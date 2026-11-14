@@ -30,7 +30,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Scan source, dependencies, and IaC configuration
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
         with:
           scan-type: fs
           scan-ref: eduos
@@ -42,7 +42,7 @@ jobs:
       - name: Build production container image
         run: docker build --target app -t eduos-app:ci .
       - name: Scan production container image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
         with:
           scan-type: image
           image-ref: eduos-app:ci
@@ -148,7 +148,7 @@ jobs:
           EDUOS_PLAYWRIGHT_DIR="$RUNNER_TEMP/pw" EDUOS_SCREENSHOT_DIR=artifacts/screens CHROME_PATH=$(command -v google-chrome) node dev/browser-smoke.mjs
       - name: Logs on failure
         if: failure()
-        run: docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile edge logs --tail 200
+        run: EDUOS_ENV_FILE=.env.dev docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile edge logs --tail 200
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: e2e-screenshots, path: eduos/artifacts/screens, if-no-files-found: ignore }
