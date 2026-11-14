@@ -3,6 +3,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
+import { readdir } from "node:fs/promises";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
@@ -52,7 +53,8 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
     } finally { await sql("INSERT INTO schema_migrations(name) VALUES ($1)", [last]); }
     const ok = await run(["-e", `import("./src/db.js").then(m=>m.assertSchemaReady()).then(n=>{console.log("ready",n);process.exit(0)},e=>{console.error(e.message);process.exit(1)})`],
       { ...env, DATABASE_URL: db.appUrl });
-    assert.equal(ok.code, 0, ok.out); assert.match(ok.out, /ready 15/);
+    const migrationCount = (await readdir(new URL("../../db/", import.meta.url))).filter(f => /^\d{3}_.*\.sql$/.test(f)).length;
+    assert.equal(ok.code, 0, ok.out); assert.match(ok.out, new RegExp(`ready ${migrationCount}\\b`));
   });
   it("H1: migrate refuses to grant to a superuser runtime role", async () => {
     const r = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl, EDUOS_APP_ROLE: new URL(PG_URL).username || "postgres" });
