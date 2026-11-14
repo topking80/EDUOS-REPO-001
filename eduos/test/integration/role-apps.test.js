@@ -121,6 +121,45 @@ describe("EduOS 32.4.0 role apps against real PostgreSQL", { skip }, () => {
     assert.ok((await audits("transport_checkin")).length >= 3);
   });
 
+  it("transport: direct runtime-role check-ins must match the run's route, stops and timing (audit 37.4.0 item 4)", async () => {
+    // Bypasses the API and inserts as the runtime role with the driver's context,
+    // so only the database policies stand between the statement and the table.
+    const insert = (runId, student, stop, observed = null) => asRole("driver", DRIVER, ID.s1,
+      `INSERT INTO transport_checkins(district_id,school_id,run_id,student_id,stop_id,event,recorded_by,observed_at,queued)
+       VALUES($1,$2,$3,$4,$5,'boarded',$6,$7,$8) RETURNING id`,
+      [ID.d1, ID.s1, runId, student, stop, DRIVER, observed, observed !== null]);
+    const rls = { message: /row-level security/ };
+
+    // run1 is completed: only an offline check-in observed during the run is accepted.
+    const t = (await admin.query("SELECT started_at, completed_at, started_at + (completed_at - started_at) / 2 AS mid FROM transport_runs WHERE id=$1", [run1.id])).rows[0];
+    assert.ok(t.completed_at, "run1 completed in the previous test");
+    await assert.rejects(insert(run1.id, ID.alice, route.stops[0].id), rls, "completed run, not queued");
+    assert.equal((await insert(run1.id, ID.alice, route.stops[0].id, t.mid)).length, 1, "queued during the run");
+    assert.equal((await insert(run1.id, ID.alice, route.stops[0].id, t.completed_at)).length, 1, "queued exactly at completion");
+    await assert.rejects(insert(run1.id, ID.alice, route.stops[0].id, new Date(t.started_at.getTime() - 1000)), rls, "queued before the run started");
+    await assert.rejects(insert(run1.id, ID.alice, route.stops[0].id, new Date(t.completed_at.getTime() + 1000)), rls, "queued after the run completed");
+
+    // A second route for the same driver, with its own stop and only Alice riding.
+    const created = await as("p1")("POST", "/api/transport/routes", { name: "Route 2", busLabel: "Bus 2", direction: "pm", driverUserId: DRIVER,
+      stops: [{ name: "Elm & 9th", time: "15:30" }, { name: "School", time: "15:05", isSchool: true }] });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const route2 = created.body.data;
+    const stops2 = (await as("p1")("GET", "/api/transport/routes")).body.data.find(r => r.id === route2.id).stops;
+    assert.equal((await as("p1")("POST", `/api/transport/routes/${route2.id}/riders`, { studentId: ID.alice, stopId: stops2[0].id })).status, 201);
+    const run2 = await as("drv1")("POST", "/api/transport/runs", { routeId: route2.id });
+    assert.equal(run2.status, 201, JSON.stringify(run2.body));
+
+    assert.equal((await insert(run2.body.data.id, ID.alice, stops2[0].id)).length, 1, "rider on route, stop on route, run in progress");
+    await assert.rejects(insert(run2.body.data.id, ID.bob, stops2[0].id), rls, "student not riding this route");
+    await assert.rejects(insert(run2.body.data.id, ID.alice, route.stops[0].id), rls, "stop belongs to another route");
+    await assert.rejects(insert(run2.body.data.id, ID.carol, stops2[0].id), "student from another school");
+
+    // The API path is unchanged: a normal driver check-in still succeeds.
+    assert.equal((await as("drv1")("POST", `/api/transport/runs/${run2.body.data.id}/checkins`, { studentId: ID.alice, stopId: stops2[0].id, event: "boarded" })).status, 201);
+    assert.equal((await as("drv1")("POST", `/api/transport/runs/${run2.body.data.id}/checkins`, { studentId: ID.alice, stopId: stops2[1].id, event: "alighted" })).status, 201);
+    assert.equal((await as("drv1")("POST", `/api/transport/runs/${run2.body.data.id}/complete`, {})).status, 200);
+  });
+
   let skillId;
   it("christie: only approved content is tutored and the answer never reaches the pupil", async () => {
     const draft = await as("t1")("POST", "/api/christie/skills", { subject: "Math", gradeLevel: "3", code: "G3.MUL", title: "Times tables", explanation: "Multiplication is repeated addition: 3 × 4 means 4 + 4 + 4.",

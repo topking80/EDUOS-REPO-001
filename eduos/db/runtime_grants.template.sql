@@ -259,3 +259,6 @@ GRANT EXECUTE ON FUNCTION
   eduos_staff_can_see_student(uuid, uuid), eduos_teaches_student(uuid), eduos_transport_manager(uuid),
   eduos_transport_staff(uuid)
   TO eduos_app;
+
+-- 034 transport check-in consistency policy helper (audit 37.4.0 item 4).
+GRANT EXECUTE ON FUNCTION eduos_transport_checkin_consistent(uuid, uuid, uuid, uuid, timestamptz) TO eduos_app;
