@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { assertReleaseMetadataAligned } from "./helpers/release.js";
 
 function htmlFiles(dir) {
   return readdirSync(dir,{withFileTypes:true}).flatMap(e=>{
@@ -25,13 +26,7 @@ test("all literal local HTML href/src references resolve",()=>{
   assert.deepEqual(missing,[]);
 });
 test("release version is consistent across app and package metadata",()=>{
-  const pkg=JSON.parse(readFileSync("package.json","utf8"));
-  const lock=JSON.parse(readFileSync("package-lock.json","utf8"));
-  const html=readFileSync("public/index.html","utf8");
-  assert.equal(pkg.version,"37.4.0");
-  assert.equal(lock.version,"37.4.0");
-  assert.equal(lock.packages[""].version,"37.4.0");
-  assert.match(html,/EduOS District Edition 37\.4\.0/);
+  assertReleaseMetadataAligned();
 });
 
 test("Vision Studio journey controls exist and all six steps are reachable",()=>{
