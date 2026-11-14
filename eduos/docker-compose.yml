@@ -117,6 +117,28 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # 37.4.0 webhook dispatcher (opt-in): `docker compose --profile ops run --rm webhooks`,
+  # every minute from cron. Drains the durable outbox for every district, so
+  # webhooks and their retries don't wait for API activity. It needs outbound
+  # HTTPS to receivers, so (like app) it also joins edge_net; the database
+  # stays on the internal backend network. Requires WEBHOOK_SIGNING_KEY.
+  webhooks:
+    build: { context: ., target: app }
+    image: eduos-app:local
+    profiles: ["ops"]
+    command: ["node", "src/webhook-dispatch.js"]
+    env_file: ${EDUOS_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgres://eduos_owner:${EDUOS_OWNER_PASSWORD:?set EDUOS_OWNER_PASSWORD}@db:5432/eduos
+      DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+    networks:
+      - backend
+      - edge_net
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   # HTTP/2 edge (opt-in): `docker compose --profile edge up`.
   # Terminates TLS and speaks HTTP/2 + HTTP/3 to browsers, serves the static
   # assets directly, and proxies /api,/auth,/health to the Node app. Set

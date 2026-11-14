@@ -177,6 +177,29 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     for (const j of jobs) assert.equal((await outbox(j.id)).status, "delivered");
   });
 
+  it("the scheduled dispatcher drains every district's queue without API activity", async () => {
+    await clearQueue();
+    const { dispatchWebhooks } = await import("../../src/webhook-dispatch.js");
+    const ownerPool = new pg.Pool({ connectionString: db.ownerUrl, max: 2 });
+    try {
+      const s1 = await subscription(), s2 = await subscription({ district: ID.d2, creator: USERS.supt2[0] });
+      const d1Jobs = [await job(s1), await job(s1), await job(s1)];
+      const d2Job = await job(s2, { district: ID.d2, actor: USERS.supt2[0] });
+      const backedOff = await job(s1);
+      await admin.query("UPDATE webhook_outbox SET available_at=now()+interval '10 minutes' WHERE id=$1", [backedOff.id]);
+      const sent = [];
+      const options = { lookup: async () => PUBLIC_IP, send: async req => { sent.push(req.headers["X-EduOS-Delivery"]); return delivered(); }, sleep: async () => {} };
+
+      assert.deepEqual(await dispatchWebhooks({ db: ownerPool, signingKey: "", deliveryOptions: options }), { skipped: "webhooks_not_configured", claimed: 0 });
+      const r = await dispatchWebhooks({ db: ownerPool, signingKey: SIGNING_KEY, deliveryOptions: options, log: { error: () => {} } });
+      assert.equal(r.claimed, 4);
+      assert.deepEqual(sent.sort(), [...d1Jobs, d2Job].map(j => j.delivery_id).sort(), "both districts drained, each job once");
+      for (const j of [...d1Jobs, d2Job]) assert.equal((await outbox(j.id)).status, "delivered");
+      assert.equal((await outbox(backedOff.id)).status, "pending", "a backed-off retry waits for its time");
+      assert.equal((await dispatchWebhooks({ db: ownerPool, signingKey: SIGNING_KEY, deliveryOptions: options })).claimed, 0, "nothing left to do");
+    } finally { await ownerPool.end(); }
+  });
+
   it("a worker only sees its own district's queue", async () => {
     await clearQueue();
     const s = await subscription(), j = await job(s);

@@ -22,6 +22,7 @@
     "supply-chain:check": "node scripts/generate-sbom-and-license-inventory.js --check",
     "supply-chain:provenance": "node scripts/generate-release-provenance.js",
     "arrival:escalations": "node src/arrival-escalation-dispatch.js",
+    "webhooks:dispatch": "node src/webhook-dispatch.js",
     "release:preflight": "node scripts/production-preflight.js",
     "test:staff": "node --test test/staff-management-36.9.test.js test/staff-management-ui-37.1.test.js test/staff-daily-workspace-36.8.test.js"
   },

@@ -219,6 +219,8 @@ demo logins and troubleshooting: `GETTING-STARTED.md`. `make down` stops it.
 4. The superintendent signs in and adds schools, principals, teachers, families
    and students under **Administration**, or imports students with **SIS import**.
 5. Schedule `docker compose --profile ops run --rm retention` nightly.
+   If webhooks are enabled (`WEBHOOK_SIGNING_KEY`), also schedule
+   `docker compose --profile ops run --rm webhooks` every minute.
 
 ### Without Docker
 Requirements: Node.js 22+, PostgreSQL 15+.
@@ -241,6 +243,7 @@ Requirements: Node.js 22+, PostgreSQL 15+.
    (Before 32.1.0 this step was missing: nobody could sign in to a fresh install.)
 8. Open the configured service URL and use district OIDC sign-in.
 9. Schedule `npm run db:retention` (owner role) for data retention.
+   With webhooks enabled, also run `npm run webhooks:dispatch` (owner role) every minute.
 
 ## Validation
 32.7.0: see "Results" in `FIX-REPORT-32.7.0.md`: 375 unit tests, 81 PostgreSQL
