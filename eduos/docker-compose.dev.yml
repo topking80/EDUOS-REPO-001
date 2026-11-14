@@ -1,0 +1,74 @@
+# LOCAL EVALUATION overlay (32.1.0). Never use in production.
+# Started by `make up` (scripts/dev-up.sh) together with docker-compose.yml and
+# the "edge" profile. Adds:
+#   devidp        local OpenID Connect provider with a demo-account picker
+#   webhook-sink  loopback webhook receiver inside the API's network namespace
+#   seed          one-shot synthetic demo district (profile "seed")
+# Everything is bound to 127.0.0.1 on the host.
+services:
+  devidp:
+    build: { context: ., target: devtools }
+    image: eduos-devtools:local
+    command: ["node", "dev/dev-idp.js"]
+    environment:
+      NODE_ENV: development
+      PORT: "9400"
+      DEV_IDP_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER}
+      DEV_IDP_PUBLIC_URL: http://localhost:${EDUOS_DEV_IDP_PORT:-9400}
+      DEV_IDP_CLIENT_ID: ${OIDC_CLIENT_ID:?set OIDC_CLIENT_ID}
+      DEV_IDP_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET}
+      # 32.7.0: plus the two simulated school nodes (docker-compose.eden.yml, `make eden-sim`).
+      DEV_IDP_REDIRECT_URIS: ${OIDC_REDIRECT_URI:?set OIDC_REDIRECT_URI},http://localhost:8501/auth/callback,http://localhost:8502/auth/callback
+    ports:
+      - "127.0.0.1:${EDUOS_DEV_IDP_PORT:-9400}:9400"
+    networks:
+      backend: { aliases: [devidp] }
+      # Its own network for the host port: joining edge_net could take the
+      # edge's fixed address before Caddy starts.
+      devnet: {}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:9400/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    depends_on:
+      devidp:
+        condition: service_healthy
+
+  webhook-sink:
+    image: eduos-devtools:local
+    command: ["node", "dev/webhook-sink.js"]
+    environment:
+      NODE_ENV: development
+    # Shares the app's network namespace so the app can reach it on loopback
+    # (the only plain-http webhook target allowed, and only outside production).
+    # If only the app is recreated (`up -d --build app`) the sink keeps the old,
+    # dead namespace; a full `make up` / `docker compose up -d` recreates it.
+    network_mode: "service:app"
+    depends_on:
+      app:
+        condition: service_started
+        restart: true
+    restart: unless-stopped
+
+  seed:
+    image: eduos-devtools:local
+    profiles: ["seed"]
+    command: ["node", "dev/seed-demo.js"]
+    environment:
+      NODE_ENV: development
+      EDUOS_ALLOW_DEMO_SEED: "true"
+      DATABASE_URL: postgres://eduos_owner:${EDUOS_OWNER_PASSWORD:?set EDUOS_OWNER_PASSWORD}@db:5432/eduos
+      OIDC_ISSUER: ${OIDC_ISSUER}
+    networks:
+      - backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+networks:
+  devnet: {}

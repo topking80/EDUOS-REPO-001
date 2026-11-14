@@ -1,0 +1,42 @@
+{
+  "name": "eduos-district-edition",
+  "version": "37.4.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "db:migrate": "node src/migrate.js",
+    "db:retention": "node src/retention.js",
+    "db:bootstrap": "node src/bootstrap-district.js",
+    "edal:verify": "node src/edal-verify.js",
+    "test:integration": "node --test test/integration/*.test.js",
+    "verify:dependencies": "node scripts/verify-dependency-registry.js",
+    "audit:dependencies": "npm audit --audit-level=high",
+    "audit:dependencies:report": "node scripts/audit-dependencies.js",
+    "supply-chain:sbom": "node scripts/generate-sbom-and-license-inventory.js",
+    "supply-chain:check": "node scripts/generate-sbom-and-license-inventory.js --check",
+    "supply-chain:provenance": "node scripts/generate-release-provenance.js",
+    "arrival:escalations": "node src/arrival-escalation-dispatch.js",
+    "webhooks:dispatch": "node src/webhook-dispatch.js",
+    "release:preflight": "node scripts/production-preflight.js",
+    "test:staff": "node --test test/staff-management-36.9.test.js test/staff-management-ui-37.1.test.js test/staff-daily-workspace-36.8.test.js"
+  },
+  "dependencies": {
+    "compression": "^1.7.5",
+    "cookie": "^1.0.2",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
+    "jose": "^6.0.11",
+    "pg": "^8.13.1",
+    "qrcode": "1.5.4",
+    "sharp": "^0.35.5"
+  },
+  "description": "EduOS District Edition with operational oversight, governed local agent orchestration and unified district workflows"
+}

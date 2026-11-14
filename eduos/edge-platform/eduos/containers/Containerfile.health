@@ -1,0 +1,21 @@
+# EduOS Health & Telemetry Container
+
+FROM registry.fedoraproject.org/fedora:40
+
+LABEL org.opencontainers.image.title="EduOS Health Agent"
+LABEL org.opencontainers.image.description="System metrics and compliance telemetry for EduOS"
+
+RUN dnf install -y \
+        bash \
+        coreutils \
+        procps-ng \
+        util-linux \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+COPY ../scripts/eduos-health.sh /usr/local/bin/eduos-health.sh
+RUN chmod +x /usr/local/bin/eduos-health.sh
+
+RUN mkdir -p /var/lib/eduos/health
+
+ENTRYPOINT ["/usr/local/bin/eduos-health.sh"]

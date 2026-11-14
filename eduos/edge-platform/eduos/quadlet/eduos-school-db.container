@@ -1,0 +1,29 @@
+# EduOS 32.7.0 school node: local PostgreSQL 16 (Quadlet).
+# Small-memory profile for a Raspberry Pi 5 (4-8 GB) or any arm64/x86_64 box.
+# The database never listens on the school LAN: it is only on the private
+# podman network "eduos-school" shared with the EduOS node container.
+[Unit]
+Description=EduOS school node database (PostgreSQL 16)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=eduos-school-db
+Image=docker.io/library/postgres:16-alpine
+Network=eduos-school.network
+Volume=/var/lib/eduos/school-db:/var/lib/postgresql/data:Z
+Volume=/etc/eduos/school-node/db-init:/docker-entrypoint-initdb.d:ro,Z
+EnvironmentFile=/etc/eduos/school-node/db.env
+# Small shared_buffers / connections for a 4 GB board.
+Exec=postgres -c shared_buffers=64MB -c max_connections=30 -c work_mem=2MB -c maintenance_work_mem=32MB -c effective_cache_size=256MB -c wal_buffers=4MB
+PodmanArgs=--memory=384m --pids-limit=200
+HealthCmd=pg_isready -h 127.0.0.1 -U postgres -d eduos
+HealthInterval=10s
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

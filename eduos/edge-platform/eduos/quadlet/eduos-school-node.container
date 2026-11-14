@@ -1,0 +1,36 @@
+# EduOS 32.7.0 school node: the EduOS API + phone app for ONE school (Quadlet).
+# Keeps attendance, bus check-ins, SafetyOS roll call, pick-up verification,
+# Christie (local provider) and gradebook reads working when the district
+# uplink is down; only gate-checked aggregates leave (see docs/EDEN-32.7.0.md).
+# The image is multi-arch (node:22-alpine base, no native addons), but arm64
+# has NOT been built or tested on real Pi 5 hardware in 32.7.0.
+[Unit]
+Description=EduOS school node (EDEN school tier)
+After=network-online.target eduos-school-db.service
+Wants=network-online.target
+Requires=eduos-school-db.service
+
+[Container]
+ContainerName=eduos-school-node
+Image=registry.district.example/eduos/eduos-app:32.7.0
+Network=eduos-school.network
+# No published port: browsers reach it through eduos-school-edge (TLS).
+Volume=/var/lib/eduos/node:/var/lib/eduos-node:Z
+EnvironmentFile=/etc/eduos/school-node/node.env
+Environment=NODE_ENV=production EDUOS_NODE_TIER=school EDEN_IDENTITY_FILE=/var/lib/eduos-node/identity.json NODE_OPTIONS=--max-old-space-size=160
+ReadOnly=true
+Tmpfs=/tmp
+NoNewPrivileges=true
+DropCapability=all
+PodmanArgs=--memory=320m --pids-limit=200
+HealthCmd=node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HealthInterval=30s
+
+[Service]
+# Migrations run first (owner role), then the API starts as the runtime role.
+ExecStartPre=/usr/bin/podman run --rm --network eduos-school --env-file /etc/eduos/school-node/migrate.env registry.district.example/eduos/eduos-app:32.7.0 node src/migrate.js
+Restart=always
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

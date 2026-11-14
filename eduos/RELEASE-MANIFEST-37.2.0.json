@@ -1,0 +1,23 @@
+{
+  "product": "EduOS District Edition",
+  "version": "37.2.0",
+  "sourceBaseline": "37.1.0",
+  "releaseType": "connection-and-webhook-reliability-fixes",
+  "productionCertified": false,
+  "validation": {
+    "webhookTests": "23 passed",
+    "syntax": "passed",
+    "fullSuite": "511 passed, 35 failed, 1 skipped",
+    "connectionAndWebhookTests": "26 passed, 0 failed"
+  },
+  "changes": [
+    "District IT administrators can manage, create, test and disable webhooks through the browser API bridge, matching server authorization.",
+    "Incomplete or oversized webhook receiver responses are no longer misclassified as successful deliveries.",
+    "Webhook retry-attempt input is bounded to 1\u20135 attempts and falls back safely for invalid values.",
+    "Webhook integration tests cover IT-admin parity and truncated response handling."
+  ],
+  "remainingRisks": [
+    "Webhook dispatch is currently in-process and best-effort after the event write; a process crash between event persistence and dispatch can still lose a delivery. A durable cross-district outbox/worker is a separate required production milestone.",
+    "No live receiver, live PostgreSQL/RLS, multi-instance concurrency, external DNS rebinding, or production deployment test was performed."
+  ]
+}

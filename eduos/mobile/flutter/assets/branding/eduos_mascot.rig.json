@@ -1,0 +1,50 @@
+{
+  "character": "EduOS student helper mascot",
+  "artboard": "EduOS_Mascot",
+  "stateMachine": "Character_Controller",
+  "assetPolicy": "Local bundled assets only; do not stream student-facing mascot assets at runtime.",
+  "groups": ["Root", "Head", "Torso", "Arm_L", "Arm_R", "Leg_L", "Leg_R", "Accessories"],
+  "bones": {
+    "Root": "Feet/world placement",
+    "Hip": "Center-of-gravity pivot",
+    "Spine_01": "Lower spine",
+    "Spine_02": "Upper spine",
+    "Neck": "Neck pivot",
+    "Head": "Head pivot",
+    "Shoulder_L": "Left shoulder",
+    "UpperArm_L": "Left upper arm",
+    "Forearm_L": "Left forearm",
+    "Hand_L": "Left hand",
+    "Shoulder_R": "Right shoulder",
+    "UpperArm_R": "Right upper arm",
+    "Forearm_R": "Right forearm",
+    "Hand_R": "Right hand",
+    "Thigh_L": "Left thigh",
+    "Shin_L": "Left shin",
+    "Foot_L": "Left foot",
+    "Thigh_R": "Right thigh",
+    "Shin_R": "Right shin",
+    "Foot_R": "Right foot",
+    "Look_Target": "External non-deforming look-at target"
+  },
+  "inputs": {
+    "onGreet": "trigger",
+    "onSuccess": "trigger",
+    "onError": "trigger",
+    "mood": {"type": "number", "min": 0, "max": 2, "mapping": {"0": "Neutral", "1": "Happy", "2": "Surprised"}, "blendSeconds": 0.2},
+    "lookX": {"type": "number", "min": -100, "max": 100},
+    "lookY": {"type": "number", "min": -100, "max": 100}
+  },
+  "layers": {
+    "Base_Body": {"default": "Idle_Breathing", "states": ["Idle_Breathing", "Wave", "Jump", "Sad"]},
+    "Face_Expressions": {"driver": "mood", "states": ["Neutral", "Happy", "Surprised"]},
+    "Eye_Blink": {"states": ["Open", "Blink"], "randomExitSeconds": [3, 5]},
+    "Eye_Tracking": {"driver": ["lookX", "lookY"], "mapping": "2D blend state"}
+  },
+  "authoringNotes": [
+    "Keep Look_Target outside the deforming Head hierarchy and constrain pupils/head aim to it.",
+    "Avoid clipping masks, multiply/overlay blend modes, and unnecessary nested effects.",
+    "Use short mix durations and test rapid trigger interruption.",
+    "The SVG is a static fallback/source illustration, not a compiled Rive asset."
+  ]
+}

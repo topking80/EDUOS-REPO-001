@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 300" role="img" aria-labelledby="title desc">
+<title id="title">Christie AI — Universal Intelligence Interface</title><desc id="desc">Coordinator: connected nodes and a central synthesis core. Animated vector identity artwork for the EduOS local demonstration.</desc>
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f5f8fc"/><stop offset="1" stop-color="#e7eff7"/></linearGradient><radialGradient id="core"><stop stop-color="#fff"/><stop offset="1" stop-color="#2878bd" stop-opacity=".18"/></radialGradient></defs>
+<rect x="12" y="12" width="296" height="276" rx="30" fill="url(#bg)" stroke="#dce6ef"/>
+<g fill="none" stroke="#2878bd" stroke-opacity=".22" stroke-width="2"><circle cx="160" cy="150" r="104"/><circle cx="160" cy="150" r="88" stroke-dasharray="5 9" class="orbit"/><path d="M45 150H275 M160 34V266" stroke-opacity=".12"/></g>
+<g class="orbit-node" fill="#2878bd"><circle cx="160" cy="46" r="6"/><circle cx="264" cy="150" r="5"/><circle cx="160" cy="254" r="6"/><circle cx="56" cy="150" r="5"/></g>
+<path d="M 160 75 C 205 75 226 109 226 150 C 226 191 205 225 160 225 C 115 225 94 191 94 150 C 94 109 115 75 160 75 Z" fill="url(#core)" stroke="#2878bd" stroke-width="3"/>
+<path d="M160 105 L174 136 L208 150 L174 164 L160 195 L146 164 L112 150 L146 136 Z" fill="none" stroke="#2878bd" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="160" cy="150" r="12" fill="#2878bd" opacity=".16"/><circle cx="160" cy="150" r="4" fill="#2878bd"/>
+<text x="160" y="270" text-anchor="middle" fill="#30465d" font-family="Arial,sans-serif" font-size="12" font-weight="700">CHRISTIE AI</text>
+<style>.orbit{transform-origin:160px 150px;animation:spin 24s linear infinite}.orbit-node{transform-origin:160px 150px;animation:breathe 3.8s ease-in-out infinite}@keyframes spin{to{transform:rotate(360deg)}}@keyframes breathe{50%{opacity:.48;transform:scale(.94)}}@media(prefers-reduced-motion:reduce){.orbit,.orbit-node{animation:none}}</style></svg>

@@ -1,0 +1,5 @@
+# Build outputs contain operator credentials (password hashes, SSH keys).
+build/
+ignition/*.ign
+# Operator credentials: keep outside git (see docs/BUILD.md).
+secrets/

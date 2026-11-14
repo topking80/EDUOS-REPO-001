@@ -1,0 +1,25 @@
+# EduOS Bootstrap Container
+# Build with: podman build -f Containerfile.bootstrap -t quay.io/eduos/eduos-bootstrap:latest .
+
+FROM registry.fedoraproject.org/fedora:40
+
+LABEL org.opencontainers.image.title="EduOS Bootstrap"
+LABEL org.opencontainers.image.description="First-boot identity and registration service for EduOS"
+LABEL org.opencontainers.image.source="https://github.com/eduos-project/eduos"
+
+RUN dnf install -y \
+        bash \
+        coreutils \
+        util-linux \
+        curl \
+        ca-certificates \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+COPY ../scripts/eduos-bootstrap.sh /usr/local/bin/eduos-bootstrap.sh
+RUN chmod +x /usr/local/bin/eduos-bootstrap.sh
+
+# Create runtime directories
+RUN mkdir -p /etc/eduos /var/lib/eduos
+
+ENTRYPOINT ["/usr/local/bin/eduos-bootstrap.sh"]

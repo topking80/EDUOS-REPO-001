@@ -1,0 +1,1 @@
+console=serial0,115200 console=tty1 rootwait rw init=/usr/lib/systemd/systemd ignition.config.url=https://district.eduos.local/ignition/edge.ign rd.neednet=1 eduos.role=edge

@@ -1,0 +1,173 @@
+# EduOS CI (32.1.0): unit tests, PostgreSQL integration tests, edge checks and a
+# full-stack end-to-end smoke test (Docker Compose + Caddy + local dev IdP).
+# Nothing here deploys anything or uses external credentials.
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  source-and-container-security:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan repository for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Scan source, dependencies, and IaC configuration
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'
+      - name: Build production container image
+        run: docker build --target app -t eduos-app:ci .
+      - name: Scan production container image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: eduos-app:ci
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'
+
+  dependency-security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - name: Verify lockfile and package registry policy
+        run: npm run verify:dependencies
+      - name: Install from lockfile
+        run: npm ci
+      - name: Audit production and development dependency tree
+        id: dependency-audit
+        continue-on-error: true
+        run: npm run audit:dependencies:report
+      - name: Generate SPDX SBOM and license inventory
+        run: npm run supply-chain:check
+      - name: Generate release provenance record
+        run: npm run supply-chain:provenance
+      - name: Preserve SBOM and license evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-sbom-license-provenance
+          path: artifacts/supply-chain/
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Preserve dependency audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-report
+          path: artifacts/dependency-audit/npm-audit.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Enforce high-severity dependency gate
+        if: steps.dependency-audit.outcome == 'failure'
+        run: exit 1
+
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm test
+
+  integration:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: ci-only-password }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run test:integration
+        env:
+          EDUOS_TEST_PG_URL: postgres://postgres:ci-only-password@127.0.0.1:5432/postgres
+
+  edge:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Edge platform unit tests
+        working-directory: edge-platform/eduos
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_enrollment.py tests/test_enrollment_token.py tests/test_edge_config.py
+      - name: Butane render + checks
+        run: |
+          curl -fsSL -o /tmp/butane https://github.com/coreos/butane/releases/download/v0.23.0/butane-x86_64-unknown-linux-gnu
+          chmod +x /tmp/butane
+          make -C edge-platform/eduos check BUTANE=/tmp/butane
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Start the stack (make up)
+        run: make up
+      - name: HTTP smoke test
+        run: make smoke
+      - name: Browser smoke test (headless Chrome)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save playwright-core@1
+          EDUOS_PLAYWRIGHT_DIR="$RUNNER_TEMP/pw" EDUOS_SCREENSHOT_DIR=artifacts/screens CHROME_PATH=$(command -v google-chrome) node dev/browser-smoke.mjs
+      - name: Logs on failure
+        if: failure()
+        run: docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile edge logs --tail 200
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: e2e-screenshots, path: artifacts/screens, if-no-files-found: ignore }
+      - name: Stop
+        if: always()
+        run: make down-volumes
+
+  flutter-mobile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+      - name: Resolve Flutter dependencies
+        working-directory: mobile/flutter
+        run: flutter pub get
+      - name: Analyze Dart sources
+        working-directory: mobile/flutter
+        run: flutter analyze --fatal-infos
+      - name: Run Flutter unit and widget tests
+        working-directory: mobile/flutter
+        run: flutter test --reporter expanded
+      - name: Compile Android debug application
+        working-directory: mobile/flutter
+        run: flutter build apk --debug

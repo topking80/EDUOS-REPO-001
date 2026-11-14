@@ -1,0 +1,59 @@
+[Unit]
+Description=EduOS Enrollment Intake (loopback only)
+After=network-online.target eduos-bootstrap.service
+Requires=eduos-bootstrap.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/eduos-enrollment.py
+Restart=on-failure
+RestartSec=5
+User=eduos-enrollment
+Group=eduos-enrollment
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Drop all capabilities; the service binds a high port on loopback and needs none.
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Kernel-enforced loopback-only, independent of the app-level HOST check.
+IPAddressAllow=localhost
+IPAddressDeny=any
+# Syscall allow-list with dangerous classes denied (EPERM, not SIGKILL, to fail cleanly).
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @mount @swap @reboot @raw-io @cpu-emulation
+SystemCallErrorNumber=EPERM
+# Shrink the visible kernel/proc surface.
+RestrictNamespaces=true
+RestrictRealtime=true
+ProtectProc=invisible
+ProcSubset=pid
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelLogs=true
+RemoveIPC=true
+KeyringMode=private
+UMask=0077
+# Bound resource use so a connection flood cannot exhaust the host.
+MemoryMax=128M
+TasksMax=64
+ReadOnlyPaths=/etc/eduos/role /run/eduos/enrollment-token
+ReadWritePaths=/var/lib/eduos/enrollments
+Environment=EDUOS_ENROLL_HOST=127.0.0.1
+Environment=EDUOS_ENROLL_PORT=8080
+Environment=EDUOS_ENROLL_TOKEN_FILE=/run/eduos/enrollment-token
+Environment=EDUOS_ENROLL_DIR=/var/lib/eduos/enrollments/pending
+Environment=EDUOS_ROLE_FILE=/etc/eduos/role
+
+[Install]
+WantedBy=multi-user.target

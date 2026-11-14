@@ -1,0 +1,21 @@
+[Unit]
+Description=EduOS Bootstrap Service - Device Onboarding & Identity
+Documentation=https://eduos.local/docs/bootstrap
+After=network-online.target ignition-firstboot-complete.service
+Wants=network-online.target
+ConditionPathExists=!/etc/eduos/bootstrap-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/eduos-bootstrap.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/eduos /var/lib/eduos
+
+[Install]
+WantedBy=multi-user.target

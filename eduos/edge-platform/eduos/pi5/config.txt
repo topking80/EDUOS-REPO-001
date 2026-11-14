@@ -1,0 +1,27 @@
+# EduOS Raspberry Pi 5 / CM5 - Edge Node Configuration
+# Place this file in the boot partition (FAT32)
+
+# Enable ARM performance boost
+arm_boost=1
+
+# Graphics / display
+dtoverlay=vc4-kms-v3d
+max_framebuffers=2
+
+# PCIe for NVMe / fast storage (very useful for Edge caching)
+dtparam=pciex1_gen=3
+
+# Fan control (for active cooling in enclosures)
+dtoverlay=gpio-fan,gpiopin=14
+
+# Disable WiFi and Bluetooth if not needed for security / power
+# dtoverlay=disable-wifi
+# dtoverlay=disable-bt
+
+# Serial console (useful for headless debugging)
+enable_uart=1
+uart_2ndstage=1
+
+# EduOS specific hint (optional)
+# This can be read by health service or custom scripts
+os_hint=eduos-edge-pi5

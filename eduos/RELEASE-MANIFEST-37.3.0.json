@@ -1,0 +1,19 @@
+{
+  "version": "37.3.0",
+  "name": "EduOS District Edition",
+  "release": "Durable webhook outbox and connection reliability",
+  "files": {
+    "package.json": "014a41510487e040fd5d9e8abf572350d69ab23857e304151c27881eb056630d",
+    "package-lock.json": "e1f6639afd20eb0e22ca45aad24d54055f511677501cb7aea5900be0faf4e6e7",
+    "src/server.js": "7380d2b7c54a85d4e7c1e9156cc16765591443d74ab789a058df29e2c6b59855",
+    "src/migrate.js": "fc9375f7e1a0243383aa97b0f17dd30362deff83838f5e4c5936bffcc7ad0cd9",
+    "db/033_durable_webhook_outbox.sql": "820288b4ad79ec303598c0ad89bb6a43ec731988ea7f6bf36a12b2c9af55ffc1",
+    "db/runtime_grants.template.sql": "8e4d43e684da877ccc6d4effc0b2cbd2432aed60e4b215888a01d8c099a24625",
+    "test/durable-webhook-outbox-37.3.test.js": "707aeabfdc7e61afd993b8af5d2047f3050e73d9f9a21e45a759cae207136ece",
+    "test/phase33-flow-webhooks.test.js": "16f38323ae9c76d9029243bf92108ec9e1c7027153217f310fce54b916e0bba8",
+    "test/connection-integrity.test.js": "5fa6d454812239f9de56619cbbcdc7fad56a08febd7e58cd761fa8c411ac098b",
+    "RELEASE-37.3.0.md": "021c2098e935b7a8d1abf123efb6b8109fbdc1c29725d751b34ecf95c744cd2e",
+    "CONNECTION-WEBHOOK-REMEDIATION-37.3.0.md": "b64cfbeabc6f70c669eb33a53490f5fb6636e385c8c419bdc29a69852d93cbe2",
+    "GITHUB-IMPORT-37.3.0.md": "cc43b956d8b40fd8abe4a20dee900dfca5935521fd4a6b0cd829482fa0d88c69"
+  }
+}

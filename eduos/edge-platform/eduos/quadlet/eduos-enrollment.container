@@ -1,0 +1,30 @@
+[Unit]
+Description=EduOS Enrollment Intake (loopback only)
+After=network-online.target eduos-bootstrap.service
+Requires=eduos-bootstrap.service
+
+[Container]
+Image=quay.io/eduos/eduos-enrollment:0.2.1
+ContainerName=eduos-enrollment
+PublishPort=127.0.0.1:8080:8080
+Volume=/var/lib/eduos/enrollments:/var/lib/eduos/enrollments:Z
+Volume=/run/eduos/enrollment-token:/run/eduos/enrollment-token:ro,Z
+Volume=/etc/eduos/role:/etc/eduos/role:ro,Z
+Environment=EDUOS_ENROLL_HOST=127.0.0.1
+Environment=EDUOS_ENROLL_PORT=8080
+Environment=EDUOS_ENROLL_TOKEN_FILE=/run/eduos/enrollment-token
+Environment=EDUOS_ENROLL_DIR=/var/lib/eduos/enrollments/pending
+Environment=EDUOS_ROLE_FILE=/etc/eduos/role
+ReadOnly=true
+Tmpfs=/tmp:rw,noexec,nosuid,nodev,size=16m
+DropCapability=all
+NoNewPrivileges=true
+HealthCmd=python3 -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3).status==200 else 1)"
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+# Bound memory/CPU/PIDs so a connection flood cannot exhaust the host.
+PodmanArgs=--security-opt=no-new-privileges --pids-limit=64 --memory=128m --memory-swap=128m --cpus=1.0 --read-only-tmpfs=true
+
+[Install]
+WantedBy=multi-user.target

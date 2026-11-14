@@ -1,0 +1,75 @@
+# EduOS District Edition — HTTP/2 edge (reverse proxy + static origin).
+#
+# Browsers negotiate HTTP/2 only over TLS, so this edge terminates TLS and
+# speaks HTTP/2 (and HTTP/3) to the client, then talks plain HTTP/1.1 to the
+# Node app on the internal network. It also serves the static assets directly,
+# so the Node process handles only the dynamic API/auth routes.
+#
+#   EDUOS_SITE_ADDRESS  the public site address. Defaults to "localhost", which
+#                       Caddy serves over HTTPS with its own local CA (real
+#                       HTTP/2, no setup). Set it to your domain in production
+#                       and Caddy provisions a trusted certificate automatically.
+#   EDUOS_UPSTREAM      the Node app address. Defaults to the compose service.
+{
+	admin off
+}
+
+{$EDUOS_SITE_ADDRESS:localhost} {
+	encode zstd gzip
+
+	# Security headers for everything the edge serves (32.0.53). Static assets
+	# never reach the Node app, so helmet's headers must be repeated here. The
+	# "?" form only sets a header when the upstream did not, so API responses
+	# keep the app's own values. Keep the CSP in sync with src/server.js.
+	header {
+		?Content-Security-Policy "default-src 'self'; base-uri 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https:; object-src 'none'; script-src 'self' 'unsafe-inline'; script-src-attr 'unsafe-inline'; style-src 'self' 'unsafe-inline'; upgrade-insecure-requests; connect-src 'self'"
+		?X-Content-Type-Options "nosniff"
+		?X-Frame-Options "SAMEORIGIN"
+		?Referrer-Policy "no-referrer"
+		?Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		?Cross-Origin-Opener-Policy "same-origin"
+		?Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+
+	# Dynamic routes -> Node app. Caddy adds X-Forwarded-For / -Proto / -Host,
+	# which the app honors when TRUSTED_PROXY_IPS covers this network.
+	# 32.2.0: LTI 1.3 authorization (/lti/*) and the public LTI key set are dynamic too.
+	@dynamic path /api/* /auth/* /health /lti/* /.well-known/jwks.json
+	handle @dynamic {
+		reverse_proxy {$EDUOS_UPSTREAM:app:8080}
+	}
+
+	# 32.4.0 mobile role apps (PWA) under /app/. The shell, its service worker
+	# and manifest are revalidated on every load so updates reach phones; deep
+	# links fall back to the app shell, not the desktop UI.
+	@mobileApp path /app /app/*
+	handle @mobileApp {
+		root * /srv/public
+		header Cache-Control "no-cache"
+		header /app/sw.js Service-Worker-Allowed "/app/"
+		@appMissingAsset path_regexp appMissingAsset \.(js|css|svg|png|ico|webmanifest)$
+		handle @appMissingAsset {
+			file_server
+		}
+		try_files {path} /app/index.html
+		file_server
+	}
+
+	# Everything else is a static asset, served from the edge over HTTP/2.
+	handle {
+		root * /srv/public
+		@html path / *.html
+		header @html Cache-Control "no-cache"
+		@assets path *.js *.css *.svg *.png *.ico *.woff2
+		# Filenames are not content-hashed; do not mark them immutable.
+		header @assets Cache-Control "public, max-age=3600, must-revalidate"
+		@missingAsset path_regexp missingAsset \.(js|css|svg|png|ico|woff2)$
+		handle @missingAsset {
+			file_server
+		}
+		try_files {path} /index.html
+		file_server
+	}
+
+	header -Server
+}

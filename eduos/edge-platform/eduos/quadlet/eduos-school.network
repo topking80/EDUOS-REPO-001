@@ -1,0 +1,4 @@
+# Private network for the school node API and its database (32.7.0).
+[Network]
+NetworkName=eduos-school
+Internal=false

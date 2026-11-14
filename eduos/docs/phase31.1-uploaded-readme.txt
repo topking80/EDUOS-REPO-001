@@ -1,0 +1,55 @@
+# EduOS District Edition 31.1 — Performance & Efficiency
+
+A performance/efficiency audit and fix pass. No features changed; no behavior
+changed. Every rendered value is identical to 31.0 — only the work done to
+produce it was reduced.
+
+## What was slow (found by audit)
+- District aggregates (districtTotal / districtAvg) recomputed on every call,
+  and were called ~23 times across the app (several times per Command Center,
+  board and report render) — districtAvg also re-ran districtTotal internally.
+- Enrollment "bars" computed Math.max(...schools) INSIDE the per-school map —
+  an O(schools^2) pass every render.
+- Attendance (leadership) filtered the full event list per student and did a
+  students.find() per rendered row — O(students * events).
+- The workflow engine (buildWorkItems), which runs on every navigation to
+  refresh the inbox badge, did a students.find() per attendance event and case.
+
+## Fixes
+- Memoized districtTotal / districtAvg / districtCapitalPlan, invalidated
+  automatically whenever district data is saved (save() -> invalidateDistrict()).
+- Hoisted the enrollment max out of the map: O(schools^2) -> O(schools).
+- Indexed attendance by student once per render (Map of students + Map of
+  events-by-student): O(students * events) -> O(students + events).
+- Map-based student lookups in buildWorkItems: find-per-item -> O(1).
+
+## Measured impact (headless, stressed to 400 schools / 300 students /
+## 600 attendance events / 200 cases / 150 assignments; min of 4 rounds,
+## 20 renders each; lower is better)
+
+    page          before    after    change
+    overview       23.0 ms   14.9 ms   -35%
+    enrollment    121.0 ms   93.2 ms   -23%
+    attendance    267.0 ms  201.4 ms   -25%
+    board         108.5 ms  100.9 ms    -7%
+    schools       131.6 ms  128.2 ms    -3%
+    mywork         74.2 ms   64.4 ms   -13%
+    student360     50.8 ms   46.4 ms    -9%
+    services      105.1 ms   94.3 ms   -10%
+    academics       7.3 ms    2.4 ms   -67%
+    districtAvg x200           ~0 ms   (memoized)
+    buildWorkItems x50  15.4->3.1 ms   -80%
+
+No page regressed. The residual cost on attendance/schools is DOM string
+building for hundreds of table rows (inherent to the content volume at that
+scale), not algorithmic waste.
+
+## Correctness (verified, behavior unchanged)
+- The cache is genuinely active and invalidates on save: districtTotal reflects
+  an added school, districtAvg recomputes after an attendance change.
+- Attendance per-student counts, enrollment bars and buildWorkItems names all
+  match a brute-force recompute.
+- Full render sweep passes for all five personas with zero page/console errors.
+
+## Run
+Open eduos-district-edition-phase31.1.html in a modern browser. No server needed.

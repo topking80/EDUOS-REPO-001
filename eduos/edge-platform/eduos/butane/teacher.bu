@@ -1,0 +1,101 @@
+variant: fcos
+version: 1.5.0
+# metadata:
+#   name: eduos-teacher
+#   labels:
+#     role: teacher
+#     version: "0.2.0"
+
+passwd:
+  users:
+    - name: teacher
+      uid: 1002
+      gecos: "EduOS Teacher Account"
+      groups: [ wheel, systemd-journal ]
+      password_hash: "@@EDUOS_TEACHER_PASSWORD_HASH@@"   # supplied at build time (docs/BUILD.md)
+      ssh_authorized_keys:
+        - "@@EDUOS_TEACHER_SSH_KEYS@@"
+
+storage:
+  files:
+    - path: /etc/eduos/role
+      mode: 0644
+      contents:
+        inline: |
+          teacher
+
+    - path: /etc/eduos/management-url
+      mode: 0644
+      contents:
+        inline: |
+          https://district.eduos.local/management
+
+    - path: /usr/local/bin/eduos-bootstrap.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-bootstrap.sh
+
+    - path: /usr/local/bin/eduos-enrollment.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-enrollment.sh
+
+    - path: /usr/local/bin/eduos-enrollment.py
+      mode: 0755
+      contents:
+        local: scripts/eduos-enrollment.py
+
+    - path: /usr/local/bin/eduos-health.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-health.sh
+
+    - path: /usr/local/bin/eduos-update.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-update.sh
+
+    - path: /etc/eduos/health.toml
+      mode: 0644
+      contents:
+        local: configs/health.toml
+
+    - path: /etc/eduos/update-policy.toml
+      mode: 0644
+      contents:
+        local: configs/update-policy.toml
+
+systemd:
+  units:
+    - name: eduos-bootstrap.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=EduOS Bootstrap
+        After=network-online.target
+        Wants=network-online.target
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/eduos-bootstrap.sh
+        RemainAfterExit=yes
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: eduos-enrollment.service
+      enabled: true
+      contents_local: services/enrollment.service
+
+    - name: eduos-health.service
+      enabled: true
+      contents_local: services/health.service
+
+    - name: eduos-update.service
+      enabled: true
+      contents_local: services/update.service
+
+ignition:
+  config:
+    merge:
+      - local: ignition/base.ign

@@ -1,0 +1,26 @@
+# EduOS Health Telemetry Configuration
+# This file controls what metrics are collected and how they are reported.
+
+[agent]
+interval_seconds = 300
+offline_cache = true
+max_cache_entries = 1000
+
+[metrics]
+cpu = true
+memory = true
+disk = true
+network = false          # privacy-sensitive, disabled by default
+temperature = true
+
+[compliance]
+check_selinux = true
+check_secure_boot = true
+check_disk_encryption = true
+ferpa_mode = true       # aggregate and anonymize student-related signals
+
+[reporting]
+endpoint = "https://district.eduos.local/api/v1/health"
+timeout_seconds = 30
+retry_attempts = 5
+use_mtls = true

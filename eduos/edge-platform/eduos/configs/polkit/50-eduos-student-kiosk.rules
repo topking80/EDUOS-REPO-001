@@ -1,0 +1,18 @@
+// EduOS 32.0.54: narrowly scoped privileges for the kiosk account "student".
+// The account is in no administrative group. From its own *active, local*
+// session it may reboot, power off or suspend the device (normal kiosk use);
+// every other polkit action is denied outright, so the account cannot even
+// be prompted to authenticate as an administrator. EduOS services
+// (bootstrap, health, enrollment, update) run as system units and need no
+// privileges from this account. Administration uses the separate
+// "eduos-admin" account.
+polkit.addRule(function (action, subject) {
+  if (subject.user !== "student") return polkit.Result.NOT_HANDLED;
+  var kioskActions = [
+    "org.freedesktop.login1.reboot",
+    "org.freedesktop.login1.power-off",
+    "org.freedesktop.login1.suspend"
+  ];
+  if (subject.local && subject.active && kioskActions.indexOf(action.id) !== -1) return polkit.Result.YES;
+  return polkit.Result.NO;
+});

@@ -1,0 +1,135 @@
+# 32.7.0 EDEN LOCAL SIMULATION (never production). `make eden-sim` runs it.
+# Two simulated school nodes next to the dev stack (`make up`), whose API acts
+# as the district hub:
+#   node-a  Riverside Elementary   http://localhost:8501/app/
+#   node-b  Lincoln Middle School  http://localhost:8502/app/
+# Networks:
+#   eden_campus the school LAN (host port), no route to the hub
+#   eden_lan  nodes <-> their database (stays up during a partition)
+#   eden_wan  the "district uplink": nodes -> district-hub (the dev app) and
+#             devidp. scripts/eden-sim.sh connects the dev app/devidp to it
+#             and simulates an outage with `docker network disconnect`.
+# Memory: three extra containers (eden-db 192 MB cap, each node 192 MB cap).
+# What this does NOT prove: real Raspberry Pi 5 / arm64 hardware, real WAN
+# links, TLS between tiers (plain HTTP here; EDEN signs every request instead),
+# separate PostgreSQL servers per school. See docs/EDEN-32.7.0.md.
+name: eduos-eden
+x-node: &node
+  image: eduos-app:local
+  env_file: ${EDUOS_ENV_FILE:-.env.dev}
+  mem_limit: 192m
+  restart: unless-stopped
+  networks: [eden_campus, eden_lan, eden_wan]
+  healthcheck:
+    test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+    interval: 10s
+    timeout: 4s
+    retries: 10
+x-node-env: &node-env
+  NODE_ENV: development
+  NODE_OPTIONS: --max-old-space-size=128
+  PORT: "8080"
+  TRUSTED_PROXY_IPS: ""
+  EDUOS_NODE_TIER: school
+  EDEN_HUB_URL: http://district-hub:8080
+  EDEN_ALLOW_INSECURE_HUB: "true"
+  EDEN_DISTRICT_ID: 00000000-0000-4000-8000-000000000001
+  EDEN_IDENTITY_FILE: /var/lib/eduos-node/identity.json
+  EDEN_SYNC_INTERVAL_SECONDS: "10"
+  EDEN_SYNC_NOW_PER_MINUTE: "30"
+  # Schools are not hubs: drop the district certificate/key the env file carries.
+  EDEN_DISTRICT_CERT: ""
+  EDEN_DISTRICT_KEY: ""
+  # Longer idle timeout so staff signed in before an outage stay signed in
+  # (new sign-ins need the district IdP; see docs).
+  SESSION_IDLE_MINUTES: "480"
+  DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+x-init: &init
+  image: eduos-devtools:local
+  env_file: ${EDUOS_ENV_FILE:-.env.dev}
+  networks: [eden_lan]
+  restart: "no"
+  depends_on: { eden-db: { condition: service_healthy } }
+
+services:
+  eden-db:
+    image: postgres:16-alpine
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=40", "-c", "work_mem=2MB"]
+    environment:
+      POSTGRES_USER: eden_admin
+      POSTGRES_PASSWORD: ${EDEN_SIM_DB_PASSWORD:?set EDEN_SIM_DB_PASSWORD}
+      EDEN_SIM_DB_PASSWORD: ${EDEN_SIM_DB_PASSWORD}
+    volumes:
+      - eden-db:/var/lib/postgresql/data
+      - ./dev/eden-sim/db-init:/docker-entrypoint-initdb.d:ro
+    networks: [eden_lan]
+    mem_limit: 192m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U eden_admin -d node_b"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  node-a-init:
+    <<: *init
+    command: ["sh", "-c", "node src/migrate.js && node src/eden/node-provision.js --school 00000000-0000-4000-8000-000000000101 --demo-seed --synthetic-students 24"]
+    environment:
+      NODE_ENV: development
+      EDUOS_ALLOW_DEMO_SEED: "true"
+      DATABASE_URL: postgres://node_a_owner:${EDEN_SIM_DB_PASSWORD}@eden-db:5432/node_a
+      EDUOS_APP_ROLE: node_a_app
+      EDEN_DISTRICT_ID: 00000000-0000-4000-8000-000000000001
+      DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+  node-b-init:
+    <<: *init
+    command: ["sh", "-c", "node src/migrate.js && node src/eden/node-provision.js --school 00000000-0000-4000-8000-000000000102 --demo-seed"]
+    environment:
+      NODE_ENV: development
+      EDUOS_ALLOW_DEMO_SEED: "true"
+      DATABASE_URL: postgres://node_b_owner:${EDEN_SIM_DB_PASSWORD}@eden-db:5432/node_b
+      EDUOS_APP_ROLE: node_b_app
+      EDEN_DISTRICT_ID: 00000000-0000-4000-8000-000000000001
+      DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+
+  node-a:
+    <<: *node
+    environment:
+      <<: *node-env
+      DATABASE_URL: postgres://node_a_app:${EDEN_SIM_DB_PASSWORD}@eden-db:5432/node_a
+      PUBLIC_ORIGIN: http://localhost:8501
+      OIDC_REDIRECT_URI: http://localhost:8501/auth/callback
+      SESSION_COOKIE_NAME: eduos_session_a
+      EDEN_SCHOOL_ID: 00000000-0000-4000-8000-000000000101
+      EDEN_NODE_NAME: Riverside Elementary node (sim)
+      EDEN_ENROLLMENT_TOKEN: ${EDEN_TOKEN_A:-}
+    ports: ["127.0.0.1:8501:8080"]
+    volumes: [node-a-identity:/var/lib/eduos-node]
+    depends_on: { node-a-init: { condition: service_completed_successfully } }
+  node-b:
+    <<: *node
+    environment:
+      <<: *node-env
+      DATABASE_URL: postgres://node_b_app:${EDEN_SIM_DB_PASSWORD}@eden-db:5432/node_b
+      PUBLIC_ORIGIN: http://localhost:8502
+      OIDC_REDIRECT_URI: http://localhost:8502/auth/callback
+      SESSION_COOKIE_NAME: eduos_session_b
+      EDEN_SCHOOL_ID: 00000000-0000-4000-8000-000000000102
+      EDEN_NODE_NAME: Lincoln Middle node (sim)
+      EDEN_ENROLLMENT_TOKEN: ${EDEN_TOKEN_B:-}
+    ports: ["127.0.0.1:8502:8080"]
+    volumes: [node-b-identity:/var/lib/eduos-node]
+    depends_on: { node-b-init: { condition: service_completed_successfully } }
+
+networks:
+  # The school LAN: phones/browsers reach the node here (published port). It
+  # has no route to the district hub, so it stays up during a partition.
+  eden_campus: {}
+  eden_lan:
+    internal: true
+  eden_wan: {}
+
+volumes:
+  eden-db:
+  node-a-identity:
+  node-b-identity:

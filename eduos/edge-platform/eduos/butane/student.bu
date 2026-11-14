@@ -1,0 +1,90 @@
+variant: fcos
+version: 1.5.0
+# metadata:
+#   name: eduos-student
+#   labels:
+#     role: student
+#     version: "0.2.0"
+
+passwd:
+  users:
+    # Kiosk account: no administrative groups, no SSH access (32.0.54).
+    # Its only extra privilege is power control of its own active local
+    # session, granted by the polkit rule installed below.
+    - name: student
+      uid: 1001
+      gecos: "EduOS Student Account"
+      groups: []
+      password_hash: "@@EDUOS_STUDENT_PASSWORD_HASH@@"   # supplied at build time (docs/BUILD.md)
+    # Separate device-administration account for IT staff (SSH key + sudo via
+    # wheel). Never used for the student session.
+    - name: eduos-admin
+      uid: 1090
+      gecos: "EduOS Device Administrator"
+      groups: [ wheel ]
+      password_hash: "@@EDUOS_STUDENT_DEVICE_ADMIN_PASSWORD_HASH@@"
+      ssh_authorized_keys:
+        - "@@EDUOS_STUDENT_DEVICE_ADMIN_SSH_KEYS@@"
+
+storage:
+  files:
+    - path: /etc/eduos/role
+      mode: 0644
+      contents:
+        inline: |
+          student
+
+    - path: /etc/polkit-1/rules.d/50-eduos-student-kiosk.rules
+      mode: 0644
+      contents:
+        local: configs/polkit/50-eduos-student-kiosk.rules
+
+    - path: /usr/local/bin/eduos-bootstrap.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-bootstrap.sh
+
+    - path: /usr/local/bin/eduos-enrollment.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-enrollment.sh
+
+    - path: /usr/local/bin/eduos-enrollment.py
+      mode: 0755
+      contents:
+        local: scripts/eduos-enrollment.py
+
+    - path: /usr/local/bin/eduos-health.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-health.sh
+
+systemd:
+  units:
+    - name: eduos-bootstrap.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=EduOS Bootstrap
+        After=network-online.target
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/eduos-bootstrap.sh
+        RemainAfterExit=yes
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: eduos-enrollment.service
+      enabled: true
+      contents_local: services/enrollment.service
+
+    - name: eduos-health.service
+      enabled: true
+      contents_local: services/health.service
+
+ignition:
+  config:
+    merge:
+      - local: ignition/base.ign

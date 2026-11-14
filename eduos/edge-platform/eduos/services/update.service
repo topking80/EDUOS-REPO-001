@@ -1,0 +1,22 @@
+[Unit]
+Description=EduOS Update Orchestration Service
+Documentation=https://eduos.local/docs/update
+After=network-online.target health.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/eduos-update.sh
+Restart=always
+RestartSec=60
+
+User=root
+Group=root
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/eduos /var/lib/eduos/updates
+
+[Install]
+WantedBy=multi-user.target

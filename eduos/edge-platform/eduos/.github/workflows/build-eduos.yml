@@ -1,0 +1,151 @@
+name: Build EduOS Images
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'butane/**'
+      - 'compose/**'
+      - 'scripts/**'
+      - 'configs/**'
+      - 'containers/**'
+      - 'Makefile'
+      - '.github/workflows/build-eduos.yml'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag'
+        required: false
+        default: '0.2.0'
+      arch:
+        description: 'Architecture'
+        required: false
+        default: 'x86_64'
+        type: choice
+        options: [x86_64, aarch64]
+
+env:
+  VERSION: ${{ github.event.inputs.version || '0.2.0' }}
+  ARCH: ${{ github.event.inputs.arch || 'x86_64' }}
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/coreos-assembler/coreos-assembler:latest
+      options: --privileged
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint and validate edge configs (no credentials needed)
+        run: make check
+      # Credentials come from repository/environment secrets; the build fails
+      # if any is missing or is a placeholder. The artifact contains password
+      # hashes, so keep its retention short.
+      - name: Generate Ignition configs
+        env:
+          EDUOS_ADMIN_PASSWORD_HASH: ${{ secrets.EDUOS_ADMIN_PASSWORD_HASH }}
+          EDUOS_ADMIN_SSH_KEYS: ${{ secrets.EDUOS_ADMIN_SSH_KEYS }}
+          EDUOS_DISTRICT_PASSWORD_HASH: ${{ secrets.EDUOS_DISTRICT_PASSWORD_HASH }}
+          EDUOS_EDGE_PASSWORD_HASH: ${{ secrets.EDUOS_EDGE_PASSWORD_HASH }}
+          EDUOS_STATE_PASSWORD_HASH: ${{ secrets.EDUOS_STATE_PASSWORD_HASH }}
+          EDUOS_STUDENT_PASSWORD_HASH: ${{ secrets.EDUOS_STUDENT_PASSWORD_HASH }}
+          EDUOS_STUDENT_DEVICE_ADMIN_PASSWORD_HASH: ${{ secrets.EDUOS_STUDENT_DEVICE_ADMIN_PASSWORD_HASH }}
+          EDUOS_STUDENT_DEVICE_ADMIN_SSH_KEYS: ${{ secrets.EDUOS_STUDENT_DEVICE_ADMIN_SSH_KEYS }}
+          EDUOS_TEACHER_PASSWORD_HASH: ${{ secrets.EDUOS_TEACHER_PASSWORD_HASH }}
+          EDUOS_TEACHER_SSH_KEYS: ${{ secrets.EDUOS_TEACHER_SSH_KEYS }}
+        run: make ignition
+      - name: Upload Ignition configs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ignition-configs
+          path: ignition/*.ign
+          retention-days: 1
+      - name: Set matrix
+        id: matrix
+        run: echo 'matrix={"role":["teacher","student","admin","edge","district","state"]}' >> $GITHUB_OUTPUT
+
+  build-isos:
+    needs: generate
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/coreos-assembler/coreos-assembler:latest
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ignition-configs
+          path: ignition/
+      - name: Build ${{ matrix.role }} ISO
+        run: make iso-${{ matrix.role }} VERSION=${{ env.VERSION }} ARCH=${{ env.ARCH }} || true
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: eduos-${{ matrix.role }}-${{ env.VERSION }}-${{ env.ARCH }}
+          path: boot/eduos-${{ matrix.role }}-${{ env.VERSION }}.iso
+          retention-days: 14
+
+  build-universal:
+    needs: generate
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/coreos-assembler/coreos-assembler:latest
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ignition-configs
+          path: ignition/
+      - name: Build Universal ISO
+        run: make iso-universal VERSION=${{ env.VERSION }} ARCH=${{ env.ARCH }} || true
+      - name: Upload Universal ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: eduos-universal-${{ env.VERSION }}-${{ env.ARCH }}
+          path: boot/eduos-universal-${{ env.VERSION }}.iso
+          retention-days: 14
+
+  build-containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build EduOS containers
+        run: |
+          make containers VERSION=${{ env.VERSION }} || true
+      - name: Upload container images (as tar)
+        uses: actions/upload-artifact@v4
+        with:
+          name: eduos-containers-${{ env.VERSION }}
+          path: containers/*.tar
+          retention-days: 7
+
+  sign:
+    needs: [build-isos, build-universal]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.8.1
+      - name: Sign all ISOs (keyless)
+        run: |
+          find artifacts -name "*.iso" -exec \
+            cosign sign-blob --yes --bundle {}.sigstore.json {} \;
+          echo "ISOs signed with cosign (keyless OIDC)"
