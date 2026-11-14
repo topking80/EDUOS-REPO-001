@@ -1,0 +1,33 @@
+# Trivy accepted-risk exceptions (used by .github/workflows/ci.yml, source scan only).
+# Each entry is limited to named files. The same check still fails CI for every
+# other Dockerfile/Containerfile, including the production app image.
+# Accepted on 2026-11-14 (audit 37.4.0, addendum 4). Review when the edge agents
+# are next changed.
+misconfigurations:
+  # DS-0002: no non-root USER. These edge-node agents run as root by design today.
+  # - bootstrap: genuinely needs root. It writes /etc/eduos, chowns host folders
+  #   and starts systemd units on the node.
+  # - health, update: write host folders (/var/lib/eduos/health, .../updates)
+  #   that bootstrap creates as root. Running them as non-root needs matching
+  #   folder ownership on the device and testing on edge hardware.
+  #   Follow-up item in AUDIT-37.4.0-ADDENDUM-4.md.
+  # Listed under the current ID and the older aliases, so the exception keeps
+  # matching across Trivy versions.
+  - id: DS-0002
+    paths:
+      - "edge-platform/eduos/containers/Containerfile.bootstrap"
+      - "edge-platform/eduos/containers/Containerfile.health"
+      - "edge-platform/eduos/containers/Containerfile.update"
+    statement: "Edge agents run as root by design (bootstrap needs root; health/update pending non-root conversion with device testing)."
+  - id: AVD-DS-0002
+    paths:
+      - "edge-platform/eduos/containers/Containerfile.bootstrap"
+      - "edge-platform/eduos/containers/Containerfile.health"
+      - "edge-platform/eduos/containers/Containerfile.update"
+    statement: "Same exception, older Trivy ID."
+  - id: DS002
+    paths:
+      - "edge-platform/eduos/containers/Containerfile.bootstrap"
+      - "edge-platform/eduos/containers/Containerfile.health"
+      - "edge-platform/eduos/containers/Containerfile.update"
+    statement: "Same exception, older Trivy ID."
