@@ -31,7 +31,7 @@ test("service worker: shell only, current-release cache name, never /api or /aut
 });
 test("admin/IT screens: Nodes tab for superintendent and IT, node status for principals", () => {
   assert.match(app, /superintendent: \[.*\["nodes", "Nodes", "server"\]\]/);
-  assert.match(app, /it_admin: \[\["nodes", "Nodes", "server"\]\]/);
+  assert.match(app, /it_admin: \[[^\n]*\["nodes", "Nodes", "server"\]/, "IT admins keep the Nodes tab");
   for (const t of ["Authorize failover", "Partner schools", "Add a school node", "What schools sent", "What left this school", "Sync now"]) assert.ok(app.includes(t), t);
 });
 test("school-node deploy: compose, Quadlet and Butane files exist with memory caps", () => {
