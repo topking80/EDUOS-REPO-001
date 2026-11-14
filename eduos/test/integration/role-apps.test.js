@@ -160,6 +160,47 @@ describe("EduOS 32.4.0 role apps against real PostgreSQL", { skip }, () => {
     assert.equal((await as("drv1")("POST", `/api/transport/runs/${run2.body.data.id}/complete`, {})).status, 200);
   });
 
+  it("offline replay: idempotent, time-bounded, and rolled back with a failed write (audit 37.4.0 item 5)", async () => {
+    const replay = async (who, runId, body, key, queued) => {
+      const headers = { cookie: s[who].cookie, "x-csrf-token": s[who].csrf, "content-type": "application/json" };
+      if (key) headers["idempotency-key"] = key;
+      if (queued) headers["x-eduos-queued-at"] = queued instanceof Date ? queued.toISOString() : queued;
+      const res = await fetch(`${server.base}/api/transport/runs/${runId}/checkins`, { method: "POST", headers, body: JSON.stringify(body) });
+      return { status: res.status, body: await res.json() };
+    };
+    const receipts = async key => (await admin.query("SELECT user_id, route, queued_at FROM offline_replays WHERE idem_key=$1", [key])).rows;
+    const rowsAt = async observed => (await admin.query("SELECT count(*)::int AS n FROM transport_checkins WHERE run_id=$1 AND observed_at=$2", [run1.id, observed])).rows[0].n;
+    const t = (await admin.query("SELECT started_at, completed_at, started_at + (completed_at - started_at) / 2 AS mid FROM transport_runs WHERE id=$1", [run1.id])).rows[0];
+    const observed = new Date(Math.floor(t.mid.getTime()));
+    const body = { studentId: ID.alice, stopId: route.stops[0].id, event: "boarded" };
+
+    // First delivery writes once; a second delivery of the same key is a no-op.
+    const key = "replay-key-0000000000000001";
+    const first = await replay("drv1", run1.id, body, key, observed);
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    assert.equal(first.body.data.queued, true);
+    const again = await replay("drv1", run1.id, body, key, observed);
+    assert.equal(again.status, 201); assert.deepEqual(again.body.data, { duplicate: true });
+    assert.equal(await rowsAt(observed), 1, "exactly one check-in for two deliveries");
+    assert.deepEqual((await receipts(key)).map(r => [r.user_id, r.route]), [[DRIVER, "checkin"]]);
+
+    // Time bounds: older than 24 hours or more than 2 minutes ahead is refused with no receipt.
+    const stale = await replay("drv1", run1.id, body, "replay-key-0000000000000002", new Date(Date.now() - 24 * 3600_000 - 60_000));
+    assert.deepEqual([stale.status, stale.body.error], [409, "queued_write_too_old"]);
+    const future = await replay("drv1", run1.id, body, "replay-key-0000000000000003", new Date(Date.now() + 10 * 60_000));
+    assert.deepEqual([future.status, future.body.error], [400, "queued_at_in_future"]);
+    assert.equal((await receipts("replay-key-0000000000000002")).length + (await receipts("replay-key-0000000000000003")).length, 0);
+    assert.equal((await replay("drv1", run1.id, body, "short-key", observed)).body.error, "invalid_idempotency_key");
+
+    // A write that fails releases its key: the phone can retry it once corrected.
+    const retryKey = "replay-key-0000000000000004";
+    const tooEarly = await replay("drv1", run1.id, body, retryKey, new Date(t.started_at.getTime() - 60_000));
+    assert.deepEqual([tooEarly.status, tooEarly.body.error], [409, "run_not_in_progress"]);
+    assert.equal((await receipts(retryKey)).length, 0, "receipt rolled back with the failed write");
+    const corrected = await replay("drv1", run1.id, body, retryKey, new Date(observed.getTime() + 1));
+    assert.equal(corrected.status, 201); assert.notEqual(corrected.body.data.duplicate, true);
+  });
+
   let skillId;
   it("christie: only approved content is tutored and the answer never reaches the pupil", async () => {
     const draft = await as("t1")("POST", "/api/christie/skills", { subject: "Math", gradeLevel: "3", code: "G3.MUL", title: "Times tables", explanation: "Multiplication is repeated addition: 3 × 4 means 4 + 4 + 4.",
