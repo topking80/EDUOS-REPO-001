@@ -1,12 +1,19 @@
 # EduOS CI (32.1.0): unit tests, PostgreSQL integration tests, edge checks and a
 # full-stack end-to-end smoke test (Docker Compose + Caddy + local dev IdP).
 # Nothing here deploys anything or uses external credentials.
+# Moved from eduos/.github/ to the repository root (GitHub only runs root
+# workflows); paths adjusted for the eduos/ directory.
 name: ci
 on:
   push:
   pull_request:
 permissions:
   contents: read
+
+# The EduOS project lives in eduos/ in this repository (37.4.0 import).
+defaults:
+  run:
+    working-directory: eduos
 
 jobs:
   source-and-container-security:
@@ -26,7 +33,7 @@ jobs:
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
-          scan-ref: .
+          scan-ref: eduos
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -50,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with: { node-version: 22, cache: npm, cache-dependency-path: eduos/package-lock.json }
       - name: Verify lockfile and package registry policy
         run: npm run verify:dependencies
       - name: Install from lockfile
@@ -68,7 +75,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dependency-sbom-license-provenance
-          path: artifacts/supply-chain/
+          path: eduos/artifacts/supply-chain/
           if-no-files-found: warn
           retention-days: 90
       - name: Preserve dependency audit evidence
@@ -76,7 +83,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dependency-audit-report
-          path: artifacts/dependency-audit/npm-audit.json
+          path: eduos/artifacts/dependency-audit/npm-audit.json
           if-no-files-found: warn
           retention-days: 30
       - name: Enforce high-severity dependency gate
@@ -88,7 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with: { node-version: 22, cache: npm, cache-dependency-path: eduos/package-lock.json }
       - run: npm ci
       - run: npm test
 
@@ -105,7 +112,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with: { node-version: 22, cache: npm, cache-dependency-path: eduos/package-lock.json }
       - run: npm ci
       - run: npm run test:integration
         env:
@@ -116,7 +123,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Edge platform unit tests
-        working-directory: edge-platform/eduos
+        working-directory: eduos/edge-platform/eduos
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_enrollment.py tests/test_enrollment_token.py tests/test_edge_config.py
       - name: Butane render + checks
         run: |
@@ -144,7 +151,7 @@ jobs:
         run: docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile edge logs --tail 200
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: e2e-screenshots, path: artifacts/screens, if-no-files-found: ignore }
+        with: { name: e2e-screenshots, path: eduos/artifacts/screens, if-no-files-found: ignore }
       - name: Stop
         if: always()
         run: make down-volumes
@@ -160,14 +167,14 @@ jobs:
           channel: stable
           cache: true
       - name: Resolve Flutter dependencies
-        working-directory: mobile/flutter
+        working-directory: eduos/mobile/flutter
         run: flutter pub get
       - name: Analyze Dart sources
-        working-directory: mobile/flutter
+        working-directory: eduos/mobile/flutter
         run: flutter analyze --fatal-infos
       - name: Run Flutter unit and widget tests
-        working-directory: mobile/flutter
+        working-directory: eduos/mobile/flutter
         run: flutter test --reporter expanded
       - name: Compile Android debug application
-        working-directory: mobile/flutter
+        working-directory: eduos/mobile/flutter
         run: flutter build apk --debug
