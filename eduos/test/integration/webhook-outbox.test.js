@@ -143,6 +143,25 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     assert.equal((await outbox(live.id)).status, "processing", "another worker still holds it");
   });
 
+  it("a worker that lost its lease does not change the subscription's failure state", async () => {
+    await clearQueue();
+    const s = await subscription({ failureCount: WEBHOOK_DISABLE_AFTER_FAILURES - 1 });
+    const j = await job(s);
+    // Worker A claims the job, then stalls past its lease. Worker B reclaims and
+    // delivers. A finally gets an error back from the receiver.
+    const slowFailure = async () => {
+      await admin.query("UPDATE webhook_outbox SET lease_until=now()-interval '1 second' WHERE id=$1", [j.id]);
+      assert.equal(await work(supt1, { send: delivered }), 1, "worker B reclaims the expired lease");
+      return { outcome: "http_error", statusCode: 500, durationMs: 1 };
+    };
+    assert.equal(await work(supt1, { send: slowFailure }), 1);
+    const row = await outbox(j.id);
+    assert.deepEqual([row.status, row.last_outcome], ["delivered", "delivered"], "A's late result cannot overwrite B's");
+    const after = await sub(s);
+    assert.deepEqual([after.status, after.failure_count, after.last_outcome], ["active", 0, "delivered"],
+      "A's stale failure must not count against (or disable) the subscription");
+  });
+
   it("competing workers never claim the same job twice", async () => {
     await clearQueue();
     const s = await subscription();

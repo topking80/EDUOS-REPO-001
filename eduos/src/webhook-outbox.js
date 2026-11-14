@@ -1,6 +1,6 @@
 // Durable webhook outbox worker (37.3.0), extracted from server.js in the
 // 37.4.0 audit so its lifecycle can be tested against real PostgreSQL with an
-// injected delivery function. Behaviour is unchanged from 37.4.0.
+// injected delivery function.
 //
 // Process durable work only inside the requesting district's RLS context.
 // A stable delivery_id is reused after lease expiry, allowing receivers to
@@ -52,12 +52,16 @@ export async function processWebhookOutbox(actorInput, { limit = 10 } = {}, deps
         const done = result.outcome === 'delivered';
         const exhausted = !done && (attemptNo >= Number(job.max_attempts) || result.outcome === 'blocked');
         const delaySeconds = Math.min(3600, Math.pow(2, Math.max(0, attemptNo - 1)) * 15);
-        await client.query(
+        const settled = await client.query(
           `UPDATE webhook_outbox SET status=$3,attempts=$4,available_at=CASE WHEN $3='pending' THEN now()+($5::text||' seconds')::interval ELSE available_at END,
              lease_until=NULL,lease_token=NULL,last_outcome=$6,last_status_code=$7,last_error=$8,
              completed_at=CASE WHEN $3 IN ('delivered','dead_letter') THEN now() ELSE NULL END,updated_at=now()
            WHERE id=$1 AND lease_token=$2`,
           [job.id, job.lease_token, done ? 'delivered' : exhausted ? 'dead_letter' : 'pending', attemptNo, delaySeconds, result.outcome, result.statusCode, result.reason || null]);
+        // Lease lost (this worker stalled past lease_until and another worker
+        // reclaimed the job): the attempt stays in the ledger above, but only the
+        // current lease holder may change the subscription's failure state.
+        if (settled.rowCount === 0) return;
         if (done) await client.query(`UPDATE webhook_subscriptions SET failure_count=0,last_delivery_at=now(),last_outcome='delivered' WHERE id=$1`, [job.subscription_id]);
         else await client.query(`UPDATE webhook_subscriptions SET failure_count=failure_count+1,last_delivery_at=now(),last_outcome=$2,
           status=CASE WHEN failure_count+1 >= $3 THEN 'disabled' ELSE status END,
