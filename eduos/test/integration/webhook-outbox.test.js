@@ -160,6 +160,10 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     const after = await sub(s);
     assert.deepEqual([after.status, after.failure_count, after.last_outcome], ["active", 0, "delivered"],
       "A's stale failure must not count against (or disable) the subscription");
+    // 036: one ledger row per attempt. B recorded attempt 1 first; A's late duplicate is ignored.
+    assert.deepEqual((await ledger(j.delivery_id)).map(x => [x.attempt, x.outcome]), [[1, "delivered"]]);
+    const idx = (await admin.query("SELECT indexdef FROM pg_indexes WHERE indexname='webhook_deliveries_attempt_unique'")).rows[0];
+    assert.match(idx.indexdef, /UNIQUE INDEX .* \(delivery_id, attempt\)$/, "clean database: full unique index");
   });
 
   it("competing workers never claim the same job twice", async () => {
