@@ -7,6 +7,9 @@
 // deduplicate the unavoidable at-least-once crash window.
 import { deliverWebhook, deriveWebhookSecret, WEBHOOK_DISABLE_AFTER_FAILURES } from "./webhooks.js";
 
+/** Attempts allowed when the receiver's domain doesn't exist (NXDOMAIN). */
+export const DNS_NOT_FOUND_MAX_ATTEMPTS = 2;
+
 export const tenantActor = actor => ({ districtId: actor.districtId, userId: actor.userId, role: actor.role, schoolId: actor.schoolId || null });
 
 /**
@@ -50,7 +53,11 @@ export async function processWebhookOutbox(actorInput, { limit = 10 } = {}, deps
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
           [actor.districtId, job.subscription_id, job.delivery_id, job.event_id, job.event_type, attemptNo, result.outcome, result.statusCode, result.durationMs]);
         const done = result.outcome === 'delivered';
-        const exhausted = !done && (attemptNo >= Number(job.max_attempts) || result.outcome === 'blocked');
+        // A domain that doesn't exist gets one retry (after the 15 s backoff, in
+        // case the resolver blipped) and is then dead-lettered instead of using
+        // the whole attempt budget.
+        const exhausted = !done && (attemptNo >= Number(job.max_attempts) || result.outcome === 'blocked'
+          || (result.reason === 'dns_not_found' && attemptNo >= DNS_NOT_FOUND_MAX_ATTEMPTS));
         const delaySeconds = Math.min(3600, Math.pow(2, Math.max(0, attemptNo - 1)) * 15);
         const settled = await client.query(
           `UPDATE webhook_outbox SET status=$3,attempts=$4,available_at=CASE WHEN $3='pending' THEN now()+($5::text||' seconds')::interval ELSE available_at END,

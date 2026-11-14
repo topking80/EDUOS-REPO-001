@@ -102,6 +102,29 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     assert.deepEqual((await ledger(j.delivery_id)).map(x => x.attempt), [1, 2, 3]);
   });
 
+  it("a receiver domain that doesn't exist gets one retry, then is dead-lettered; a brief NXDOMAIN recovers", async () => {
+    await clearQueue();
+    const nx = async () => { throw Object.assign(new Error("getaddrinfo ENOTFOUND hooks.example.test"), { code: "ENOTFOUND" }); };
+    const send = async () => { throw new Error("must not send"); };
+    const s = await subscription(), gone = await job(s);
+    assert.equal(await work(supt1, { lookup: nx, send }), 1);
+    let row = await outbox(gone.id);
+    assert.deepEqual([row.status, row.attempts, row.last_outcome, row.last_error], ["pending", 1, "network_error", "dns_not_found"]);
+    await makeDue(gone.id);
+    assert.equal(await work(supt1, { lookup: nx, send }), 1);
+    row = await outbox(gone.id);
+    assert.deepEqual([row.status, row.attempts, row.last_error], ["dead_letter", 2, "dns_not_found"], "stops after 2 of 5 attempts");
+
+    // A resolver that answers NXDOMAIN once and then recovers loses nothing.
+    const blip = await job(s);
+    let lookups = 0;
+    const flaky = async name => { lookups += 1; return lookups === 1 ? nx(name) : PUBLIC_IP; };
+    assert.equal(await work(supt1, { lookup: flaky, send: delivered }), 1);
+    await makeDue(blip.id);
+    assert.equal(await work(supt1, { lookup: flaky, send: delivered }), 1);
+    assert.deepEqual([(await outbox(blip.id)).status, (await outbox(blip.id)).attempts], ["delivered", 2]);
+  });
+
   it("an unsafe DNS answer is a dead letter on the first attempt and nothing is sent", async () => {
     await clearQueue();
     const s = await subscription(), j = await job(s);

@@ -138,7 +138,12 @@ export async function resolveWebhookTarget(url, options = {}) {
         })
       ]);
     } catch (error) {
-      return { ok: false, reason: error?.message === "dns_timeout" ? "dns_timeout" : "dns_failure" };
+      if (error?.message === "dns_timeout") return { ok: false, reason: "dns_timeout" };
+      // ENOTFOUND is the resolver saying the name doesn't exist (NXDOMAIN), for
+      // example a misspelled receiver domain. It's still retried, because a
+      // misconfigured resolver can answer NXDOMAIN briefly, but the outbox gives
+      // up on it sooner than on an outage (src/webhook-outbox.js).
+      return { ok: false, reason: error?.code === "ENOTFOUND" ? "dns_not_found" : "dns_failure" };
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -248,7 +253,7 @@ export async function deliverWebhook({ subscription, secret, eventType, delivery
       // destinations. Keep retrying within the bounded attempt budget; only
       // fail-closed policy violations (private/mixed answers, invalid hosts)
       // should permanently block and dead-letter the job.
-      const transientDnsFailure = target.reason === "dns_failure" || target.reason === "dns_timeout";
+      const transientDnsFailure = target.reason === "dns_failure" || target.reason === "dns_timeout" || target.reason === "dns_not_found";
       attempts.push({
         attempt,
         outcome: transientDnsFailure ? "network_error" : "blocked",
