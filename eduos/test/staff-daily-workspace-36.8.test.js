@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const route=fs.readFileSync(new URL('../src/staff-daily-workspace-routes.js',import.meta.url),'utf8');
+const server=fs.readFileSync(new URL('../src/server.js',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../db/031_staff_daily_workspace.sql',import.meta.url),'utf8');
+test('36.8 workspace routes are registered and authenticated',()=>{assert.match(server,/registerStaffDailyWorkspaceRoutes\(app\)/);assert.match(route,/requireSession/);assert.match(route,/\/api\/staff-workspace/)});
+test('36.8 supports checklist completion, shift handoffs and announcements',()=>{for(const path of ['/checklists','/checklists/:itemId/complete','/handoffs','/handoffs/:id/acknowledge','/announcements'])assert.ok(route.includes(path),path)});
+test('36.8 protects school and district tenant boundaries',()=>{assert.match(route,/district_id=\$1/);assert.match(route,/school_id=\$2/);assert.match(migration,/ENABLE ROW LEVEL SECURITY/);assert.match(migration,/FORCE ROW LEVEL SECURITY/)});
+test('36.8 prevents sensitive health and counseling handoff notes',()=>{assert.match(route,/sensitive_handoff_not_supported_use_approved_system/);assert.match(route,/health_office","counseling/)});
+test('36.8 mutations require CSRF and audit checklist/handoff/announcement actions',()=>{assert.match(route,/requireCsrf/);assert.match(route,/school_staff_checklist/);assert.match(route,/school_staff_handoff/);assert.match(route,/school_staff_announcement/)});

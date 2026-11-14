@@ -1,0 +1,165 @@
+# Enterprise deployment: Postgres + one-shot migration + the EduOS API.
+# Copy .env.example to .env and set real OIDC values and the three database
+# passwords (POSTGRES_PASSWORD, EDUOS_OWNER_PASSWORD, EDUOS_APP_PASSWORD) first;
+# compose refuses to start without them. Use URL-safe values (openssl rand -hex 24).
+#
+# Database roles (32.0.53):
+#   ${POSTGRES_SUPERUSER} bootstrap superuser, used only by the db container itself
+#   eduos_owner           owns the schema; used by `migrate` and `retention`
+#   eduos_app             runtime role for the API (no superuser, no BYPASSRLS,
+#                         not an owner), so row-level security is enforced.
+# Upgrading an existing volume: docs/UPGRADING-32.0.53.md.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-eduos_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: eduos
+      EDUOS_OWNER_PASSWORD: ${EDUOS_OWNER_PASSWORD:?set EDUOS_OWNER_PASSWORD}
+      EDUOS_APP_PASSWORD: ${EDUOS_APP_PASSWORD:?set EDUOS_APP_PASSWORD}
+    networks:
+      - backend
+    volumes:
+      - eduos-db:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1 (32.1.0): on first boot the image runs its init scripts on a
+      # socket-only temporary server and then restarts; a socket check reported
+      # "healthy" during init and migrate hit the restart.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d eduos"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build: { context: ., target: app }
+    image: eduos-app:local
+    command: ["node", "src/migrate.js"]
+    env_file: ${EDUOS_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgres://eduos_owner:${EDUOS_OWNER_PASSWORD:?set EDUOS_OWNER_PASSWORD}@db:5432/eduos
+      # migrate applies db/runtime_grants.template.sql to this role.
+      EDUOS_APP_ROLE: eduos_app
+      # The database is only reachable on the internal "backend" network.
+      DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+    networks:
+      - backend
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: { context: ., target: app }
+    image: eduos-app:local
+    env_file: ${EDUOS_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgres://eduos_app:${EDUOS_APP_PASSWORD:?set EDUOS_APP_PASSWORD}@db:5432/eduos
+      # Production mode may use plain TCP to the database ONLY because it is on
+      # the internal compose network; a remote database still requires TLS.
+      DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+      PORT: "8080"
+      # Trust only the dedicated Caddy edge subnet, never the whole app/db network.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-${EDUOS_EDGE_IP:-172.30.0.2}/32}
+    networks:
+      - backend
+      - edge_net
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 4s
+      retries: 5
+    restart: unless-stopped
+
+  # Retention job (opt-in): `docker compose --profile ops run --rm retention`,
+  # e.g. nightly from cron. Prunes audit/flow/webhook/session rows older than the
+  # RETENTION_* windows in .env (see docs/UPGRADING-32.0.53.md).
+  retention:
+    build: { context: ., target: app }
+    image: eduos-app:local
+    profiles: ["ops"]
+    command: ["node", "src/retention.js"]
+    env_file: ${EDUOS_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgres://eduos_owner:${EDUOS_OWNER_PASSWORD:?set EDUOS_OWNER_PASSWORD}@db:5432/eduos
+      DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+    networks:
+      - backend
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # 32.4.0 notification dispatcher (opt-in): `docker compose --profile ops run --rm notify`.
+  # Processes pending email/SMS/push outbox rows. Every adapter is "off" or
+  # "log" (dry run) in 32.4.0, so nothing is ever sent; in-app notifications
+  # need no dispatcher.
+  notify:
+    build: { context: ., target: app }
+    image: eduos-app:local
+    profiles: ["ops"]
+    command: ["node", "src/notify-dispatch.js"]
+    env_file: ${EDUOS_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgres://eduos_owner:${EDUOS_OWNER_PASSWORD:?set EDUOS_OWNER_PASSWORD}@db:5432/eduos
+      DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+    networks:
+      - backend
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # HTTP/2 edge (opt-in): `docker compose --profile edge up`.
+  # Terminates TLS and speaks HTTP/2 + HTTP/3 to browsers, serves the static
+  # assets directly, and proxies /api,/auth,/health to the Node app. Set
+  # EDUOS_SITE_ADDRESS to your domain for an automatic trusted certificate;
+  # it defaults to localhost (Caddy's local CA) for a zero-config demo.
+  edge:
+    image: caddy:2.8-alpine
+    profiles: ["edge"]
+    environment:
+      EDUOS_SITE_ADDRESS: ${EDUOS_SITE_ADDRESS:-localhost}
+      EDUOS_UPSTREAM: app:8080
+    ports:
+      - "${EDUOS_HTTP_PORT:-80}:80"
+      - "${EDUOS_HTTPS_PORT:-443}:443"
+      - "${EDUOS_HTTPS_PORT:-443}:443/udp"   # HTTP/3 (QUIC)
+    networks:
+      edge_net:
+        ipv4_address: ${EDUOS_EDGE_IP:-172.30.0.2}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./public:/srv/public:ro
+      - eduos-caddy-data:/data
+      - eduos-caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  backend:
+    internal: true
+  # 32.1.0: configurable, because a fixed 172.30.0.0/24 collides with hosts or
+  # VPNs already using that range. EDUOS_EDGE_IP must lie inside the subnet and
+  # outside ip_range, which is where Docker places the app's dynamic address
+  # (before, the app could take .2 first and the edge failed with
+  # "Address already in use").
+  edge_net:
+    ipam:
+      config:
+        - subnet: ${EDUOS_EDGE_SUBNET:-172.30.0.0/24}
+          ip_range: ${EDUOS_EDGE_IP_RANGE:-172.30.0.128/25}
+
+volumes:
+  eduos-db:
+  eduos-caddy-data:
+  eduos-caddy-config:

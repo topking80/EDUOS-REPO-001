@@ -1,0 +1,88 @@
+variant: fcos
+version: 1.5.0
+# metadata:
+#   name: nashville-metro-schools
+#   labels:
+#     district: nashville-metro
+#     state: TN
+#     version: "0.2.0"
+
+storage:
+  files:
+    # District branding and identity
+    - path: /etc/eduos/district-name
+      mode: 0644
+      contents:
+        inline: |
+          Nashville Metropolitan Schools
+
+    - path: /etc/eduos/district-contact
+      mode: 0644
+      contents:
+        inline: |
+          IT Department
+          support@nashville-schools.edu
+          (615) 555-0100
+          Zip: 37203
+
+    # District-specific default policies
+    - path: /etc/eduos/update-policy.toml
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          # Nashville Metro Schools - Update Policy
+          [general]
+          enabled = true
+          strategy = "maintenance-window-only"
+
+          [maintenance_window]
+          enabled = true
+          start = "01:00"
+          end = "05:00"
+          timezone = "America/Chicago"
+
+          [canary]
+          percent = 15
+          health_check_minutes = 45
+
+          [rollback]
+          automatic = true
+          on_health_degradation = true
+
+    - path: /etc/eduos/health.toml
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          # Nashville Metro Schools - Health & Compliance
+          [agent]
+          interval_seconds = 300
+          ferpa_mode = true
+
+          [reporting]
+          endpoint = "https://district.nashville-schools.edu/api/v1/health"
+          use_mtls = true
+
+    # Example MOTD with district info
+    - path: /etc/motd
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          ============================================================
+           EduOS - Nashville Metropolitan Schools
+           Secure • Immutable • Education-Focused
+          ============================================================
+          Location: Nashville, TN (37203)
+          Support: support@nashville-schools.edu
+          ============================================================
+
+systemd:
+  units:
+    - name: eduos-bootstrap.service
+      enabled: true
+    - name: eduos-health.service
+      enabled: true
+    - name: eduos-update.service
+      enabled: true

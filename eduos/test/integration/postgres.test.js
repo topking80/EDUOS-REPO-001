@@ -1,0 +1,325 @@
+// End-to-end regression tests against a real PostgreSQL server (32.0.53).
+// Run: EDUOS_TEST_PG_URL=postgres://postgres@127.0.0.1:5432/postgres npm run test:integration
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import pg from "pg";
+import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
+
+const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
+const today = new Date().toISOString().slice(0, 10);
+
+describe("EduOS against real PostgreSQL", { skip }, () => {
+  let db, idp, server, admin, env, s = {};
+  const as = name => client(server.base, s[name]);
+  const sql = (text, params) => admin.query(text, params);
+
+  before(async () => {
+    db = await createDatabase();
+    idp = await startIdp();
+    env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app });
+    const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
+    assert.equal(migrated.code, 0, migrated.out);
+    await seed(db.adminUrl, idp.issuer);
+    admin = new pg.Client(db.adminUrl); await admin.connect();
+    server = await startServer({ ...env, DATABASE_URL: db.appUrl });
+    for (const name of ["supt1", "p1", "p2", "t1", "pa", "pu", "pb", "tp"])
+      s[name] = await login(server.base, idp, name, { email_verified: true });
+    for (const name of Object.keys(s)) assert.ok(s[name].cookie, `${name} login failed: ${JSON.stringify(s[name])}`);
+  });
+  after(async () => {
+    await server?.stop(); await admin?.end(); await idp?.close(); await db?.drop();
+  });
+
+  // ---- Finding 1: runtime role and RLS ----
+  it("H1: migrate applied the grants to a non-superuser, non-BYPASSRLS runtime role", async () => {
+    const role = (await sql("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname=$1", [db.names.app])).rows[0];
+    assert.deepEqual(role, { rolsuper: false, rolbypassrls: false });
+    const owner = (await sql("SELECT tableowner FROM pg_tables WHERE tablename='students'")).rows[0].tableowner;
+    assert.equal(owner, db.names.owner);
+  });
+  it("H1: the API refuses to start as a superuser or as the table owner", async () => {
+    const asSuper = await run(["src/server.js"], { ...env, PORT: "1", DATABASE_URL: db.adminUrl });
+    assert.notEqual(asSuper.code, 0); assert.match(asSuper.out, /superuser|BYPASSRLS/i);
+    const asOwner = await run(["src/server.js"], { ...env, PORT: "1", DATABASE_URL: db.ownerUrl });
+    assert.notEqual(asOwner.code, 0); assert.match(asOwner.out, /owns/i);
+  });
+  it("32.0.54: the API refuses to start when a migration is missing", async () => {
+    const last = (await sql("SELECT name FROM schema_migrations ORDER BY name DESC LIMIT 1")).rows[0].name;
+    await sql("DELETE FROM schema_migrations WHERE name=$1", [last]);
+    try {
+      const r = await run(["src/server.js"], { ...env, PORT: "1", DATABASE_URL: db.appUrl });
+      assert.notEqual(r.code, 0); assert.match(r.out, new RegExp(`1 migration\\(s\\) not applied \\(${last.replace(".", "\\.")}\\).*db:migrate`));
+    } finally { await sql("INSERT INTO schema_migrations(name) VALUES ($1)", [last]); }
+    const ok = await run(["-e", `import("./src/db.js").then(m=>m.assertSchemaReady()).then(n=>{console.log("ready",n);process.exit(0)},e=>{console.error(e.message);process.exit(1)})`],
+      { ...env, DATABASE_URL: db.appUrl });
+    assert.equal(ok.code, 0, ok.out); assert.match(ok.out, /ready 15/);
+  });
+  it("H1: migrate refuses to grant to a superuser runtime role", async () => {
+    const r = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl, EDUOS_APP_ROLE: new URL(PG_URL).username || "postgres" });
+    assert.notEqual(r.code, 0); assert.match(r.out, /superuser|BYPASSRLS/i);
+  });
+  it("H1: RLS isolates districts for the runtime role", async () => {
+    const r = await as("supt1")("GET", "/api/students");
+    assert.equal(r.status, 200);
+    assert.ok(!r.body.data.some(st => st.id === ID.xavier), "district 2 student leaked");
+  });
+
+  // ---- Finding 2: complete runtime grants ----
+  it("H2: family messaging, classroom preferences, SIS runs and guardian links work as the runtime role", async () => {
+    const msg = await as("pa")("POST", "/api/family/messages", { studentId: ID.alice, recipientUserId: USERS.p1[0], body: "Hello from Parent A" });
+    assert.equal(msg.status, 201, JSON.stringify(msg.body));
+    assert.equal((await as("pa")("GET", "/api/family/messages")).status, 200);
+    const pref = await as("t1")("PUT", "/api/teacher/classroom-preferences",
+      { schoolId: ID.s1, roomLabel: "Room 12", floorNumber: 1, layout: "rows", seatPosition: "front-left" });
+    assert.ok([200, 201].includes(pref.status), JSON.stringify(pref.body));
+    assert.equal((await as("supt1")("GET", "/api/integrations/sis/runs")).status, 200);
+  });
+  it("H2: every tenant table used by the API is granted to the runtime role", async () => {
+    const r = await sql(`SELECT t.tablename FROM pg_tables t WHERE t.schemaname='public'
+      AND NOT has_table_privilege($1, format('%I.%I', t.schemaname, t.tablename), 'SELECT')`, [db.names.app]);
+    // 32.6.0: edal_heads (the ledger's chain head) is deliberately reachable only through definer functions.
+    assert.deepEqual(r.rows.map(x => x.tablename).filter(t => t !== "edal_heads"), []);
+    for (const [table, priv] of [["students", "INSERT"], ["students", "UPDATE"], ["student_user_links", "INSERT"], ["student_user_links", "UPDATE"],
+      ["family_messages", "INSERT"], ["teacher_classroom_preferences", "UPDATE"], ["sis_sync_runs", "INSERT"], ["sis_attendance_imports", "INSERT"]])
+      assert.ok((await sql("SELECT has_table_privilege($1,$2,$3) AS ok", [db.names.app, table, priv])).rows[0].ok, `${table} ${priv}`);
+    assert.equal((await sql("SELECT has_table_privilege($1,'audit_events','DELETE') AS ok", [db.names.app])).rows[0].ok, false);
+  });
+
+  // ---- Finding 3: SIS import school scope ----
+  it("H3: a school-scoped schools:update grant cannot import into another school", async () => {
+    const expiresAt = new Date(Date.now() + 86400_000).toISOString();
+    const req = await as("t1")("POST", "/api/access-requests", { resource: "schools", action: "update", reason: "Need to run the nightly SIS import for S1", expiresAt });
+    assert.equal(req.status, 201, JSON.stringify(req.body));
+    const decision = await as("supt1")("POST", `/api/access-requests/${req.body.data.id}/decision`, { decision: "approved" });
+    assert.equal(decision.status, 200, JSON.stringify(decision.body));
+    const batch = (schoolId, n) => ({ schoolId, sourceSystem: "it-sis", sourceBatchId: `batch-${n}`,
+      students: [{ localStudentNumber: `IMP-${n}`, displayName: "Imported Learner", gradeLevel: "2" }] });
+    const cross = await as("t1")("POST", "/api/integrations/sis/import", batch(ID.s2, 1));
+    assert.equal(cross.status, 403); assert.equal(cross.body.error, "school_scope_denied");
+    assert.equal((await sql("SELECT count(*)::int AS n FROM students WHERE local_student_number='IMP-1'")).rows[0].n, 0);
+    const own = await as("t1")("POST", "/api/integrations/sis/import", batch(ID.s1, 2));
+    assert.equal(own.status, 201, JSON.stringify(own.body));
+    assert.equal((await sql("SELECT school_id FROM students WHERE local_student_number='IMP-2'")).rows[0].school_id, ID.s1);
+  });
+
+  // ---- Finding 4 + 9: guardian invitations ----
+  it("H4/M9: ordinary guardian emails are accepted and the invitation needs an IdP-verified email", async () => {
+    const bad = await as("p1")("POST", "/api/guardian-invitations", { studentId: ID.bob, email: "not an email" });
+    assert.equal(bad.status, 400);
+    const inv = await as("p1")("POST", "/api/guardian-invitations", { studentId: ID.alice, email: "Parent.Bob@D1.test" });
+    assert.equal(inv.status, 201, JSON.stringify(inv.body));
+    const token = decodeURIComponent(inv.body.invitationUrl.split("guardianInvite=")[1]);
+    // Same account, but the IdP did not assert a verified email this time.
+    const unverified = await login(server.base, idp, "pb", { email_verified: false });
+    assert.ok(unverified.cookie, "login must not be blocked by email_verified=false (Entra ID)");
+    const denied = await client(server.base, unverified)("POST", "/api/guardian-invitations/accept", { token });
+    assert.equal(denied.status, 403); assert.equal(denied.body.error, "idp_verified_email_required");
+    const ok = await as("pb")("POST", "/api/guardian-invitations/accept", { token });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    s.pb = await login(server.base, idp, "pb", { email_verified: true }); // unverified login revoked nothing of s.pb, refresh anyway
+  });
+
+  // ---- Finding 5: audit scope ----
+  it("M5: a principal only sees audit events from their own school", async () => {
+    await as("p2")("GET", `/api/student-360/${ID.carol}`); // creates an S2 read audit row
+    const s2rows = (await sql("SELECT count(*)::int AS n FROM audit_events WHERE school_id=$1", [ID.s2])).rows[0].n;
+    assert.ok(s2rows > 0);
+    const r = await as("p1")("GET", "/api/audit");
+    assert.equal(r.status, 200);
+    const ids = r.body.data.map(e => e.id);
+    const s2ids = (await sql("SELECT id FROM audit_events WHERE school_id=$1 OR school_id IS NULL", [ID.s2])).rows.map(x => x.id);
+    assert.ok(r.body.data.length > 0);
+    assert.ok(!ids.some(id => s2ids.includes(id)), "principal saw another school's or district-wide audit rows");
+  });
+
+  // ---- Finding 6: draft assignments ----
+  it("M6: parents and pupils never see draft assignments", async () => {
+    for (const who of ["pa", "pu"]) {
+      const r = await as(who)("GET", "/api/assignments");
+      assert.equal(r.status, 200);
+      const titles = r.body.data.map(a => a.title);
+      assert.ok(titles.includes("Published reading"), `${who}: ${titles}`);
+      assert.ok(!titles.includes("DRAFT secret quiz"), `${who} saw a draft`);
+    }
+    const sum = await as("pa")("GET", `/api/family/children/${ID.alice}/summary`);
+    assert.ok(!JSON.stringify(sum.body).includes("DRAFT secret quiz"));
+  });
+
+  // ---- Finding 7: teacher roster ----
+  it("M7: teachers only see rostered students; principals manage rosters", async () => {
+    const before = await as("t1")("GET", "/api/students");
+    assert.deepEqual(before.body.data, []);
+    assert.equal((await as("t1")("GET", `/api/students/${ID.bob}`)).status, 404);
+    assert.equal((await as("t1")("POST", "/api/rosters", { teacherUserId: USERS.t1[0], studentId: ID.alice })).status, 403);
+    assert.equal((await as("p1")("POST", "/api/rosters", { teacherUserId: USERS.t1[0], studentId: ID.carol })).status, 404);
+    assert.equal((await as("p1")("POST", "/api/rosters", { teacherUserId: USERS.t1[0], studentId: ID.alice })).status, 201);
+    const after = await as("t1")("GET", "/api/students");
+    assert.deepEqual(after.body.data.map(x => x.id), [ID.alice]);
+    assert.equal((await as("t1")("GET", `/api/students/${ID.alice}`)).status, 200);
+    assert.equal((await as("t1")("POST", "/api/attendance", { studentId: ID.bob, eventDate: today, status: "present" })).status, 404);
+    const caseBob = await as("p1")("POST", "/api/cases", { studentId: ID.bob, category: "academic", title: "Bob reading", summary: "Reading support" });
+    assert.equal(caseBob.status, 201);
+    const cases = await as("t1")("GET", "/api/cases");
+    assert.ok(!cases.body.data.some(c => c.id === caseBob.body.data.id), "teacher saw an unrostered learner's case");
+  });
+
+  // ---- Finding 12: FERPA reads, export, delete, retention ----
+  it("M12: student record reads are audited", async () => {
+    await as("p1")("GET", `/api/students/${ID.bob}`);
+    const r = await sql("SELECT actor_role,school_id FROM audit_events WHERE action='read' AND resource_id=$1 ORDER BY occurred_at DESC LIMIT 1", [ID.bob]);
+    assert.deepEqual(r.rows[0], { actor_role: "principal", school_id: ID.s1 });
+  });
+  it("M12: record export, superintendent-only delete and audit retention", async () => {
+    const exp = await as("p1")("POST", `/api/students/${ID.bob}/records-export`, {});
+    assert.equal(exp.status, 200); assert.equal(exp.body.student.local_student_number, "S1-B");
+    assert.equal((await as("p1")("POST", `/api/students/${ID.bob}/records-delete`, { confirmLocalStudentNumber: "S1-B", reason: "Parent requested deletion under FERPA policy" })).status, 403);
+    assert.equal((await as("supt1")("POST", `/api/students/${ID.bob}/records-delete`, { confirmLocalStudentNumber: "WRONG", reason: "Parent requested deletion under FERPA policy" })).status, 409);
+    const del = await as("supt1")("POST", `/api/students/${ID.bob}/records-delete`, { confirmLocalStudentNumber: "S1-B", reason: "Parent requested deletion under FERPA policy" });
+    assert.equal(del.status, 200, JSON.stringify(del.body));
+    assert.equal((await sql("SELECT count(*)::int AS n FROM students WHERE id=$1", [ID.bob])).rows[0].n, 0);
+    assert.equal((await sql("SELECT count(*)::int AS n FROM student_intervention_cases WHERE student_id=$1", [ID.bob])).rows[0].n, 0);
+    assert.equal((await sql("SELECT count(*)::int AS n FROM student_case_notes WHERE student_id=$1", [ID.bob])).rows[0].n, 0);
+    // The runtime role still cannot delete append-only rows directly.
+    const app = new pg.Client(db.appUrl); await app.connect();
+    await assert.rejects(app.query("DELETE FROM audit_events"), /permission denied/);
+    await assert.rejects(app.query("SELECT eduos_retention_purge(1,1,1,1)"), /permission denied/);
+    await app.end();
+    // Retention CLI (owner role) prunes rows older than the configured windows.
+    await sql(`INSERT INTO audit_events(district_id,actor_user_id,actor_role,action,resource_type,outcome,occurred_at) VALUES($1,$2,'superintendent','old','test','success',now()-interval '400 days')`, [ID.d1, USERS.supt1[0]]);
+    await sql("UPDATE sessions SET expires_at=now()-interval '60 days' WHERE user_id=$1", [USERS.pu[0]]);
+    const ret = await run(["src/retention.js"], { ...env, DATABASE_URL: db.ownerUrl, RETENTION_AUDIT_DAYS: "365" });
+    assert.equal(ret.code, 0, ret.out);
+    assert.equal((await sql("SELECT count(*)::int AS n FROM audit_events WHERE action='old'")).rows[0].n, 0);
+    assert.ok((await sql("SELECT count(*)::int AS n FROM audit_events")).rows[0].n > 0, "recent audit rows kept");
+    assert.equal((await sql("SELECT count(*)::int AS n FROM sessions WHERE user_id=$1", [USERS.pu[0]])).rows[0].n, 0);
+    s.pu = await login(server.base, idp, "pu", { email_verified: true });
+  });
+
+  // ---- Findings 15 + 19: flow feed scope and dates ----
+  it("L15/L19: attendance events are scoped to the learner's family and dates stay YYYY-MM-DD", async () => {
+    const rec = await as("supt1")("POST", "/api/attendance", { studentId: ID.alice, eventDate: today, status: "tardy" });
+    assert.equal(rec.status, 201, JSON.stringify(rec.body));
+    assert.equal(rec.body.data.event_date, today);
+    // Flow events are recorded asynchronously after the response.
+    let ev;
+    for (let i = 0; i < 40 && !ev; i++) {
+      ev = (await sql("SELECT school_id, subject_student_id FROM flow_events WHERE event_type='attendance.recorded' ORDER BY occurred_at DESC LIMIT 1")).rows[0];
+      if (!ev) await new Promise(r => setTimeout(r, 50));
+    }
+    assert.ok(ev, `no flow event recorded: ${server.log()}`);
+    assert.deepEqual(ev, { school_id: ID.s1, subject_student_id: ID.alice });
+    const fa = await as("pa")("GET", "/api/flow-events");
+    assert.ok(fa.body.data.some(e => e.type === "attendance.recorded"), "the learner's own parent sees the event");
+    const fb = await as("pb")("GET", "/api/flow-events");
+    assert.ok(!fb.body.data.some(e => e.type === "attendance.recorded" && e.refs?.attendanceId === rec.body.data.id), "another family saw the event");
+    const list = await as("pa")("GET", "/api/attendance");
+    assert.ok(list.body.data.every(a => /^\d{4}-\d{2}-\d{2}$/.test(a.event_date)));
+  });
+
+  // ---- Finding 16 + 17 ----
+  it("L16: GET /api/csrf is stable and does not invalidate earlier tokens", async () => {
+    const a = await (await fetch(`${server.base}/api/csrf`, { headers: { cookie: s.p1.cookie } })).json();
+    const b = await (await fetch(`${server.base}/api/csrf`, { headers: { cookie: s.p1.cookie } })).json();
+    assert.equal(a.csrfToken, b.csrfToken);
+    assert.equal((await as("p1")("POST", "/api/rosters", { teacherUserId: USERS.t1[0], studentId: ID.alice })).status, 201);
+  });
+  it("L17: malformed JSON is 400 and oversized bodies are 413", async () => {
+    const bad = await as("p1")("POST", "/api/cases", "{not json");
+    assert.equal(bad.status, 400); assert.equal(bad.body.error, "invalid_json");
+    const big = await as("p1")("POST", "/api/cases", JSON.stringify({ summary: "x".repeat(2_000_000) }));
+    assert.equal(big.status, 413);
+  });
+
+  // ---- Finding 18 ----
+  it("L18: principals keep classroom preferences to their school; case owners must be staff", async () => {
+    const pref = await as("p1")("PUT", "/api/teacher/classroom-preferences", { schoolId: ID.s2, roomLabel: "X", floorNumber: 1, layout: "rows", seatPosition: "front-left" });
+    assert.equal(pref.status, 403);
+    const c = await as("p1")("POST", "/api/cases", { studentId: ID.alice, category: "academic", title: "Owner check", summary: "x", ownerUserId: USERS.pa[0] });
+    assert.equal(c.status, 400); assert.equal(c.body.error, "invalid_case_owner");
+    const ok = await as("p1")("POST", "/api/cases", { studentId: ID.alice, category: "academic", title: "Owner check", summary: "x", ownerUserId: USERS.t1[0] });
+    assert.equal(ok.status, 201);
+  });
+
+  // ---- Finding 23 ----
+  it("L23: permissions without an enforcing route cannot be requested", async () => {
+    const r = await as("p1")("POST", "/api/access-requests", { resource: "cases", action: "export", reason: "Need to export every case for a report", expiresAt: new Date(Date.now() + 86400_000).toISOString() });
+    assert.equal(r.status, 400);
+  });
+
+  // ---- Finding 24 ----
+  it("L24: an account can hold several roles and switch between them", async () => {
+    const m = await as("tp")("GET", "/api/memberships");
+    assert.equal(m.status, 200);
+    assert.deepEqual(m.body.data.map(x => x.role).sort(), ["parent", "teacher"]);
+    const parent = m.body.data.find(x => x.role === "parent");
+    const sw = await as("tp")("POST", "/api/session/membership", { membershipId: parent.id });
+    assert.equal(sw.status, 200, JSON.stringify(sw.body));
+    const cookie = sw.headers.getSetCookie().map(c => c.split(";")[0]).find(c => c.startsWith("eduos_session=") && !c.endsWith("="));
+    const me = await (await fetch(`${server.base}/api/me`, { headers: { cookie } })).json();
+    assert.equal(me.role ?? me.data?.role ?? me.actor?.role, "parent");
+    assert.equal((await as("tp")("GET", "/api/me")).status, 401, "the previous session is revoked after switching");
+    const kids = await (await fetch(`${server.base}/api/family/children`, { headers: { cookie } })).json();
+    assert.deepEqual(kids.data.map(k => k.id), [ID.alice]);
+  });
+  it("L24: a parent with children at two schools can accept an invitation at the second school", async () => {
+    const inv = await as("p2")("POST", "/api/guardian-invitations", { studentId: ID.carol, email: "two.school@d1.test" });
+    assert.equal(inv.status, 201);
+    const token = decodeURIComponent(inv.body.invitationUrl.split("guardianInvite=")[1]);
+    const p2s = await login(server.base, idp, "p2s", { email_verified: true });
+    const ok = await client(server.base, p2s)("POST", "/api/guardian-invitations/accept", { token });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  });
+});
+
+describe("EduOS session hardening against real PostgreSQL", { skip }, () => {
+  let db, idp, server, admin, env;
+  before(async () => {
+    db = await createDatabase(); idp = await startIdp();
+    env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app, SESSION_MAX_PER_USER: "2", SESSION_IDLE_MINUTES: "5" });
+    const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
+    assert.equal(migrated.code, 0, migrated.out);
+    await seed(db.adminUrl, idp.issuer);
+    admin = new pg.Client(db.adminUrl); await admin.connect();
+    server = await startServer({ ...env, DATABASE_URL: db.appUrl });
+  });
+  after(async () => { await server?.stop(); await admin?.end(); await idp?.close(); await db?.drop(); });
+  const me = sess => fetch(`${server.base}/api/me`, { headers: { cookie: sess.cookie } }).then(r => r.status);
+
+  it("L21: pending OIDC logins live in the database and are single use", async () => {
+    const start = await fetch(`${server.base}/auth/login`, { redirect: "manual" });
+    const state = new URL(start.headers.get("location")).searchParams.get("state");
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM oidc_pending_logins")).rows[0].n, 1);
+    const sess = await login(server.base, idp, "t1");
+    assert.ok(sess.cookie);
+    const replay = await fetch(`${server.base}/auth/callback?code=x&state=${encodeURIComponent(sess.state)}`, { redirect: "manual" });
+    assert.notEqual(replay.status, 303);
+    assert.ok(state);
+  });
+  it("L21: logging in again from the same browser revokes the previous session", async () => {
+    const first = await login(server.base, idp, "p1");
+    const second = await login(server.base, idp, "p1", {}, first.cookie);
+    assert.equal(await me(first), 401); assert.equal(await me(second), 200);
+  });
+  it("L21: concurrent sessions per user are capped", async () => {
+    const a = await login(server.base, idp, "p2"), b = await login(server.base, idp, "p2"), c = await login(server.base, idp, "p2");
+    assert.equal(await me(a), 401); assert.equal(await me(b), 200); assert.equal(await me(c), 200);
+  });
+  it("L21: idle sessions expire", async () => {
+    const sess = await login(server.base, idp, "pa");
+    assert.equal(await me(sess), 200);
+    await admin.query("UPDATE sessions SET last_seen_at=now()-interval '10 minutes' WHERE user_id=$1", [USERS.pa[0]]);
+    // The optional session cache (SESSION_CACHE_TTL_MS) is off here.
+    assert.equal(await me(sess), 401);
+  });
+});
+
+describe("EduOS API against an unmigrated database (32.0.54)", { skip }, () => {
+  it("refuses to start instead of failing on the first request", async () => {
+    const db = await createDatabase();
+    try {
+      const r = await run(["src/server.js"], { ...baseEnv(), PORT: "1", DATABASE_URL: db.appUrl });
+      assert.notEqual(r.code, 0);
+      assert.match(r.out, /Refusing to start: the database schema is not migrated.*npm run db:migrate/);
+    } finally { await db.drop(); }
+  });
+});

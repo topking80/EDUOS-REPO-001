@@ -1,0 +1,27 @@
+# EduOS Update Policy
+# Controls when and how updates are applied per district/state rules.
+
+[general]
+enabled = true
+strategy = "canary"          # or "immediate", "maintenance-window-only"
+
+[canary]
+percent = 10                 # 10% of devices get update first
+cohort_label = "eduos-stable"
+health_check_minutes = 30    # monitor health after update before promoting
+
+[maintenance_window]
+enabled = true
+start = "02:00"
+end = "04:00"
+timezone = "America/Chicago" # or district local
+
+[rollback]
+automatic = true
+on_health_degradation = true
+threshold_cpu_percent = 85
+threshold_disk_percent = 90
+
+[approvals]
+require_district_signoff = true
+state_override_allowed = false

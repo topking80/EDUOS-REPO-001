@@ -1,0 +1,11 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const route=fs.readFileSync(new URL("../src/school-operations-automation-routes.js",import.meta.url),"utf8");
+const server=fs.readFileSync(new URL("../src/server.js",import.meta.url),"utf8");
+const migration=fs.readFileSync(new URL("../db/029_school_operations_automation.sql",import.meta.url),"utf8");
+test("36.6 automation routes are registered and protected",()=>{assert.match(server,/registerSchoolOperationsAutomationRoutes\(app\)/);assert.match(route,/requireSession/);assert.match(route,/requireCsrf/);});
+test("36.6 schedules are limited to known operational domains and cadence",()=>{assert.match(route,/DOMAINS=\["facilities","health_office","counseling","meal_service"\]/);assert.match(route,/daily","weekly","monthly/);});
+test("36.6 schedule execution creates operational work and advances recurrence",()=>{assert.match(route,/INSERT INTO school_service_work/);assert.match(route,/UPDATE school_operation_schedules SET next_run_at/);assert.match(route,/FOR UPDATE SKIP LOCKED/);});
+test("36.6 district isolation and audit are included",()=>{assert.match(migration,/ENABLE ROW LEVEL SECURITY/);assert.match(migration,/FORCE ROW LEVEL SECURITY/);assert.match(route,/audit_events/);});
+test("36.6 sensitive health and counseling free text is blocked",()=>{assert.match(route,/sensitive_summary_not_supported/);});

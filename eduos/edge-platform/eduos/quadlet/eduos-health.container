@@ -1,0 +1,15 @@
+# EduOS Health & Telemetry Agent - Quadlet version
+
+[Unit]
+Description=EduOS Health Telemetry Agent
+Documentation=https://eduos.local/docs/health
+After=network-online.target eduos-bootstrap.service
+
+[Container]
+Image=quay.io/eduos/eduos-health:latest
+Volume=/var/lib/eduos/health:/var/lib/eduos/health:Z
+Volume=/etc/eduos/health.toml:/etc/eduos/health.toml:ro,Z
+Environment=EDUOS_HEALTH_INTERVAL=300
+
+[Install]
+WantedBy=multi-user.target

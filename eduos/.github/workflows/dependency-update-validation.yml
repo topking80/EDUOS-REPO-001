@@ -1,0 +1,29 @@
+name: dependency-update-validation
+on:
+  pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/dependabot.yml
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  validate-lockfile-change:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Require package and lockfile consistency
+        run: npm run verify:dependencies
+      - name: Reproducible clean install
+        run: npm ci
+      - name: Generate SBOM and license inventory
+        run: npm run supply-chain:check
+      - name: Dependency security audit
+        run: npm run audit:dependencies:report
+      - name: Dependency-focused regression tests
+        run: node --test test/security-authorization-baseline-33.1.test.js test/security-tenant-context-33.2.test.js test/supply-chain-33.5.test.js

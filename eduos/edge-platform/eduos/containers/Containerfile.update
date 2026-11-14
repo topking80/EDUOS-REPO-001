@@ -1,0 +1,19 @@
+# EduOS Update Orchestrator Container
+
+FROM registry.fedoraproject.org/fedora:40
+
+LABEL org.opencontainers.image.title="EduOS Update Agent"
+LABEL org.opencontainers.image.description="Policy-driven atomic update orchestrator for EduOS"
+
+RUN dnf install -y \
+        bash \
+        coreutils \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+COPY ../scripts/eduos-update.sh /usr/local/bin/eduos-update.sh
+RUN chmod +x /usr/local/bin/eduos-update.sh
+
+RUN mkdir -p /var/lib/eduos/updates
+
+ENTRYPOINT ["/usr/local/bin/eduos-update.sh"]

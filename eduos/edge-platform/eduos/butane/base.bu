@@ -1,0 +1,21 @@
+variant: fcos
+version: 1.5.0
+# metadata:
+#   name: eduos-base
+
+storage:
+  directories:
+    - path: /var/lib/eduos
+      mode: 0755
+
+  files:
+    - path: /etc/eduos/.keep
+      mode: 0644
+      contents:
+        inline: |
+          EduOS base marker file
+
+systemd:
+  units:
+    - name: zincati.service
+      enabled: false   # We manage updates via eduos-update.service

@@ -1,0 +1,73 @@
+# EduOS rpm-ostree Treefile
+# Build with: rpm-ostree compose tree --repo=repo compose/eduos-tree.yaml
+
+ref: "eduos/0.2.0/x86_64"
+reponame: eduos
+releasever: "40"
+automatic_version_prefix: "eduos-0.2.0"
+mutate-os-release: "40"
+
+# Packages to layer on top of Fedora CoreOS base
+packages:
+  # Core system
+  - bash
+  - coreutils
+  - util-linux
+  - procps-ng
+  - NetworkManager
+  - NetworkManager-wifi
+  - podman
+  - systemd
+  - selinux-policy-targeted
+  - policycoreutils
+  # EduOS runtime needs
+  - python3
+  - python3-pip
+  - curl
+  - ca-certificates
+  - jq
+  # Useful for edge nodes
+  - rsync
+  - nfs-utils
+  # Security / compliance
+  - chrony
+  - audit
+
+# Kernel arguments (applied at compose time)
+kernel-arguments:
+  - console=tty0
+  - console=ttyS0,115200n8
+  - rd.neednet=1
+  - ignition.firstboot
+  - eduos.version=0.2.0
+
+# Enable our custom services by default
+units:
+  - eduos-bootstrap.service
+  - eduos-enrollment.service
+  - eduos-health.service
+  - eduos-update.service
+
+# Post-processing script
+postprocess-script: |
+  #!/bin/bash
+  set -euo pipefail
+
+  echo "=== EduOS Postprocess ==="
+
+  # Create standard directories
+  mkdir -p /etc/eduos
+  mkdir -p /var/lib/eduos/{identity,health,updates,enrollments,logs}
+  chmod 755 /var/lib/eduos
+
+  # Ensure all EduOS scripts are executable
+  for f in /usr/local/bin/eduos-*.sh; do
+      [ -f "$f" ] && chmod +x "$f" || true
+  done
+
+  # Set proper SELinux contexts (best effort)
+  if command -v restorecon >/dev/null 2>&1; then
+      restorecon -Rv /etc/eduos /var/lib/eduos /usr/local/bin/eduos-*.sh || true
+  fi
+
+  echo "EduOS postprocess completed successfully"

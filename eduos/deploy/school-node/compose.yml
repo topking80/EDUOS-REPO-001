@@ -1,0 +1,82 @@
+# EduOS 32.7.0 school node, low-memory profile (Docker or Podman compose).
+# For a small box at ONE school, e.g. Raspberry Pi 5 (8 GB, NVMe) running
+# Raspberry Pi OS 64-bit or Fedora IoT. For Fedora CoreOS use the Quadlet
+# units instead (edge-platform/eduos/butane/school-node.bu).
+#   cp node.env.example node.env   # fill in (0600); see README.md
+#   docker compose up -d
+# Memory caps total about 640 MB (db 384 MB, app 192 MB, edge 64 MB).
+# STATUS: the image is multi-arch-friendly (node:22-alpine, no native addons)
+# but 32.7.0 was built and tested on x86_64 only; arm64 is untested.
+name: eduos-school-node
+services:
+  db:
+    image: postgres:16-alpine
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=30", "-c", "work_mem=2MB", "-c", "effective_cache_size=256MB"]
+    env_file: node.env
+    environment:
+      POSTGRES_DB: eduos
+    volumes:
+      - school-db:/var/lib/postgresql/data
+      - ../../db/init:/docker-entrypoint-initdb.d:ro
+    networks: [school_internal]
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d eduos"]
+      interval: 5s
+      retries: 30
+    restart: unless-stopped
+  migrate:
+    image: ${EDUOS_IMAGE:-eduos-app:local}
+    command: ["node", "src/migrate.js"]
+    env_file: node.env
+    environment:
+      DATABASE_URL: postgres://eduos_owner:${EDUOS_OWNER_PASSWORD:?set EDUOS_OWNER_PASSWORD}@db:5432/eduos
+      EDUOS_APP_ROLE: eduos_app
+      DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+    networks: [school_internal]
+    depends_on: { db: { condition: service_healthy } }
+    restart: "no"
+  app:
+    image: ${EDUOS_IMAGE:-eduos-app:local}
+    env_file: node.env
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=128
+      PORT: "8080"
+      EDUOS_NODE_TIER: school
+      EDEN_IDENTITY_FILE: /var/lib/eduos-node/identity.json
+      DATABASE_URL: postgres://eduos_app:${EDUOS_APP_PASSWORD:?set EDUOS_APP_PASSWORD}@db:5432/eduos
+      DATABASE_SSL_ALLOW_PRIVATE_NETWORK: "true"
+      TRUSTED_PROXY_IPS: 172.31.77.2/32
+    volumes: [node-identity:/var/lib/eduos-node]
+    networks: [school_internal, school_edge]
+    mem_limit: 192m
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+  edge:
+    image: caddy:2.8-alpine
+    environment:
+      EDUOS_SITE_ADDRESS: ${EDUOS_SITE_ADDRESS:?set EDUOS_SITE_ADDRESS}
+      EDUOS_UPSTREAM: app:8080
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ../../Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../../public:/srv/public:ro
+      - caddy-data:/data
+    networks:
+      school_edge: { ipv4_address: 172.31.77.2 }
+    mem_limit: 64m
+    depends_on: [app]
+    restart: unless-stopped
+networks:
+  school_internal: { internal: true }
+  school_edge:
+    ipam: { config: [{ subnet: 172.31.77.0/24, ip_range: 172.31.77.128/25 }] }
+volumes:
+  school-db:
+  node-identity:
+  caddy-data:

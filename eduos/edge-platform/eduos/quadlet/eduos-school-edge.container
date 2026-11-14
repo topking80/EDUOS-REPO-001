@@ -1,0 +1,29 @@
+# EduOS 32.7.0 school node: HTTPS edge (Caddy) in front of the node API.
+# Uses the same Caddyfile as the district compose stack. The static app files
+# are copied out of the EduOS image on start so Caddy can serve them.
+# TEMPLATE: compiled by `make check`, not yet run on real school hardware.
+[Unit]
+Description=EduOS school node HTTPS edge (Caddy)
+After=eduos-school-node.service
+Requires=eduos-school-node.service
+
+[Container]
+ContainerName=eduos-school-edge
+Image=docker.io/library/caddy:2.8-alpine
+Network=eduos-school.network
+PublishPort=443:443
+PublishPort=80:80
+Volume=/etc/eduos/school-node/Caddyfile:/etc/caddy/Caddyfile:ro,Z
+Volume=/var/lib/eduos/public:/srv/public:ro,Z
+Volume=/var/lib/eduos/caddy:/data:Z
+EnvironmentFile=/etc/eduos/school-node/edge.env
+Environment=EDUOS_UPSTREAM=eduos-school-node:8080
+PodmanArgs=--memory=96m --pids-limit=100
+NoNewPrivileges=true
+
+[Service]
+ExecStartPre=/bin/sh -c 'rm -rf /var/lib/eduos/public && id=$(podman create registry.district.example/eduos/eduos-app:32.7.0) && podman cp "$id":/app/public /var/lib/eduos/public; podman rm "$id" >/dev/null'
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

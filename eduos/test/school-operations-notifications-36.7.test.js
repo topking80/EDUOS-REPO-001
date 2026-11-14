@@ -1,0 +1,13 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const route=fs.readFileSync(new URL("../src/school-operations-notification-routes.js",import.meta.url),"utf8");
+const server=fs.readFileSync(new URL("../src/server.js",import.meta.url),"utf8");
+const migration=fs.readFileSync(new URL("../db/030_school_operations_notifications.sql",import.meta.url),"utf8");
+const runner=fs.readFileSync(new URL("../src/migrate.js",import.meta.url),"utf8");
+test("36.7 notification routes are registered and session/CSRF protected",()=>{assert.match(server,/registerSchoolOperationsNotificationRoutes\(app\)/);assert.match(route,/requireSession/);assert.match(route,/requireCsrf/);});
+test("36.7 user preferences expose independent notification controls",()=>{for(const k of ["in_app_enabled","due_soon_enabled","overdue_enabled","escalation_enabled"])assert.match(route,new RegExp(k));});
+test("36.7 dispatch is restricted to school and district leadership",()=>{assert.match(route,/LEADS\.includes\(a\.role\)/);assert.match(route,/school_id=\$2/);});
+test("36.7 delivery ledger prevents duplicate notices per work, user and notice type",()=>{assert.match(route,/ON CONFLICT\(work_id,recipient_user_id,notice_type\) DO NOTHING/);assert.match(migration,/UNIQUE\(work_id,recipient_user_id,notice_type\)/);});
+test("36.7 notifications are in-app only and contain no student data",()=>{assert.match(route,/delivery:"in_app_only"/);assert.match(route,/'in_app','school_operations'/);assert.doesNotMatch(route,/student_name|diagnosis|guardian_phone/);});
+test("36.7 migration is registered and RLS enabled",()=>{assert.match(runner,/030_school_operations_notifications\.sql/);assert.match(migration,/FORCE ROW LEVEL SECURITY/);});

@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+!.env.example
+coverage/
+.DS_Store
+*.log
+caddy-local-root.crt
+artifacts/
+.eden-dev/
+
+# Generated dependency audit evidence
+artifacts/dependency-audit/

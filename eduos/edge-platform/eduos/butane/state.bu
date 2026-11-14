@@ -1,0 +1,55 @@
+variant: fcos
+version: 1.5.0
+# metadata:
+#   name: eduos-state
+#   labels:
+#     role: state
+#     version: "0.2.0"
+
+passwd:
+  users:
+    - name: state-admin
+      uid: 1005
+      gecos: "EduOS State Education Administrator"
+      groups: [ wheel ]
+      password_hash: "@@EDUOS_STATE_PASSWORD_HASH@@"   # supplied at build time (docs/BUILD.md)
+
+storage:
+  files:
+    - path: /etc/eduos/role
+      mode: 0644
+      contents:
+        inline: |
+          state
+
+    - path: /usr/local/bin/eduos-bootstrap.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-bootstrap.sh
+
+    - path: /usr/local/bin/eduos-health.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-health.sh
+
+    - path: /usr/local/bin/eduos-update.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-update.sh
+
+systemd:
+  units:
+    - name: eduos-bootstrap.service
+      enabled: true
+      contents_local: services/bootstrap.service
+    - name: eduos-health.service
+      enabled: true
+      contents_local: services/health.service
+    - name: eduos-update.service
+      enabled: true
+      contents_local: services/update.service
+
+ignition:
+  config:
+    merge:
+      - local: ignition/base.ign

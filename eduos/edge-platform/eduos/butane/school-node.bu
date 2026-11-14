@@ -1,0 +1,81 @@
+variant: fcos
+version: 1.5.0
+# metadata:
+#   name: eduos-school-node
+#   labels:
+#     role: school-node
+#     version: "0.3.0"
+#     eduos: "32.7.0"
+# EDEN school tier (deck p18-p23): one school's EduOS on a small local box,
+# e.g. Raspberry Pi 5 8 GB with an NVMe SSD. Secrets (database passwords,
+# OIDC client secret, EDEN enrollment token and pinned root certificate) are
+# NOT in this file: the installer drops /etc/eduos/school-node/*.env (0600)
+# from the district's provisioning USB, see docs/SCHOOL-NODE.md.
+
+passwd:
+  users:
+    - name: edge
+      uid: 1003
+      gecos: "EduOS School Node operator"
+      groups: [ wheel ]
+      password_hash: "@@EDUOS_EDGE_PASSWORD_HASH@@"   # supplied at build time (docs/BUILD.md)
+
+storage:
+  directories:
+    - path: /etc/eduos/school-node
+      mode: 0700
+    - path: /etc/eduos/school-node/db-init
+      mode: 0755
+    - path: /var/lib/eduos/school-db
+      mode: 0700
+    - path: /var/lib/eduos/node
+      mode: 0700
+    - path: /var/lib/eduos/caddy
+      mode: 0700
+  files:
+    - path: /etc/eduos/role
+      mode: 0644
+      contents:
+        inline: |
+          school-node
+    - path: /etc/containers/systemd/eduos-school.network
+      mode: 0644
+      contents:
+        local: quadlet/eduos-school.network
+    - path: /etc/containers/systemd/eduos-school-db.container
+      mode: 0644
+      contents:
+        local: quadlet/eduos-school-db.container
+    - path: /etc/containers/systemd/eduos-school-node.container
+      mode: 0644
+      contents:
+        local: quadlet/eduos-school-node.container
+    - path: /etc/containers/systemd/eduos-school-edge.container
+      mode: 0644
+      contents:
+        local: quadlet/eduos-school-edge.container
+    - path: /etc/containers/systemd/eduos-health.container
+      mode: 0644
+      contents:
+        local: quadlet/eduos-health.container
+    - path: /usr/local/bin/eduos-health.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-health.sh
+    # Swap on zram keeps a 4 GB board responsive under PostgreSQL + Node.
+    - path: /etc/systemd/zram-generator.conf
+      mode: 0644
+      contents:
+        inline: |
+          [zram0]
+          zram-size = min(ram / 2, 2048)
+
+systemd:
+  units:
+    - name: podman-auto-update.timer
+      enabled: true
+
+ignition:
+  config:
+    merge:
+      - local: ignition/base.ign

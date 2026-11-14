@@ -1,0 +1,11 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const src=fs.readFileSync(new URL("../src/unified-school-operations-routes.js",import.meta.url),"utf8");
+const server=fs.readFileSync(new URL("../src/server.js",import.meta.url),"utf8");
+const migration=fs.readFileSync(new URL("../db/028_unified_school_operations.sql",import.meta.url),"utf8");
+test("36.5 unified command center is registered and authenticated",()=>{assert.match(server,/registerUnifiedSchoolOperationsRoutes\(app\)/);assert.match(src,/requireSession/);assert.match(src,/\/api\/school-operations\/command-center/);});
+test("36.5 work queues are tenant and school scoped",()=>{assert.match(src,/district_id=\$1 AND \(\$2::uuid IS NULL OR school_id=\$2\)/);assert.match(src,/Cache-Control","no-store"/);});
+test("36.5 assignments require an active same-school domain worker",()=>{assert.match(src,/m\.school_id=\$3/);assert.match(src,/m\.role=ANY\(\$4::text\[\]\)/);assert.match(src,/m\.status='active'/);});
+test("36.5 escalation is bounded and audited",()=>{assert.match(src,/LEAST\(3,escalation_level\+1\)/);assert.match(src,/priority=CASE/);assert.match(src,/'escalate'/);});
+test("36.5 migration adds deadlines and escalation tracking",()=>{assert.match(migration,/ADD COLUMN IF NOT EXISTS due_at/);assert.match(migration,/escalation_level/);});

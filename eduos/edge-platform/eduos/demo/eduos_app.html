@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>EdOS</title>
+<meta name="theme-color" content="#070d18">
+<meta name="description" content="EdOS — the operating system for education. One platform, one identity, one data model. Every role, one app.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="EdOS">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+@property --accent{syntax:'<color>';inherits:true;initial-value:#7c5cff;}
+:root{
+  --space:#070d18; --space-2:#0a1426; --card:#0e1a30; --card-2:#0b1628;
+  --text:#e9eefc; --muted:#8ca0c2; --dim:#5d7298; --line:rgba(120,150,200,.16); --line-2:rgba(120,150,200,.09);
+  --ok:#34d27a; --warn:#ffc62b; --bad:#ff5d6c; --info:#37a9ff;
+  --accent:#7c5cff; --accent-soft:rgba(124,92,255,.16);
+  --disp:'Space Grotesk',-apple-system,system-ui,sans-serif;
+  --body:'Inter',-apple-system,system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,.8,.2,1);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;font-family:var(--body);}
+body{background:var(--space);color:var(--text);line-height:1.5;transition:--accent .5s ease;
+  background-image:radial-gradient(1100px 520px at 50% -10%,color-mix(in srgb,var(--accent) 16%,transparent),transparent 60%);}
+::selection{background:var(--accent-soft);}
+.wrap{max-width:480px;margin:0 auto;min-height:100vh;position:relative;padding-bottom:80px;
+  background:linear-gradient(180deg,rgba(255,255,255,.012),transparent 240px);}
+
+/* header */
+.hdr{position:sticky;top:0;z-index:30;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  background:linear-gradient(180deg,rgba(7,13,24,.92),rgba(7,13,24,.72));border-bottom:1px solid var(--line-2);
+  padding:calc(12px + env(safe-area-inset-top)) 14px 10px;}
+.hdr-top{display:flex;align-items:center;justify-content:space-between;}
+.wm{font-family:var(--disp);font-weight:700;font-size:22px;letter-spacing:-.5px;display:flex;align-items:center;gap:1px;color:#fff;cursor:pointer;}
+.wm .o{width:20px;height:20px;margin:0 1px;display:inline-block;}
+.wm .o svg{width:100%;height:100%;}
+.wm small{font-weight:600;color:var(--accent);}
+.pillars{display:flex;gap:8px;align-items:center;font-size:9.5px;letter-spacing:.04em;color:var(--dim);font-weight:600;}
+.pillars b{color:var(--muted);font-weight:600;}
+.pillars .d{width:5px;height:5px;border-radius:50%;}
+.switcher{display:flex;gap:7px;overflow-x:auto;margin-top:11px;padding-bottom:2px;scrollbar-width:none;}
+.switcher::-webkit-scrollbar{display:none;}
+.per{flex:0 0 auto;display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:rgba(120,150,200,.05);
+  color:var(--muted);font-weight:600;font-size:12.5px;padding:7px 13px;border-radius:30px;cursor:pointer;transition:.18s;white-space:nowrap;}
+.per .pi{font-size:14px;}
+.per.on{color:#fff;border-color:transparent;background:var(--accent-soft);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 55%,transparent),0 6px 18px -8px var(--accent);}
+
+/* view + screens */
+#view{padding:14px 14px 6px;}
+#view.in{animation:viewIn .34s var(--ease);}
+@keyframes viewIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+.greet{font-family:var(--disp);font-size:23px;font-weight:600;color:#fff;line-height:1.15;}
+.greet .a{color:var(--accent);}
+.greet-sub{font-size:12.5px;color:var(--muted);margin-top:3px;margin-bottom:4px;}
+.scr-title{font-family:var(--disp);font-size:19px;font-weight:600;color:#fff;}
+.scr-sub{font-size:12.5px;color:var(--muted);margin:2px 0 6px;}
+
+.card{background:linear-gradient(180deg,var(--card),var(--card-2));border:1px solid var(--line);border-radius:18px;
+  padding:15px;margin-bottom:12px;box-shadow:0 18px 40px -30px #000;opacity:0;transform:translateY(10px);
+  animation:cardIn .5s var(--ease) forwards;}
+.card:nth-child(1){animation-delay:.02s} .card:nth-child(2){animation-delay:.08s} .card:nth-child(3){animation-delay:.14s}
+.card:nth-child(4){animation-delay:.2s} .card:nth-child(5){animation-delay:.26s} .card:nth-child(6){animation-delay:.32s}
+.card:nth-child(7){animation-delay:.38s}
+@keyframes cardIn{to{opacity:1;transform:none;}}
+.card.glow{border-color:color-mix(in srgb,var(--accent) 45%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 20%,transparent),0 18px 44px -28px var(--accent);}
+.card-h{font-family:var(--disp);font-size:15px;font-weight:600;color:#fff;display:flex;align-items:center;gap:8px;}
+.card-h .r{margin-left:auto;font-size:11.5px;color:var(--muted);font-weight:500;}
+.kick{font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-weight:700;color:var(--dim);}
+.kick.acc{color:var(--accent);}
+.muted{color:var(--muted);} .small{font-size:12.5px;}
+p.t{font-size:13.5px;color:var(--text);opacity:.92;margin-top:8px;}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px;}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:12px;}
+.stat{background:rgba(120,150,200,.05);border:1px solid var(--line-2);border-radius:13px;padding:12px;}
+.stat .n{font-family:var(--disp);font-size:22px;font-weight:600;color:#fff;line-height:1;}
+.stat .n.acc{color:var(--accent);} .stat .n.ok{color:var(--ok);} .stat .n.warn{color:var(--warn);} .stat .n.bad{color:var(--bad);}
+.stat .l{font-size:10.5px;color:var(--muted);margin-top:6px;}
+.stat .d{font-size:10px;margin-top:4px;font-weight:600;}
+.up{color:var(--ok);} .down{color:var(--bad);}
+.cu{font-variant-numeric:tabular-nums;}
+
+.bars{margin-top:10px;display:flex;flex-direction:column;gap:11px;}
+.lb{display:flex;align-items:center;justify-content:space-between;font-size:12.5px;margin-bottom:5px;}
+.lb b{font-family:var(--mono);font-weight:500;color:var(--text);}
+.bar{height:7px;border-radius:99px;background:rgba(120,150,200,.13);overflow:hidden;}
+.bar>i{display:block;height:100%;width:0;border-radius:99px;transition:width 1s var(--ease);
+  background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 40%,#fff));}
+.bar.ok>i{background:linear-gradient(90deg,var(--ok),#9af0c0);}
+.bar.warn>i{background:linear-gradient(90deg,var(--warn),#ffe08a);}
+.bar.bad>i{background:linear-gradient(90deg,var(--bad),#ff9aa4);}
+
+.row{display:flex;align-items:center;gap:11px;padding:11px 0;border-top:1px solid var(--line-2);}
+.row:first-child{border-top:none;}
+.row .ico{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;
+  flex:0 0 auto;border:1px solid currentColor;background:rgba(8,16,32,.6);}
+.row .mid{flex:1;min-width:0;}
+.row .nm{font-size:13.5px;font-weight:600;color:var(--text);}
+.row .sub{font-size:11.5px;color:var(--muted);margin-top:1px;}
+.row .rt{font-family:var(--mono);font-size:12.5px;color:var(--muted);text-align:right;flex:0 0 auto;}
+.av{width:36px;height:36px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  font-family:var(--disp);font-weight:600;font-size:13px;color:#06101f;}
+
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:99px;
+  border:1px solid currentColor;background:rgba(255,255,255,.02);}
+.c-ok{color:var(--ok);} .c-warn{color:var(--warn);} .c-bad{color:var(--bad);} .c-info{color:var(--info);} .c-acc{color:var(--accent);} .c-dim{color:var(--dim);}
+
+.banner{border-radius:13px;padding:13px;display:flex;gap:11px;align-items:flex-start;margin-top:12px;border:1px solid;}
+.banner .bi{font-size:18px;line-height:1;}
+.banner .bt{font-weight:700;font-size:13.5px;color:#fff;}
+.banner .bs{font-size:12px;color:var(--muted);margin-top:2px;}
+.banner .bm{margin-left:auto;}
+.b-high{background:rgba(255,93,108,.08);border-color:rgba(255,93,108,.3);}
+.b-med{background:rgba(255,198,43,.07);border-color:rgba(255,198,43,.28);}
+.b-low{background:rgba(55,169,255,.06);border-color:rgba(55,169,255,.24);}
+.b-acc{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 35%,transparent);}
+
+.btn{display:block;width:100%;border:none;border-radius:12px;padding:12px;font-family:var(--body);font-weight:700;font-size:13.5px;
+  cursor:pointer;margin-top:12px;color:#fff;background:linear-gradient(180deg,var(--accent),color-mix(in srgb,var(--accent) 72%,#000));
+  transition:transform .14s,filter .14s;}
+.btn:active{transform:scale(.985);filter:brightness(1.08);}
+.btn.sec{background:rgba(120,150,200,.12);color:var(--text);}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text);}
+.btn.danger{background:linear-gradient(180deg,#ff4658,#c11e2c);}
+.btn-row{display:flex;gap:8px;margin-top:12px;}
+.btn-row .btn{margin-top:0;}
+
+.seg{display:flex;gap:4px;background:rgba(120,150,200,.08);border:1px solid var(--line);border-radius:11px;padding:4px;margin-top:10px;}
+.seg button{flex:1;border:none;background:none;color:var(--muted);font-family:var(--body);font-weight:600;font-size:12px;
+  padding:8px;border-radius:8px;cursor:pointer;transition:.15s;}
+.seg button.on{background:var(--accent-soft);color:#fff;}
+
+.quick{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:12px;}
+.quick button{border:1px solid var(--line);background:rgba(120,150,200,.05);border-radius:13px;padding:13px 8px;color:var(--text);
+  display:flex;flex-direction:column;align-items:center;gap:7px;cursor:pointer;font-size:11px;font-weight:600;transition:.15s;}
+.quick button:active{transform:scale(.96);}
+.quick button .qi{font-size:18px;}
+
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px;}
+.tile{border:1px solid var(--line-2);background:rgba(120,150,200,.05);border-radius:14px;padding:13px;cursor:pointer;transition:.15s;}
+.tile:active{transform:scale(.97);}
+.tile .ti{font-size:18px;} .tile .tn{font-weight:600;font-size:13px;color:#fff;margin-top:8px;} .tile .ts{font-size:11px;color:var(--muted);margin-top:2px;}
+
+/* donut + spark */
+.donut{display:flex;align-items:center;justify-content:center;position:relative;width:84px;height:84px;flex:0 0 auto;}
+.donut svg{width:100%;height:100%;transform:rotate(-90deg);}
+.donut circle{fill:none;stroke-width:7;stroke-linecap:round;}
+.donut .dbg{stroke:rgba(120,150,200,.14);}
+.donut .dc-fg{transition:stroke-dashoffset 1.1s var(--ease);}
+.donut .dc{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.donut .dc b{font-family:var(--disp);font-size:18px;color:#fff;line-height:1;}
+.donut .dc span{font-size:9px;color:var(--muted);margin-top:2px;}
+.donutseg{width:84px;height:84px;flex:0 0 auto;transform:rotate(-90deg);animation:popIn .6s var(--ease);}
+.donutseg circle{fill:none;stroke-width:9;}
+@keyframes popIn{from{opacity:0;transform:rotate(-90deg) scale(.7);}to{opacity:1;transform:rotate(-90deg) scale(1);}}
+.legend{display:flex;flex-direction:column;gap:6px;flex:1;}
+.legend .lg{display:flex;align-items:center;gap:8px;font-size:12px;}
+.legend .lg .sw{width:9px;height:9px;border-radius:3px;flex:0 0 auto;}
+.legend .lg .lv{margin-left:auto;font-family:var(--mono);color:var(--muted);font-size:11.5px;}
+.spark{width:100%;height:46px;margin-top:10px;}
+.spark polyline{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;
+  stroke-dasharray:1;stroke-dashoffset:1;animation:draw 1.3s var(--ease) forwards;}
+@keyframes draw{to{stroke-dashoffset:0;}}
+.flexrow{display:flex;gap:13px;align-items:center;}
+
+/* tutor / path */
+.solve{background:rgba(120,150,200,.06);border:1px solid var(--line-2);border-radius:12px;padding:13px;margin-top:11px;}
+.solve .q{font-family:var(--disp);font-size:17px;color:#fff;}
+.step{background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);border-radius:12px;padding:12px;margin-top:11px;}
+.step .sk{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:700;}
+.step .se{font-family:var(--mono);font-size:16px;color:#fff;margin-top:6px;}
+.pathline{position:relative;margin-top:8px;padding-left:6px;}
+.node{display:flex;align-items:center;gap:11px;padding:9px 0;position:relative;}
+.node .dot{width:22px;height:22px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:11px;
+  border:2px solid var(--line);color:var(--dim);background:var(--space-2);z-index:1;}
+.node.done .dot{border-color:var(--ok);color:var(--ok);background:rgba(52,210,122,.12);}
+.node.now .dot{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);animation:halo 2s ease-in-out infinite;}
+@keyframes halo{0%,100%{box-shadow:0 0 0 4px var(--accent-soft);}50%{box-shadow:0 0 0 7px transparent;}}
+.node:not(:last-child)::after{content:"";position:absolute;left:10px;top:26px;bottom:-9px;width:2px;background:var(--line);}
+.node.done:not(:last-child)::after{background:var(--ok);}
+.node .nl{font-size:13.5px;color:var(--text);font-weight:500;}
+.node.done .nl{color:var(--muted);}
+
+.input{display:flex;gap:8px;margin-top:12px;}
+.input input{flex:1;background:rgba(120,150,200,.06);border:1px solid var(--line);border-radius:12px;padding:11px 13px;
+  color:var(--text);font-size:13.5px;outline:none;font-family:inherit;}
+.input button{flex:0 0 auto;width:44px;border:none;border-radius:12px;background:var(--accent);color:#fff;font-size:16px;cursor:pointer;}
+
+/* ai orb */
+.orb{width:64px;height:64px;border-radius:50%;margin:4px auto 0;display:flex;align-items:center;justify-content:center;font-size:26px;
+  background:radial-gradient(circle at 50% 35%,color-mix(in srgb,var(--accent) 55%,#0b1628),#0b1628);
+  border:1px solid color-mix(in srgb,var(--accent) 50%,transparent);box-shadow:0 0 24px -4px var(--accent);animation:pulse 2.6s ease-in-out infinite;}
+@keyframes pulse{0%,100%{box-shadow:0 0 22px -6px var(--accent);}50%{box-shadow:0 0 30px 2px var(--accent);}}
+
+/* bottom nav */
+.nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;z-index:40;display:flex;
+  background:rgba(8,15,28,.94);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top:1px solid var(--line);
+  padding:8px 4px calc(8px + env(safe-area-inset-bottom));}
+.nav button{flex:1;border:none;background:none;color:var(--dim);cursor:pointer;font-size:10px;font-weight:600;padding:3px 2px;transition:color .18s;}
+.nav button .ni{font-size:18px;display:block;margin-bottom:2px;transition:transform .2s;}
+.nav button.on{color:var(--accent);}
+.nav button.on .ni{transform:translateY(-2px) scale(1.08);}
+
+.toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%) translateY(18px);background:#16243f;color:#fff;
+  border:1px solid var(--line);padding:11px 18px;border-radius:30px;font-size:13px;font-weight:500;opacity:0;pointer-events:none;
+  transition:all .3s;z-index:80;box-shadow:0 12px 30px rgba(0,0,0,.5);max-width:88%;text-align:center;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+.live{display:inline-flex;align-items:center;gap:5px;}
+.live .d{width:7px;height:7px;border-radius:50%;background:currentColor;animation:blink 1.6s ease-in-out infinite;}
+@keyframes blink{0%,100%{opacity:.35;}50%{opacity:1;}}
+
+/* splash */
+.splash{position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;justify-content:center;padding:30px 26px;overflow-y:auto;
+  background:radial-gradient(700px 380px at 50% 22%,rgba(124,92,255,.22),transparent 62%),var(--space);}
+.splash.hide{display:none;}
+.splash .lg{text-align:center;}
+.splash .lg .wm{font-size:40px;justify-content:center;}
+.splash .lg .wm .o{width:34px;height:34px;}
+.splash .tl{text-align:center;color:var(--muted);font-size:13px;margin-top:6px;letter-spacing:.04em;}
+.splash h3{text-align:center;font-family:var(--disp);font-size:16px;color:#fff;margin:26px 0 4px;}
+.splash .pick{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;}
+.pick button{border:1px solid var(--line);background:rgba(120,150,200,.05);border-radius:15px;padding:16px 12px;color:var(--text);
+  display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;transition:.15s;}
+.pick button:active{transform:scale(.97);}
+.pick button .pic{font-size:24px;}
+.pick button .pn{font-weight:700;font-size:13px;color:#fff;}
+.pick button .pd{font-size:10.5px;color:var(--muted);text-align:center;line-height:1.3;}
+
+/* about sheet */
+.sheet{position:fixed;inset:0;z-index:90;display:flex;align-items:flex-end;justify-content:center;
+  background:rgba(4,8,16,.6);opacity:0;pointer-events:none;transition:opacity .25s;}
+.sheet.open{opacity:1;pointer-events:auto;}
+.sheet .panel{width:100%;max-width:480px;max-height:86vh;overflow-y:auto;background:var(--space-2);border:1px solid var(--line);
+  border-radius:22px 22px 0 0;padding:18px 16px calc(20px + env(safe-area-inset-bottom));transform:translateY(100%);transition:transform .3s var(--ease);}
+.sheet.open .panel{transform:none;}
+.sheet .grab{width:38px;height:4px;border-radius:3px;background:var(--line);margin:0 auto 14px;}
+
+@media (min-width:540px){ .wrap{margin-top:18px;margin-bottom:18px;min-height:auto;border-radius:28px;overflow:hidden;
+  border:1px solid var(--line);box-shadow:0 40px 80px -30px #000;} .nav{position:sticky;} body{padding:0;} }
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;}
+  .card{opacity:1;transform:none;}
+}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <header class="hdr">
+    <div class="hdr-top">
+      <div class="wm" onclick="openAbout()">Ed<span class="o" id="logoO"></span><small>S</small></div>
+      <div class="pillars"><span class="d" style="background:#37a9ff"></span><b>Platform</b><span class="d" style="background:#a855f7"></span><b>Identity</b><span class="d" style="background:#34d27a"></span><b>Data Model</b></div>
+    </div>
+    <div class="switcher" id="switcher"></div>
+  </header>
+  <main id="view"></main>
+  <nav class="nav" id="nav"></nav>
+</div>
+<div class="toast" id="toast"></div>
+
+<div class="splash" id="splash">
+  <div class="lg"><div class="wm">Ed<span class="o" id="logoO2"></span><small>S</small></div>
+    <div class="tl">The operating system for education</div></div>
+  <h3>Choose your experience</h3>
+  <div class="pick" id="pick"></div>
+</div>
+
+<div class="sheet" id="sheet" onclick="if(event.target===this)closeAbout()">
+  <div class="panel" id="aboutPanel"></div>
+</div>
+
+<script>
+const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+const RM=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const ORBIT=`<svg viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#37a9ff"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs><ellipse cx="16" cy="16" rx="13" ry="6.4" fill="none" stroke="url(#og)" stroke-width="2.4" transform="rotate(32 16 16)"/><circle cx="16" cy="16" r="3.4" fill="url(#og)"/><circle cx="27" cy="11" r="2.1" fill="#37a9ff"/></svg>`;
+document.getElementById('logoO').innerHTML=ORBIT; document.getElementById('logoO2').innerHTML=ORBIT;
+
+/* format + count-up */
+function fmtN(n,dec,comma){if(comma)return Number(n).toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec});return Number(n).toFixed(dec);}
+function cnt(v,o){o=o||{};const pre=o.pre||'',suf=o.suf||'',dec=o.dec||0,comma=o.comma?1:0;
+  return `<span class="cu" data-to="${v}" data-dec="${dec}" data-pre="${pre}" data-suf="${suf}" data-comma="${comma}">${pre}${fmtN(0,dec,!!comma)}${suf}</span>`;}
+function auto(n){const m=String(n).match(/^([\$+]?)([\d,]+(?:\.\d+)?)(%|M|K|\+|x)?$/);if(!m)return n;
+  const pre=m[1]||'',suf=m[3]||'',comma=m[2].includes(','),num=parseFloat(m[2].replace(/,/g,'')),dec=(m[2].split('.')[1]||'').length;
+  return cnt(num,{pre,suf,dec,comma});}
+function countUp(el){const to=+el.dataset.to,dec=+el.dataset.dec,pre=el.dataset.pre,suf=el.dataset.suf,comma=el.dataset.comma==='1';
+  if(RM){el.textContent=pre+fmtN(to,dec,comma)+suf;return;}
+  const dur=850,t0=performance.now();
+  (function step(t){const k=Math.min(1,(t-t0)/dur),e=1-Math.pow(1-k,3);el.textContent=pre+fmtN(to*e,dec,comma)+suf;if(k<1)requestAnimationFrame(step);})(performance.now());}
+function animateView(){const v=document.getElementById('view');
+  v.querySelectorAll('.cu').forEach(countUp);
+  const paint=()=>{v.querySelectorAll('.bar>i').forEach(i=>i.style.width=i.dataset.w+'%');v.querySelectorAll('.dc-fg').forEach(c=>c.style.strokeDashoffset=c.dataset.off);};
+  if(RM)paint(); else requestAnimationFrame(paint);}
+
+/* visual builders */
+function donut(pct,color,big,small){const r=29,c=2*Math.PI*r,off=c*(1-pct/100);
+  return `<div class="donut"><svg viewBox="0 0 72 72"><circle class="dbg" cx="36" cy="36" r="${r}"/><circle class="dc-fg" data-off="${off}" cx="36" cy="36" r="${r}" style="stroke:${color};stroke-dasharray:${c};stroke-dashoffset:${c}"/></svg><div class="dc"><b>${big}</b>${small?`<span>${small}</span>`:''}</div></div>`;}
+function donutSeg(segs){const r=29,c=2*Math.PI*r;let acc=0;
+  const arcs=segs.map(s=>{const len=c*s.v/100;const el=`<circle r="${r}" cx="36" cy="36" style="stroke:${s.c};stroke-dasharray:${len} ${c-len};stroke-dashoffset:${-acc}"/>`;acc+=len;return el;}).join('');
+  return `<svg class="donutseg" viewBox="0 0 72 72">${arcs}</svg>`;}
+function legend(segs){return `<div class="legend">${segs.map(s=>`<div class="lg"><span class="sw" style="background:${s.c}"></span>${s.k}<span class="lv">${s.v}%</span></div>`).join('')}</div>`;}
+function spark(v,color){const w=240,h=44,mx=Math.max(...v),mn=Math.min(...v),rg=(mx-mn)||1;
+  const pts=v.map((y,i)=>`${(i/(v.length-1))*w},${h-((y-mn)/rg)*(h-10)-5}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${pts}" pathLength="1" style="stroke:${color}"/></svg>`;}
+function bar(pct,cls){return `<div class="bar ${cls||''}"><i data-w="${pct}"></i></div>`;}
+function lbar(name,pct,cls){return `<div><div class="lb"><span>${name}</span><b>${pct}%</b></div>${bar(pct,cls)}</div>`;}
+function avatar(ini,color){return `<div class="av" style="background:${color}">${ini}</div>`;}
+
+/* ===================== PERSONAS ===================== */
+const P={
+ student:{name:'Student',icon:'🎓',accent:'#7c5cff',sub:'Grade 8 · STEM Pathway',tag:'Learn, master, and see your path',
+   nav:[['home','🏠','Home'],['courses','📚','Courses'],['tutor','🤖','Tutor'],['path','🧭','Progress'],['future','🚀','Future']]},
+ teacher:{name:'Teacher',icon:'🧑‍🏫',accent:'#37a9ff',sub:'8th Grade Math',tag:'Plan, teach, assess, support',
+   nav:[['home','🏠','Dashboard'],['analytics','📈','Classes'],['copilot','✨','Planner'],['messages','💬','Messages'],['impact','🏆','Impact']]},
+ guardian:{name:'Guardian',icon:'👪',accent:'#2bb6a3',sub:'Parent of Emma · 8th Grade',tag:'Stay connected to their progress',
+   nav:[['home','🏠','Home'],['progress','📊','Progress'],['attend','📅','Attendance'],['messages','💬','Messages'],['resources','🧰','Resources']]},
+ admin:{name:'Administrator',icon:'🏛',accent:'#3b82f6',sub:'Superintendent',tag:'Run the district on real-time data',
+   nav:[['home','🏠','Overview'],['analytics','📈','Analytics'],['finance','💰','Finance'],['ops','🏫','Schools'],['compliance','✅','Reports']]},
+ officer:{name:'Resource Officer',icon:'🛡',accent:'#6d5dfc',sub:'Lincoln & Roosevelt',tag:'See, respond, keep students safe',
+   nav:[['home','🏠','Home'],['incidents','🚨','Incidents'],['report','📝','Report'],['alerts','🔔','Alerts'],['resources','🧰','Resources']]},
+ driver:{name:'Bus Driver',icon:'🚌',accent:'#f5b301',sub:'Route 15 · Lincoln → Roosevelt',tag:'Safe routes, on-time arrivals',
+   nav:[['home','🏠','Home'],['route','🗺','Route'],['scan','📷','Scan'],['alerts','🔔','Alerts'],['safety','🛟','Safety']]},
+};
+
+const S={};
+S.student={
+ home:()=>`${greet('Welcome back,','Emma')}
+  <div class="card glow"><div class="kick acc">Christie · learning tutor</div><div class="card-h" style="margin-top:4px">Ready to continue Algebra?</div>
+   <p class="t">You're <b>82%</b> through your current path.</p>${bar(82)}<button class="btn" onclick="setTab('tutor')">Resume learning ▸</button></div>
+  <div class="card"><div class="card-h">My courses</div><div class="bars" style="margin-top:13px">${lbar('Mathematics',92)}${lbar('Science',88)}${lbar('English',84)}${lbar('History',79)}</div></div>
+  <div class="card"><div class="card-h">📌 Assignments due</div>${row('🧮','Algebra homework','Linear equations',chip('Today','c-bad'))}${row('🔬','Science quiz','Ecosystems',chip('Tomorrow','c-warn'))}${row('✍️','Essay draft','Argument writing',chip('Friday','c-info'))}</div>
+  <div class="card"><div class="card-h">📈 Weekly performance</div>${spark([62,68,64,75,72,84,82],'var(--accent)')}</div>`,
+ courses:()=>`${title('My courses','Tap a course to open lessons.')}
+  ${[['Mathematics',92],['Science',88],['English',84],['History',79]].map(([nm,pc])=>`<div class="card"><div class="flexrow" style="justify-content:space-between"><div class="row" style="border:none;padding:0;flex:1"><div class="ico" style="color:var(--accent)">📘</div><div class="mid"><div class="nm">${nm}</div><div class="sub">STEM pathway</div></div></div><b style="font-family:var(--mono);color:#fff">${pc}%</b></div>${bar(pc)}</div>`).join('')}`,
+ tutor:()=>`${title('AI Tutor',"Christie — let's solve this together.")}
+  <div class="card"><div class="orb">🤖</div><div class="solve"><div class="kick">Question</div><div class="q" style="margin-top:6px">Solve: 2x + 5 = 17</div></div>
+   <div class="step"><div class="sk">Step 1 · Subtract 5 from both sides</div><div class="se">2x = 12</div></div>
+   <button class="btn" onclick="toast('Next step: divide both sides by 2')">Next step</button>
+   <div class="btn-row"><button class="btn sec" onclick="toast('Playing explanation…')">▶ Watch</button><button class="btn sec" onclick="toast('Loading practice…')">Practice</button></div>
+   <div class="input"><input placeholder="Type your answer…"><button onclick="toast('Checking…')">➤</button></div></div>
+  <div class="card"><div class="card-h">🎉 Last solved</div><p class="t">Great job — you solved <b>2x + 5 = 17</b> correctly.</p>
+   <div class="flexrow" style="margin-top:12px">${donut(92,'var(--ok)',cnt(92,{suf:'%'}),'mastery')}<div><div class="kick">Algebra skill</div><p class="t" style="margin-top:4px">Mastery <b style="color:var(--ok)">88% → 92%</b></p></div></div></div>`,
+ path:()=>`${title('Learning path','Your personalized STEM route.')}
+  <div class="card"><div class="card-h">🧭 STEM Career Path</div><div class="pathline" style="margin-top:10px">${pnode('Mathematics','done')}${pnode('Algebra I','done')}${pnode('Geometry','done')}${pnode('Algebra II','now')}${pnode('Physics','')}${pnode('Engineering Fundamentals','')}</div></div>
+  <div class="card glow"><div class="kick acc">Christie · recommendation</div><div class="card-h" style="margin-top:4px">Focus on Algebra II mastery</div>
+   <p class="t">Strengthening this skill helps you succeed in Physics and Engineering.</p>${row('📅','Estimated completion','3 weeks','')}${row('🚀','Next skill unlock','Physics','')}
+   <button class="btn" onclick="toast('Focus plan started 🚀')">Start focus plan</button></div>`,
+ future:()=>`${title('Your future','Where this path leads.')}
+  <div class="card"><div class="card-h">Path to STEM success</div><div class="pathline" style="margin-top:10px">${pnode('You · Grade 8','now')}${pnode('STEM Pathway','done')}${pnode('Engineering Program','')}${pnode('Future Career','')}</div></div>
+  <div class="card"><div class="card-h">🧪 Explore careers</div><div class="tiles">${tile('⚙️','Engineer','Design & build')}${tile('🚀','Aerospace','Flight & space')}${tile('💻','Software','Code & systems')}${tile('🔬','Research','Discover')}</div></div>
+  <div class="card"><div class="card-h">One EdOS</div>${chkrow('One identity')}${chkrow('One data model')}${chkrow('One seamless experience')}<p class="t">Built for every student.</p></div>`,
+};
+S.teacher={
+ home:()=>`${greet('Welcome back,','Ms. Johnson')}
+  <div class="card"><div class="card-h">📅 Today's classes<span class="r">3 today</span></div>${row('🟢','Algebra I','8:00 AM',chip('Live','c-bad'))}${row('📐','Geometry','10:00 AM','')}${row('🧮','Algebra I','1:00 PM','')}</div>
+  <div class="card"><div class="card-h">This week</div><div class="grid3">${stat('92%','Attendance','ok')}${stat('85%','Mastery','acc')}${stat('12','At-risk','warn')}</div></div>
+  <div class="card glow"><div class="kick acc">Leo · lesson studio</div><div class="card-h" style="margin-top:4px">Plan a lesson in seconds</div><p class="t">Generate plans, quizzes, and differentiated activities.</p><button class="btn" onclick="setTab('copilot')">Open Planner ✨</button></div>
+  <div class="card"><div class="card-h">Recent activity</div>${row('📝','Algebra Quiz','Submitted by 18/24','2h')}${row('📄','Homework · Linear Eq.','Submitted by 20/24','5h')}</div>`,
+ analytics:()=>`${title('Class analytics','Edison · operational intelligence')}
+  <div class="card"><div class="grid2">${stat('85%','Class mastery','acc')}${statD('High','Engagement','+12%','up')}</div>${spark([70,72,75,73,80,84,85],'var(--accent)')}</div>
+  <div class="card"><div class="card-h">Mastery by topic</div><div class="bars" style="margin-top:13px">${lbar('Linear equations',92,'ok')}${lbar('Inequalities',78,'warn')}${lbar('Functions',84)}${lbar('Systems',72,'warn')}</div></div>
+  <div class="card"><div class="card-h">⚠️ At-risk students<span class="r">12</span></div>${prow('JT','Jake Thompson','42%','High risk','var(--bad)')}${prow('AC','Aaliyah Carter','48%','High risk','var(--bad)')}${prow('EL','Ethan Lewis','58%','Moderate','var(--warn)')}${prow('SM','Sofia Martinez','62%','Moderate','var(--warn)')}${prow('LA','Liam Anderson','65%','Monitor','var(--info)')}<button class="btn sec" onclick="toast('Opening intervention planner')">Plan interventions</button></div>`,
+ copilot:()=>`${title('Planner','Leo helps you build lessons.')}
+  <div class="card"><div class="orb">✨</div>${actrow('📋','Generate a lesson plan')}${actrow('✅','Create a quiz or assessment')}${actrow('🧩','Differentiated activities')}${actrow('💡','Explain a concept')}${actrow('📊','Rubric generator')}<div class="input"><input placeholder="Create a lesson on solving linear equations…"><button onclick="toast('Drafting with Leo…')">➤</button></div></div>`,
+ messages:()=>`${title('Messages','Students, parents, and classes.')}
+  <div class="seg"><button class="on" onclick="seg(this)">Students</button><button onclick="seg(this)">Parents</button><button onclick="seg(this)">Classes</button></div>
+  <div class="card">${prowMsg('SM','Sofia Martinez','Can you help me with the homework?','Yest','2')}${prowMsg('AC','Aaliyah Carter','Thanks for the extra help today!','Yest','')}${prowMsg('JC','James Carter (Parent)',"I'd like to schedule a conference.",'Mon','')}${prowMsg('EL','Ethan Lewis','What topics will we cover tomorrow?','Sun','')}</div>
+  <button class="btn" onclick="toast('New message')">New message</button>`,
+ impact:()=>`${title('Impact insights','This month')}
+  <div class="card"><div class="card-h">📈 Student growth<span class="r">vs last month</span></div><div class="greet" style="color:var(--ok);font-size:28px;margin-top:6px">${cnt(18,{pre:'+',suf:'%'})}</div>${spark([4,7,6,9,11,14,18],'var(--ok)')}</div>
+  <div class="grid2"><div class="card">${stat('+22%','Mastery improvement','ok')}</div><div class="card">${stat('+15%','Engagement','acc')}</div></div>
+  <div class="card glow"><div class="card-h">🏆 Great job!</div><p class="t">Your class is outperforming 85% of similar classes.</p></div>`,
+};
+S.guardian={
+ home:()=>`${greet('Good morning,','Maria')}
+  <div class="card"><div class="row" style="border:none;padding:4px 0">${avatar('EM','var(--accent)')}<div class="mid"><div class="nm">Emma Johnson</div><div class="sub">8th Grade · Lincoln Middle School</div></div></div></div>
+  <div class="card"><div class="card-h">Overall progress</div><div class="flexrow" style="margin-top:12px">${donut(87,'var(--accent)',cnt(87,{suf:'%'}),'on track')}<div><div class="chip c-ok">● On track</div><p class="t" style="margin-top:8px">Great job, Emma! 🎉</p></div></div></div>
+  <div class="card"><div class="card-h">Today's snapshot</div><div class="grid2">${stat('5','Classes today')}${stat('2','Assignments due','warn')}${statC('Present','Attendance','ok')}${stat('1','Alerts','warn')}</div></div>
+  <div class="card"><div class="card-h">Recent update</div>${row('🔬','Science quiz score','Yesterday',chip('92%','c-ok'))}</div>`,
+ progress:()=>`${title('Academic progress','This semester')}
+  <div class="card"><div class="card-h">Overall GPA<span class="r">above average</span></div><div class="greet" style="font-size:30px;color:var(--accent);margin-top:6px">${cnt(3.6,{dec:1})}</div>${spark([3.2,3.3,3.4,3.4,3.5,3.6],'var(--accent)')}</div>
+  <div class="card"><div class="card-h">Class performance</div>${gradeRow('Mathematics','A','93')}${gradeRow('Science','A-','90')}${gradeRow('English','B+','87')}${gradeRow('History','B','82')}${gradeRow('Spanish','A-','91')}<button class="btn sec" onclick="toast('Opening detailed report')">View detailed report</button></div>`,
+ attend:()=>`${title('Attendance & behavior','Real-time.')}
+  <div class="card"><div class="card-h">Attendance</div><div class="flexrow" style="margin-top:12px">${donut(96,'var(--ok)',cnt(96,{suf:'%'}),'present')}<div class="legend">${lg('var(--ok)','Present','48')}${lg('var(--bad)','Absent','2')}${lg('var(--warn)','Tardy','1')}</div></div></div>
+  <div class="card glow"><div class="card-h">🙂 Behavior</div><div class="chip c-ok" style="margin-top:8px">Excellent</div><p class="t">Emma is making positive choices.</p></div>
+  <div class="card"><div class="card-h">⭐ Highlights</div><p class="t">No behavioral concerns. Excellent participation in class!</p></div>`,
+ messages:()=>`${title('Messages','Teachers and school.')}
+  <div class="seg"><button class="on" onclick="seg(this)">All</button><button onclick="seg(this)">Teachers</button><button onclick="seg(this)">School</button></div>
+  <div class="card">${prowMsg('MT','Mrs. Thompson · Math','Emma did a great job on her quiz!','Today','2')}${prowMsg('MC','Mr. Carter · Science',"Don't forget the lab report due tomorrow.",'Yest','')}${prowMsg('📣','School announcement','Parent-teacher conferences next week.','2d','')}${prowMsg('MR','Ms. Rodriguez · Counselor','New study-skills resources available.','3d','')}</div>
+  <button class="btn" onclick="toast('New message')">New message</button>`,
+ resources:()=>`${title('Resources & support','Tools for families.')}
+  <div class="card"><div class="card-h">Tools for families</div><div class="tiles">${tile('📖','Study tips','Help them focus')}${tile('💗','Wellness','Healthy habits')}${tile('🎓','Tutoring','Practice & learn')}${tile('🏛','College prep','Plan ahead')}</div></div>
+  <div class="card"><div class="card-h">Recommended for Emma</div>${row('⭐','Time management guide','Stay organized','')}${row('📐','8th Grade math support','Practice & learn','')}${row('🧭','STEM career explorer','Discover future paths','')}</div>
+  <div class="card"><div class="card-h">📈 Growth this year</div><div class="greet" style="color:var(--ok);font-size:26px;margin-top:6px">${cnt(23,{pre:'+',suf:'%'})}</div><div class="bars" style="margin-top:12px">${lbar('Math',88,'ok')}${lbar('Reading',82)}${lbar('Science',86,'ok')}${lbar('Writing',79)}</div></div>`,
+};
+S.admin={
+ home:()=>`${greet('Good morning,','Dr. Anderson')}
+  <div class="card"><div class="card-h">Real-time snapshot</div><div class="grid2">${statD('24,532','Total students','+3.2%','up')}${stat('32','Schools')}${statD('1,842','Teachers','+2.1%','up')}${statD('94.6%','Attendance today','+1.8%','up')}</div></div>
+  <div class="card"><div class="card-h">⚠️ Alerts<span class="r">3</span></div>${row('🔴','High absenteeism','Lincoln High School','')}${row('📉','Budget threshold','Westview Elementary','')}${row('🟠','At-risk students','12 schools need attention','')}</div>`,
+ analytics:()=>`${title('Enrollment & performance','Edison · operational intelligence')}
+  <div class="card"><div class="card-h">Enrollment trend<span class="r">+3.2% YoY</span></div><div class="greet" style="font-size:26px;margin-top:6px">${cnt(24532,{comma:true})}</div>${spark([20,21,20.5,22,23,23.5,24,24.5],'var(--ok)')}</div>
+  <div class="card"><div class="card-h">Student demographics</div><div class="flexrow" style="margin-top:12px">${donutSeg([{v:45,c:'#37a9ff'},{v:28,c:'#a855f7'},{v:15,c:'#34d27a'},{v:7,c:'#ffc62b'},{v:5,c:'#ff7a18'}])}${legend([{k:'Hispanic',v:45,c:'#37a9ff'},{k:'White',v:28,c:'#a855f7'},{k:'Black',v:15,c:'#34d27a'},{k:'Asian',v:7,c:'#ffc62b'},{k:'Other',v:5,c:'#ff7a18'}])}</div></div>
+  <div class="card"><div class="card-h">Academic performance</div><div class="grid3">${statD('72%','ELA','+4%','up')}${statD('68%','Math','+5%','up')}${statD('71%','Science','+3%','up')}</div><div class="bars" style="margin-top:14px">${lbar('Northview High',78,'ok')}${lbar('Riverside Middle',71)}${lbar('Lincoln Elementary',66,'warn')}${lbar('Westview Elementary',64,'warn')}${lbar('Pinecrest Elementary',58,'bad')}</div></div>`,
+ finance:()=>`${title('Financial insights','FY 2024–25')}
+  <div class="card"><div class="card-h">Budget overview</div><div class="flexrow" style="margin-top:12px">${donutSeg([{v:62,c:'#37a9ff'},{v:18,c:'#a855f7'},{v:10,c:'#34d27a'},{v:6,c:'#ffc62b'},{v:4,c:'#ff7a18'}])}<div><div class="greet" style="font-size:22px">${cnt(152.4,{pre:'$',suf:'M',dec:1})}</div><div class="small muted">total budget</div></div></div>${legend([{k:'Salaries',v:62,c:'#37a9ff'},{k:'Benefits',v:18,c:'#a855f7'},{k:'Operations',v:10,c:'#34d27a'},{k:'Programs',v:6,c:'#ffc62b'},{k:'Other',v:4,c:'#ff7a18'}])}</div>
+  <div class="card"><div class="card-h">Spending vs budget<span class="r">YTD</span></div><div class="flexrow" style="justify-content:space-between;margin-top:6px"><div class="greet" style="font-size:24px">${cnt(96.7,{pre:'$',suf:'M',dec:1})}</div><div class="small muted">63.5% of budget</div></div>${bar(63.5)}</div>
+  <div class="card"><div class="card-h">Budget alerts</div>${row('🟠','Facilities maintenance','8% over budget','')}${row('🟢','Transportation','5% under budget','')}</div>`,
+ ops:()=>`${title('Schools & operations','Operational health.')}
+  <div class="card"><div class="card-h">Operational health</div><div class="flexrow" style="margin-top:12px">${donut(87,'var(--ok)',cnt(87),'good')}<div class="legend">${lg('var(--ok)','Excellent','18')}${lg('var(--info)','Good','10')}${lg('var(--warn)','Needs attention','3')}${lg('var(--bad)','Critical','1')}</div></div></div>
+  <div class="card"><div class="card-h">Attendance<span class="r">today</span></div><div class="flexrow" style="justify-content:space-between;margin-top:4px"><div class="greet" style="font-size:24px">${cnt(94.6,{suf:'%',dec:1})}</div><div class="chip c-ok">▲ +1.8%</div></div>${spark([90,91,92,91,93,94,94.6],'var(--ok)')}</div>
+  <div class="card"><div class="card-h">Incidents reported<span class="r">this week</span></div><div class="flexrow" style="justify-content:space-between"><div class="greet" style="font-size:24px">${cnt(24)}</div><div class="chip c-ok">▼ 12%</div></div></div>`,
+ compliance:()=>`${title('Reports & compliance','Status across the district.')}
+  <div class="card"><div class="card-h">Compliance status</div>${compRow('State reporting','ok','On track')}${compRow('Federal compliance','ok','On track')}${compRow('Special education','ok','On track')}${compRow('ESSA requirements','ok','On track')}${compRow('Safety & security','warn','Attention')}</div>
+  <div class="card glow"><div class="kick acc">EDAL · audit ledger</div><div class="card-h" style="margin-top:4px">🔐 Aggregates only</div><p class="t">Student records stay at the school tier. District dashboards show counts and distributions — never per-student rows. Cohorts under five are suppressed, and every release is signed on the EDAL ledger.</p></div>
+  <div class="card"><div class="card-h">Generate report</div>${row('📄','Enrollment report','','›')}${row('📄','Academic report','','›')}${row('📄','Financial report','','›')}${row('📄','Attendance report','','›')}<button class="btn" onclick="toast('Building custom report…')">Custom report</button></div>`,
+};
+S.officer={
+ home:()=>`${greet('Good morning,','Officer Davis')}
+  <div class="card glow"><div class="card-h">Overall safety status</div><div class="flexrow" style="margin-top:8px"><div class="chip c-ok" style="font-size:13px;padding:6px 12px"><span class="live"><span class="d"></span></span> Good</div><span class="small muted">All clear across campuses</span></div></div>
+  <div class="card"><div class="card-h">Today's snapshot</div><div class="grid3">${stat('4','Incidents','warn')}${stat('2','Flagged')}${stat('7','Active alerts','bad')}</div></div>
+  <div class="card"><div class="card-h">My schools</div>${row('🏫','Lincoln Middle School','',chip('All clear','c-ok'))}${row('🏫','Roosevelt High School','',chip('1 active alert','c-bad'))}</div>
+  <div class="card"><div class="card-h">Quick actions</div><div class="quick"><button onclick="toast('New report')"><span class="qi">📝</span>New report</button><button onclick="toast('Scanning ID / QR')"><span class="qi">📷</span>Scan ID</button><button onclick="toast('Starting walkthrough')"><span class="qi">🚶</span>Walkthrough</button></div><button class="btn danger" onclick="confirmLockdown()">🔒 Initiate lockdown</button></div>`,
+ incidents:()=>`${title('Incidents','Manage reported incidents.')}
+  <div class="seg"><button class="on" onclick="seg(this)">Active</button><button onclick="seg(this)">Recent</button><button onclick="seg(this)">All</button></div>
+  <div class="card">${incRow('🥊','Physical altercation','Roosevelt High · 10:32 AM','High','c-bad')}${incRow('💬','Bullying report','Lincoln Middle · 9:15 AM','Medium','c-warn')}${incRow('🎨','Vandalism','Roosevelt High · Yesterday','Medium','c-warn')}${incRow('⚠️','Harassment','Lincoln Middle · Yesterday','Low','c-info')}</div>
+  <button class="btn" onclick="setTab('report')">+ New incident report</button>`,
+ report:()=>`${title('New report','Document an incident.')}
+  <div class="card">${field('Incident type','Bullying ▾')}${field('Location','Lincoln Middle School ▾')}${field('Date & time','May 8, 2025 · 10:35 AM')}<div class="kick" style="margin-top:14px">Involved students</div>${prow('JS','Jordan Smith','','8th Grade','var(--accent)')}<button class="btn sec" onclick="toast('Add student')">+ Add student</button><div class="kick" style="margin-top:14px">Description</div><div class="input" style="margin-top:8px"><input placeholder="Student reported ongoing bullying…"></div><button class="btn" onclick="toast('Report submitted ✓ · logged to EDAL')">Submit report</button></div>`,
+ alerts:()=>`${title('Alerts','Prioritized and live.')}
+  ${banner('🚨','Fight reported','Roosevelt High · 11:02 AM · multiple students near the gym','High','b-high','c-bad')}${banner('⚠️','Student in distress','Lincoln Middle · 10:48 AM · counselor requested follow-up','Medium','b-med','c-warn')}${banner('👁','Suspicious activity','Roosevelt High · 9:40 AM','Low','b-low','c-info')}`,
+ resources:()=>`${title('Resources','Tools, guides, and support.')}
+  <div class="card"><div class="tiles">${tile('🛡','Safety protocols','School guidelines')}${tile('✉️','Templates','Letters & messages')}${tile('🤝','Community partners','Local services')}${tile('💗','Crisis support','Mental health')}</div></div>
+  <div class="card"><div class="card-h">Emergency contacts</div>${row('🏢','Campus security','(555) 123-4567','📞')}${row('☎️','Crisis hotline','988','📞')}</div>
+  <div class="card"><div class="card-h">📉 Incident trends<span class="r">vs last month</span></div><div class="chip c-ok" style="margin-top:6px">▼ 18%</div>${spark([9,8,7,8,6,5,5],'var(--ok)')}<div class="card-h" style="margin-top:16px">Top incident types</div><div class="flexrow" style="margin-top:12px">${donutSeg([{v:38,c:'#6d5dfc'},{v:27,c:'#37a9ff'},{v:18,c:'#34d27a'},{v:10,c:'#ffc62b'},{v:7,c:'#ff7a18'}])}${legend([{k:'Bullying',v:38,c:'#6d5dfc'},{k:'Altercation',v:27,c:'#37a9ff'},{k:'Harassment',v:18,c:'#34d27a'},{k:'Vandalism',v:10,c:'#ffc62b'},{k:'Other',v:7,c:'#ff7a18'}])}</div></div>`,
+};
+S.driver={
+ home:()=>`${greet('Good morning,','Alex')}<div class="greet-sub">Thursday · Route 15</div>
+  <div class="card glow"><div class="kick acc">Today's route</div><div class="card-h" style="margin-top:4px">🚌 Route 15</div><p class="t">Lincoln Elementary → Roosevelt Middle</p><div class="grid3">${stat('32','Students')}${stat('18','Stops')}${stat('6:45','Start','acc')}</div><div class="chip c-ok" style="margin-top:12px"><span class="live"><span class="d"></span></span> On time</div></div>
+  <div class="card"><div class="card-h">Next stop</div>${row('📍','Maple St & 5th Ave','9:55 AM ETA','')}<button class="btn" onclick="toast('Opening navigation…')">▸ Navigate</button></div>`,
+ route:()=>`${title('Route & stops','Route 15 · 1h 20m est.')}
+  <div class="card">${stopRow('1','Oak St & 1st Ave','9:12 AM','3','Picked up','c-ok')}${stopRow('2','Pine St & 3rd Ave','9:20 AM','5','Picked up','c-ok')}${stopRow('3','Maple St & 5th Ave','9:55 AM','7','Next','c-acc')}${stopRow('4','Cedar St & 7th Ave','10:05 AM','6','','c-dim')}${stopRow('5','Lincoln Elementary','10:18 AM','9','Drop off','c-info')}${stopRow('6','Roosevelt Middle','10:35 AM','2','Drop off','c-info')}</div>`,
+ scan:()=>`${title('Student check-in','Scan students on and off.')}
+  <div class="card glow"><div class="chip c-ok" style="margin-top:2px"><span class="live"><span class="d"></span></span> Scanning on</div><div style="text-align:center;margin-top:14px">${avatar('EM','var(--accent)')}</div><div style="text-align:center;margin-top:10px"><div class="scr-title">Ethan Miller</div><div class="small muted">Grade 5 · Lincoln Elementary</div><div class="chip c-ok" style="margin-top:10px">✓ On board · 9:22 AM</div></div></div>
+  <div class="card"><div class="card-h">Today summary</div><div class="grid2">${stat('14','On board','ok')}${stat('8','Checked off','acc')}</div></div>`,
+ alerts:()=>`${title('Alerts & messages','Stay informed.')}
+  ${banner('🚦','Traffic delay','Main St · heavy traffic, expect 10 min delay','High','b-high','c-bad')}${banner('🧍','Student not picked up','Maple St & 5th · Liam Johnson · parent notified','Medium','b-med','c-warn')}${banner('🔄','Route update','Stop added to route — check updated schedule','Info','b-low','c-info')}
+  <div class="card"><div class="card-h">Messages</div>${prowMsg('DC','Dispatch Center','Proceed with caution on 5th Ave.','9:20','1')}${prowMsg('🏫','Lincoln Elementary','Field trip Friday — return by 2:45.','Yest','')}${prowMsg('SM','Parent · Sarah Miller','Will Ethan be riding today?','Yest','')}</div>`,
+ safety:()=>`${title('Safety & performance','Report and track.')}
+  <div class="card"><div class="card-h">Report an incident</div>${row('🔺','Safety concern','Report a safety issue','›')}${row('🧑','Behavior incident','Report student behavior','›')}${row('🚑','Accident / injury','Report accident or injury','›')}${row('🔧','Mechanical issue','Report bus issue','›')}<button class="btn" onclick="toast('Calling dispatch…')">📞 Call dispatch</button></div>
+  <div class="card"><div class="card-h">My performance<span class="r">this week</span></div><div class="flexrow" style="margin-top:10px">${donut(96,'var(--ok)',cnt(96,{suf:'%'}),'on-time')}<div class="grid3" style="margin:0;flex:1">${stat('12','Routes')}${stat('98%','Check-ins','ok')}${stat('0','Incidents','ok')}</div></div><div class="card-h" style="margin-top:16px">🏅 Achievements</div>${row('⭐','Perfect week','No late arrivals','')}</div>`,
+};
+
+/* component builders */
+function greet(line,name){return `<div class="greet">${line} <span class="a">${name}</span></div><div class="greet-sub">${P[CUR].sub}</div>`;}
+function title(t,s){return `<div class="scr-title">${t}</div><div class="scr-sub">${s||''}</div>`;}
+function stat(n,l,cls){return `<div class="stat"><div class="n ${cls||''}">${auto(n)}</div><div class="l">${l}</div></div>`;}
+function statD(n,l,d,dir){return `<div class="stat"><div class="n">${auto(n)}</div><div class="l">${l}</div><div class="d ${dir}">${dir==='up'?'▲':'▼'} ${d}</div></div>`;}
+function statC(n,l,cls){return `<div class="stat"><div class="n ${cls}" style="font-size:16px">${n}</div><div class="l">${l}</div></div>`;}
+function chip(t,c){return `<span class="chip ${c}">${t}</span>`;}
+function row(ico,nm,sub,rt){return `<div class="row"><div class="ico" style="color:var(--accent)">${ico}</div><div class="mid"><div class="nm">${nm}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>${rt?`<div class="rt">${rt}</div>`:''}</div>`;}
+function prow(ini,nm,score,sub,col){return `<div class="row">${avatar(ini,col)}<div class="mid"><div class="nm">${nm}</div><div class="sub" style="color:${col}">${sub}</div></div>${score?`<div class="rt" style="color:${col}">${score}</div>`:''}</div>`;}
+function prowMsg(ini,nm,msg,time,badge){const a=ini.length>2?`<div class="ico" style="color:var(--accent)">${ini}</div>`:avatar(ini,'var(--accent)');return `<div class="row">${a}<div class="mid"><div class="nm">${nm}</div><div class="sub">${msg}</div></div><div class="rt">${time}${badge?`<br><span class="chip c-acc" style="padding:1px 6px">${badge}</span>`:''}</div></div>`;}
+function actrow(ico,t){return `<div class="row" onclick="toast('${t}…')" style="cursor:pointer"><div class="ico" style="color:var(--accent)">${ico}</div><div class="mid"><div class="nm">${t}</div></div><div class="rt">›</div></div>`;}
+function tile(ic,nm,sub){return `<div class="tile" onclick="toast('${nm}')"><div class="ti">${ic}</div><div class="tn">${nm}</div><div class="ts">${sub}</div></div>`;}
+function pnode(label,state){return `<div class="node ${state}"><div class="dot">${state==='done'?'✓':''}</div><div class="nl">${label}</div></div>`;}
+function chkrow(t){return `<div class="row"><div class="ico" style="color:var(--ok)">✓</div><div class="mid"><div class="nm">${t}</div></div></div>`;}
+function gradeRow(sub,grade,pct){return `<div style="padding:11px 0;border-top:1px solid var(--line-2)"><div class="lb"><span>${sub}</span><span><b style="color:var(--accent)">${grade}</b> &nbsp;<b>${pct}%</b></span></div>${bar(+pct)}</div>`;}
+function compRow(t,cls,label){const c=cls==='ok'?'c-ok':'c-warn';return `<div class="row"><div class="ico ${c}">${cls==='ok'?'✓':'!'}</div><div class="mid"><div class="nm">${t}</div></div><span class="chip ${c}">${label}</span></div>`;}
+function incRow(ic,nm,sub,sev,c){return `<div class="row"><div class="ico ${c}">${ic}</div><div class="mid"><div class="nm">${nm}</div><div class="sub">${sub}</div></div><span class="chip ${c}">${sev}</span></div>`;}
+function stopRow(n,nm,time,cnt,label,c){return `<div class="row"><div class="ico ${c==='c-acc'?'c-acc':'c-dim'}" style="font-family:var(--mono);font-size:13px">${n}</div><div class="mid"><div class="nm">${nm}</div><div class="sub">${time} · ${cnt} students</div></div>${label?`<span class="chip ${c}">${label}</span>`:''}</div>`;}
+function banner(ic,t,s,m,cls,mc){return `<div class="banner ${cls}"><div class="bi">${ic}</div><div><div class="bt">${t}</div><div class="bs">${s}</div></div><div class="bm"><span class="chip ${mc}">${m}</span></div></div>`;}
+function field(label,val){return `<div style="margin-top:12px"><div class="kick">${label}</div><div class="row" style="border:none;padding:8px 0 0"><div class="mid"><div class="nm" style="font-weight:500">${val}</div></div></div></div>`;}
+function lg(c,k,v){return `<div class="lg"><span class="sw" style="background:${c}"></span>${k}<span class="lv">${v}</span></div>`;}
+
+/* state + render */
+let CUR='student', TAB='home';
+function setAccent(){const a=P[CUR].accent;document.documentElement.style.setProperty('--accent',a);document.documentElement.style.setProperty('--accent-soft',hexA(a,.16));}
+function hexA(hex,al){const n=parseInt(hex.slice(1),16);return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${al})`;}
+function buildSwitcher(){document.getElementById('switcher').innerHTML=Object.keys(P).map(k=>`<button class="per ${k===CUR?'on':''}" data-p="${k}"><span class="pi">${P[k].icon}</span>${P[k].name}</button>`).join('');}
+function buildNav(){document.getElementById('nav').innerHTML=P[CUR].nav.map(([id,ic,lab])=>`<button data-t="${id}" class="${id===TAB?'on':''}"><span class="ni">${ic}</span>${lab}</button>`).join('');}
+function render(){const v=document.getElementById('view');v.classList.remove('in');void v.offsetWidth;v.innerHTML=S[CUR][TAB]();v.classList.add('in');animateView();window.scrollTo({top:0,behavior:RM?'auto':'smooth'});}
+function setPersona(p){CUR=p;TAB=P[p].nav[0][0];store.set('edos_persona',p);setAccent();buildSwitcher();buildNav();render();}
+function setTab(t){TAB=t;document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));render();}
+document.getElementById('switcher').addEventListener('click',e=>{const b=e.target.closest('.per');if(b)setPersona(b.dataset.p);});
+document.getElementById('nav').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setTab(b.dataset.t);});
+
+/* about sheet */
+function openAbout(){document.getElementById('aboutPanel').innerHTML=`<div class="grab"></div>
+  <div class="lg" style="text-align:center"><div class="wm" style="justify-content:center;font-size:30px">Ed<span class="o" style="width:26px;height:26px">${ORBIT}</span><small>S</small></div><div class="tl" style="margin-top:4px">The operating system for education</div></div>
+  <div class="card" style="opacity:1;transform:none;animation:none;margin-top:16px"><div class="card-h">🤖 AI layer</div>${row('🎓','Christie','Personalized learning · student tutor','')}${row('⚙️','Edison','Operational intelligence · insights','')}${row('🎨','Leo','Creative intelligence · lessons & content','')}</div>
+  <div class="card" style="opacity:1;transform:none;animation:none"><div class="card-h">🛰 Platform</div>${row('🔌','Genesis event bus','Every action flows as an event','')}${row('🔐','EDAL ledger','Immutable, signed audit trail','')}${row('♻️','DECN continuity','Automatic failover, &lt; 30s','')}${row('🏫','Data residency','Student PII stays at the school tier','')}</div>
+  <div class="card" style="opacity:1;transform:none;animation:none"><div class="card-h">💠 Revenue model</div><div class="flexrow">${donut(97,'var(--ok)',cnt(97,{suf:'%'}),'to programs')}<p class="t" style="margin-top:0">A flat <b>3%</b> network fee funds the platform; <b>97%</b> of net revenue returns to schools, districts, and student programs.</p></div></div>
+  <button class="btn" onclick="closeAbout()">Close</button>`;
+  const sh=document.getElementById('sheet');sh.classList.add('open');
+  sh.querySelectorAll('.dc-fg').forEach(c=>requestAnimationFrame(()=>c.style.strokeDashoffset=c.dataset.off));
+  sh.querySelectorAll('.cu').forEach(countUp);}
+function closeAbout(){document.getElementById('sheet').classList.remove('open');}
+
+/* misc */
+let toastT;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2000);}
+function seg(b){b.parentNode.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');toast(b.textContent);}
+function confirmLockdown(){if(confirm('Initiate campus-wide lockdown? This alerts all devices and notifies first responders.'))toast('🔒 Lockdown initiated — campus secured');}
+
+/* splash + init */
+function buildSplash(){const el=document.getElementById('pick');el.innerHTML=Object.keys(P).map(k=>`<button data-p="${k}"><span class="pic">${P[k].icon}</span><span class="pn">${P[k].name}</span><span class="pd">${P[k].tag}</span></button>`).join('');
+  el.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;setPersona(b.dataset.p);store.set('edos_onboarded','1');document.getElementById('splash').classList.add('hide');});}
+function init(){buildSplash();const saved=store.get('edos_persona');if(saved&&P[saved])CUR=saved;TAB=P[CUR].nav[0][0];setAccent();buildSwitcher();buildNav();render();if(store.get('edos_onboarded')==='1')document.getElementById('splash').classList.add('hide');}
+init();
+</script>
+</body>
+</html>

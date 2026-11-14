@@ -1,0 +1,24 @@
+[Unit]
+Description=EduOS Health & Telemetry Service
+Documentation=https://eduos.local/docs/health
+After=network-online.target bootstrap.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/eduos-health.sh
+Restart=always
+RestartSec=30
+
+User=root
+Group=root
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/eduos/health /var/log/eduos
+
+SupplementaryGroups=systemd-journal
+
+[Install]
+WantedBy=multi-user.target
