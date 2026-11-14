@@ -238,3 +238,24 @@ REVOKE DELETE, TRUNCATE ON school_staff_checklists, school_staff_checklist_items
 -- 36.9.0 district staff management.
 GRANT SELECT, INSERT, UPDATE ON staff_absence_requests, staff_shift_assignments, substitute_coverage_requests TO eduos_app;
 REVOKE DELETE, TRUNCATE ON staff_absence_requests, staff_shift_assignments, substitute_coverage_requests FROM eduos_app;
+
+-- Audit 37.4.0 item 3: row-level-security policy helpers.
+-- Every function referenced by an RLS policy, plus the SECURITY INVOKER
+-- functions those helpers call, is granted to the runtime role explicitly
+-- instead of relying on PostgreSQL's default PUBLIC EXECUTE. This is additive:
+-- PUBLIC EXECUTE is NOT revoked here (see AUDIT-37.4.0-ADDENDUM-2.md).
+-- test/integration/postgres.test.js (H2b) fails if a policy helper lacks an
+-- explicit grant.
+GRANT EXECUTE ON FUNCTION
+  eduos_can_manage_assignment(uuid), eduos_can_manage_course(uuid), eduos_can_see_assignment(uuid),
+  eduos_can_see_attempt(uuid), eduos_can_see_christie_session(uuid), eduos_can_see_course(uuid),
+  eduos_can_see_learning(uuid, uuid), eduos_can_see_lesson(uuid), eduos_child_rides_route(uuid),
+  eduos_ctx_district(), eduos_ctx_role(), eduos_ctx_school(), eduos_ctx_user(), eduos_drives_route(uuid),
+  eduos_drives_run(uuid), eduos_edal_verifier(), eduos_in_class(uuid), eduos_is_district_role(),
+  eduos_is_linked_student(uuid), eduos_is_moderator(uuid), eduos_is_school_lead(uuid), eduos_is_staff(),
+  eduos_is_table_owner(), eduos_is_thread_participant(uuid), eduos_learning_staff(uuid, uuid),
+  eduos_my_open_attempt(uuid), eduos_on_my_roster(uuid), eduos_owner_session(),
+  eduos_parent_has_child_at(uuid), eduos_safety_lead(uuid), eduos_safety_live(uuid), eduos_safety_staff(uuid),
+  eduos_staff_can_see_student(uuid, uuid), eduos_teaches_student(uuid), eduos_transport_manager(uuid),
+  eduos_transport_staff(uuid)
+  TO eduos_app;

@@ -90,6 +90,24 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
     assert.equal((await sql("SELECT has_table_privilege($1,'audit_events','DELETE') AS ok", [db.names.app])).rows[0].ok, false);
   });
 
+  it("H2b: every RLS policy helper is explicitly executable by the runtime role (not only via PUBLIC)", async () => {
+    // Audit 37.4.0 item 3. A function referenced by a policy must carry an explicit
+    // EXECUTE grant to the runtime role, so revoking PUBLIC EXECUTE later can't
+    // silently break row-level security.
+    const r = await sql(`SELECT DISTINCT p.oid::regprocedure::text AS fn
+      FROM pg_depend d
+      JOIN pg_policy pol ON d.classid = 'pg_policy'::regclass AND d.objid = pol.oid
+      JOIN pg_proc p ON d.refclassid = 'pg_proc'::regclass AND d.refobjid = p.oid
+      JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+      WHERE NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+        WHERE a.grantee = $1::regrole AND a.privilege_type = 'EXECUTE')
+      ORDER BY 1`, [db.names.app]);
+    assert.deepEqual(r.rows.map(x => x.fn), []);
+    const helpers = (await sql(`SELECT count(DISTINCT d.refobjid)::int AS n FROM pg_depend d
+      WHERE d.classid = 'pg_policy'::regclass AND d.refclassid = 'pg_proc'::regclass`)).rows[0].n;
+    assert.ok(helpers >= 37, `expected the 37.4.0 policy helpers to be found, got ${helpers}`);
+  });
+
   // ---- Finding 3: SIS import school scope ----
   it("H3: a school-scoped schools:update grant cannot import into another school", async () => {
     const expiresAt = new Date(Date.now() + 86400_000).toISOString();
