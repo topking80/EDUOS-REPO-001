@@ -12,6 +12,7 @@ import { parseArgs, loadCheckpoint, verifyExport } from "../src/edal-verify.js";
 import { localProvider } from "../src/christie/providers.js";
 import { canPerform } from "../src/policy.js";
 import { PRIMARY_SOURCES, STANDARDS, COURSE_WORK, LESSONS } from "../dev/demo-fixture.js";
+import { RELEASE_RE } from "./helpers/release.js";
 
 const read = p => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 const can = (role, res, act) => canPerform({ role, districtId: "d", userId: "u" }, res, act);
@@ -207,5 +208,5 @@ test("phone UI: learning screens exist, read-aloud uses on-device voices only, n
   for (const v of ["courses", "course", "lesson", "quiz", "attempt", "progress", "gradebook", "edal", "mastery"]) assert.match(app, new RegExp(`VIEWS\\.${v}\\s*=|${v}: *(async )?\\(`), v);
   assert.match(app, /speechSynthesis/); assert.match(app, /localService/);
   assert.doesNotMatch(app, /\bprompt\(|\bconfirm\(|getUserMedia|geolocation/);
-  assert.match(read("public/app/sw.js"), /eduos-app-shell-34\.7\.0/);
+  assert.match(read("public/app/sw.js"), new RegExp(`eduos-app-shell-${RELEASE_RE}"`));
 });
