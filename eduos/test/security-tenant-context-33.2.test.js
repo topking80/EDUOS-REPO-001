@@ -1,6 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pool, withTenantTransaction, assertSafeRuntimeRole } from "../src/db.js";
+// src/config.js requires these at import time. Use inert local defaults (as the
+// session tests do) so this unit test runs without a deployment environment;
+// db.js is imported afterwards so the defaults are in place first. Nothing here
+// opens a database connection: every query goes through fakeClient().
+process.env.DATABASE_URL ||= "postgresql://u@127.0.0.1:1/db";
+process.env.PUBLIC_ORIGIN ||= "http://localhost:8080";
+process.env.OIDC_ISSUER ||= "http://localhost/oidc";
+process.env.OIDC_CLIENT_ID ||= "eduos-test-client";
+process.env.OIDC_CLIENT_SECRET ||= "test-secret";
+process.env.OIDC_REDIRECT_URI ||= "http://localhost:8080/auth/callback";
+const { pool, withTenantTransaction, assertSafeRuntimeRole } = await import("../src/db.js");
 
 function fakeClient({ failCallback = false } = {}) {
   const calls = [];
