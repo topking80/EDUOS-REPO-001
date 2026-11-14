@@ -134,6 +134,8 @@ GRANT EXECUTE ON FUNCTION eduos_school_today(uuid), eduos_safety_find_student(uu
   eduos_safety_student_at_school(uuid,uuid), eduos_safety_recipients(uuid,text), eduos_pickup_ensure_guardian(uuid),
   eduos_pickup_today(), eduos_pickup_early_today(), eduos_school_leads(), eduos_pickup_guardians(uuid) TO eduos_app;
 REVOKE ALL ON FUNCTION eduos_purge_student_324(uuid), eduos_retention_purge_role_apps(jsonb) FROM eduos_app;
+-- 035 (audit 37.4.0 item 6): replay-receipt purge is owner-only, like the other retention functions.
+REVOKE ALL ON FUNCTION eduos_retention_purge_offline_replays(int) FROM eduos_app;
 -- 32.6.0 learning core and EDAL. Evidence, final grades and the ledger are
 -- insert-only; EDAL heads are reachable only through definer functions.
 GRANT SELECT, INSERT ON learning_standards, courses, course_enrollments, course_units, lessons, lesson_standards, primary_sources, lesson_sources,

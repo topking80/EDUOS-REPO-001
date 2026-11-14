@@ -201,6 +201,38 @@ describe("EduOS 32.4.0 role apps against real PostgreSQL", { skip }, () => {
     assert.equal(corrected.status, 201); assert.notEqual(corrected.body.data.duplicate, true);
   });
 
+  it("offline replay receipts past the replay window are purged by retention, per district (audit 37.4.0 item 6)", async () => {
+    const receipts = async key => (await admin.query("SELECT user_id FROM offline_replays WHERE idem_key=$1", [key])).rows;
+    // Receipts past the window are purged per district; recent ones are kept.
+    await admin.query(`INSERT INTO offline_replays(district_id,user_id,idem_key,route,created_at) VALUES
+      ($1,$2,'retention-old-000000000001','checkin',now()-interval '8 days'),
+      ($1,$2,'retention-new-000000000001','checkin',now()-interval '30 hours'),
+      ($3,$4,'retention-old-000000000002','checkin',now()-interval '8 days')`, [ID.d1, DRIVER, ID.d2, USERS.supt2[0]]);
+    const owner = new pg.Client(db.ownerUrl); await owner.connect();
+    try {
+      await owner.query("BEGIN");
+      await owner.query("SELECT set_config('app.district_id',$1,true)", [ID.d1]);
+      await assert.rejects(owner.query("SELECT eduos_retention_purge_offline_replays(1)"), /at least 2 days/);
+      await owner.query("ROLLBACK");
+      await owner.query("BEGIN");
+      await owner.query("SELECT set_config('app.district_id',$1,true)", [ID.d1]);
+      const purged = (await owner.query("SELECT eduos_retention_purge_offline_replays(7) AS c")).rows[0].c;
+      await owner.query("COMMIT");
+      assert.equal(purged.offline_replays, 1);
+    } finally { await owner.end(); }
+    const left = (await admin.query("SELECT idem_key FROM offline_replays WHERE idem_key LIKE 'retention-%' ORDER BY 1")).rows.map(r => r.idem_key);
+    assert.deepEqual(left, ["retention-new-000000000001", "retention-old-000000000002"], "only district 1's expired receipt is gone");
+    assert.equal((await receipts("replay-key-0000000000000001")).length, 1, "today's receipt still protects its replay");
+    await assert.rejects(asRole("principal", USERS.p1[0], ID.s1, "SELECT eduos_retention_purge_offline_replays(7)"), /permission denied/);
+
+    // The nightly job covers every district.
+    const job = await run(["src/retention.js"], { ...baseEnv({ EDUOS_APP_ROLE: db.names.app }), DATABASE_URL: db.ownerUrl });
+    assert.equal(job.code, 0, job.out);
+    const summary = JSON.parse(job.out.trim().split("\n").pop());
+    assert.equal(summary.districts[ID.d2].offline_replays, 1);
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM offline_replays WHERE idem_key LIKE 'retention-old-%'")).rows[0].n, 0);
+  });
+
   let skillId;
   it("christie: only approved content is tutored and the answer never reaches the pupil", async () => {
     const draft = await as("t1")("POST", "/api/christie/skills", { subject: "Math", gradeLevel: "3", code: "G3.MUL", title: "Times tables", explanation: "Multiplication is repeated addition: 3 × 4 means 4 + 4 + 4.",

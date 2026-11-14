@@ -13,6 +13,12 @@ const days = (env, name, fallback) => {
   return value;
 };
 
+function replayDays(env) {
+  const value = days(env, "RETENTION_OFFLINE_REPLAY_DAYS", 7);
+  if (value < 2) throw new Error("RETENTION_OFFLINE_REPLAY_DAYS must be at least 2 (offline writes can be replayed for 24 hours)");
+  return value;
+}
+
 export function retentionSettings(env = process.env) {
   return {
     auditDays: days(env, "RETENTION_AUDIT_DAYS", 2555),               // ~7 years
@@ -20,6 +26,9 @@ export function retentionSettings(env = process.env) {
     flowEventDays: days(env, "RETENTION_FLOW_EVENT_DAYS", 90),
     webhookDeliveryDays: days(env, "RETENTION_WEBHOOK_DELIVERY_DAYS", 90),
     sessionDays: days(env, "RETENTION_SESSION_DAYS", 30),             // expired/revoked sessions
+    // 37.4.0 audit item 6: offline replay receipts (Idempotency-Key). The replay
+    // window is 24 hours, so at least 2 days are kept; see db/035.
+    offlineReplayDays: replayDays(env),
     // 32.5.0: role-app records (32.4.0 / 32.5.0 tables).
     roleApps: {
       notificationDays: days(env, "RETENTION_NOTIFICATION_DAYS", 180),  // read in-app + external outbox rows (unread: twice this)
@@ -43,8 +52,10 @@ export async function runRetention(settings = retentionSettings()) {
       const r = await client.query("SELECT eduos_retention_purge($1,$2,$3,$4) AS counts",
         [settings.auditDays, settings.closedCaseDays, settings.flowEventDays, settings.webhookDeliveryDays]);
       const ra = await client.query("SELECT eduos_retention_purge_role_apps($1::jsonb) AS counts", [JSON.stringify(settings.roleApps || retentionSettings({}).roleApps)]);
+      const or = await client.query("SELECT eduos_retention_purge_offline_replays($1) AS counts",
+        [settings.offlineReplayDays ?? retentionSettings({}).offlineReplayDays]);
       await client.query("COMMIT");
-      summary.districts[id] = { ...r.rows[0].counts, ...ra.rows[0].counts };
+      summary.districts[id] = { ...r.rows[0].counts, ...ra.rows[0].counts, ...or.rows[0].counts };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;
