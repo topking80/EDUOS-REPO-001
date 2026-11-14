@@ -9,8 +9,8 @@
 
 | Suite | Tests | Pass | Fail | Skipped |
 |---|---|---|---|---|
-| Unit (`node --test`, no environment) | 582 | 581 | 0 | 1 |
-| Integration (`npm run test:integration`, real PostgreSQL) | 94 | 94 | 0 | 0 |
+| Unit (`node --test`, no environment) | 585 | 584 | 0 | 1 |
+| Integration (`npm run test:integration`, real PostgreSQL) | 95 | 95 | 0 | 0 |
 | Integration with `REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC` added (not committed) | 93 | 93 | 0 | 0 |
 
 - **1 skip:** needs the `butane` tool, which isn't installed in this environment.
@@ -31,8 +31,8 @@ Before this addendum, the integration suite had never been run in full against t
 - **Fix:** only the current lease holder updates subscription state. The ledger still records the attempt.
 
 ### Observations (not changed)
-- `webhook_deliveries` has no unique key on `(delivery_id, attempt)`, so its `ON CONFLICT DO NOTHING` never fires. A stale worker's attempt is logged with the same attempt number as the reclaiming worker's. That's truthful, but readers should expect duplicate attempt numbers.
-- Every DNS lookup error, including a non-existent domain, is treated as transient and retried. The attempt limit and auto-disable keep this bounded.
+- `webhook_deliveries` had no unique key on `(delivery_id, attempt)`, so its `ON CONFLICT DO NOTHING` never fired and a stale worker could log a duplicate attempt. **Fixed:** migration 036 adds the unique index. On a database that already holds duplicates, it applies only to rows from the migration on.
+- Every DNS lookup error, including a non-existent domain, was retried for the full 5 attempts. **Fixed:** NXDOMAIN (`dns_not_found`) gets one retry and is then dead-lettered; outages keep the full budget.
 - The outbox was only processed on authenticated activity in the district, so a district with no traffic didn't drain its queue. **Fixed:** `src/webhook-dispatch.js` (`npm run webhooks:dispatch`, compose `--profile ops run --rm webhooks`) drains every district. Schedule it every minute.
 - 37.3.1 → 37.4.0 comparison: the only code change is in `src/webhooks.js` (DNS retry classification), plus one new test and version bumps. It matches `CODE-IMPROVEMENTS-37.4.0.md`. The 37.3.1 archive SHA-256 is `be13328314b75c7fc27c25e33208fdddaea570ee6976f3f244ea76a8e25cc648`.
 
@@ -53,7 +53,8 @@ Before this addendum, the integration suite had never been run in full against t
 
 - `034_transport_checkin_integrity.sql`
 - `035_offline_replay_retention.sql`
+- `036_webhook_delivery_attempt_unique.sql`
 
-Both are additive and listed in `src/migrate.js`. Deployments must run `npm run db:migrate` (compose: the `migrate` service) before starting the new API. The API already refuses to start with unapplied migrations.
+All three are additive and listed in `src/migrate.js`. Deployments must run `npm run db:migrate` (compose: the `migrate` service) before starting the new API. The API already refuses to start with unapplied migrations.
 
 **Disposition:** Continue validation. Not production approval.
