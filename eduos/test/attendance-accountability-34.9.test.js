@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { assertReleaseMetadataAligned } from './helpers/release.js';
 
 const ui = await readFile(new URL('../public/api-bridge.js', import.meta.url), 'utf8');
 const routes = await readFile(new URL('../src/arrival-routes.js', import.meta.url), 'utf8');
@@ -19,5 +20,5 @@ test('34.9 command center groups AM rider accountability by school', () => {
 });
 
 test('34.9 release metadata is aligned', () => {
-  assert.equal(pkg.version, '35.6.0');
+  assertReleaseMetadataAligned();
 });

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { assertReleaseMetadataAligned } from './helpers/release.js';
 
 const compose = fs.readFileSync(new URL("../docker-compose.yml", import.meta.url), "utf8");
 const caddy = fs.readFileSync(new URL("../Caddyfile", import.meta.url), "utf8");
@@ -36,5 +37,5 @@ test("missing static assets do not receive SPA index fallback", () => {
 });
 
 test("release version is updated", () => {
-  assert.equal(pkg.version, "35.6.0");
+  assertReleaseMetadataAligned();
 });

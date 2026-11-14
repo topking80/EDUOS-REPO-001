@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { assertReleaseMetadataAligned } from './helpers/release.js';
 
 const routes = await readFile(new URL('../src/pickup-routes.js', import.meta.url), 'utf8');
 const policy = await readFile(new URL('../src/policy.js', import.meta.url), 'utf8');
@@ -28,5 +29,5 @@ test('35.0 does not grant additional pickup permissions to staff roles', () => {
 });
 
 test('35.0 release metadata is aligned', () => {
-  assert.equal(pkg.version, '35.6.0');
+  assertReleaseMetadataAligned();
 });

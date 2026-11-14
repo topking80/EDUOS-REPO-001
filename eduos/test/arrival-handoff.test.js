@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertReleaseMetadataAligned } from './helpers/release.js';
 const root=path.resolve(import.meta.dirname,'..');
 const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 test('32.0.52 exposes arrival workflow to principal, teacher and bus driver workspaces',()=>{
- assert.ok(['33.9.0','34.0.0','34.1.0','34.2.0','34.3.0','34.4.0','34.5.0','34.6.0','34.7.0','35.0.0','37.3.0'].includes(pkg.version));
+ assertReleaseMetadataAligned();
  assert.ok(html.includes('arrival:"Arrival & Transportation Handoff"'));
  assert.ok(html.includes('busdriver:{label:"Bus Driver"'));
  for(const role of ['principal','teacher','busdriver']) assert.ok(html.includes(role+':{label:'));

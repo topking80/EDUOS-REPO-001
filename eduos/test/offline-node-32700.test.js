@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { parseArgs, provision } from "../src/eden/node-provision.js";
+import { RELEASE_RE } from "./helpers/release.js";
 
 const read = p => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 const app = read("public/app/app.js"), sw = read("public/app/sw.js");
@@ -22,8 +23,8 @@ test("offline queue: encrypted with a non-extractable AES-GCM key, capped, expir
   assert.doesNotMatch(app, /localStorage/, "nothing in localStorage");
   assert.match(app, /"idempotency-key"/); assert.match(app, /"x-eduos-queued-at"/);
 });
-test("service worker: shell only, 32.21.0 cache name, never /api or /auth", () => {
-  assert.match(sw, /eduos-app-shell-32\.21\.0/);
+test("service worker: shell only, current-release cache name, never /api or /auth", () => {
+  assert.match(sw, new RegExp(`eduos-app-shell-${RELEASE_RE}"`));
   assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\) \|\| url\.pathname\.startsWith\("\/auth\/"\)\) return;/);
   const assets = JSON.parse(/const ASSETS = (\[.*?\]);/.exec(sw)[1]);
   assert.ok(assets.every(a => a.startsWith("/app/")));

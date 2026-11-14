@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { assertReleaseMetadataAligned } from './helpers/release.js';
 
 const ui = await readFile(new URL('../public/api-bridge.js', import.meta.url), 'utf8');
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
@@ -18,6 +19,6 @@ test('34.8 command center exposes readiness coverage and actionable review navig
 });
 
 test('34.8 package metadata is aligned', () => {
-  assert.equal(pkg.version, '35.6.0');
+  assertReleaseMetadataAligned();
   assert.equal(pkg.scripts['arrival:escalations'], 'node src/arrival-escalation-dispatch.js');
 });

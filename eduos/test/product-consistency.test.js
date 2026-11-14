@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { assertReleaseMetadataAligned } from "./helpers/release.js";
 const root=process.cwd();
 const html=readFileSync(join(root,"public/index.html"),"utf8");
 const bridge=readFileSync(join(root,"public/api-bridge.js"),"utf8");
@@ -29,8 +30,7 @@ test("API bridge exposes guardian endpoints only to authenticated parent role",(
 test("application title and package version use the same release",()=>{
  const pkg=JSON.parse(readFileSync(join(root,"package.json"),"utf8"));
  const lock=JSON.parse(readFileSync(join(root,"package-lock.json"),"utf8"));
- assert.equal(pkg.version,"35.0.0");
  assert.equal(lock.version,pkg.version);
  assert.equal(lock.packages[""].version,pkg.version);
- assert.match(html,/<title>EduOS District Edition 34\.7\.0/);
+ assertReleaseMetadataAligned();
 });

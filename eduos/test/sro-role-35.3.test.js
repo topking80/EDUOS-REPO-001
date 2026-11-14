@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { assertReleaseMetadataAligned } from './helpers/release.js';
 
 const policy = await readFile(new URL('../src/policy.js', import.meta.url), 'utf8');
 const routes = await readFile(new URL('../src/safety-routes.js', import.meta.url), 'utf8');
@@ -42,5 +43,5 @@ test('35.3 migration is registered and UI exposes dedicated SRO workspace', () =
 });
 
 test('35.3 release metadata is aligned', () => {
-  assert.equal(pkg.version, '35.8.0');
+  assertReleaseMetadataAligned();
 });

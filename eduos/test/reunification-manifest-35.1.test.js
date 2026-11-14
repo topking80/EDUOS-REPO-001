@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { assertReleaseMetadataAligned } from './helpers/release.js';
 
 const routes = await readFile(new URL('../src/safety-routes.js', import.meta.url), 'utf8');
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
@@ -28,5 +29,5 @@ test('35.1 manifest access is audited and non-cacheable', () => {
 });
 
 test('35.1 release metadata is aligned', () => {
-  assert.equal(pkg.version, '35.6.0');
+  assertReleaseMetadataAligned();
 });

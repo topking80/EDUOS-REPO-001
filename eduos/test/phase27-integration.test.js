@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { RELEASE_RE } from "./helpers/release.js";
 
 const root = new URL("../", import.meta.url);
 const html = await readFile(new URL("public/index.html", root), "utf8");
@@ -8,7 +9,7 @@ const bridge = await readFile(new URL("public/api-bridge.js", root), "utf8");
 const server = await readFile(new URL("src/server.js", root), "utf8");
 
 test("Phase 32.0.16 district workspace is the integrated primary UI", () => {
-  assert.match(html, /EduOS District Edition 34\.7\.0 \| Transportation-to-Arrival Reconciliation/);
+  assert.match(html, new RegExp(`EduOS District Edition ${RELEASE_RE} \\| Transportation-to-Arrival Reconciliation`));
   assert.match(html, /Access Requests/i);
   assert.match(html, /Request access/i);
   assert.match(html, /Intervention case register/i);
