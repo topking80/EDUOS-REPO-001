@@ -9,11 +9,10 @@
 
 | Suite | Tests | Pass | Fail | Skipped |
 |---|---|---|---|---|
-| Unit (`node --test`, no environment) | 582 | 579 | 2 | 1 |
-| Integration (`npm run test:integration`, real PostgreSQL) | 93 | 93 | 0 | 0 |
+| Unit (`node --test`, no environment) | 582 | 581 | 0 | 1 |
+| Integration (`npm run test:integration`, real PostgreSQL) | 94 | 94 | 0 | 0 |
 | Integration with `REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC` added (not committed) | 93 | 93 | 0 | 0 |
 
-- **2 unit failures:** the camera-policy tests (finding F-4). They need a decision on whether the barcode scanner may use the camera.
 - **1 skip:** needs the `butane` tool, which isn't installed in this environment.
 
 Before this addendum, the integration suite had never been run in full against this release. Its first run here gave 79/81, revealing F-6.
@@ -34,7 +33,7 @@ Before this addendum, the integration suite had never been run in full against t
 ### Observations (not changed)
 - `webhook_deliveries` has no unique key on `(delivery_id, attempt)`, so its `ON CONFLICT DO NOTHING` never fires. A stale worker's attempt is logged with the same attempt number as the reclaiming worker's. That's truthful, but readers should expect duplicate attempt numbers.
 - Every DNS lookup error, including a non-existent domain, is treated as transient and retried. The attempt limit and auto-disable keep this bounded.
-- The outbox is only processed on authenticated activity in the district; there's no scheduler. A district with no traffic doesn't drain its queue. This belongs to item 9 (production scheduler).
+- The outbox was only processed on authenticated activity in the district, so a district with no traffic didn't drain its queue. **Fixed:** `src/webhook-dispatch.js` (`npm run webhooks:dispatch`, compose `--profile ops run --rm webhooks`) drains every district. Schedule it every minute.
 - 37.3.1 → 37.4.0 comparison: the only code change is in `src/webhooks.js` (DNS retry classification), plus one new test and version bumps. It matches `CODE-IMPROVEMENTS-37.4.0.md`. The 37.3.1 archive SHA-256 is `be13328314b75c7fc27c25e33208fdddaea570ee6976f3f244ea76a8e25cc648`.
 
 ## Outstanding items
@@ -47,8 +46,8 @@ Before this addendum, the integration suite had never been run in full against t
 | 6 | Offline replay receipt retention | **Done** | Migration 035 plus `src/retention.js`: `RETENTION_OFFLINE_REPLAY_DAYS` (default 7, minimum 2, enforced in JS and SQL). District-scoped, owner-only, tested. |
 | 7 | Webhook outbox lifecycle and leases | **Done** | Worker moved to `src/webhook-outbox.js` with no behaviour change. 8 integration tests cover DNS outage then success, backoff and exhaustion, unsafe DNS, auto-disable and cancellation, lease expiry, competing workers, tenant isolation and stale workers (F-7). |
 | 8 | Non-superuser migrations and runtime permissions | **Done** | Clean migration as a non-superuser owner: 35/35. Upgrade from a 33-migration database: 034 and 035 applied; a re-run is a no-op. Runtime role: no superuser, BYPASSRLS, CREATEROLE or CREATEDB. |
-| 9 | Production edge, scheduler, secrets, connectivity | Open | Needs the target environment |
-| 2 | Camera-policy conflict | Open | Needs a decision |
+| 9 | Production edge, scheduler, secrets, connectivity | Partly open | Webhook dispatcher added (code side of the scheduler). Cron setup, edge, secrets and connectivity need the target environment. |
+| 2 | Camera-policy conflict | **Done** | The camera barcode scanner (36.0.0) was removed. It broke the documented no-camera policy (FIX-REPORT-32.5.0), and Caddy's `camera=()` blocked it in production anyway. Typed entry and USB/Bluetooth scanners are unchanged. A second stale version check behind it in `learning-32600` was also fixed. |
 
 ## New migrations
 
