@@ -14,7 +14,7 @@ import { writeAudit } from "./audit.js";
 import { normalizeAgentEvent } from "./agent-events.js";
 import { classifyOperationalEvent } from "./operational-event-taxonomy.js";
 import { FLOW_EVENT_TYPES, isFlowEventType, normalizeFlowEvent, serverFlowEvent, webhookPayload } from "./flow-events.js";
-import { deriveWebhookSecret, resolveWebhookTarget, validateWebhookUrl } from "./webhooks.js";
+import { deliverWebhook, deriveWebhookSecret, resolveWebhookTarget, validateWebhookUrl } from "./webhooks.js";
 import { processWebhookOutbox as processOutbox } from "./webhook-outbox.js";
 import { registerAdminRoutes } from "./admin-routes.js";
 import { registerMeshRoutes } from "./mesh-routes.js";
@@ -1687,6 +1687,25 @@ async function recordFlowEvent(actor,event,schoolId,subjectStudentId=null){
     }
     return saved;
   });
+}
+
+// "Send test" delivery for one subscription (POST /api/webhooks/:id/test).
+// Restored in the 37.4.0 audit: the endpoint has called this since 37.3.0, but
+// the function was dropped when the outbox replaced direct delivery, so every
+// test returned 500. One signed webhook.test payload, attempted synchronously
+// (no outbox), recorded in the delivery ledger. A test result never changes the
+// subscription's failure count or status.
+async function deliverToSubscription(actor,subscription,event,_eventId=null,maxAttempts=1){
+  const deliveryId=crypto.randomUUID();
+  const attempts=await deliverWebhook({subscription,secret:deriveWebhookSecret(config.webhookSigningKey,subscription.id),
+    eventType:event.type,deliveryId,body:JSON.stringify(webhookPayload(event)),options:{...webhookOptions(),maxAttempts}});
+  await withTenantTransaction(actor,async client=>{
+    for(const a of attempts) await client.query(
+      `INSERT INTO webhook_deliveries(district_id,subscription_id,delivery_id,event_id,event_type,attempt,outcome,status_code,duration_ms)
+       VALUES($1,$2,$3,NULL,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+      [actor.districtId,subscription.id,deliveryId,event.type,a.attempt,a.outcome,a.statusCode,a.durationMs]);
+  });
+  return attempts[attempts.length-1];
 }
 
 // Durable outbox worker: src/webhook-outbox.js (extracted for lifecycle tests).
