@@ -106,14 +106,14 @@ class _SchoolWelcomeScreenState extends State<SchoolWelcomeScreen> {
             label: const ['Neutral', 'Happy', 'Surprised'][_mood.round()],
             onChanged: (value) => setState(() => _mood = value),
           ),
-          Text('Eye tracking · horizontal'),
+          const Text('Eye tracking · horizontal'),
           Slider(
             value: _lookX,
             min: -100,
             max: 100,
             onChanged: (value) => setState(() => _lookX = value),
           ),
-          Text('Eye tracking · vertical'),
+          const Text('Eye tracking · vertical'),
           Slider(
             value: _lookY,
             min: -100,
