@@ -80,7 +80,10 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
     // 32.6.0: edal_heads (the ledger's chain head) is deliberately reachable only through definer functions.
     assert.deepEqual(r.rows.map(x => x.tablename).filter(t => t !== "edal_heads"), []);
     for (const [table, priv] of [["students", "INSERT"], ["students", "UPDATE"], ["student_user_links", "INSERT"], ["student_user_links", "UPDATE"],
-      ["family_messages", "INSERT"], ["teacher_classroom_preferences", "UPDATE"], ["sis_sync_runs", "INSERT"], ["sis_attendance_imports", "INSERT"]])
+      ["family_messages", "INSERT"], ["teacher_classroom_preferences", "UPDATE"], ["sis_sync_runs", "INSERT"], ["sis_attendance_imports", "INSERT"],
+      // Missing through 37.4.0 (audit addendum 2): library policy upsert, overdue notices, ops schedules.
+      ["library_borrowing_policies", "INSERT"], ["library_borrowing_policies", "UPDATE"], ["library_notice_ledger", "INSERT"],
+      ["school_operation_schedules", "INSERT"], ["school_operation_schedules", "UPDATE"]])
       assert.ok((await sql("SELECT has_table_privilege($1,$2,$3) AS ok", [db.names.app, table, priv])).rows[0].ok, `${table} ${priv}`);
     assert.equal((await sql("SELECT has_table_privilege($1,'audit_events','DELETE') AS ok", [db.names.app])).rows[0].ok, false);
   });

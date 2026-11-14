@@ -207,9 +207,21 @@ GRANT SELECT, INSERT, UPDATE ON library_loans, library_reservations TO eduos_app
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON library_borrower_cards TO eduos_app;
 
+-- 36.2.0 borrowing policy (upserted) and overdue notice ledger (insert-only).
+-- Missing through 37.4.0, so the runtime role was denied these tables.
+GRANT SELECT, INSERT, UPDATE ON library_borrowing_policies TO eduos_app;
+GRANT SELECT, INSERT ON library_notice_ledger TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON library_notice_ledger FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON library_borrowing_policies FROM eduos_app;
+
 -- 36.4.0 specialized school operations queues.
 GRANT SELECT, INSERT, UPDATE ON school_service_work TO eduos_app;
 REVOKE DELETE, TRUNCATE ON school_service_work FROM eduos_app;
+
+-- 36.6.0 recurring school operations schedules.
+-- Missing through 37.4.0, so the runtime role was denied this table.
+GRANT SELECT, INSERT, UPDATE ON school_operation_schedules TO eduos_app;
+REVOKE DELETE, TRUNCATE ON school_operation_schedules FROM eduos_app;
 
 -- 36.7.0 school operations notification preferences and idempotency ledger.
 GRANT SELECT, INSERT, UPDATE ON school_ops_notification_preferences TO eduos_app;
