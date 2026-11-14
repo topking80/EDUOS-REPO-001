@@ -32,6 +32,9 @@ test('37.3 records flow events and outbox rows in the same tenant transaction', 
 
 
 test('37.3 outbox leases exceed bounded network operations to reduce premature reclaim', async () => {
+  // The worker moved to src/webhook-outbox.js in the 37.4.0 audit; server.js delegates to it.
   const server = await readFile(new URL('../src/server.js', import.meta.url), 'utf8');
-  assert.match(server, /lease_until=now\(\)\+interval '2 minutes'/);
+  assert.match(server, /import \{ processWebhookOutbox as processOutbox \} from "\.\/webhook-outbox\.js"/);
+  const worker = await readFile(new URL('../src/webhook-outbox.js', import.meta.url), 'utf8');
+  assert.match(worker, /lease_until=now\(\)\+interval '2 minutes'/);
 });
