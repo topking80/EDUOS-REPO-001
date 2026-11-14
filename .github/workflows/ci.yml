@@ -30,7 +30,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Scan source, dependencies, and IaC configuration
-        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: eduos
@@ -42,7 +42,7 @@ jobs:
       - name: Build production container image
         run: docker build --target app -t eduos-app:ci .
       - name: Scan production container image
-        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: eduos-app:ci
@@ -175,6 +175,11 @@ jobs:
       - name: Run Flutter unit and widget tests
         working-directory: eduos/mobile/flutter
         run: flutter test --reporter expanded
+      # The starter ships Dart code only (no android/ folder). Generate the
+      # platform scaffolding in CI; existing files (lib/, test/, pubspec) are kept.
+      - name: Generate Android platform scaffolding
+        working-directory: eduos/mobile/flutter
+        run: flutter create --platforms=android --project-name eduos_mobile_branding --org org.eduos .
       - name: Compile Android debug application
         working-directory: eduos/mobile/flutter
         run: flutter build apk --debug
