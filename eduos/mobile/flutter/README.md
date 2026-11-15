@@ -28,9 +28,15 @@ and accommodations, roster, gradebook with final grades), Grading (quiz
 open answers, rubric grading, hand-ins) and the Christie copilot (class
 mastery, reading and reviewing tutoring conversations). Staffing (time
 away, substitute coverage, shifts; leaders approve) is native for every
-staff role. The remaining staff tabs (library desk, operations, counseling,
-health office, facilities, meals, transport, nodes) open the EduOS web app
-until their phase ships.
+staff role.
+
+**Phase 6** makes every tab native: the school operations work queues
+(vice principal operations, counseling, health office, facilities, meal
+service), the vice principal's attendance, transport for leaders, the
+library desk (Bluetooth keyboard-style barcode scanners), an EDEN nodes
+status view, and the School Resource Officer's incident workspace. A few
+heavy admin flows still link to the web: EDEN partners, failover
+authorization, node enrollment and signed updates.
 
 ## How sign-in works (RFC 8252)
 

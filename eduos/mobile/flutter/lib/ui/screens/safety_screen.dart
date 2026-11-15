@@ -6,7 +6,7 @@ import '../../core/models.dart';
 import '../widgets.dart';
 import 'roll_call_card.dart';
 import 'safety_board.dart';
-import 'web_fallback_screen.dart';
+import 'staff_pickup_screen.dart';
 
 const _kindText = {'lockdown': 'LOCKDOWN', 'shelter': 'SHELTER IN PLACE', 'evacuate': 'EVACUATE', 'hold': 'HOLD IN ROOMS'};
 
@@ -50,24 +50,20 @@ class SafetyScreen extends StatelessWidget {
           if (role == 'teacher') ...[
             RollCallCard(key: ValueKey('rollcall-${i.id}'), incident: i),
             if (i.reunification)
-              OutlinedButton.icon(
+              FilledButton.tonalIcon(
                 icon: const Icon(Icons.directions_car),
-                label: const Text('Pick-up line: release to approved adults (web)'),
-                onPressed: () => openWebApp(context, path: '/app/#/pickup'),
+                label: const Text('Pick-up line: release to approved adults'),
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => Scaffold(appBar: AppBar(title: const Text('Pick-up line')), body: const StaffPickupScreen()))),
               ),
           ],
-          if (app.canLeadSafety && role != 'teacher')
+          if (role == 'sro') SroStatusCard(key: ValueKey('sro-${i.id}'), incident: i, officer: true),
+          if (app.canLeadSafety && role != 'teacher' && role != 'sro') ...[
             SafetyBoardCards(key: ValueKey('board-${i.id}-${i.status}'), incident: i, onOpenPickup: onOpenPickup),
-          if (role != 'parent' && role != 'pupil' && role != 'teacher' && !app.canLeadSafety)
-            SectionCard(children: [
-              const Text('The accountability board and other staff safety tools aren\'t in the app yet.'),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('Open Safety on the web'),
-                onPressed: () => openWebApp(context, path: '/app/#/safety'),
-              ),
-            ]),
+            if (role == 'principal' || role == 'superintendent') SroStatusCard(key: ValueKey('sro-lead-${i.id}'), incident: i, officer: false),
+          ],
+          if (!const {'parent', 'pupil', 'teacher', 'sro'}.contains(role) && !app.canLeadSafety)
+            const Notice('Follow your school\'s emergency plan and your leaders\' instructions. Staff can still open pick-up from the menu if reunification starts.'),
         ],
         if (live.isNotEmpty && role == 'parent')
           const Notice('Please don\'t call or come to the school unless asked. EduOS shares only what you need here; it never tracks anyone\'s location.'),

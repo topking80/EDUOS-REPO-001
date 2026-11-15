@@ -5,7 +5,6 @@ import '../../core/api_client.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
-import 'web_fallback_screen.dart';
 
 const kindText = {'lockdown': 'LOCKDOWN', 'shelter': 'SHELTER IN PLACE', 'evacuate': 'EVACUATE', 'hold': 'HOLD IN ROOMS'};
 const kindHelp = {
@@ -150,11 +149,6 @@ class _SafetyBoardCardsState extends State<SafetyBoardCards> {
                   if (ok) await _post('$_base/all-clear', {'kind': i.kind}, done: 'All clear sent', refreshStatus: true);
                 },
                 child: const Text('All clear'),
-              ),
-              TextButton.icon(
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('SRO coordination (web)'),
-                onPressed: () => openWebApp(context, path: '/app/#/safety'),
               ),
             ]),
           ]),
@@ -327,5 +321,100 @@ class _SafetyCenterScreenState extends State<SafetyCenterScreen> {
         const Notice('A person starts every alert. EduOS has no cameras, location tracking, facial recognition or threat scoring.'),
       ]);
     return widget.embedded ? body : Scaffold(appBar: AppBar(title: const Text('Safety')), body: body);
+  }
+}
+
+const sroStatuses = {
+  'requested': 'Requested',
+  'notified': 'Notified',
+  'responding': 'Responding',
+  'on_scene': 'On scene',
+  'cleared': 'Cleared',
+  'unavailable': 'Unavailable',
+};
+
+/// School Resource Officer coordination status for a live incident
+/// (GET/POST /api/safety/incidents/:id/sro-status). The officer records their
+/// own status; leaders can record it for them. Coordination only: it never
+/// contacts or dispatches law enforcement.
+class SroStatusCard extends StatefulWidget {
+  const SroStatusCard({super.key, required this.incident, required this.officer});
+  final Incident incident;
+
+  /// The officer's own limited workspace (no rosters or release details).
+  final bool officer;
+
+  @override
+  State<SroStatusCard> createState() => _SroStatusCardState();
+}
+
+class _SroStatusCardState extends State<SroStatusCard> {
+  Key _key = UniqueKey();
+  String _status = 'responding';
+  final _name = TextEditingController(), _unit = TextEditingController(), _note = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _unit.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  String? _opt(TextEditingController c) => c.text.trim().isEmpty ? null : c.text.trim();
+
+  Future<void> _record() async {
+    setState(() => _busy = true);
+    try {
+      await AppScope.read(context).api.post('/api/safety/incidents/${widget.incident.id}/sro-status',
+          {'status': _status, 'officerName': _opt(_name), 'unit': _opt(_unit), 'note': _opt(_note)});
+      if (!mounted) return;
+      toast(context, 'SRO status recorded.');
+      _note.clear();
+      setState(() => _key = UniqueKey());
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.isOffline ? 'You\'re offline. This needs a connection.' : 'Couldn\'t record the SRO status.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final i = widget.incident;
+    final title = widget.officer ? 'SRO incident workspace' : 'School Resource Officer (SRO) coordination';
+    return InlineLoader<List<Json>>(
+      key: _key,
+      load: () async => objs(obj((await AppScope.read(context).api.get('/api/safety/incidents/${i.id}/sro-status'))['data'])['updates']),
+      builder: (context, updates) {
+        final latest = updates.firstOrNull;
+        return SectionCard(title: title, children: [
+          if (widget.officer) Text('${i.schoolName} · ${i.isDrill ? 'DRILL: ' : ''}${kindText[i.kind] ?? i.kind} · ${i.status}'),
+          if (latest == null)
+            const EmptyState('No SRO status has been recorded for this incident.')
+          else
+            Notice('Latest status: ${sroStatuses[latest['status']] ?? str(latest['status'])}'
+                '${strOrNull(latest['officerName']) != null ? ' · ${latest['officerName']}' : ''}'
+                '${strOrNull(latest['unit']) != null ? ' · ${latest['unit']}' : ''} · ${fmtTime(date(latest['recordedAt']))}'),
+          Text(
+            widget.officer
+                ? 'This limited workspace shows coordination status only. It does not show student rosters, roll call, guardian information or release authorization.'
+                : 'Records the SRO coordination status for this incident. It does not contact or dispatch law enforcement.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          DropdownButtonFormField<String>(
+            value: _status,
+            decoration: const InputDecoration(labelText: 'SRO status'),
+            items: [for (final e in sroStatuses.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
+            onChanged: (v) => setState(() => _status = v ?? _status),
+          ),
+          TextField(controller: _name, maxLength: 100, decoration: const InputDecoration(labelText: 'Officer name (optional)', counterText: '')),
+          TextField(controller: _unit, maxLength: 100, decoration: const InputDecoration(labelText: 'Agency / unit (optional)', counterText: '')),
+          TextField(controller: _note, maxLength: 300, minLines: 1, maxLines: 3, decoration: const InputDecoration(labelText: 'Operational note (optional)')),
+          FilledButton(onPressed: _busy ? null : _record, child: const Text('Update SRO status')),
+        ]);
+      },
+    );
   }
 }

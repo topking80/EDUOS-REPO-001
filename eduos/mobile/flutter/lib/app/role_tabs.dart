@@ -19,6 +19,8 @@ class RoleTab {
 /// library and news.
 /// Phase 5: teachers: courses, gradebook, grading and Christie copilot;
 /// staffing for every staff role.
+/// Phase 6: everything else: operations queues, attendance, transport,
+/// library desk, nodes status and the SRO workspace. Every tab is native.
 const roleTabs = <String, List<RoleTab>>{
   'parent': [
     RoleTab('children', 'Children', Icons.child_care, native: true),
@@ -44,38 +46,38 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('copilot', 'Christie', Icons.auto_awesome, native: true),
     RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true),
   ],
-  'librarian': [RoleTab('library', 'Library desk', Icons.menu_book), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
+  'librarian': [RoleTab('library', 'Library desk', Icons.menu_book, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
   'vice_principal': [
-    RoleTab('operations', 'Operations', Icons.grid_view),
+    RoleTab('operations', 'Operations', Icons.grid_view, native: true),
     RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true),
-    RoleTab('attendance', 'Attendance', Icons.check_circle_outline),
+    RoleTab('attendance', 'Attendance', Icons.check_circle_outline, native: true),
     RoleTab('safety', 'Safety', Icons.shield_outlined, native: true),
     RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true),
   ],
-  'counselor': [RoleTab('guidance', 'Counseling', Icons.favorite_border), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
-  'nurse': [RoleTab('healthoffice', 'Health office', Icons.monitor_heart_outlined), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
-  'maintenance': [RoleTab('facilities', 'Facilities', Icons.build_outlined), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
-  'lunch_staff': [RoleTab('meals', 'Meal service', Icons.restaurant), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
+  'counselor': [RoleTab('guidance', 'Counseling', Icons.favorite_border, native: true), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
+  'nurse': [RoleTab('healthoffice', 'Health office', Icons.monitor_heart_outlined, native: true), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
+  'maintenance': [RoleTab('facilities', 'Facilities', Icons.build_outlined, native: true), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
+  'lunch_staff': [RoleTab('meals', 'Meal service', Icons.restaurant, native: true), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
   'principal': [
     RoleTab('overview', 'School', Icons.grid_view, native: true),
     RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true),
-    RoleTab('library', 'Library', Icons.menu_book),
+    RoleTab('library', 'Library', Icons.menu_book, native: true),
     RoleTab('pickup', 'Pick-up', Icons.directions_car, native: true),
-    RoleTab('transport', 'Transport', Icons.directions_bus),
+    RoleTab('transport', 'Transport', Icons.directions_bus, native: true),
     RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true),
     RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true),
   ],
   'superintendent': [
     RoleTab('overview', 'District', Icons.grid_view, native: true),
     RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true),
-    RoleTab('library', 'Library', Icons.menu_book),
+    RoleTab('library', 'Library', Icons.menu_book, native: true),
     RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true),
-    RoleTab('transport', 'Transport', Icons.directions_bus),
-    RoleTab('nodes', 'Nodes', Icons.dns_outlined),
+    RoleTab('transport', 'Transport', Icons.directions_bus, native: true),
+    RoleTab('nodes', 'Nodes', Icons.dns_outlined, native: true),
   ],
   'driver': [RoleTab('route', 'Route', Icons.directions_bus, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
-  'sro': [RoleTab('safety', 'Safety', Icons.shield_outlined), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
-  'it_admin': [RoleTab('nodes', 'Nodes', Icons.dns_outlined), RoleTab('library', 'Library', Icons.menu_book)],
+  'sro': [RoleTab('safety', 'Safety', Icons.shield_outlined, native: true), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
+  'it_admin': [RoleTab('nodes', 'Nodes', Icons.dns_outlined, native: true), RoleTab('library', 'Library', Icons.menu_book, native: true)],
 };
 
 const roleNames = {
