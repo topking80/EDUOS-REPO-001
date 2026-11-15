@@ -52,6 +52,11 @@ function mockApi(role, pathname) {
     case "/api/learning/review": return { data: { attempts: [] } };
     case "/api/learning/progress": return { data: { children: [] } };
     case "/api/notifications": return { data: { unread: 0, items: [] } };
+    case "/api/edge/updates": return { data: { canApprove: ["superintendent", "it_admin"].includes(role),
+      policy: { require_approval: true, min_canaries: 2, soak_hours: 24 }, fleet: [{ version: "45.20261110.3.0", cohort: "canary", devices: 2 }],
+      releases: [{ id: "r1", version: "45.20261117.3.0", stage: "canary", approved_at: now, approved_by_name: "Supt",
+        gate: { ready: false, blockers: ["1 of 2 canaries healthy on it"], soaked: 0, required: 2, soakHours: 24 } },
+        { id: "r0", version: "45.20261110.3.0", stage: "promoted", approved_at: now, promoted_at: now, approved_by_name: "Supt", promoted_by_name: "IT" }] } };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
       return { data: [] };

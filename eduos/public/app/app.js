@@ -69,7 +69,8 @@ const api = {
     return json;
   },
   get(p) { return this.req("GET", p); },
-  post(p, b = {}) { return this.req("POST", p, b); }
+  post(p, b = {}) { return this.req("POST", p, b); },
+  put(p, b = {}) { return this.req("PUT", p, b); }
 };
 const safe = async (p, fallback = null) => { try { return await p; } catch (e) { if (e.status === 401) throw e; return fallback; } };
 
@@ -1562,7 +1563,9 @@ async function edgeDevicesCard() {
     const bits = [d.school_name || "District", d.device_role, d.last_seen_at ? `seen ${ago(d.last_seen_at)}` : "never reported",
       m.cpu_percent != null ? `CPU ${m.cpu_percent}%` : null, m.root_disk_used_percent != null ? `disk ${m.root_disk_used_percent}%` : null,
       o.booted_version ? `OS ${o.booted_version}` : null, o.updates === "held" ? `updates held${o.hold_reason ? `: ${o.hold_reason}` : ""}` : null,
-      o.last_verify === "rolled_back" ? "rolled back" : null].filter(Boolean).join(" · ");
+      o.last_verify === "rolled_back" ? `rolled back${o.rollback_from_version ? ` from ${o.rollback_from_version}` : ""}` : null,
+      o.approval === "installing" ? `installing ${o.target_version}` : o.approval === "waiting" && o.target_version ? `${o.target_version} approved, waiting for window` : null,
+      o.approval === "unreachable" ? "can't reach EduOS for approvals" : null].filter(Boolean).join(" · ");
     const [cls, txt] = d.revoked_at ? ["not_started", "Revoked"] : d.stale ? ["absent", d.last_seen_at ? "Stale" : "Waiting"] : o.updates === "held" ? ["expected", "Updates held"] : ["present", "Reporting"];
     return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, d.name), h("br"), h("span", { class: "muted small" }, bits)), chip(cls, txt),
       d.revoked_at ? null : h("button", { class: "btn small", type: "button", "aria-label": `Revoke ${d.name}`, onclick: async () => {
@@ -1582,7 +1585,54 @@ async function edgeDevicesCard() {
       school ? [h("label", { for: school.id }, "School"), school] : null, h("button", { class: "btn", type: "submit" }, "Register and show token")),
     tokenOut);
 }
-VIEWS.nodes = async () => [...[await edenNodesView()].flat(), await edgeDevicesCard()];
+// District-approved OS updates (db/039): approve a version for canaries,
+// promote it once the canary gate passes, withdraw it.
+async function osUpdatesCard() {
+  const r = await safe(api.get("/api/edge/updates"));
+  if (!r?.data?.policy) return null;
+  const { policy, releases = [], fleet = [], canApprove } = r.data;
+  const reload = () => go(state.tab, { push: false });
+  const STAGE = { canary: ["expected", "Canary"], promoted: ["present", "Promoted"], withdrawn: ["not_started", "Withdrawn"] };
+  const act = async (fn, ok, fail) => { try { await fn(); toast(ok); reload(); } catch (e) { toast(e?.body?.gate?.blockers?.length ? `Not yet: ${e.body.gate.blockers.join("; ")}` : fail); } };
+  const release = (x) => {
+    const g = x.gate;
+    const bits = [`approved by ${x.approved_by_name || "—"} ${ago(x.approved_at)}`,
+      x.promoted_at ? `promoted by ${x.promoted_by_name || "—"} ${ago(x.promoted_at)}` : null,
+      x.withdrawn_at ? `withdrawn ${ago(x.withdrawn_at)}: ${x.withdraw_reason}` : null,
+      g ? (g.ready ? `Canary gate passed: ${g.soaked} of ${g.required} canaries healthy for ${g.soakHours} h` : `Waiting: ${g.blockers.join("; ")}`) : null].filter(Boolean).join(" · ");
+    const [cls, txt] = STAGE[x.stage] || ["expected", x.stage];
+    return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, x.version), h("br"), h("span", { class: "muted small" }, bits)), chip(cls, txt),
+      canApprove && x.stage === "canary" ? h("button", { class: "btn small primary", type: "button", disabled: !g?.ready, "aria-label": `Promote ${x.version} to all devices`,
+        onclick: () => act(() => api.post(`/api/edge/updates/releases/${x.id}/promote`, {}), "Promoted to all devices", "Couldn't promote.") }, "Promote") : null,
+      canApprove && x.stage !== "withdrawn" ? h("button", { class: "btn small", type: "button", "aria-label": `Withdraw ${x.version}`, onclick: async () => {
+        const reason = await ask({ title: `Withdraw ${x.version}?`, text: "Devices go back to the newest version still approved for them.", label: "Reason", confirm: "Withdraw", danger: true, maxlength: 300 });
+        if (reason) act(() => api.post(`/api/edge/updates/releases/${x.id}/withdraw`, { reason }), "Withdrawn", "Couldn't withdraw.");
+      } }, "Withdraw") : null);
+  };
+  const out = [h("h2", {}, "OS updates"),
+    h("p", { class: "muted small" }, policy.require_approval
+      ? `Devices with district sign-off install only versions approved here, canaries first. A version reaches every device once ${policy.min_canaries} canar${policy.min_canaries === 1 ? "y has" : "ies have"} run it healthy for ${policy.soak_hours} h and none rolled back from it.`
+      : "Approval is off: devices follow Fedora CoreOS updates in their maintenance windows."),
+    fleet.length ? h("ul", { class: "list" }, fleet.map(f => kv(`${f.version} (${f.cohort})`, `${f.devices} device${f.devices === 1 ? "" : "s"}`))) : null,
+    releases.length ? h("ul", { class: "list" }, releases.map(release)) : empty("No versions approved yet.")];
+  if (canApprove) {
+    const version = h("input", { id: "osu-version", required: true, maxlength: 40, pattern: "\\d{2,3}\\.\\d{8}\\.\\d+\\.\\d+", placeholder: "e.g. 45.20261110.3.0" });
+    out.push(h("form", { class: "stack", onsubmit: (e) => { e.preventDefault();
+        act(() => api.post("/api/edge/updates/releases", { version: version.value.trim() }), "Approved for canary devices", "Couldn't approve that version."); } },
+      h("h3", {}, "Approve a version for canaries"), h("label", { for: version.id }, "Fedora CoreOS version"), version,
+      h("button", { class: "btn", type: "submit" }, "Approve for canaries")));
+    const req = h("input", { id: "osu-require", type: "checkbox", class: "check" }); req.checked = policy.require_approval;
+    const minC = h("input", { id: "osu-min", type: "number", min: 1, max: 100, required: true, value: String(policy.min_canaries) });
+    const soak = h("input", { id: "osu-soak", type: "number", min: 0, max: 720, required: true, value: String(policy.soak_hours) });
+    out.push(h("form", { class: "stack", onsubmit: (e) => { e.preventDefault();
+        act(() => api.put("/api/edge/updates/policy", { requireApproval: req.checked, minCanaries: Number(minC.value), soakHours: Number(soak.value) }), "Update policy saved", "Couldn't save the policy."); } },
+      h("h3", {}, "Policy"), h("div", { class: "row" }, req, h("label", { for: req.id, class: "grow" }, "Require district approval for OS updates")),
+      h("label", { for: minC.id }, "Healthy canaries needed to promote"), minC, h("label", { for: soak.id }, "Hours they must run it first"), soak,
+      h("button", { class: "btn", type: "submit" }, "Save policy")));
+  }
+  return h("section", { class: "card", "aria-label": "OS updates" }, out);
+}
+VIEWS.nodes = async () => [...[await edenNodesView()].flat(), await edgeDevicesCard(), await osUpdatesCard()];
 VIEWS.node = async () => {
   const s = (await safe(api.get("/api/node/status")))?.data;
   if (!s) return [h("h2", {}, "School node"), empty("This server isn't a school node.")];
