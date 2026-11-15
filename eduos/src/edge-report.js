@@ -42,6 +42,12 @@ export function sanitizeReport(r) {
       cohort: txt(o.cohort, 16, /^(canary|standard)$/),
       last_verify: txt(o.last_verify, 32, /^(healthy|rolled_back|unhealthy|pending|first_boot)$/),
       zincati: txt(o.zincati, 16, /^(active|inactive|failed|unknown)$/),
+      // District approval (db/039): the version the district approved for this
+      // device, whether the device is following approvals, and the version it
+      // rolled back from (which blocks that version's promotion).
+      target_version: txt(o.target_version, 80, VERSION),
+      approval: txt(o.approval, 16, /^(off|waiting|current|installing|unreachable)$/),
+      rollback_from_version: txt(o.rollback_from_version, 80, VERSION),
     }),
   });
 }
