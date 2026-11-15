@@ -1,0 +1,9 @@
+[Unit]
+Description=Re-apply the EduOS update policy when it changes
+
+[Path]
+PathChanged=/etc/eduos/update-policy.toml
+Unit=eduos-update.service
+
+[Install]
+WantedBy=paths.target

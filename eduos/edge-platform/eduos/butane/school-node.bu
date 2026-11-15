@@ -58,10 +58,6 @@ storage:
       mode: 0644
       contents:
         local: quadlet/eduos-health.container
-    - path: /usr/local/bin/eduos-health.sh
-      mode: 0755
-      contents:
-        local: scripts/eduos-health.sh
     # Swap on zram keeps a 4 GB board responsive under PostgreSQL + Node.
     - path: /etc/systemd/zram-generator.conf
       mode: 0644
