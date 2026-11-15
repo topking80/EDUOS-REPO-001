@@ -26,12 +26,20 @@ test('receipt requires a different authorized staff member and is idempotent aft
   assert.equal(arrivalReceiptDenial({...base,assignedTeacherUserId:'teacher-3',isRostered:false}), 'student_not_on_roster');
 });
 
-test('first attendance is blocked until receipt and limited to assigned/rostered teacher or principal', () => {
-  assert.equal(firstAttendanceDenial({...base,status:'pending'}), 'attendance_requires_received_handoff');
-  assert.equal(firstAttendanceDenial({...base,status:'received'}), null);
-  assert.equal(firstAttendanceDenial({...base,status:'received',role:'teacher',assignedTeacherUserId:'teacher-3',isRostered:false}), 'student_not_on_roster');
-  assert.equal(firstAttendanceDenial({...base,status:'received',role:'principal'}), null);
-  assert.equal(firstAttendanceDenial({...base,status:'received',role:'driver'}), 'school_staff_only');
+test('first attendance: only the receiving staff member, or a principal override with a reason', () => {
+  const rec = {...base,status:'received',receivedByUserId:'teacher-2'};
+  assert.equal(firstAttendanceDenial({...rec,status:'pending'}), 'attendance_requires_received_handoff');
+  assert.equal(firstAttendanceDenial(rec), null, 'the receiving teacher');
+  assert.equal(firstAttendanceDenial({...rec,actorUserId:'teacher-4',isRostered:true}), 'receiving_staff_required', 'another rostered teacher');
+  assert.equal(firstAttendanceDenial({...rec,actorUserId:'teacher-4',isRostered:true,overrideReason:'covering'}), 'receiving_staff_required', 'teachers cannot override');
+  assert.equal(firstAttendanceDenial({...rec,role:'teacher',assignedTeacherUserId:'teacher-3',isRostered:false}), 'student_not_on_roster');
+  assert.equal(firstAttendanceDenial({...rec,role:'principal',actorUserId:'principal-1'}), 'override_reason_required');
+  assert.equal(firstAttendanceDenial({...rec,role:'principal',actorUserId:'principal-1',overrideReason:'  '}), 'override_reason_required');
+  assert.equal(firstAttendanceDenial({...rec,role:'principal',actorUserId:'principal-1',overrideReason:'x'.repeat(301)}), 'override_reason_required');
+  assert.equal(firstAttendanceDenial({...rec,role:'principal',actorUserId:'principal-1',overrideReason:'Receiving teacher left sick'}), null);
+  assert.equal(firstAttendanceDenial({...rec,role:'principal',actorUserId:'principal-1',receivedByUserId:'principal-1'}), null, 'a principal who received the student');
+  assert.equal(firstAttendanceDenial({...rec,role:'principal',actorUserId:'principal-1',actorSchoolId:'school-2',overrideReason:'reason'}), 'school_scope_denied');
+  assert.equal(firstAttendanceDenial({...rec,role:'driver'}), 'school_staff_only');
 });
 
 test('API route handlers invoke the shared lifecycle policy and keep tenant-scoped persistence', () => {
