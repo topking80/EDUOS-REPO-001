@@ -8,8 +8,15 @@ live incident. Messages and alerts also work natively for staff roles.
 
 **Phase 2** adds the offline-critical staff screens: the bus driver's route
 (stop-by-stop check-ins, start and finish run), the teacher's class register
-(attendance) and the teacher's safety roll call. Other staff and learner tabs
-open the EduOS web app until their phase ships.
+(attendance) and the teacher's safety roll call.
+
+**Phase 3** adds school leaders: the principal's school overview (and the
+superintendent's district overview) with announcements, the pick-up desk
+(pass check, photo-ID and custody acknowledgement, release or refuse) with
+approvals and restrictions, the accountability board during an incident
+(missing, injured, roll calls, responders, reunification, all clear) and
+starting an alert in two confirmed steps, plus debriefs. Other staff and
+learner tabs open the EduOS web app until their phase ships.
 
 ## How sign-in works (RFC 8252)
 
