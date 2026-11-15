@@ -7,7 +7,7 @@
 // is stored only as a SHA-256 hash. Reports are reduced to an allowlist of
 // device metrics, compliance flags and OS update state: nothing else is kept.
 import crypto from "node:crypto";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { requireSession, requireCsrf } from "./auth.js";
 import { pool, withTenantTransaction } from "./db.js";
 import { HttpError, audit, rows, one, validId, sendError } from "./role-app-util.js";
@@ -32,7 +32,12 @@ export function registerEdgeDeviceRoutes(app) {
   // Per-device limit (agents report every few minutes) and a per-address cap.
   const deviceLimiter = rateLimit({
     windowMs: 60_000, limit: 6, standardHeaders: true, legacyHeaders: false,
-    keyGenerator: (req) => `edge:${(TOKEN_RE.exec(String(req.headers.authorization || "").replace(/^Bearer\s+/i, "")) || [])[1] || req.ip}`,
+    // The device id from the token, or (no valid token) the address, with
+    // IPv6 grouped by subnet as express-rate-limit 8 expects.
+    keyGenerator: (req) => {
+      const device = (TOKEN_RE.exec(String(req.headers.authorization || "").replace(/^Bearer\s+/i, "")) || [])[1];
+      return device ? `edge:${device}` : `edge-ip:${ipKeyGenerator(req.ip)}`;
+    },
   });
   const addressLimiter = rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: true, legacyHeaders: false });
 
