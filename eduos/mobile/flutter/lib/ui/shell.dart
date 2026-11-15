@@ -15,6 +15,9 @@ import 'screens/family_library_screen.dart';
 import 'screens/family_pickup_screen.dart';
 import 'screens/learner_screens.dart';
 import 'screens/messages_screen.dart';
+import 'screens/library_desk_screen.dart';
+import 'screens/nodes_screen.dart';
+import 'screens/operations_screen.dart';
 import 'screens/overview_screen.dart';
 import 'screens/safety_board.dart';
 import 'screens/staff_pickup_screen.dart';
@@ -80,6 +83,13 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       'pickup' => const StaffPickupScreen(),
       'overview' => const OverviewScreen(),
       'safety' when role != 'sro' => const SafetyCenterScreen(embedded: true),
+      'safety' => const SafetyScreen(),
+      'operations' => const OperationsScreen(),
+      'guidance' || 'healthoffice' || 'facilities' || 'meals' => OperationsScreen(key: ValueKey(tab.id), domain: opsTabDomains[tab.id]),
+      'attendance' => const AttendanceTodayScreen(),
+      'transport' => const TransportScreen(),
+      'library' => const LibraryDeskScreen(),
+      'nodes' => const NodesScreen(),
       'messages' => const MessagesScreen(),
       'alerts' => const AlertsScreen(),
       _ => WebFallbackScreen(tab: tab),
