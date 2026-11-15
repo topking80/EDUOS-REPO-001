@@ -354,7 +354,17 @@ const staffField = (label, type, attrs = {}) => {
   return { input, node: h("label", {}, h("span", {}, label), input) };
 };
 const staffLead = () => ["superintendent", "it_admin", "principal", "vice_principal"].includes(state.me?.role);
+// Superintendents and IT admins have no school on their membership: they choose one for each write.
+const staffDistrict = () => ["superintendent", "it_admin"].includes(state.me?.role) && !state.me?.schoolId;
+const staffSchools = { list: [] };
+const staffSchoolPicker = (id) => {
+  const sel = h("select", { id, required: true }, h("option", { value: "" }, "Choose a school"), staffSchools.list.map(x => h("option", { value: x.id }, x.name)));
+  return { sel, node: h("label", { for: id }, h("span", {}, "School"), sel), body: () => (sel.value ? { schoolId: sel.value } : {}) };
+};
 VIEWS.staffing = async () => {
+  if (staffDistrict()) staffSchools.list = ((await safe(api.get("/api/schools")))?.data || []).filter(x => x.status !== "inactive");
+  const schoolName = (id) => staffSchools.list.find(x => x.id === id)?.name;
+  const absenceSchool = staffDistrict() ? staffSchoolPicker("absence-school") : null;
   const response = await api.get("/api/staff-management");
   const d = response.data || { absences: [], shifts: [], coverage: [], staffing: [] };
   const pendingAbsences = d.absences.filter(x => x.status === "pending");
@@ -365,22 +375,22 @@ VIEWS.staffing = async () => {
   const absenceForm = h("form", { class: "stack", onsubmit: async e => {
     e.preventDefault();
     if (end.input.value < start.input.value) return toast("End date must be on or after the first day.");
-    try { await api.post("/api/staff-management/absences", { startsAt: staffDateTime(start.input.value,"00:00"), endsAt: staffDateTime(end.input.value,"23:59"), reasonCategory: reason.value }); toast("Absence request submitted."); go("staffing", {push:false}); }
+    try { await api.post("/api/staff-management/absences", { startsAt: staffDateTime(start.input.value,"00:00"), endsAt: staffDateTime(end.input.value,"23:59"), reasonCategory: reason.value, ...(absenceSchool?.body() || {}) }); toast("Absence request submitted."); go("staffing", {push:false}); }
     catch { toast("Could not submit absence request."); }
-  }}, start.node, end.node, h("label", {}, h("span", {}, "Category"), reason), h("p", { class:"small muted" }, "Do not include medical details or sensitive personal information."), h("button", { class:"btn primary", type:"submit" }, "Submit absence"));
+  }}, absenceSchool?.node, start.node, end.node, h("label", {}, h("span", {}, "Category"), reason), h("p", { class:"small muted" }, "Do not include medical details or sensitive personal information."), h("button", { class:"btn primary", type:"submit" }, "Submit absence"));
   const absenceItems = d.absences.map(a => {
     const actions = staffLead() && a.status === "pending" ? h("div", {class:"btns"},
       h("button", {class:"btn primary small", type:"button", onclick:()=>reviewAbsence(a.id,"approved")},"Approve"),
       h("button", {class:"btn danger small", type:"button", onclick:()=>reviewAbsence(a.id,"denied")},"Deny")) : null;
     return h("li", {class:"item"}, h("div", {class:"row"}, h("strong", {class:"grow"}, `${fmtDay(a.starts_at)} – ${fmtDay(a.ends_at)}`), chip(a.status)),
-      h("p", {class:"small muted"}, `${a.reason_category.replaceAll("_"," ")} · Submitted ${fmtDay(a.created_at)}`), actions);
+      h("p", {class:"small muted"}, [staffLead() ? a.display_name : null, staffDistrict() ? schoolName(a.school_id) : null, a.reason_category.replaceAll("_"," "), `Submitted ${fmtDay(a.created_at)}`].filter(Boolean).join(" · ")), actions);
   });
   const coverageItems = d.coverage.map(c => {
-    const actions = staffLead() && ["requested","approved"].includes(c.status) ? h("div",{class:"btns"},
+    const actions = staffLead() && ["pending","approved"].includes(c.status) ? h("div",{class:"btns"},
       h("button",{class:"btn primary small",type:"button",onclick:()=>decideCoverage(c.id,"approved")},"Approve"),
       h("button",{class:"btn danger small",type:"button",onclick:()=>decideCoverage(c.id,"declined")},"Decline")) : null;
     return h("li", {class:"item"}, h("div",{class:"row"},h("strong",{class:"grow"},c.role_needed),chip(c.status)),
-      h("p",{class:"small muted"},`${c.department.replaceAll("_"," ")} · ${fmtDay(c.starts_at)} · ${fmtTime(c.starts_at)}–${fmtTime(c.ends_at)}`), actions);
+      h("p",{class:"small muted"},`${staffDistrict() && schoolName(c.school_id) ? `${schoolName(c.school_id)} · ` : ""}${c.department.replaceAll("_"," ")} · ${fmtDay(c.starts_at)} · ${fmtTime(c.starts_at)}–${fmtTime(c.ends_at)}`), actions);
   });
   const shiftItems = d.shifts.map(x => h("li",{class:"item"},h("div",{class:"row"},h("strong",{class:"grow"},x.display_name||"Staff member"),chip(x.status)),
     h("p",{class:"small muted"},`${fmtDay(x.shift_date)} · ${fmtTime(x.starts_at)}–${fmtTime(x.ends_at)} · ${x.department.replaceAll("_"," ")}`),h("p",{},x.assignment)));
@@ -412,12 +422,13 @@ function coverageRequestForm(date) {
   const role = staffField("Role needed","text",{required:true,maxlength:100,placeholder:"e.g. Substitute teacher"});
   const dept = h("select",{}, ...["instruction","transport","facilities","health_office","counseling","meal_service","library","administration","other"].map(v=>h("option",{value:v},v.replaceAll("_"," "))));
   const details = staffField("Notes (non-sensitive)","textarea",{maxlength:500,rows:2});
+  const school = staffDistrict() ? staffSchoolPicker("coverage-school") : null;
   return h("section",{class:"card"},h("h2",{},"Request substitute coverage"),h("form",{class:"stack",onsubmit:async e=>{
     e.preventDefault();
     if(to.input.value<=from.input.value)return toast("End time must be after start time.");
-    try { await api.post("/api/staff-management/coverage",{startsAt:staffDateTime(day.input.value,from.input.value),endsAt:staffDateTime(day.input.value,to.input.value),department:dept.value,roleNeeded:role.input.value,details:details.input.value}); toast("Coverage request created."); go("staffing",{push:false}); }
-    catch { toast("Could not create coverage request."); }
-  }},day.node,from.node,to.node,role.node,h("label",{},h("span",{},"Department"),dept),details.node,h("button",{class:"btn primary",type:"submit"},"Create coverage request")));
+    try { await api.post("/api/staff-management/coverage",{startsAt:staffDateTime(day.input.value,from.input.value),endsAt:staffDateTime(day.input.value,to.input.value),department:dept.value,roleNeeded:role.input.value,details:details.input.value,...(school?.body()||{})}); toast("Coverage request created."); go("staffing",{push:false}); }
+    catch (err) { toast({ school_required: "Choose a school first.", school_not_in_district: "That school isn't in your district." }[err.body?.error] || "Could not create coverage request."); }
+  }},school?.node,day.node,from.node,to.node,role.node,h("label",{},h("span",{},"Department"),dept),details.node,h("button",{class:"btn primary",type:"submit"},"Create coverage request")));
 }
 VIEWS.news = async () => {
   const list = (await api.get("/api/comms/announcements")).data;

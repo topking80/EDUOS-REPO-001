@@ -153,6 +153,12 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
             content: Text('${app.queued} change${app.queued == 1 ? '' : 's'} saved on this phone. ${app.queued == 1 ? 'It sends' : 'They send'} when you\'re back online.'),
             actions: [TextButton(onPressed: app.flushQueue, child: const Text('Send now'))],
           ),
+        if (app.heldForOthers > 0)
+          MaterialBanner(
+            content: Text('${app.heldForOthers} change${app.heldForOthers == 1 ? ' was' : 's were'} saved on this phone under another account, role or school. '
+                '${app.heldForOthers == 1 ? 'It is' : 'They are'} only sent when that account signs back in here, and deleted after 24 hours.'),
+            actions: const [SizedBox.shrink()],
+          ),
         if (app.notice != null)
           MaterialBanner(content: Text(app.notice!), actions: [TextButton(onPressed: app.clearNotice, child: const Text('Dismiss'))]),
         Expanded(

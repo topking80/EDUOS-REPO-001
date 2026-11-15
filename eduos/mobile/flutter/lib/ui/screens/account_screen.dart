@@ -70,10 +70,12 @@ class AccountScreen extends StatelessWidget {
             icon: const Icon(Icons.logout),
             label: const Text('Sign out'),
             onPressed: () async {
-              if (app.queued > 0) {
+              final unsent = app.queued + app.heldForOthers;
+              if (unsent > 0) {
                 final ok = await confirm(context,
                     title: 'Sign out with unsent changes?',
-                    text: '${app.queued} saved change${app.queued > 1 ? 's have' : ' has'} not been sent yet. Signing out deletes them from this phone.',
+                    text: '$unsent saved change${unsent > 1 ? 's have' : ' has'} not been sent yet'
+                        '${app.heldForOthers > 0 ? ' (${app.heldForOthers} from another account on this phone)' : ''}. Signing out deletes them from this phone.',
                     action: 'Sign out',
                     danger: true);
                 if (!ok) return;

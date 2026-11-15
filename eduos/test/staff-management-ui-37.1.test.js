@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import fs from "node:fs";
 
 const root = new URL('../', import.meta.url);
 
@@ -31,4 +32,15 @@ test('37.1 staffing actions validate intervals and use API client with CSRF hand
   assert.match(app, /to\.input\.value<=from\.input\.value/);
   assert.match(app, /api\.post\("\/api\/staff-management\/absences"/);
   assert.match(app, /api\.post\("\/api\/staff-management\/coverage"/);
+});
+
+// Audit: coverage requests are created 'pending' (032_district_staff_management),
+// so that's the status the decision buttons must appear for.
+test("web staffing offers decisions for pending coverage and a school picker for district leads", () => {
+  const ui = fs.readFileSync(new URL("../public/app/app.js", import.meta.url), "utf8");
+  const sql = fs.readFileSync(new URL("../db/032_district_staff_management.sql", import.meta.url), "utf8");
+  assert.match(sql, /substitute_coverage_requests[\s\S]*status text NOT NULL DEFAULT 'pending'/);
+  assert.match(ui, /staffLead\(\) && \["pending","approved"\]\.includes\(c\.status\)/);
+  assert.doesNotMatch(ui, /\["requested","approved"\]\.includes\(c\.status\)/);
+  assert.match(ui, /const staffDistrict = \(\) => \["superintendent", "it_admin"\]\.includes\(state\.me\?\.role\) && !state\.me\?\.schoolId/);
 });

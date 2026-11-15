@@ -9,6 +9,10 @@ import '../widgets.dart';
 const _reasons = {'personal': 'Personal', 'professional_development': 'Professional development', 'other': 'Other'};
 const _departments = ['instruction', 'transport', 'facilities', 'health_office', 'counseling', 'meal_service', 'library', 'administration', 'other'];
 const staffLeadRoles = {'superintendent', 'it_admin', 'principal', 'vice_principal'};
+const _districtRoles = {'superintendent', 'it_admin'};
+
+/// Coverage statuses a lead can still decide (the server creates them 'pending').
+const _decidable = {'pending', 'approved'};
 
 String _words(Object? v) => str(v).replaceAll('_', ' ');
 String _iso(DateTime day, int hour, int minute) => DateTime(day.year, day.month, day.day, hour, minute).toUtc().toIso8601String();
@@ -29,6 +33,10 @@ class _StaffingScreenState extends State<StaffingScreen> {
   TimeOfDay _start = const TimeOfDay(hour: 8, minute: 0), _end = const TimeOfDay(hour: 15, minute: 0);
   final _role = TextEditingController(), _notes = TextEditingController();
 
+  /// District-level memberships have no school: they pick one for each write.
+  String? _school;
+  bool _busy = false;
+
   DateTime get _today => DateUtils.dateOnly(DateTime.now());
 
   @override
@@ -38,16 +46,34 @@ class _StaffingScreenState extends State<StaffingScreen> {
     super.dispose();
   }
 
-  Future<void> _post(String path, Map<String, Object?> body, String done, String failed) async {
+  /// Sends one write; true only when the server accepted it. One at a time.
+  Future<bool> _post(String path, Map<String, Object?> body, String done, String failed) async {
+    if (_busy) return false;
+    setState(() => _busy = true);
     try {
       await AppScope.read(context).api.post(path, body);
-      if (!mounted) return;
+      if (!mounted) return true;
       toast(context, done);
       setState(() => _key = UniqueKey());
+      return true;
     } on ApiException catch (e) {
-      if (mounted) toast(context, e.isOffline ? 'You\'re offline. This needs a connection.' : failed);
+      if (mounted) {
+        toast(
+            context,
+            switch (e.error) {
+              _ when e.isOffline => 'You\'re offline. This needs a connection.',
+              'school_required' => 'Choose a school first.',
+              'school_not_in_district' => 'That school isn\'t in your district.',
+              _ => failed,
+            });
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
+
+  Map<String, Object?> get _schoolField => _school == null ? const {} : {'schoolId': _school};
 
   Future<void> _pickDay(DateTime current, ValueChanged<DateTime> set) async {
     final d = await showDatePicker(context: context, initialDate: current, firstDate: _today.subtract(const Duration(days: 30)), lastDate: _today.add(const Duration(days: 365)));
@@ -66,10 +92,27 @@ class _StaffingScreenState extends State<StaffingScreen> {
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final lead = staffLeadRoles.contains(app.me?.role);
-    return Loader<Json>(
+    final district = _districtRoles.contains(app.me?.role) && app.me?.schoolId == null;
+    return Loader<(Json, List<Json>)>(
       key: _key,
-      load: () async => obj((await app.api.get('/api/staff-management'))['data']),
-      builder: (context, d, _) {
+      load: () async {
+        final d = obj((await app.api.get('/api/staff-management'))['data']);
+        final schools = district ? objs((await app.api.get('/api/schools'))['data']).where((x) => x['status'] != 'inactive').toList() : const <Json>[];
+        return (d, schools);
+      },
+      builder: (context, loaded, _) {
+        final (d, schools) = loaded;
+        final schoolNames = {for (final x in schools) str(x['id']): str(x['name'])};
+        final schoolPicker = district
+            ? DropdownButtonFormField<String>(
+                value: _school,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'School'),
+                items: [for (final x in schools) DropdownMenuItem(value: str(x['id']), child: Text(str(x['name'])))],
+                onChanged: (v) => setState(() => _school = v),
+              )
+            : null;
+        final needSchool = district && _school == null;
         final absences = objs(d['absences']), coverage = objs(d['coverage']), shifts = objs(d['shifts']);
         return ListView(padding: const EdgeInsets.all(16), children: [
           SectionCard(children: [
@@ -84,6 +127,7 @@ class _StaffingScreenState extends State<StaffingScreen> {
             ]),
           ]),
           SectionCard(title: 'Request time away', children: [
+            if (schoolPicker != null) schoolPicker,
             Wrap(spacing: 8, runSpacing: 8, children: [
               _dayButton('First day', _from, (v) => _from = v),
               _dayButton('Last day', _to, (v) => _to = v),
@@ -97,11 +141,13 @@ class _StaffingScreenState extends State<StaffingScreen> {
             Text('Do not include medical details or sensitive personal information.', style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 8),
             FilledButton(
-              onPressed: () {
-                if (_to.isBefore(_from)) return toast(context, 'The last day must be on or after the first day.');
-                _post('/api/staff-management/absences', {'startsAt': _iso(_from, 0, 0), 'endsAt': _iso(_to, 23, 59), 'reasonCategory': _reason},
-                    'Absence request submitted.', 'Couldn\'t submit the absence request.');
-              },
+              onPressed: _busy || needSchool
+                  ? null
+                  : () {
+                      if (_to.isBefore(_from)) return toast(context, 'The last day must be on or after the first day.');
+                      _post('/api/staff-management/absences', {'startsAt': _iso(_from, 0, 0), 'endsAt': _iso(_to, 23, 59), 'reasonCategory': _reason, ..._schoolField},
+                          'Absence request submitted.', 'Couldn\'t submit the absence request.');
+                    },
               child: const Text('Submit absence'),
             ),
           ]),
@@ -112,22 +158,32 @@ class _StaffingScreenState extends State<StaffingScreen> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text('${fmtDay(date(a['starts_at']))} – ${fmtDay(date(a['ends_at']))}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text('${lead && strOrNull(a['display_name']) != null ? '${a['display_name']} · ' : ''}${_words(a['reason_category'])} · submitted ${fmtDay(date(a['created_at']))}'),
+                  subtitle: Text([
+                    if (lead && strOrNull(a['display_name']) != null) str(a['display_name']),
+                    if (district && schoolNames[str(a['school_id'])] != null) schoolNames[str(a['school_id'])]!,
+                    _words(a['reason_category']),
+                    'submitted ${fmtDay(date(a['created_at']))}',
+                  ].join(' · ')),
                   trailing: StatusChip(str(a['status'])),
                 ),
                 if (lead && a['status'] == 'pending')
                   Wrap(spacing: 8, children: [
                     FilledButton(
-                        onPressed: () => _post('/api/staff-management/absences/${a['id']}/review', {'decision': 'approved'}, 'Absence approved.', 'Couldn\'t update the request.'),
+                        onPressed: _busy
+                            ? null
+                            : () => _post('/api/staff-management/absences/${a['id']}/review', {'decision': 'approved'}, 'Absence approved.', 'Couldn\'t update the request.'),
                         child: const Text('Approve')),
                     OutlinedButton(
-                        onPressed: () => _post('/api/staff-management/absences/${a['id']}/review', {'decision': 'denied'}, 'Absence denied.', 'Couldn\'t update the request.'),
+                        onPressed: _busy
+                            ? null
+                            : () => _post('/api/staff-management/absences/${a['id']}/review', {'decision': 'denied'}, 'Absence denied.', 'Couldn\'t update the request.'),
                         child: const Text('Deny')),
                   ]),
               ]),
           ]),
           if (lead)
             SectionCard(title: 'Request substitute coverage', children: [
+              if (schoolPicker != null) schoolPicker,
               Wrap(spacing: 8, runSpacing: 8, children: [
                 _dayButton('Date', _coverDay, (v) => _coverDay = v),
                 OutlinedButton(onPressed: () => _pickTime(_start, (v) => _start = v), child: Text('From ${_start.format(context)}')),
@@ -142,19 +198,29 @@ class _StaffingScreenState extends State<StaffingScreen> {
               ),
               TextField(controller: _notes, maxLength: 500, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: 'Notes (non-sensitive)')),
               FilledButton(
-                onPressed: () async {
-                  if (_role.text.trim().isEmpty) return toast(context, 'Say which role is needed.');
-                  if (_end.hour * 60 + _end.minute <= _start.hour * 60 + _start.minute) return toast(context, 'The end time must be after the start time.');
-                  await _post('/api/staff-management/coverage', {
-                    'startsAt': _iso(_coverDay, _start.hour, _start.minute),
-                    'endsAt': _iso(_coverDay, _end.hour, _end.minute),
-                    'department': _dept,
-                    'roleNeeded': _role.text.trim(),
-                    'details': _notes.text.trim(),
-                  }, 'Coverage request created.', 'Couldn\'t create the coverage request.');
-                  _role.clear();
-                  _notes.clear();
-                },
+                onPressed: _busy || needSchool
+                    ? null
+                    : () async {
+                        if (_role.text.trim().isEmpty) return toast(context, 'Say which role is needed.');
+                        if (_end.hour * 60 + _end.minute <= _start.hour * 60 + _start.minute) return toast(context, 'The end time must be after the start time.');
+                        final ok = await _post(
+                            '/api/staff-management/coverage',
+                            {
+                              'startsAt': _iso(_coverDay, _start.hour, _start.minute),
+                              'endsAt': _iso(_coverDay, _end.hour, _end.minute),
+                              'department': _dept,
+                              'roleNeeded': _role.text.trim(),
+                              'details': _notes.text.trim(),
+                              ..._schoolField,
+                            },
+                            'Coverage request created.',
+                            'Couldn\'t create the coverage request.');
+                        // Keep what they typed unless the server accepted it.
+                        if (ok) {
+                          _role.clear();
+                          _notes.clear();
+                        }
+                      },
                 child: const Text('Create coverage request'),
               ),
             ]),
@@ -165,16 +231,27 @@ class _StaffingScreenState extends State<StaffingScreen> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(str(c['role_needed']), style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text('${_words(c['department'])} · ${fmtDay(date(c['starts_at']))} · ${fmtTime(date(c['starts_at']))}–${fmtTime(date(c['ends_at']))}'),
+                  subtitle: Text([
+                    if (district && schoolNames[str(c['school_id'])] != null) schoolNames[str(c['school_id'])]!,
+                    _words(c['department']),
+                    '${fmtDay(date(c['starts_at']))} · ${fmtTime(date(c['starts_at']))}–${fmtTime(date(c['ends_at']))}',
+                  ].join(' · ')),
                   trailing: StatusChip(str(c['status'])),
                 ),
-                if (lead && (c['status'] == 'requested' || c['status'] == 'approved'))
+                if (lead && _decidable.contains(c['status']))
                   Wrap(spacing: 8, children: [
-                    FilledButton.tonal(
-                        onPressed: () => _post('/api/staff-management/coverage/${c['id']}/decision', {'decision': 'approved'}, 'Coverage approved.', 'Couldn\'t update the coverage request.'),
-                        child: const Text('Approve coverage')),
+                    if (c['status'] == 'pending')
+                      FilledButton.tonal(
+                          onPressed: _busy
+                              ? null
+                              : () => _post(
+                                  '/api/staff-management/coverage/${c['id']}/decision', {'decision': 'approved'}, 'Coverage approved.', 'Couldn\'t update the coverage request.'),
+                          child: const Text('Approve coverage')),
                     OutlinedButton(
-                        onPressed: () => _post('/api/staff-management/coverage/${c['id']}/decision', {'decision': 'declined'}, 'Coverage declined.', 'Couldn\'t update the coverage request.'),
+                        onPressed: _busy
+                            ? null
+                            : () => _post(
+                                '/api/staff-management/coverage/${c['id']}/decision', {'decision': 'declined'}, 'Coverage declined.', 'Couldn\'t update the coverage request.'),
                         child: const Text('Decline')),
                   ]),
               ]),
@@ -185,7 +262,8 @@ class _StaffingScreenState extends State<StaffingScreen> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(str(x['display_name'], 'Staff member'), style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text('${fmtDay(date(x['shift_date']))} · ${fmtTime(date(x['starts_at']))}–${fmtTime(date(x['ends_at']))} · ${_words(x['department'])}\n${str(x['assignment'])}'),
+                subtitle: Text(
+                    '${fmtDay(date(x['shift_date']))} · ${fmtTime(date(x['starts_at']))}–${fmtTime(date(x['ends_at']))} · ${_words(x['department'])}\n${str(x['assignment'])}'),
                 isThreeLine: true,
                 trailing: StatusChip(str(x['status'])),
               ),
