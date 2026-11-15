@@ -33,7 +33,7 @@ class FakeServer {
         requests.add(r);
         final key = '${r.method} ${r.url.path}';
         final common = <String, Handler>{
-          'GET /api/me': (_) => {'userId': 'u-t', 'displayName': 'Ms. Rivera', 'role': role, 'districtId': 'd1', 'schoolId': 's1'},
+          'GET /api/me': (_) => {'userId': 'u-t', 'displayName': 'Ms. Rivera', 'role': role, 'districtId': 'd1', 'schoolId': role == 'superintendent' ? null : 's1'},
           'GET /api/branding/current': (_) => {'data': {'school': {'name': 'Maple Elementary'}, 'branding': {}}},
           'GET /api/safety/status': (_) => {'data': {'incidents': [], 'canInitiate': false, 'canLead': false}},
           'GET /api/notifications': (_) => {'data': {'unread': 0, 'items': []}},
@@ -206,7 +206,8 @@ void main() {
   group('Staffing', () {
     Map<String, Object?> data() => {'data': {
       'absences': [{'id': 'ab1', 'display_name': 'Mr. Lee', 'starts_at': now, 'ends_at': now, 'reason_category': 'professional_development', 'status': 'pending', 'created_at': now}],
-      'coverage': [{'id': 'cv1', 'role_needed': 'Substitute teacher', 'department': 'instruction', 'starts_at': now, 'ends_at': now, 'status': 'requested'}],
+      // 'pending' is what the database creates (032_district_staff_management.sql).
+      'coverage': [{'id': 'cv1', 'school_id': 's1', 'role_needed': 'Substitute teacher', 'department': 'instruction', 'starts_at': now, 'ends_at': now, 'status': 'pending'}],
       'shifts': [], 'staffing': []}};
 
     testWidgets('staff request time away; they cannot approve', (tester) async {
@@ -227,6 +228,50 @@ void main() {
       expect((from.hour, from.minute, to.hour, to.minute), (0, 0, 23, 59));
       expect(DateUtils.isSameDay(from, DateTime.now()), isTrue);
       expect(find.text('Absence request submitted.'), findsOneWidget);
+    });
+
+    testWidgets('a refused coverage request keeps what the leader typed', (tester) async {
+      var accept = false;
+      final fake = FakeServer({
+        'GET /api/staff-management': (_) => data(),
+        'POST /api/staff-management/coverage': (_) => accept ? {'data': {'id': 'cv2'}} : http.Response('{"error":"valid_coverage_fields_required"}', 400),
+      }, role: 'principal');
+      await launch(tester, fake);
+      await openTab(tester, 'Staffing');
+      await tester.enterText(find.widgetWithText(TextField, 'Role needed (e.g. Substitute teacher)'), 'Bus aide');
+      await tester.enterText(find.widgetWithText(TextField, 'Notes (non-sensitive)'), 'Route 7 morning');
+      await tester.tap(find.text('Create coverage request'));
+      await tester.pumpAndSettle();
+      expect(find.text('Couldn\'t create the coverage request.'), findsOneWidget);
+      expect(find.text('Bus aide'), findsOneWidget, reason: 'kept after a refusal');
+      expect(find.text('Route 7 morning'), findsOneWidget);
+      accept = true;
+      await tester.tap(find.text('Create coverage request'));
+      await tester.pumpAndSettle();
+      expect(fake.sent('POST', '/api/staff-management/coverage'), hasLength(2));
+      expect(find.text('Bus aide'), findsNothing, reason: 'cleared once accepted');
+    });
+
+    testWidgets('a superintendent picks a school before requesting coverage', (tester) async {
+      final fake = FakeServer({
+        'GET /api/staff-management': (_) => data(),
+        'GET /api/schools': (_) => {'data': [{'id': 's1', 'name': 'Maple Elementary'}, {'id': 's2', 'name': 'Oak Middle'}, {'id': 's3', 'name': 'Closed', 'status': 'inactive'}]},
+        'GET /api/home': (_) => {'data': {}},
+        'POST /api/staff-management/coverage': (_) => {'data': {'id': 'cv2'}},
+      }, role: 'superintendent');
+      await launch(tester, fake);
+      await openTab(tester, 'Staffing');
+      expect(find.textContaining('Maple Elementary · instruction'), findsOneWidget, reason: 'district view says which school');
+      await tester.enterText(find.widgetWithText(TextField, 'Role needed (e.g. Substitute teacher)'), 'Substitute teacher');
+      expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Create coverage request')).onPressed, isNull, reason: 'no school chosen yet');
+      await tester.tap(find.widgetWithText(DropdownButtonFormField<String>, 'School').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Closed'), findsNothing);
+      await tester.tap(find.text('Oak Middle').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create coverage request'));
+      await tester.pumpAndSettle();
+      expect((jsonDecode(fake.sent('POST', '/api/staff-management/coverage').single.body) as Map)['schoolId'], 's2');
     });
 
     testWidgets('leaders approve absences and coverage', (tester) async {
