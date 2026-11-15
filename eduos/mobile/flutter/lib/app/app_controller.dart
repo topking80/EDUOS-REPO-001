@@ -45,10 +45,28 @@ class AppController extends ChangeNotifier {
   bool canLeadSafety = false;
   int unread = 0;
   int queued = 0;
+
+  /// Offline writes saved on this phone by a different account, membership or
+  /// server. Never sent from this session.
+  int heldForOthers = 0;
   String? notice;
   Timer? _poll;
 
   ApiClient get api => _api ?? (throw StateError('Not signed in'));
+
+  /// The identity offline writes are saved under: server, user, district and
+  /// membership. null until the profile has loaded (nothing is queued then).
+  QueueOwner? get queueOwner {
+    final s = _session, m = me;
+    if (s == null || m == null || m.userId.isEmpty) return null;
+    return QueueOwner(server: s.serverUrl.origin, userId: m.userId, districtId: m.districtId, role: m.role, schoolId: m.schoolId);
+  }
+
+  Future<void> _countQueue() async {
+    final all = await queue.length;
+    queued = await queue.lengthFor(queueOwner);
+    heldForOthers = all - queued;
+  }
   List<Incident> get liveIncidents => incidents.where((i) => i.live).toList();
 
   Future<void> start() async {
@@ -152,7 +170,7 @@ class AppController extends ChangeNotifier {
     } on ApiException {
       // Keep the last count.
     }
-    queued = await queue.length;
+    await _countQueue();
     notifyListeners();
   }
 
@@ -160,6 +178,7 @@ class AppController extends ChangeNotifier {
     if (_api == null) return null;
     final result = await api.flushQueue();
     queued = result.remaining;
+    heldForOthers = result.held;
     if (result.rejected > 0) {
       notice = '${result.rejected} saved change${result.rejected == 1 ? ' was' : 's were'} refused by the school (too old or no longer valid).';
     }
@@ -194,6 +213,7 @@ class AppController extends ChangeNotifier {
     _api = ApiClient(
       session: () => _session!,
       queue: queue,
+      owner: () => queueOwner,
       httpClient: _httpFactory(),
       onUnauthorized: () => unawaited(_dropSession(notice: 'Your session ended. Please sign in again.')),
       onCsrfRefreshed: (csrf) {
@@ -214,6 +234,8 @@ class AppController extends ChangeNotifier {
     canInitiateSafety = false;
     canLeadSafety = false;
     unread = 0;
+    queued = 0;
+    heldForOthers = 0;
     if (notice != null) this.notice = notice;
     await _sessions.clear();
     _setStage(server == null ? AppStage.needsServer : AppStage.signedOut);
