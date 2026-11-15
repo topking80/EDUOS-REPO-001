@@ -1,4 +1,63 @@
-# EduOS Flutter School Branding + Mascot Starter
+# EduOS mobile app (Flutter)
+
+The native EduOS app for Android (iOS later). **Phase 1** ships sign-in, role
+navigation, the offline write queue and the full **parent app**: children,
+library books, arrival (bus check-ins), pick-up (passes, approved adults,
+early dismissal), messages and alerts, plus the SafetyOS takeover during a
+live incident. Messages and alerts also work natively for staff roles. Other
+staff and learner tabs open the EduOS web app until their phase ships.
+
+## How sign-in works (RFC 8252)
+
+District identity providers block sign-in inside embedded WebViews, so the app
+uses the system browser:
+
+1. The app makes a PKCE pair and opens
+   `https://<server>/auth/login?next=native&app_challenge=…&app_redirect=org.eduos.app:/oauth2redirect`.
+2. After district sign-in, the server returns to `org.eduos.app:/oauth2redirect?code=…`
+   with a single-use code (60 s).
+3. The app redeems it at `POST /auth/native/token` with its PKCE verifier and
+   receives a normal EduOS session (same expiry, idle timeout and revocation as
+   the browser). It's kept in the Android Keystore (`flutter_secure_storage`)
+   and sent as `Authorization: Bearer`, with the CSRF token on every write.
+
+**Server setup:** set `NATIVE_APP_REDIRECT_URIS=org.eduos.app:/oauth2redirect`
+on the EduOS server. Native sign-in is off until this is set.
+
+## Offline
+
+The same small allowlist as the web app (safety roll call, bus check-ins,
+attendance) is queued on the phone when the network or server is down. Queued
+writes are re-sent with their original `Idempotency-Key` and
+`X-EduOS-Queued-At`, kept at most 24 hours (200 entries), and wiped on sign-out.
+Pick-up actions are always online, because identity is checked live. School
+records are never cached on the phone.
+
+## Run and test
+
+```bash
+cd mobile/flutter
+flutter pub get --enforce-lockfile
+flutter analyze --fatal-infos
+flutter test
+flutter run            # Android device or emulator; enter your district's EduOS address
+```
+
+`lib/branding/branding_demo.dart` is the mascot and brand designer preview
+(`flutter run -t lib/branding/branding_demo.dart`).
+
+**Release builds** use debug signing until the district adds its own key
+(`android/key.properties`, never committed). Application ID: `org.eduos.app`.
+
+## Layout
+
+- `lib/core/`: API client (bearer + CSRF + offline routing), sign-in (PKCE),
+  session storage, offline queue, models
+- `lib/app/`: app controller (session, branding, safety polling), role tabs
+- `lib/ui/`: sign-in, shell, parent screens
+- `test/`: core unit tests and app widget tests against a fake EduOS server
+
+# School branding + mascot
 
 This isolated Flutter module provides tenant-replaceable brand tokens, a locally bundled mascot illustration, and a lifecycle-aware Rive controller. The bundled SVG is a usable static fallback and an art-direction/source reference; it is **not** a compiled `.riv` animation file.
 

@@ -24,6 +24,25 @@ export function isPrivateDatabaseHost(hostname) {
   return /^[a-z0-9-]+$/.test(host) && !/^\d+$/.test(host);
 }
 
+/**
+ * Native app redirect URIs: a private-use scheme in reverse-domain form
+ * (RFC 8252 section 7.1, e.g. org.eduos.app:/oauth2redirect) or an https app
+ * link. Anything else is a configuration error, so a typo can't widen redirects.
+ */
+export function parseNativeRedirectUris(value) {
+  const uris = String(value).split(",").map(x => x.trim()).filter(Boolean);
+  for (const uri of uris) {
+    let url;
+    try { url = new URL(uri); } catch { throw new Error(`NATIVE_APP_REDIRECT_URIS: not a URI: ${uri}`); }
+    const scheme = url.protocol.slice(0, -1);
+    const privateUse = /^[a-z][a-z0-9+-]*(\.[a-z0-9+-]+)+$/.test(scheme);
+    if (!(privateUse || scheme === "https")) throw new Error(`NATIVE_APP_REDIRECT_URIS: use a reverse-domain scheme (org.example.app:/path) or https: ${uri}`);
+    if (url.search || url.hash || url.username || url.password) throw new Error(`NATIVE_APP_REDIRECT_URIS: no query, fragment or credentials: ${uri}`);
+    if (uri.length > 200) throw new Error(`NATIVE_APP_REDIRECT_URIS: longer than 200 characters: ${uri}`);
+  }
+  return uris;
+}
+
 export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 8080),
@@ -66,6 +85,10 @@ export const config = {
   webhookAllowedHosts: (process.env.WEBHOOK_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
   // Development aid only: permits http:// to a loopback receiver. Ignored in production.
   webhookAllowInsecureLoopback: process.env.WEBHOOK_ALLOW_INSECURE_LOOPBACK === "true" && (process.env.NODE_ENV || "development") !== "production",
+  // Native mobile app sign-in (RFC 8252). Comma-separated redirect URIs the
+  // EduOS app may return to after district sign-in, e.g.
+  // "org.eduos.app:/oauth2redirect". Empty (default) disables native sign-in.
+  nativeAppRedirectUris: parseNativeRedirectUris(process.env.NATIVE_APP_REDIRECT_URIS || ""),
   // 32.1.0: GET /metrics is served only when this is set (Bearer token).
   metricsToken: process.env.METRICS_TOKEN || "",
   // Sign-in requests (/auth/login + /auth/callback) per client IP per 15 minutes.

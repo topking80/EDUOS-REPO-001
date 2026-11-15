@@ -8,7 +8,7 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { config } from "./config.js";
 import { pool, withTenantTransaction, assertSafeRuntimeRole, assertSchemaReady } from "./db.js";
-import { beginLogin, completeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership } from "./auth.js";
+import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership } from "./auth.js";
 import { requirePermission, requireSchoolScope, canPerform, isGrantable, isDistrictRole } from "./policy.js";
 import { writeAudit } from "./audit.js";
 import { normalizeAgentEvent } from "./agent-events.js";
@@ -107,6 +107,7 @@ app.get("/health", async (_req,res)=> {
 app.get("/metrics",metricsHandler({token:config.metricsToken,version:APP_VERSION,poolStats:()=>pool.stats()}));
 app.get("/auth/login",loginLimiter,beginLogin);
 app.get("/auth/callback",loginLimiter,completeLogin);
+app.post("/auth/native/token",loginLimiter,exchangeNativeLogin);
 app.post("/auth/logout",requireSession,requireCsrf,logout);
 app.get("/api/csrf",requireSession,issueCsrfToken);
 
