@@ -20,7 +20,10 @@ class _LoaderState<T> extends State<Loader<T>> {
 
   Future<void> _reload() async {
     final next = widget.load();
-    setState(() => _future = next);
+    // Block body: setState must not return a Future.
+    setState(() {
+      _future = next;
+    });
     try {
       await next;
     } on Object {

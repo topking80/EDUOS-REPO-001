@@ -4,6 +4,8 @@ import '../../app/app_scope.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
+import 'roll_call_card.dart';
+import 'web_fallback_screen.dart';
 
 const _kindText = {'lockdown': 'LOCKDOWN', 'shelter': 'SHELTER IN PLACE', 'evacuate': 'EVACUATE', 'hold': 'HOLD IN ROOMS'};
 
@@ -44,8 +46,25 @@ class SafetyScreen extends StatelessWidget {
               ],
             ]),
           if (role == 'pupil') const Notice('Stay with your teacher. Your phone does not need to do anything.'),
-          if (role != 'parent' && role != 'pupil')
-            const Notice('Staff safety tools (roll call, accountability board) arrive in a later phase of the app. Use the EduOS web app on this phone in the meantime.'),
+          if (role == 'teacher') ...[
+            RollCallCard(key: ValueKey('rollcall-${i.id}'), incident: i),
+            if (i.reunification)
+              OutlinedButton.icon(
+                icon: const Icon(Icons.directions_car),
+                label: const Text('Pick-up line: release to approved adults (web)'),
+                onPressed: () => openWebApp(context, path: '/app/#/pickup'),
+              ),
+          ],
+          if (role != 'parent' && role != 'pupil' && role != 'teacher')
+            SectionCard(children: [
+              const Text('The accountability board and other staff safety tools aren\'t in the app yet.'),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Open Safety on the web'),
+                onPressed: () => openWebApp(context, path: '/app/#/safety'),
+              ),
+            ]),
         ],
         if (live.isNotEmpty && role == 'parent')
           const Notice('Please don\'t call or come to the school unless asked. EduOS shares only what you need here; it never tracks anyone\'s location.'),

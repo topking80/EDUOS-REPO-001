@@ -4,8 +4,12 @@ The native EduOS app for Android (iOS later). **Phase 1** ships sign-in, role
 navigation, the offline write queue and the full **parent app**: children,
 library books, arrival (bus check-ins), pick-up (passes, approved adults,
 early dismissal), messages and alerts, plus the SafetyOS takeover during a
-live incident. Messages and alerts also work natively for staff roles. Other
-staff and learner tabs open the EduOS web app until their phase ships.
+live incident. Messages and alerts also work natively for staff roles.
+
+**Phase 2** adds the offline-critical staff screens: the bus driver's route
+(stop-by-stop check-ins, start and finish run), the teacher's class register
+(attendance) and the teacher's safety roll call. Other staff and learner tabs
+open the EduOS web app until their phase ships.
 
 ## How sign-in works (RFC 8252)
 

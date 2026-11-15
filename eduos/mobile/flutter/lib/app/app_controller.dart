@@ -214,7 +214,14 @@ class AppController extends ChangeNotifier {
   void _startPolling() {
     _poll?.cancel();
     final every = safetyPollInterval;
-    if (every != null) _poll = Timer.periodic(every, (_) => unawaited(refreshStatus()));
+    if (every != null) _poll = Timer.periodic(every, (_) => unawaited(_tick()));
+  }
+
+  /// Periodic: refresh safety/alerts and, if anything is saved on the phone,
+  /// try to send it (signal often returns without the app being reopened).
+  Future<void> _tick() async {
+    await refreshStatus();
+    if (queued > 0) await flushQueue();
   }
 
   void _setStage(AppStage next) {
