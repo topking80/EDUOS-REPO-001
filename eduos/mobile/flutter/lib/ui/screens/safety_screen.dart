@@ -5,6 +5,7 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
 import 'roll_call_card.dart';
+import 'safety_board.dart';
 import 'web_fallback_screen.dart';
 
 const _kindText = {'lockdown': 'LOCKDOWN', 'shelter': 'SHELTER IN PLACE', 'evacuate': 'EVACUATE', 'hold': 'HOLD IN ROOMS'};
@@ -55,7 +56,9 @@ class SafetyScreen extends StatelessWidget {
                 onPressed: () => openWebApp(context, path: '/app/#/pickup'),
               ),
           ],
-          if (role != 'parent' && role != 'pupil' && role != 'teacher')
+          if (app.canLeadSafety && role != 'teacher')
+            SafetyBoardCards(key: ValueKey('board-${i.id}-${i.status}'), incident: i, onOpenPickup: onOpenPickup),
+          if (role != 'parent' && role != 'pupil' && role != 'teacher' && !app.canLeadSafety)
             SectionCard(children: [
               const Text('The accountability board and other staff safety tools aren\'t in the app yet.'),
               const SizedBox(height: 8),

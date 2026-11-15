@@ -400,3 +400,137 @@ class RollCall {
   final List<RollCallLearner> learners, extras;
   final DateTime? submittedAt;
 }
+
+// ---- Phase 3: principal / school leader ----
+
+class PassStudent {
+  const PassStudent({required this.studentId, required this.name, required this.grade, required this.eligible,
+      this.reason, required this.custodyOrder, this.flagDetail, this.earlyDismissalTime});
+  factory PassStudent.fromJson(Json j) => PassStudent(
+        studentId: str(j['studentId']),
+        name: str(j['name']),
+        grade: str(j['grade']),
+        eligible: boolean(j['eligible']),
+        reason: strOrNull(j['reason']),
+        custodyOrder: boolean(j['custodyOrder']),
+        flagDetail: strOrNull(j['flagDetail']),
+        earlyDismissalTime: strOrNull(obj(j['earlyDismissal'])['time']),
+      );
+  final String studentId, name, grade;
+  final bool eligible, custodyOrder;
+  final String? reason, flagDetail, earlyDismissalTime;
+}
+
+/// Result of POST /api/pickup/verify.
+class PassCheck {
+  const PassCheck({required this.pass, required this.adultName, required this.relationship, required this.adultKind,
+      required this.students, required this.blocked, required this.reunification, required this.instructions});
+  factory PassCheck.fromJson(Json j) {
+    final a = obj(j['adult']);
+    return PassCheck(
+      pass: str(j['pass']),
+      adultName: str(a['name']),
+      relationship: str(a['relationship']),
+      adultKind: str(a['kind']),
+      students: objs(j['students']).map(PassStudent.fromJson).toList(),
+      blocked: boolean(j['blocked']),
+      reunification: boolean(j['reunification']),
+      instructions: str(j['instructions']),
+    );
+  }
+  final String pass, adultName, relationship, adultKind, instructions;
+  final List<PassStudent> students;
+  final bool blocked, reunification;
+  List<PassStudent> get eligible => students.where((s) => s.eligible).toList();
+}
+
+class PickupQueueEntry {
+  const PickupQueueEntry({required this.name, required this.adult, this.relationship, this.at});
+  factory PickupQueueEntry.fromJson(Json j) =>
+      PickupQueueEntry(name: str(j['name']), adult: str(j['adult']), relationship: strOrNull(j['relationship']), at: date(j['at']));
+  final String name, adult;
+  final String? relationship;
+  final DateTime? at;
+}
+
+class PickupQueue {
+  const PickupQueue({this.incidentStatus, this.incidentKind, required this.waiting, required this.released,
+      required this.blocked, required this.denied, required this.earlyDismissals});
+  factory PickupQueue.fromJson(Json j) {
+    final i = obj(j['incident']);
+    return PickupQueue(
+      incidentStatus: strOrNull(i['status']),
+      incidentKind: strOrNull(i['kind']),
+      waiting: objs(j['waiting']).map(PickupQueueEntry.fromJson).toList(),
+      released: objs(j['released']).map(PickupQueueEntry.fromJson).toList(),
+      blocked: integer(j['blocked']),
+      denied: integer(j['denied']),
+      earlyDismissals: objs(j['earlyDismissals']),
+    );
+  }
+  final String? incidentStatus, incidentKind;
+  final List<PickupQueueEntry> waiting, released;
+  final int blocked, denied;
+  final List<Json> earlyDismissals;
+}
+
+class BoardPerson {
+  const BoardPerson({required this.name, this.grade, this.by, this.note});
+  factory BoardPerson.fromJson(Json j) => BoardPerson(name: str(j['name']), grade: strOrNull(j['grade']), by: strOrNull(j['by']), note: strOrNull(j['note']));
+  final String name;
+  final String? grade, by, note;
+  String get detail => [if (grade != null) 'gr $grade', if (by != null) by!, if (note != null) note!].join(' · ');
+}
+
+class BoardTeacher {
+  const BoardTeacher({required this.name, required this.roster, this.submittedAt});
+  factory BoardTeacher.fromJson(Json j) => BoardTeacher(name: str(j['name']), roster: integer(j['roster']), submittedAt: date(j['submittedAt']));
+  final String name;
+  final int roster;
+  final DateTime? submittedAt;
+}
+
+class IncidentLogEntry {
+  const IncidentLogEntry({required this.event, this.detail, this.at, required this.actorName});
+  factory IncidentLogEntry.fromJson(Json j) =>
+      IncidentLogEntry(event: str(j['event']), detail: strOrNull(j['detail']), at: date(j['at']), actorName: str(j['actor_name']));
+  final String event, actorName;
+  final String? detail;
+  final DateTime? at;
+}
+
+/// GET /api/safety/incidents/:id/board (school leaders).
+class SafetyBoard {
+  const SafetyBoard({required this.totals, required this.missing, required this.injured, required this.teachers,
+      required this.unaccounted, required this.events});
+  factory SafetyBoard.fromJson(Json j) => SafetyBoard(
+        totals: {for (final e in obj(j['totals']).entries) e.key: integer(e.value)},
+        missing: objs(j['missing']).map(BoardPerson.fromJson).toList(),
+        injured: objs(j['injured']).map(BoardPerson.fromJson).toList(),
+        teachers: objs(j['teachers']).map(BoardTeacher.fromJson).toList(),
+        unaccounted: objs(j['unaccounted']).map(BoardPerson.fromJson).toList(),
+        events: objs(j['events']).map(IncidentLogEntry.fromJson).toList(),
+      );
+  final Map<String, int> totals;
+  final List<BoardPerson> missing, injured, unaccounted;
+  final List<BoardTeacher> teachers;
+  final List<IncidentLogEntry> events;
+  int total(String k) => totals[k] ?? 0;
+}
+
+class PastIncident {
+  const PastIncident({required this.id, required this.label, required this.isDrill, required this.schoolName,
+      this.startedAt, required this.status, required this.debriefed});
+  factory PastIncident.fromJson(Json j) => PastIncident(
+        id: str(j['id']),
+        label: str(j['label']),
+        isDrill: boolean(j['isDrill']),
+        schoolName: str(j['schoolName']),
+        startedAt: date(j['startedAt']),
+        status: str(j['status']),
+        debriefed: j['debrief'] != null && '${j['debrief']}'.isNotEmpty,
+      );
+  final String id, label, schoolName, status;
+  final bool isDrill, debriefed;
+  final DateTime? startedAt;
+}

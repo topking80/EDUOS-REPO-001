@@ -13,6 +13,9 @@ import 'screens/driver_route_screen.dart';
 import 'screens/family_library_screen.dart';
 import 'screens/family_pickup_screen.dart';
 import 'screens/messages_screen.dart';
+import 'screens/overview_screen.dart';
+import 'screens/safety_board.dart';
+import 'screens/staff_pickup_screen.dart';
 import 'screens/safety_screen.dart';
 import 'screens/web_fallback_screen.dart';
 
@@ -60,6 +63,9 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       'library' when role == 'parent' => const FamilyLibraryScreen(),
       'arrival' => const ArrivalScreen(),
       'pickup' when role == 'parent' => const FamilyPickupScreen(),
+      'pickup' => const StaffPickupScreen(),
+      'overview' => const OverviewScreen(),
+      'safety' when role != 'sro' => const SafetyCenterScreen(embedded: true),
       'messages' => const MessagesScreen(),
       'alerts' => const AlertsScreen(),
       _ => WebFallbackScreen(tab: tab),
@@ -75,7 +81,11 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     // SafetyOS: while an incident is live, families see the safety screen;
     // they may open pick-up once reunification starts (as in the web app).
     final reunification = live.any((i) => i.reunification);
-    final safetyLock = live.isNotEmpty && !(role == 'parent' && reunification && _tab == 'pickup');
+    // Staff may still open pick-up (reunification releases happen there);
+    // families only once reunification has started.
+    const staffRoles = {'teacher', 'principal', 'superintendent', 'vice_principal', 'counselor', 'nurse', 'maintenance', 'lunch_staff', 'librarian', 'driver', 'sro', 'it_admin'};
+    final pickupAllowed = _tab == 'pickup' && (staffRoles.contains(role) || (role == 'parent' && reunification));
+    final safetyLock = live.isNotEmpty && !pickupAllowed;
     if (tabs.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text('EduOS')),
@@ -98,6 +108,14 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
             onPressed: tabs.any((t) => t.id == 'alerts') ? () => _go('alerts') : null,
             icon: Badge(isLabelVisible: app.unread > 0, label: Text('${app.unread}'), child: const Icon(Icons.notifications_none)),
           ),
+          if (app.canInitiateSafety || app.canLeadSafety)
+            IconButton(
+              tooltip: live.isNotEmpty ? 'Safety board' : 'Safety: start an alert',
+              icon: Icon(Icons.shield_outlined, color: live.isNotEmpty ? Theme.of(context).colorScheme.error : null),
+              onPressed: live.isNotEmpty
+                  ? () => _go(tabs.first.id) // the safety takeover shows the board
+                  : () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SafetyCenterScreen())),
+            ),
           IconButton(
             tooltip: 'Account',
             icon: const Icon(Icons.account_circle_outlined),
@@ -115,7 +133,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
           MaterialBanner(content: Text(app.notice!), actions: [TextButton(onPressed: app.clearNotice, child: const Text('Dismiss'))]),
         Expanded(
           child: safetyLock
-              ? SafetyScreen(onOpenPickup: role == 'parent' && reunification ? () => _go('pickup') : null)
+              ? SafetyScreen(onOpenPickup: reunification && (role == 'parent' || tabs.any((t) => t.id == 'pickup')) ? () => _go('pickup') : null)
               : KeyedSubtree(key: ValueKey('$role/${current.id}'), child: _screen(current, role)),
         ),
       ]),
