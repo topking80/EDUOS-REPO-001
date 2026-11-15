@@ -101,6 +101,9 @@ class ApiClient {
     }
   }
 
+  /// PUT (never queued: quiz answers must reach the server while the attempt is open).
+  Future<Map<String, Object?>> put(String path, [Map<String, Object?> body = const {}]) => _writeJson('PUT', path, body);
+
   /// Sends queued writes now (call when the app resumes or the network returns).
   Future<FlushResult> flushQueue() => queue.flush((write) async {
         try {
@@ -130,11 +133,16 @@ class ApiClient {
     return token;
   }
 
-  Future<Map<String, Object?>> _postJson(String path, Map<String, Object?> body) async {
-    var res = await _send(() => _http.post(_uri(path), headers: _headers(write: true), body: jsonEncode(body)));
+  Future<Map<String, Object?>> _postJson(String path, Map<String, Object?> body) => _writeJson('POST', path, body);
+
+  Future<Map<String, Object?>> _writeJson(String method, String path, Map<String, Object?> body) async {
+    Future<http.Response> send(String csrf) => method == 'PUT'
+        ? _http.put(_uri(path), headers: _headers(write: true, csrf: csrf), body: jsonEncode(body))
+        : _http.post(_uri(path), headers: _headers(write: true, csrf: csrf), body: jsonEncode(body));
+    var res = await _send(() => send(_session().csrfToken));
     if (res.statusCode == 403 && _errorCode(res) == 'csrf_validation_failed') {
       final fresh = await refreshCsrf();
-      res = await _send(() => _http.post(_uri(path), headers: _headers(write: true, csrf: fresh), body: jsonEncode(body)));
+      res = await _send(() => send(fresh));
     }
     return _decode(res);
   }
