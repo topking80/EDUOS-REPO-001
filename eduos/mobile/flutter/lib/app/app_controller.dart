@@ -39,12 +39,34 @@ class AppController extends ChangeNotifier {
   Me? me;
   Brand? brand;
   List<Incident> incidents = const [];
+
+  /// From /api/safety/status: may this person start alerts / lead incidents.
+  bool canInitiateSafety = false;
+  bool canLeadSafety = false;
   int unread = 0;
   int queued = 0;
+
+  /// Offline writes saved on this phone by a different account, membership or
+  /// server. Never sent from this session.
+  int heldForOthers = 0;
   String? notice;
   Timer? _poll;
 
   ApiClient get api => _api ?? (throw StateError('Not signed in'));
+
+  /// The identity offline writes are saved under: server, user, district and
+  /// membership. null until the profile has loaded (nothing is queued then).
+  QueueOwner? get queueOwner {
+    final s = _session, m = me;
+    if (s == null || m == null || m.userId.isEmpty) return null;
+    return QueueOwner(server: s.serverUrl.origin, userId: m.userId, districtId: m.districtId, role: m.role, schoolId: m.schoolId);
+  }
+
+  Future<void> _countQueue() async {
+    final all = await queue.length;
+    queued = await queue.lengthFor(queueOwner);
+    heldForOthers = all - queued;
+  }
   List<Incident> get liveIncidents => incidents.where((i) => i.live).toList();
 
   Future<void> start() async {
@@ -137,6 +159,8 @@ class AppController extends ChangeNotifier {
     try {
       final status = obj((await api.get('/api/safety/status'))['data']);
       incidents = objs(status['incidents']).map(Incident.fromJson).toList();
+      canInitiateSafety = boolean(status['canInitiate']);
+      canLeadSafety = boolean(status['canLead']);
     } on ApiException catch (e) {
       if (e.isUnauthorized) return;
       if (e.status == 403) incidents = const [];
@@ -146,7 +170,7 @@ class AppController extends ChangeNotifier {
     } on ApiException {
       // Keep the last count.
     }
-    queued = await queue.length;
+    await _countQueue();
     notifyListeners();
   }
 
@@ -154,6 +178,7 @@ class AppController extends ChangeNotifier {
     if (_api == null) return null;
     final result = await api.flushQueue();
     queued = result.remaining;
+    heldForOthers = result.held;
     if (result.rejected > 0) {
       notice = '${result.rejected} saved change${result.rejected == 1 ? ' was' : 's were'} refused by the school (too old or no longer valid).';
     }
@@ -188,6 +213,7 @@ class AppController extends ChangeNotifier {
     _api = ApiClient(
       session: () => _session!,
       queue: queue,
+      owner: () => queueOwner,
       httpClient: _httpFactory(),
       onUnauthorized: () => unawaited(_dropSession(notice: 'Your session ended. Please sign in again.')),
       onCsrfRefreshed: (csrf) {
@@ -205,7 +231,11 @@ class AppController extends ChangeNotifier {
     me = null;
     brand = null;
     incidents = const [];
+    canInitiateSafety = false;
+    canLeadSafety = false;
     unread = 0;
+    queued = 0;
+    heldForOthers = 0;
     if (notice != null) this.notice = notice;
     await _sessions.clear();
     _setStage(server == null ? AppStage.needsServer : AppStage.signedOut);
@@ -214,7 +244,14 @@ class AppController extends ChangeNotifier {
   void _startPolling() {
     _poll?.cancel();
     final every = safetyPollInterval;
-    if (every != null) _poll = Timer.periodic(every, (_) => unawaited(refreshStatus()));
+    if (every != null) _poll = Timer.periodic(every, (_) => unawaited(_tick()));
+  }
+
+  /// Periodic: refresh safety/alerts and, if anything is saved on the phone,
+  /// try to send it (signal often returns without the app being reopened).
+  Future<void> _tick() async {
+    await refreshStatus();
+    if (queued > 0) await flushQueue();
   }
 
   void _setStage(AppStage next) {

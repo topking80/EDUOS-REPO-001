@@ -354,7 +354,17 @@ const staffField = (label, type, attrs = {}) => {
   return { input, node: h("label", {}, h("span", {}, label), input) };
 };
 const staffLead = () => ["superintendent", "it_admin", "principal", "vice_principal"].includes(state.me?.role);
+// Superintendents and IT admins have no school on their membership: they choose one for each write.
+const staffDistrict = () => ["superintendent", "it_admin"].includes(state.me?.role) && !state.me?.schoolId;
+const staffSchools = { list: [] };
+const staffSchoolPicker = (id) => {
+  const sel = h("select", { id, required: true }, h("option", { value: "" }, "Choose a school"), staffSchools.list.map(x => h("option", { value: x.id }, x.name)));
+  return { sel, node: h("label", { for: id }, h("span", {}, "School"), sel), body: () => (sel.value ? { schoolId: sel.value } : {}) };
+};
 VIEWS.staffing = async () => {
+  if (staffDistrict()) staffSchools.list = ((await safe(api.get("/api/schools")))?.data || []).filter(x => x.status !== "inactive");
+  const schoolName = (id) => staffSchools.list.find(x => x.id === id)?.name;
+  const absenceSchool = staffDistrict() ? staffSchoolPicker("absence-school") : null;
   const response = await api.get("/api/staff-management");
   const d = response.data || { absences: [], shifts: [], coverage: [], staffing: [] };
   const pendingAbsences = d.absences.filter(x => x.status === "pending");
@@ -365,22 +375,22 @@ VIEWS.staffing = async () => {
   const absenceForm = h("form", { class: "stack", onsubmit: async e => {
     e.preventDefault();
     if (end.input.value < start.input.value) return toast("End date must be on or after the first day.");
-    try { await api.post("/api/staff-management/absences", { startsAt: staffDateTime(start.input.value,"00:00"), endsAt: staffDateTime(end.input.value,"23:59"), reasonCategory: reason.value }); toast("Absence request submitted."); go("staffing", {push:false}); }
+    try { await api.post("/api/staff-management/absences", { startsAt: staffDateTime(start.input.value,"00:00"), endsAt: staffDateTime(end.input.value,"23:59"), reasonCategory: reason.value, ...(absenceSchool?.body() || {}) }); toast("Absence request submitted."); go("staffing", {push:false}); }
     catch { toast("Could not submit absence request."); }
-  }}, start.node, end.node, h("label", {}, h("span", {}, "Category"), reason), h("p", { class:"small muted" }, "Do not include medical details or sensitive personal information."), h("button", { class:"btn primary", type:"submit" }, "Submit absence"));
+  }}, absenceSchool?.node, start.node, end.node, h("label", {}, h("span", {}, "Category"), reason), h("p", { class:"small muted" }, "Do not include medical details or sensitive personal information."), h("button", { class:"btn primary", type:"submit" }, "Submit absence"));
   const absenceItems = d.absences.map(a => {
     const actions = staffLead() && a.status === "pending" ? h("div", {class:"btns"},
       h("button", {class:"btn primary small", type:"button", onclick:()=>reviewAbsence(a.id,"approved")},"Approve"),
       h("button", {class:"btn danger small", type:"button", onclick:()=>reviewAbsence(a.id,"denied")},"Deny")) : null;
     return h("li", {class:"item"}, h("div", {class:"row"}, h("strong", {class:"grow"}, `${fmtDay(a.starts_at)} – ${fmtDay(a.ends_at)}`), chip(a.status)),
-      h("p", {class:"small muted"}, `${a.reason_category.replaceAll("_"," ")} · Submitted ${fmtDay(a.created_at)}`), actions);
+      h("p", {class:"small muted"}, [staffLead() ? a.display_name : null, staffDistrict() ? schoolName(a.school_id) : null, a.reason_category.replaceAll("_"," "), `Submitted ${fmtDay(a.created_at)}`].filter(Boolean).join(" · ")), actions);
   });
   const coverageItems = d.coverage.map(c => {
-    const actions = staffLead() && ["requested","approved"].includes(c.status) ? h("div",{class:"btns"},
+    const actions = staffLead() && ["pending","approved"].includes(c.status) ? h("div",{class:"btns"},
       h("button",{class:"btn primary small",type:"button",onclick:()=>decideCoverage(c.id,"approved")},"Approve"),
       h("button",{class:"btn danger small",type:"button",onclick:()=>decideCoverage(c.id,"declined")},"Decline")) : null;
     return h("li", {class:"item"}, h("div",{class:"row"},h("strong",{class:"grow"},c.role_needed),chip(c.status)),
-      h("p",{class:"small muted"},`${c.department.replaceAll("_"," ")} · ${fmtDay(c.starts_at)} · ${fmtTime(c.starts_at)}–${fmtTime(c.ends_at)}`), actions);
+      h("p",{class:"small muted"},`${staffDistrict() && schoolName(c.school_id) ? `${schoolName(c.school_id)} · ` : ""}${c.department.replaceAll("_"," ")} · ${fmtDay(c.starts_at)} · ${fmtTime(c.starts_at)}–${fmtTime(c.ends_at)}`), actions);
   });
   const shiftItems = d.shifts.map(x => h("li",{class:"item"},h("div",{class:"row"},h("strong",{class:"grow"},x.display_name||"Staff member"),chip(x.status)),
     h("p",{class:"small muted"},`${fmtDay(x.shift_date)} · ${fmtTime(x.starts_at)}–${fmtTime(x.ends_at)} · ${x.department.replaceAll("_"," ")}`),h("p",{},x.assignment)));
@@ -412,12 +422,13 @@ function coverageRequestForm(date) {
   const role = staffField("Role needed","text",{required:true,maxlength:100,placeholder:"e.g. Substitute teacher"});
   const dept = h("select",{}, ...["instruction","transport","facilities","health_office","counseling","meal_service","library","administration","other"].map(v=>h("option",{value:v},v.replaceAll("_"," "))));
   const details = staffField("Notes (non-sensitive)","textarea",{maxlength:500,rows:2});
+  const school = staffDistrict() ? staffSchoolPicker("coverage-school") : null;
   return h("section",{class:"card"},h("h2",{},"Request substitute coverage"),h("form",{class:"stack",onsubmit:async e=>{
     e.preventDefault();
     if(to.input.value<=from.input.value)return toast("End time must be after start time.");
-    try { await api.post("/api/staff-management/coverage",{startsAt:staffDateTime(day.input.value,from.input.value),endsAt:staffDateTime(day.input.value,to.input.value),department:dept.value,roleNeeded:role.input.value,details:details.input.value}); toast("Coverage request created."); go("staffing",{push:false}); }
-    catch { toast("Could not create coverage request."); }
-  }},day.node,from.node,to.node,role.node,h("label",{},h("span",{},"Department"),dept),details.node,h("button",{class:"btn primary",type:"submit"},"Create coverage request")));
+    try { await api.post("/api/staff-management/coverage",{startsAt:staffDateTime(day.input.value,from.input.value),endsAt:staffDateTime(day.input.value,to.input.value),department:dept.value,roleNeeded:role.input.value,details:details.input.value,...(school?.body()||{})}); toast("Coverage request created."); go("staffing",{push:false}); }
+    catch (err) { toast({ school_required: "Choose a school first.", school_not_in_district: "That school isn't in your district." }[err.body?.error] || "Could not create coverage request."); }
+  }},school?.node,day.node,from.node,to.node,role.node,h("label",{},h("span",{},"Department"),dept),details.node,h("button",{class:"btn primary",type:"submit"},"Create coverage request")));
 }
 VIEWS.news = async () => {
   const list = (await api.get("/api/comms/announcements")).data;
@@ -1458,7 +1469,7 @@ const NODE_STATE = { online: ["present", "Online"], offline: ["absent", "Offline
 const FO_STATE = { authorized: ["expected", "Authorized"], active: ["absent", "Partner hosting"], handing_back: ["expected", "Handing back"], returned: ["expected", "Returned"], closed: ["present", "Closed"], cancelled: ["present", "Cancelled"] };
 const staffOf = c => (Number(c?.memberships) || 0) + (Number(c?.memberships_reenabled) || 0);
 const kv = (label, value) => h("li", { class: "row" }, h("span", { class: "grow" }, label), h("span", { class: "muted" }, value ?? "—"));
-VIEWS.nodes = async () => {
+async function edenNodesView() {
   const tier = (await safe(api.get("/api/eden/tier")))?.data;
   if (tier?.tier === "school") return VIEWS.node();
   if (tier?.tier !== "district") return [h("h2", {}, "School nodes"), h("section", { class: "card" }, h("p", {}, "This EduOS server is not set up as an EDEN district hub, so there are no school nodes to manage."),
@@ -1532,7 +1543,46 @@ VIEWS.nodes = async () => {
     o.inbound.length ? h("ul", { class: "list" }, o.inbound.slice(0, 8).map(l => h("li", { class: "row" }, h("span", { class: "grow" }, `${byId[l.node_id]?.school_name || "Unknown node"} · ${l.kind}`, h("br"), h("span", { class: "muted small" }, `${ago(l.received_at)}${l.reason ? ` · ${l.reason}` : ""}`)),
       chip(l.decision === "accepted" ? "present" : l.decision === "rejected" ? "absent" : "expected", l.decision)))) : empty("Nothing yet.")));
   return out;
-};
+}
+
+// Edge Phase 2: EduOS edge devices and their health reports (db/038).
+const EDGE_ROLES = ["edge", "school-node", "teacher", "student", "admin", "district", "state"];
+async function edgeDevicesCard() {
+  const r = await safe(api.get("/api/edge/devices"));
+  if (!r) return null;
+  const list = r.data.devices || [];
+  const district = ["superintendent", "it_admin"].includes(state.me.role);
+  const schools = district ? ((await safe(api.get("/api/schools")))?.data || []).filter(x => x.status !== "inactive") : [];
+  const name = h("input", { id: "edge-name", maxlength: 80, required: true, placeholder: "e.g. Maple edge 01" });
+  const role = h("select", { id: "edge-role" }, EDGE_ROLES.map(x => h("option", { value: x }, x)));
+  const school = district ? h("select", { id: "edge-school" }, h("option", { value: "" }, "District-level (no school)"), schools.map(x => h("option", { value: x.id }, x.name))) : null;
+  const tokenOut = h("div", { "aria-live": "polite" });
+  const line = (d) => {
+    const rp = d.last_report || {}, m = rp.metrics || {}, o = rp.os || {};
+    const bits = [d.school_name || "District", d.device_role, d.last_seen_at ? `seen ${ago(d.last_seen_at)}` : "never reported",
+      m.cpu_percent != null ? `CPU ${m.cpu_percent}%` : null, m.root_disk_used_percent != null ? `disk ${m.root_disk_used_percent}%` : null,
+      o.booted_version ? `OS ${o.booted_version}` : null, o.updates === "held" ? `updates held${o.hold_reason ? `: ${o.hold_reason}` : ""}` : null,
+      o.last_verify === "rolled_back" ? "rolled back" : null].filter(Boolean).join(" · ");
+    const [cls, txt] = d.revoked_at ? ["not_started", "Revoked"] : d.stale ? ["absent", d.last_seen_at ? "Stale" : "Waiting"] : o.updates === "held" ? ["expected", "Updates held"] : ["present", "Reporting"];
+    return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, d.name), h("br"), h("span", { class: "muted small" }, bits)), chip(cls, txt),
+      d.revoked_at ? null : h("button", { class: "btn small", type: "button", "aria-label": `Revoke ${d.name}`, onclick: async () => {
+        if (!(await ask({ title: `Revoke ${d.name}?`, text: "Its token stops working at once. Register it again to get a new token.", confirm: "Revoke", danger: true }))) return;
+        try { await api.post(`/api/edge/devices/${d.id}/revoke`, {}); toast("Revoked"); go(state.tab, { push: false }); } catch { toast("Couldn't revoke."); } } }, "Revoke"));
+  };
+  return h("section", { class: "card", "aria-label": "Edge devices" }, h("h2", {}, "Edge devices"),
+    h("p", { class: "muted small" }, `Health reports from EduOS edge devices: metrics, compliance and OS update state only, never student data. A device is stale after ${r.data.staleAfterMinutes} minutes without a report.`),
+    list.length ? h("ul", { class: "list" }, list.map(line)) : empty("No edge devices registered yet."),
+    h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
+      try {
+        const t = (await api.post("/api/edge/devices", { name: name.value, deviceRole: role.value, ...(school && school.value ? { schoolId: school.value } : {}) })).data;
+        tokenOut.replaceChildren(h("p", { class: "notice" }, `Device token for ${t.name}, shown once. Put it in /etc/eduos/health-token on the device (mode 0400): `, h("code", { class: "token" }, t.token)));
+        name.value = "";
+      } catch { toast("Couldn't register the device."); } } },
+      h("h3", {}, "Register a device"), h("label", { for: name.id }, "Name"), name, h("label", { for: role.id }, "Device role"), role,
+      school ? [h("label", { for: school.id }, "School"), school] : null, h("button", { class: "btn", type: "submit" }, "Register and show token")),
+    tokenOut);
+}
+VIEWS.nodes = async () => [...[await edenNodesView()].flat(), await edgeDevicesCard()];
 VIEWS.node = async () => {
   const s = (await safe(api.get("/api/node/status")))?.data;
   if (!s) return [h("h2", {}, "School node"), empty("This server isn't a school node.")];
@@ -1559,27 +1609,98 @@ VIEWS.node = async () => {
     kv("Record transfers (consent)", s.consentExceptions === "on" ? "on" : "off (default)"))));
   return out;
 };
-VIEWS.overview = async () => {
-  const role=state.me.role;
-  const config={
-    vice_principal:{domain:"facilities",title:"Vice Principal Operations",desc:"Coordinate school-day exceptions, attendance follow-up, safety coordination and facilities escalations.",kind:"operations_followup",placeholder:"Describe the operational follow-up needed"},
-    counselor:{domain:"counseling",title:"Guidance Counselor Console",desc:"Manage a routing queue for non-confidential follow-ups. Keep counseling narratives and student clinical details in the district-approved case system.",kind:"student_support_referral",placeholder:"Brief non-sensitive routing summary"},
-    nurse:{domain:"health_office",title:"School Nurse Console",desc:"Coordinate health-office operational tasks only. Do not enter diagnoses, medications, treatment notes or student-identifying health details here.",kind:"health_office_task",placeholder:"Brief non-sensitive operational summary"},
-    maintenance:{domain:"facilities",title:"Maintenance Console",desc:"Submit and track facility work orders, safety repairs and building service requests.",kind:"repair",placeholder:"Describe the facility issue and location (no student names)"},
-    lunch_staff:{domain:"meal_service",title:"Meal Service Console",desc:"Coordinate meal service tasks, stock issues, equipment problems and daily service operations.",kind:"meal_service_issue",placeholder:"Describe the meal service issue"}
-  }[role];
-  if(!config) return h("section",{class:"card"},h("h2",{},"School operations"),h("p",{class:"muted"},"Choose a workspace."));
-  const result=await safe(api.get(`/api/school-operations/${config.domain}`));
-  const items=result?.data||[];
-  const form=h("form",{class:"card",onsubmit:async e=>{e.preventDefault();const f=e.currentTarget,summary=f.elements.summary.value.trim();if(!summary)return;await api.post(`/api/school-operations/${config.domain}`,{kind:config.kind,summary,priority:f.elements.priority.value});go("overview",{push:false});}},
-    h("h3",{},"Create work item"),h("label",{}, "Summary"),h("input",{name:"summary",required:true,maxlength:300,placeholder:config.placeholder}),
-    h("label",{},"Priority"),h("select",{name:"priority"},h("option",{value:"normal"},"Normal"),h("option",{value:"high"},"High"),h("option",{value:"urgent"},"Urgent"),h("option",{value:"low"},"Low")),
-    h("button",{class:"btn",type:"submit"},"Add to queue"));
-  return [h("h2",{},config.title),h("p",{class:"muted"},config.desc),
-    h("section",{class:"card"},h("h3",{},"Queue summary"),h("p",{},`${items.filter(x=>x.status==="open").length} open · ${items.filter(x=>x.status==="in_progress").length} in progress · ${items.filter(x=>x.status==="completed").length} completed`)),
-    form,
-    h("section",{class:"card"},h("h3",{},"Work queue"),items.length?h("ul",{class:"list"},items.map(x=>h("li",{class:"row"},h("span",{class:"grow"},h("b",{},x.summary),h("br"),h("span",{class:"muted small"},`${x.kind} · ${x.priority} · ${x.status}`)),h("button",{class:"btn secondary",type:"button",onclick:async()=>{await api.post(`/api/school-operations/${config.domain}/${x.id}/status`,{status:x.status==="open"?"in_progress":"completed"});go("overview",{push:false});}},x.status==="open"?"Start":"Complete")))):empty("No work items in this queue."))];
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+VIEWS.attendance = async () => {
+  const today = isoDay(new Date());
+  const r = await api.get("/api/attendance?limit=500");
+  const marks = (r.data || []).filter(e => String(e.event_date).slice(0, 10) === today);
+  const by = (s) => marks.filter(e => e.status === s);
+  const absent = by("absent"), tardy = by("tardy");
+  const row = (e) => h("li", { class: "row" }, h("span", { class: "grow" }, e.display_name), chip(e.status), e.family_acknowledged_at ? h("span", { class: "small muted" }, "Family acknowledged") : null);
+  return [h("h2", {}, "Attendance today"),
+    h("div", { class: "stats" }, stat(by("present").length, "present"), stat(absent.length, "absent", true), stat(tardy.length, "tardy", true)),
+    h("section", { class: "card", "aria-label": "Absent today" }, h("h2", {}, "Absent"), absent.length ? h("ul", { class: "list" }, absent.map(row)) : empty("No absences marked today.")),
+    h("section", { class: "card", "aria-label": "Tardy today" }, h("h2", {}, "Tardy"), tardy.length ? h("ul", { class: "list" }, tardy.map(row)) : empty("No tardies marked today.")),
+    h("p", { class: "notice" }, "Marks come from teachers' class registers. Follow-ups go in the Operations queue.")];
 };
+// Specialized school operations consoles (vice principal, counselor, nurse,
+// facilities, meal service): routing-only work queues on /api/school-operations.
+const OPS_TABS = { guidance: "counseling", healthoffice: "health_office", facilities: "facilities", meals: "meal_service" };
+const OPS_TEXT = { counseling: "Counseling", health_office: "Health office", facilities: "Facilities", meal_service: "Meal service" };
+const OPS_SENSITIVE = ["counseling", "health_office"];
+const OPS_KINDS = {
+  facilities: ["repair", "cleaning", "safety_hazard", "setup", "other"],
+  meal_service: ["supply", "equipment", "menu", "staffing", "other"],
+  counseling: ["check_in_request", "referral_follow_up", "schedule_change", "other"],
+  health_office: ["supply", "screening_logistics", "room_coverage", "other"],
+};
+// Role-specific titles and guidance (from the 36.4 console config).
+const OPS_ROLE = {
+  vice_principal: ["Vice Principal Operations", "Coordinate school-day exceptions, attendance follow-up, safety coordination and facilities escalations."],
+  counselor: ["Guidance Counselor Console", "A routing queue for non-confidential follow-ups. Keep counseling narratives and student clinical details in the district-approved case system."],
+  nurse: ["School Nurse Console", "Health-office operational tasks only. Do not enter diagnoses, medications, treatment notes or student-identifying health details here."],
+  maintenance: ["Maintenance Console", "Submit and track facility work orders, safety repairs and building service requests."],
+  lunch_staff: ["Meal Service Console", "Coordinate meal service tasks, stock issues, equipment problems and daily service operations."],
+};
+const OPS_STATUS_CHIP = { open: "expected", in_progress: "boarded", completed: "present", cancelled: "not_started" };
+const opsWords = (v) => String(v || "").replaceAll("_", " ");
+async function specializedOpsView() {
+  const tab = state.tab, lead = ["principal", "vice_principal", "superintendent", "it_admin"].includes(state.me.role);
+  const domain = OPS_TABS[tab] || null; // null: the vice principal's operations view across every domain
+  const [center, list] = await Promise.all([api.get("/api/school-operations/command-center"), domain ? api.get(`/api/school-operations/${domain}`) : Promise.resolve(null)]);
+  const summary = center.data.summary || [];
+  const sum = (k) => summary.filter(r => !domain || r.domain === domain).reduce((n, r) => n + (k === "active" ? (["open", "in_progress"].includes(r.status) ? r.count : 0) : r[k] || 0), 0);
+  const items = domain ? list.data : center.data.work;
+  const creatable = domain ? [domain] : ["facilities", "meal_service"];
+  const refresh = () => go(tab, { push: false });
+  const setStatus = async (it, status) => {
+    try { await api.post(`/api/school-operations/${it.domain}/${it.id}/status`, { status }); toast(`Marked ${opsWords(status)}.`); refresh(); }
+    catch { toast("Couldn't update that work item."); }
+  };
+  const escalate = async (it) => {
+    try { await api.post(`/api/school-operations/${it.domain}/${it.id}/escalate`, {}); toast("Escalated."); refresh(); }
+    catch { toast("Couldn't escalate that work item."); }
+  };
+  const dom = h("select", { id: "ops-domain" }, creatable.map(d => h("option", { value: d }, OPS_TEXT[d])));
+  const kind = h("select", { id: "ops-kind" });
+  const fillKinds = () => { kind.replaceChildren(...OPS_KINDS[dom.value].map(k => h("option", { value: k }, opsWords(k)))); details.hidden = detailsLabel.hidden = OPS_SENSITIVE.includes(dom.value); };
+  const priority = h("select", { id: "ops-priority" }, ["normal", "low", "high", "urgent"].map(p => h("option", { value: p }, p)));
+  const summaryIn = h("input", { id: "ops-summary", type: "text", maxlength: 300, required: true });
+  const details = h("textarea", { id: "ops-details", maxlength: 500, rows: 2 });
+  const detailsLabel = h("label", { for: "ops-details" }, "Details (optional)");
+  dom.addEventListener("change", fillKinds);
+  fillKinds();
+  const form = h("form", { class: "card stack", "aria-label": "New work item", onsubmit: async (e) => {
+    e.preventDefault();
+    const d = dom.value;
+    try {
+      await api.post(`/api/school-operations/${d}`, { kind: kind.value, priority: priority.value, summary: summaryIn.value, ...(OPS_SENSITIVE.includes(d) || !details.value.trim() ? {} : { details: details.value }) });
+      toast("Work item added."); refresh();
+    } catch (err) { toast(err.body?.error === "kind_and_summary_required" ? "Add a short summary." : "Couldn't add that work item."); }
+  } }, h("h2", {}, "New work item"),
+    creatable.length > 1 ? [h("label", { for: dom.id }, "Area"), dom] : null,
+    h("label", { for: kind.id }, "Kind"), kind, h("label", { for: priority.id }, "Priority"), priority,
+    h("label", { for: summaryIn.id }, "Summary"), summaryIn, detailsLabel, details,
+    OPS_SENSITIVE.includes(creatable[0]) && creatable.length === 1 ? h("p", { class: "small muted" }, "Routing only. Never enter student names, health details or counseling notes here; use the approved student health or counseling system.") : null,
+    h("button", { class: "btn primary", type: "submit" }, "Add work item"));
+  const canCreate = creatable.some(d => ({ facilities: ["maintenance", "principal", "vice_principal"], health_office: ["nurse"], counseling: ["counselor"], meal_service: ["lunch_staff", "principal", "vice_principal"] })[d].includes(state.me.role));
+  return [
+    h("section", { class: "card hero" }, h("p", { class: "small muted" }, "SCHOOL OPERATIONS"), h("h2", {}, OPS_ROLE[state.me.role]?.[0] || (domain ? OPS_TEXT[domain] : "Operations")),
+      h("p", { class: "muted" }, OPS_ROLE[state.me.role]?.[1] || (domain ? "Your team's work queue." : "Work queues for facilities, meal service, counseling and the health office."))),
+    h("div", { class: "stats" }, stat(sum("active"), "open"), stat(sum("urgent"), "urgent", true), stat(sum("overdue"), "overdue", true)),
+    canCreate ? form : null,
+    h("section", { class: "card", "aria-label": "Work items" }, h("h2", {}, domain ? "Work queue" : "Open work"),
+      items.length ? h("ul", { class: "list" }, items.map(it => h("li", {},
+        h("div", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, it.summary),
+          h("p", { class: "small muted" }, `${domain ? "" : `${OPS_TEXT[it.domain]} · `}${opsWords(it.kind)} · ${it.priority}${it.escalation_level ? ` · escalated ×${it.escalation_level}` : ""} · ${ago(it.created_at)}${it.due_at ? ` · due ${fmtDay(it.due_at)}` : ""}`)),
+          chip(OPS_STATUS_CHIP[it.status] || "expected", opsWords(it.status))),
+        ["open", "in_progress"].includes(it.status) ? h("div", { class: "btns" },
+          it.status === "open" ? h("button", { class: "btn small", type: "button", "aria-label": `Start: ${it.summary}`, onclick: () => setStatus(it, "in_progress") }, "Start") : null,
+          h("button", { class: "btn primary small", type: "button", "aria-label": `Complete: ${it.summary}`, onclick: () => setStatus(it, "completed") }, "Complete"),
+          h("button", { class: "btn small", type: "button", "aria-label": `Cancel: ${it.summary}`, onclick: () => setStatus(it, "cancelled") }, "Cancel"),
+          lead ? h("button", { class: "btn danger small", type: "button", "aria-label": `Escalate: ${it.summary}`, onclick: () => escalate(it) }, "Escalate") : null) : null))) : empty("Nothing in the queue.")),
+  ];
+}
 VIEWS.operations = specializedOpsView;
 VIEWS.guidance = specializedOpsView;
 VIEWS.healthoffice = specializedOpsView;

@@ -1,5 +1,5 @@
 # EduOS enrollment intake; build from eduos/ directory.
-FROM registry.fedoraproject.org/fedora:40
+FROM registry.fedoraproject.org/fedora:45
 RUN dnf install -y python3 && dnf clean all && rm -rf /var/cache/dnf \
  && groupadd --system --gid 10001 eduos && useradd --system --uid 10001 --gid eduos --home-dir /nonexistent --shell /sbin/nologin eduos
 COPY scripts/eduos-enrollment.py /usr/local/bin/eduos-enrollment.py

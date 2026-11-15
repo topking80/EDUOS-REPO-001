@@ -1,22 +1,19 @@
 [Unit]
-Description=EduOS Update Orchestration Service
-Documentation=https://eduos.local/docs/update
-After=network-online.target health.service
+Description=EduOS update policy, post-update verification and status
+After=network-online.target zincati.service
 Wants=network-online.target
 
 [Service]
-Type=simple
-ExecStart=/usr/local/bin/eduos-update.sh
-Restart=always
-RestartSec=60
-
+# Runs on the host as root: it configures Fedora CoreOS's updater (Zincati),
+# can roll back an unhealthy deployment with rpm-ostree, and writes the OS
+# status file the health agent reports. It never downloads or applies updates.
+Type=oneshot
+ExecStart=/usr/local/bin/eduos-update.sh run
 User=root
 Group=root
-
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/etc/eduos /var/lib/eduos/updates
-
-[Install]
-WantedBy=multi-user.target
+PrivateTmp=true
+ReadWritePaths=/etc/zincati/config.d /var/lib/eduos/updates /var/lib/eduos/os-status
+TimeoutStartSec=10min

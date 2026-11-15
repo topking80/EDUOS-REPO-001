@@ -8,9 +8,21 @@ import 'screens/account_screen.dart';
 import 'screens/alerts_screen.dart';
 import 'screens/arrival_screen.dart';
 import 'screens/children_screen.dart';
+import 'screens/class_register_screen.dart';
+import 'screens/courses_screen.dart';
+import 'screens/driver_route_screen.dart';
 import 'screens/family_library_screen.dart';
 import 'screens/family_pickup_screen.dart';
+import 'screens/learner_screens.dart';
 import 'screens/messages_screen.dart';
+import 'screens/library_desk_screen.dart';
+import 'screens/nodes_screen.dart';
+import 'screens/operations_screen.dart';
+import 'screens/overview_screen.dart';
+import 'screens/safety_board.dart';
+import 'screens/staff_pickup_screen.dart';
+import 'screens/staffing_screen.dart';
+import 'screens/teacher_screens.dart';
 import 'screens/safety_screen.dart';
 import 'screens/web_fallback_screen.dart';
 
@@ -53,9 +65,31 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     if (!tab.native) return WebFallbackScreen(tab: tab);
     return switch (tab.id) {
       'children' => ChildrenScreen(onOpenArrival: () => _go('arrival')),
+      'route' => const DriverRouteScreen(),
+      'classes' when role == 'teacher' => const ClassRegisterScreen(),
       'library' when role == 'parent' => const FamilyLibraryScreen(),
+      'library' when role == 'pupil' => const FamilyLibraryScreen(mine: true),
+      'home' when role == 'pupil' => const LearnerHomeScreen(),
+      'path' when role == 'pupil' => const PathScreen(),
+      'christie' when role == 'pupil' => const ChristieTab(),
+      'courses' when role == 'pupil' => const LearnerCoursesScreen(),
+      'courses' when role == 'teacher' => const TeacherCoursesScreen(),
+      'grading' when role == 'teacher' => const GradingScreen(),
+      'copilot' when role == 'teacher' => const CopilotScreen(),
+      'staffing' => const StaffingScreen(),
+      'news' when role == 'pupil' => const NewsScreen(),
       'arrival' => const ArrivalScreen(),
       'pickup' when role == 'parent' => const FamilyPickupScreen(),
+      'pickup' => const StaffPickupScreen(),
+      'overview' => const OverviewScreen(),
+      'safety' when role != 'sro' => const SafetyCenterScreen(embedded: true),
+      'safety' => const SafetyScreen(),
+      'operations' => const OperationsScreen(),
+      'guidance' || 'healthoffice' || 'facilities' || 'meals' => OperationsScreen(key: ValueKey(tab.id), domain: opsTabDomains[tab.id]),
+      'attendance' => const AttendanceTodayScreen(),
+      'transport' => const TransportScreen(),
+      'library' => const LibraryDeskScreen(),
+      'nodes' => const NodesScreen(),
       'messages' => const MessagesScreen(),
       'alerts' => const AlertsScreen(),
       _ => WebFallbackScreen(tab: tab),
@@ -71,7 +105,11 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     // SafetyOS: while an incident is live, families see the safety screen;
     // they may open pick-up once reunification starts (as in the web app).
     final reunification = live.any((i) => i.reunification);
-    final safetyLock = live.isNotEmpty && !(role == 'parent' && reunification && _tab == 'pickup');
+    // Staff may still open pick-up (reunification releases happen there);
+    // families only once reunification has started.
+    const staffRoles = {'teacher', 'principal', 'superintendent', 'vice_principal', 'counselor', 'nurse', 'maintenance', 'lunch_staff', 'librarian', 'driver', 'sro', 'it_admin'};
+    final pickupAllowed = _tab == 'pickup' && (staffRoles.contains(role) || (role == 'parent' && reunification));
+    final safetyLock = live.isNotEmpty && !pickupAllowed;
     if (tabs.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text('EduOS')),
@@ -94,6 +132,14 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
             onPressed: tabs.any((t) => t.id == 'alerts') ? () => _go('alerts') : null,
             icon: Badge(isLabelVisible: app.unread > 0, label: Text('${app.unread}'), child: const Icon(Icons.notifications_none)),
           ),
+          if (app.canInitiateSafety || app.canLeadSafety)
+            IconButton(
+              tooltip: live.isNotEmpty ? 'Safety board' : 'Safety: start an alert',
+              icon: Icon(Icons.shield_outlined, color: live.isNotEmpty ? Theme.of(context).colorScheme.error : null),
+              onPressed: live.isNotEmpty
+                  ? () => _go(tabs.first.id) // the safety takeover shows the board
+                  : () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SafetyCenterScreen())),
+            ),
           IconButton(
             tooltip: 'Account',
             icon: const Icon(Icons.account_circle_outlined),
@@ -107,11 +153,17 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
             content: Text('${app.queued} change${app.queued == 1 ? '' : 's'} saved on this phone. ${app.queued == 1 ? 'It sends' : 'They send'} when you\'re back online.'),
             actions: [TextButton(onPressed: app.flushQueue, child: const Text('Send now'))],
           ),
+        if (app.heldForOthers > 0)
+          MaterialBanner(
+            content: Text('${app.heldForOthers} change${app.heldForOthers == 1 ? ' was' : 's were'} saved on this phone under another account, role or school. '
+                '${app.heldForOthers == 1 ? 'It is' : 'They are'} only sent when that account signs back in here, and deleted after 24 hours.'),
+            actions: const [SizedBox.shrink()],
+          ),
         if (app.notice != null)
           MaterialBanner(content: Text(app.notice!), actions: [TextButton(onPressed: app.clearNotice, child: const Text('Dismiss'))]),
         Expanded(
           child: safetyLock
-              ? SafetyScreen(onOpenPickup: role == 'parent' && reunification ? () => _go('pickup') : null)
+              ? SafetyScreen(onOpenPickup: reunification && (role == 'parent' || tabs.any((t) => t.id == 'pickup')) ? () => _go('pickup') : null)
               : KeyedSubtree(key: ValueKey('$role/${current.id}'), child: _screen(current, role)),
         ),
       ]),

@@ -99,7 +99,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: eduos/package-lock.json }
       - run: npm ci
+      # Includes test/browser/app-smoke.test.js: the web app booted in headless
+      # Chrome (preinstalled on the runner) for every role and tab.
       - run: npm test
+        env: { EDUOS_REQUIRE_BROWSER: "1" }
 
   integration:
     runs-on: ubuntu-24.04
@@ -126,12 +129,32 @@ jobs:
       - uses: actions/checkout@v4
       - name: Edge platform unit tests
         working-directory: eduos/edge-platform/eduos
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_enrollment.py tests/test_enrollment_token.py tests/test_edge_config.py
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_enrollment.py tests/test_enrollment_token.py tests/test_edge_config.py tests/test_update_agent.py tests/test_health_agent.py
+      - name: ShellCheck the edge agents
+        working-directory: eduos/edge-platform/eduos
+        run: shellcheck scripts/eduos-update.sh scripts/eduos-health.sh
       - name: Butane render + checks
         run: |
           curl -fsSL -o /tmp/butane https://github.com/coreos/butane/releases/download/v0.23.0/butane-x86_64-unknown-linux-gnu
           chmod +x /tmp/butane
           make -C edge-platform/eduos check BUTANE=/tmp/butane
+      # Edge Phase 2: build every edge image and scan it, like the app image.
+      - name: Build the edge container images
+        working-directory: eduos/edge-platform/eduos
+        run: |
+          for name in bootstrap enrollment health; do
+            docker build -f containers/Containerfile.$name -t eduos-edge-$name:ci .
+          done
+          test "$(docker run --rm --entrypoint id eduos-edge-health:ci -u)" = 10003
+      - name: Scan the edge bootstrap image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with: { scan-type: image, image-ref: 'eduos-edge-bootstrap:ci', scanners: vuln, severity: 'HIGH,CRITICAL', ignore-unfixed: true, format: table, exit-code: '1' }
+      - name: Scan the edge enrollment image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with: { scan-type: image, image-ref: 'eduos-edge-enrollment:ci', scanners: vuln, severity: 'HIGH,CRITICAL', ignore-unfixed: true, format: table, exit-code: '1' }
+      - name: Scan the edge health image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with: { scan-type: image, image-ref: 'eduos-edge-health:ci', scanners: vuln, severity: 'HIGH,CRITICAL', ignore-unfixed: true, format: table, exit-code: '1' }
 
   e2e:
     runs-on: ubuntu-24.04

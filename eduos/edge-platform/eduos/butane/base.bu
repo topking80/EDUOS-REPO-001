@@ -2,10 +2,37 @@ variant: fcos
 version: 1.5.0
 # metadata:
 #   name: eduos-base
+# Merged into every role (ignition.config.merge).
+
+passwd:
+  groups:
+    - name: eduos-health
+      gid: 10003
+      system: true
+  users:
+    # Runs the health agent (Edge Phase 2): no login, no root.
+    - name: eduos-health
+      uid: 10003
+      primary_group: eduos-health
+      system: true
+      no_create_home: true
+      shell: /sbin/nologin
 
 storage:
   directories:
     - path: /var/lib/eduos
+      mode: 0755
+    - path: /var/lib/eduos/health
+      mode: 0750
+      user:
+        id: 10003
+      group:
+        id: 10003
+    - path: /var/lib/eduos/updates
+      mode: 0750
+    - path: /var/lib/eduos/os-status
+      mode: 0755
+    - path: /etc/zincati/config.d
       mode: 0755
 
   files:
@@ -15,7 +42,55 @@ storage:
         inline: |
           EduOS base marker file
 
+    # Updates (Edge Phase 2): Fedora CoreOS's own updater (Zincati + rpm-ostree)
+    # installs signed, atomic OS updates. eduos-update turns the district policy
+    # into Zincati settings (maintenance windows, canary cohort), checks each
+    # new deployment and rolls back an unhealthy one. A role or district overlay
+    # can replace the policy file.
+    - path: /usr/local/bin/eduos-update.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-update.sh
+    - path: /usr/local/bin/eduos-health.sh
+      mode: 0755
+      contents:
+        local: scripts/eduos-health.sh
+    - path: /etc/eduos/update-policy.toml
+      mode: 0644
+      contents:
+        local: configs/update-policy.toml
+    - path: /etc/eduos/health.toml
+      mode: 0644
+      contents:
+        local: configs/health.toml
+    # Until eduos-update has run, hold Zincati to the default maintenance window
+    # instead of its out-of-the-box "reboot as soon as an update is ready".
+    - path: /etc/zincati/config.d/55-eduos-policy.toml
+      mode: 0644
+      contents:
+        inline: |
+          # Replaced by eduos-update from /etc/eduos/update-policy.toml.
+          [updates]
+          enabled = true
+          strategy = "periodic"
+
+          [updates.periodic]
+          time_zone = "localtime"
+
+          [[updates.periodic.window]]
+          days = [ "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" ]
+          start_time = "02:00"
+          length_minutes = 120
+
 systemd:
   units:
     - name: zincati.service
-      enabled: false   # We manage updates via eduos-update.service
+      enabled: true
+    - name: eduos-update.service
+      contents_local: services/update.service
+    - name: eduos-update.timer
+      enabled: true
+      contents_local: services/update.timer
+    - name: eduos-update.path
+      enabled: true
+      contents_local: services/update.path

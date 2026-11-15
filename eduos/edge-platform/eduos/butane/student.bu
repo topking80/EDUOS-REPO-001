@@ -54,11 +54,6 @@ storage:
       contents:
         local: scripts/eduos-enrollment.py
 
-    - path: /usr/local/bin/eduos-health.sh
-      mode: 0755
-      contents:
-        local: scripts/eduos-health.sh
-
 systemd:
   units:
     - name: eduos-bootstrap.service

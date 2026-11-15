@@ -241,7 +241,16 @@ def synthetic_values(names):
     env = {}
     for name in names:
         if name.endswith("_PASSWORD_HASH"):
-            env[name] = f"$6$rounds=656000${rand(16)}${rand(86)}"
+            # A random string can contain "..." or an uppercase placeholder word
+            # (e.g. CHANGE) and trip validate_hash; draw again until it passes.
+            while True:
+                value = f"$6$rounds=656000${rand(16)}${rand(86)}"
+                try:
+                    validate_hash(name, value)
+                    break
+                except ConfigError:
+                    continue
+            env[name] = value
         else:
             blob = struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32) + secrets.token_bytes(32)
             env[name] = f"ssh-ed25519 {base64.b64encode(blob).decode()} eduos-check-only"

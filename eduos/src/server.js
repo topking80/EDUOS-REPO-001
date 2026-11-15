@@ -38,6 +38,7 @@ import { registerSchoolOperationsAutomationRoutes } from "./school-operations-au
 import { registerSchoolOperationsNotificationRoutes } from "./school-operations-notification-routes.js";
 import { registerStaffDailyWorkspaceRoutes } from "./staff-daily-workspace-routes.js";
 import { registerStaffManagementRoutes } from "./staff-management-routes.js";
+import { registerEdgeDeviceRoutes } from "./edge-device-routes.js";
 import { registerEdenHub } from "./eden/hub.js";
 import { registerEdenNode, startAgent } from "./eden/node.js";
 import { parseSisCsv, isCalendarDate } from "./csv.js";
@@ -1298,7 +1299,7 @@ app.get("/api/attendance",requireSession,requirePermission("attendance","read"),
     const result=await withTenantTransaction(req.actor,client=>client.query(
       `SELECT e.id,e.event_date,e.status,e.family_acknowledged_at,e.student_id,s.display_name
          FROM attendance_events e JOIN students s ON s.id=e.student_id AND s.district_id=e.district_id
-        WHERE $1='superintendent' OR ($1='principal' AND s.school_id=$2)
+        WHERE $1='superintendent' OR ($1 IN ('principal','vice_principal') AND s.school_id=$2)
            OR ($1='teacher' AND s.school_id=$2 AND ${rosterSql("s.id","$3")})
            OR ($1 IN ('parent','pupil') AND EXISTS (
              SELECT 1 FROM student_user_links l WHERE l.student_id=s.id AND l.user_id=$3 AND l.status='active'
@@ -1906,6 +1907,7 @@ registerSchoolOperationsAutomationRoutes(app);
 registerSchoolOperationsNotificationRoutes(app);
 registerStaffDailyWorkspaceRoutes(app);
 registerStaffManagementRoutes(app);
+registerEdgeDeviceRoutes(app);
 // 32.7.0 EDEN: a district hub or a school node (EDUOS_NODE_TIER).
 const edenStatus = config.nodeTier === "district" ? registerEdenHub(app) : config.nodeTier === "school" ? registerEdenNode(app) : null;
 app.get("/api/eden/tier",requireSession,(req,res)=>{res.setHeader("Cache-Control","no-store");res.json({data:{tier:config.nodeTier||"classic",enabled:Boolean(edenStatus?.enabled),reason:edenStatus?.reason||null}})});

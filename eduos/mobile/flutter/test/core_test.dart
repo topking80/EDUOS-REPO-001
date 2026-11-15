@@ -18,6 +18,8 @@ Session session([String token = 'tok-1', String csrf = 'csrf-1']) =>
     Session(serverUrl: server, token: token, csrfToken: csrf, expiresAt: DateTime.now().add(const Duration(hours: 8)));
 const runPath = '/api/transport/runs/11111111-2222-4333-8444-555555555555/checkins';
 
+const owner = QueueOwner(server: 'https://eduos.example.test', userId: 'u-teacher', districtId: 'd1', role: 'teacher', schoolId: 's1');
+
 void main() {
   group('PKCE', () {
     test('matches the RFC 7636 appendix B test vector', () {
@@ -58,26 +60,26 @@ void main() {
     test('drops writes older than 24 hours and caps at 200', () async {
       var now = DateTime(2026, 11, 14, 8);
       final q = OfflineQueue(MemoryKeyValueStore(), clock: () => now);
-      await q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'old', queuedAt: now));
+      await q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'old', queuedAt: now, owner: owner));
       now = now.add(const Duration(hours: 24, seconds: 1));
       expect(await q.length, 0);
       for (var i = 0; i < OfflineQueue.maxEntries; i++) {
-        await q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'k$i', queuedAt: now));
+        await q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'k$i', queuedAt: now, owner: owner));
       }
-      await expectLater(q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'x', queuedAt: now)), throwsA(isA<OfflineQueueFullException>()));
-      expect(() => q.enqueue(QueuedWrite(path: '/api/pickup/tags', body: const {}, idempotencyKey: 'y', queuedAt: now)), throwsArgumentError);
+      await expectLater(q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'x', queuedAt: now, owner: owner)), throwsA(isA<OfflineQueueFullException>()));
+      expect(() => q.enqueue(QueuedWrite(path: '/api/pickup/tags', body: const {}, idempotencyKey: 'y', queuedAt: now, owner: owner)), throwsArgumentError);
     });
 
     test('flush sends oldest first, stops at retryLater, removes rejected, keeps writes queued meanwhile', () async {
       final q = OfflineQueue(MemoryKeyValueStore());
       final at = DateTime.now();
       for (final k in ['a', 'b', 'c', 'd']) {
-        await q.enqueue(QueuedWrite(path: '/api/attendance', body: {'k': k}, idempotencyKey: k, queuedAt: at));
+        await q.enqueue(QueuedWrite(path: '/api/attendance', body: {'k': k}, idempotencyKey: k, queuedAt: at, owner: owner));
       }
       final seen = <String>[];
-      final r = await q.flush((w) async {
+      final r = await q.flush(owner, (w) async {
         seen.add(w.idempotencyKey);
-        if (w.idempotencyKey == 'a') await q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'late', queuedAt: at));
+        if (w.idempotencyKey == 'a') await q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'late', queuedAt: at, owner: owner));
         return switch (w.idempotencyKey) { 'a' => ReplayOutcome.done, 'b' => ReplayOutcome.rejected, _ => ReplayOutcome.retryLater };
       });
       expect(seen, ['a', 'b', 'c']);
@@ -86,11 +88,101 @@ void main() {
     });
   });
 
+  group('Offline queue identity', () {
+    QueuedWrite w(String k, QueueOwner? who) => QueuedWrite(path: '/api/attendance', body: {'k': k}, idempotencyKey: k, queuedAt: DateTime.now(), owner: who);
+    const other = QueueOwner(server: 'https://eduos.example.test', userId: 'u-other', districtId: 'd1', role: 'teacher', schoolId: 's1');
+
+    test('a write is never queued without an owner', () async {
+      final q = OfflineQueue(MemoryKeyValueStore());
+      expect(() => q.enqueue(w('a', null)), throwsArgumentError);
+    });
+
+    test('owner survives storage, and the same identity matches exactly', () async {
+      final kv = MemoryKeyValueStore();
+      await OfflineQueue(kv).enqueue(w('a', owner));
+      final back = (await OfflineQueue(kv).entries()).single.owner;
+      expect(back, owner);
+      for (final changed in [
+        const QueueOwner(server: 'https://other.example.test', userId: 'u-teacher', districtId: 'd1', role: 'teacher', schoolId: 's1'),
+        const QueueOwner(server: 'https://eduos.example.test', userId: 'u-teacher', districtId: 'd2', role: 'teacher', schoolId: 's1'),
+        const QueueOwner(server: 'https://eduos.example.test', userId: 'u-teacher', districtId: 'd1', role: 'principal', schoolId: 's1'),
+        const QueueOwner(server: 'https://eduos.example.test', userId: 'u-teacher', districtId: 'd1', role: 'teacher', schoolId: 's2'),
+        other,
+      ]) {
+        expect(changed == owner, isFalse, reason: changed.key);
+      }
+    });
+
+    test('flush sends only the current identity\'s writes and holds everyone else\'s', () async {
+      final q = OfflineQueue(MemoryKeyValueStore());
+      await q.enqueue(w('mine-1', owner));
+      await q.enqueue(w('theirs', other));
+      await q.enqueue(w('mine-2', owner));
+      final sent = <String>[];
+      final r = await q.flush(other, (x) async {
+        sent.add(x.idempotencyKey);
+        return ReplayOutcome.done;
+      });
+      expect(sent, ['theirs']);
+      expect([r.sent, r.remaining, r.held], [1, 0, 2]);
+      expect((await q.entries()).map((e) => e.idempotencyKey), ['mine-1', 'mine-2'], reason: 'the teacher\'s own work is kept for them');
+      expect(await q.lengthFor(owner), 2);
+      expect(await q.lengthFor(other), 0);
+    });
+
+    test('nothing is sent without a known identity, and older ownerless entries are never sent', () async {
+      final kv = MemoryKeyValueStore();
+      await kv.write(OfflineQueue.storageKey, jsonEncode([
+        {'path': '/api/attendance', 'body': {}, 'idempotencyKey': 'legacy', 'queuedAt': DateTime.now().toUtc().toIso8601String()},
+      ]));
+      final q = OfflineQueue(kv);
+      var calls = 0;
+      expect((await q.flush(null, (_) async { calls++; return ReplayOutcome.done; })).held, 1);
+      expect((await q.flush(owner, (_) async { calls++; return ReplayOutcome.done; })).held, 1);
+      expect(calls, 0);
+    });
+
+    test('the API client stamps its identity on a queued write and replays only its own', () async {
+      final q = OfflineQueue(MemoryKeyValueStore());
+      var who = owner;
+      var online = false;
+      final sent = <String>[];
+      final api = ApiClient(
+        session: session,
+        owner: () => who,
+        queue: q,
+        httpClient: MockClient((r) async {
+          if (!online) throw http.ClientException('offline');
+          sent.add(r.headers['idempotency-key']!);
+          return http.Response('{"data":{}}', 201);
+        }),
+      );
+      expect((await api.post('/api/attendance', const {'status': 'present'})).queued, isTrue);
+      expect((await q.entries()).single.owner, owner);
+      online = true;
+      who = other; // a different teacher signs in on the same phone
+      final r = await api.flushQueue();
+      expect(sent, isEmpty);
+      expect([r.remaining, r.held], [0, 1]);
+      who = owner; // the original teacher signs back in
+      expect((await api.flushQueue()).sent, 1);
+      expect(sent, hasLength(1));
+    });
+
+    test('with no identity loaded, an offline write fails instead of being queued', () async {
+      final q = OfflineQueue(MemoryKeyValueStore());
+      final api = ApiClient(session: session, owner: () => null, queue: q, httpClient: MockClient((r) async => throw http.ClientException('offline')));
+      await expectLater(api.post('/api/attendance', const {}), throwsA(isA<ApiException>()));
+      expect(await q.length, 0);
+    });
+  });
+
   group('API client', () {
     test('sends the bearer token, never a cookie, and CSRF only on writes', () async {
       final seen = <http.Request>[];
       final api = ApiClient(
         session: session,
+        owner: () => owner,
         queue: OfflineQueue(MemoryKeyValueStore()),
         httpClient: MockClient((r) async {
           seen.add(r);
@@ -112,6 +204,7 @@ void main() {
       String? refreshed;
       final api = ApiClient(
         session: session,
+        owner: () => owner,
         queue: OfflineQueue(MemoryKeyValueStore()),
         onCsrfRefreshed: (t) => refreshed = t,
         httpClient: MockClient((r) async {
@@ -134,6 +227,7 @@ void main() {
       var gone = 0;
       final api = ApiClient(
         session: session,
+        owner: () => owner,
         queue: OfflineQueue(MemoryKeyValueStore()),
         onUnauthorized: () => gone++,
         httpClient: MockClient((r) async => r.url.path == '/api/me'
@@ -151,6 +245,7 @@ void main() {
       final sent = <http.Request>[];
       final api = ApiClient(
         session: session,
+        owner: () => owner,
         queue: q,
         httpClient: MockClient((r) async {
           sent.add(r);
@@ -183,12 +278,12 @@ void main() {
     test('replays refused by the server are dropped; busy or signed-out replays wait', () async {
       final q = OfflineQueue(MemoryKeyValueStore());
       for (final k in ['a', 'b']) {
-        await q.enqueue(QueuedWrite(path: runPath, body: const {}, idempotencyKey: k, queuedAt: DateTime.now()));
+        await q.enqueue(QueuedWrite(path: runPath, body: const {}, idempotencyKey: k, queuedAt: DateTime.now(), owner: owner));
       }
       var status = 409;
-      final api = ApiClient(session: session, queue: q, httpClient: MockClient((r) async => http.Response('{"error":"queued_write_too_old"}', status)));
+      final api = ApiClient(session: session, owner: () => owner, queue: q, httpClient: MockClient((r) async => http.Response('{"error":"queued_write_too_old"}', status)));
       expect((await api.flushQueue()).rejected, 2);
-      await q.enqueue(QueuedWrite(path: runPath, body: const {}, idempotencyKey: 'c', queuedAt: DateTime.now()));
+      await q.enqueue(QueuedWrite(path: runPath, body: const {}, idempotencyKey: 'c', queuedAt: DateTime.now(), owner: owner));
       for (status in [401, 429, 503]) {
         expect((await api.flushQueue()).remaining, 1, reason: '$status keeps the write');
       }

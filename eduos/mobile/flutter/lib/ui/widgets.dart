@@ -20,7 +20,10 @@ class _LoaderState<T> extends State<Loader<T>> {
 
   Future<void> _reload() async {
     final next = widget.load();
-    setState(() => _future = next);
+    // Block body: setState must not return a Future.
+    setState(() {
+      _future = next;
+    });
     try {
       await next;
     } on Object {
@@ -258,4 +261,45 @@ class _QrPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_QrPainter old) => old.rows != rows;
+}
+
+/// Like [Loader], for a section inside an already-scrolling screen: no list
+/// or pull-to-refresh of its own, so it can sit in a ListView.
+class InlineLoader<T> extends StatefulWidget {
+  const InlineLoader({super.key, required this.load, required this.builder});
+
+  final Future<T> Function() load;
+  final Widget Function(BuildContext context, T data) builder;
+
+  @override
+  State<InlineLoader<T>> createState() => _InlineLoaderState<T>();
+}
+
+class _InlineLoaderState<T> extends State<InlineLoader<T>> {
+  late Future<T> _future = widget.load();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<T>(
+      future: _future,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()));
+        }
+        if (snap.hasError) {
+          final e = snap.error;
+          return SectionCard(children: [
+            Text(e is ApiException && e.isOffline ? 'You\'re offline. This needs a connection.' : 'Couldn\'t load this.'),
+            TextButton(
+              onPressed: () => setState(() {
+                _future = widget.load();
+              }),
+              child: const Text('Retry'),
+            ),
+          ]);
+        }
+        return widget.builder(context, snap.data as T);
+      },
+    );
+  }
 }

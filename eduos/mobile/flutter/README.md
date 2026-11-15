@@ -4,8 +4,39 @@ The native EduOS app for Android (iOS later). **Phase 1** ships sign-in, role
 navigation, the offline write queue and the full **parent app**: children,
 library books, arrival (bus check-ins), pick-up (passes, approved adults,
 early dismissal), messages and alerts, plus the SafetyOS takeover during a
-live incident. Messages and alerts also work natively for staff roles. Other
-staff and learner tabs open the EduOS web app until their phase ships.
+live incident. Messages and alerts also work natively for staff roles.
+
+**Phase 2** adds the offline-critical staff screens: the bus driver's route
+(stop-by-stop check-ins, start and finish run), the teacher's class register
+(attendance) and the teacher's safety roll call.
+
+**Phase 3** adds school leaders: the principal's school overview (and the
+superintendent's district overview) with announcements, the pick-up desk
+(pass check, photo-ID and custody acknowledgement, release or refuse) with
+approvals and restrictions, the accountability board during an incident
+(missing, injured, roll calls, responders, reunification, all clear) and
+starting an alert in two confirmed steps, plus debriefs.
+
+**Phase 4** adds learners: Home (what to practise next, courses, my bus,
+school news), Courses (grades, standards mastery, lessons with primary
+sources, quizzes with a timer and answers saved as you go, results and
+classwork feedback), Christie practice chats, My path, My library and News.
+Quiz answers are never queued offline; the app says when one isn't saved.
+
+**Phase 5** adds teachers: Courses (course view with lesson approval status
+and accommodations, roster, gradebook with final grades), Grading (quiz
+open answers, rubric grading, hand-ins) and the Christie copilot (class
+mastery, reading and reviewing tutoring conversations). Staffing (time
+away, substitute coverage, shifts; leaders approve) is native for every
+staff role.
+
+**Phase 6** makes every tab native: the school operations work queues
+(vice principal operations, counseling, health office, facilities, meal
+service), the vice principal's attendance, transport for leaders, the
+library desk (Bluetooth keyboard-style barcode scanners), an EDEN nodes
+status view, and the School Resource Officer's incident workspace. A few
+heavy admin flows still link to the web: EDEN partners, failover
+authorization, node enrollment and signed updates.
 
 ## How sign-in works (RFC 8252)
 

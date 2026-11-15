@@ -30,7 +30,10 @@ log "Detected role: $ROLE"
 
 # Create required directories
 mkdir -p /var/lib/eduos/{identity,health,updates,enrollments/pending}
-chmod 750 /var/lib/eduos
+# 0751: other users can't list it, but the unprivileged eduos-health service
+# (uid 10003) can reach its own folder and the OS status file inside.
+chmod 751 /var/lib/eduos
+chmod 700 /var/lib/eduos/identity /var/lib/eduos/updates
 # Dedicated unprivileged identity for the enrollment intake.
 if ! getent group eduos-enrollment >/dev/null 2>&1; then
     groupadd --system --gid 10001 eduos-enrollment

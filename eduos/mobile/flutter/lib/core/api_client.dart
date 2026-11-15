@@ -40,6 +40,7 @@ class ApiClient {
   ApiClient({
     required Session Function() session,
     required this.queue,
+    QueueOwner? Function()? owner,
     http.Client? httpClient,
     this.onUnauthorized,
     this.onCsrfRefreshed,
@@ -47,11 +48,15 @@ class ApiClient {
     Random? random,
     DateTime Function()? clock,
   })  : _session = session,
+        _owner = owner ?? (() => null),
         _http = httpClient ?? http.Client(),
         _random = random ?? Random.secure(),
         _clock = clock ?? DateTime.now;
 
   final Session Function() _session;
+
+  /// The identity offline writes are saved under and may be replayed by.
+  final QueueOwner? Function() _owner;
   final http.Client _http;
   final OfflineQueue queue;
   final Duration timeout;
@@ -86,23 +91,29 @@ class ApiClient {
     if (!OfflineQueue.isQueueable('POST', path)) {
       return WriteResult(await _postJson(path, body));
     }
-    final write = QueuedWrite(path: path, body: body, idempotencyKey: _idempotencyKey(), queuedAt: _clock());
+    final owner = _owner();
+    final write = QueuedWrite(path: path, body: body, idempotencyKey: _idempotencyKey(), queuedAt: _clock(), owner: owner);
     try {
       final res = await _sendRaw(() => _http.post(_uri(path), headers: _replayHeaders(write), body: jsonEncode(body)));
-      if (const {502, 503, 504}.contains(res.statusCode)) {
+      if (const {502, 503, 504}.contains(res.statusCode) && owner != null) {
         await queue.enqueue(write);
         return const WriteResult(null, queued: true);
       }
       return WriteResult(_decode(res));
     } on ApiException catch (e) {
-      if (!e.isOffline) rethrow;
+      // Without a known identity there's no one to replay it as: fail instead.
+      if (!e.isOffline || owner == null) rethrow;
       await queue.enqueue(write);
       return const WriteResult(null, queued: true);
     }
   }
 
+  /// PUT (never queued: quiz answers must reach the server while the attempt is open).
+  Future<Map<String, Object?>> put(String path, [Map<String, Object?> body = const {}]) => _writeJson('PUT', path, body);
+
   /// Sends queued writes now (call when the app resumes or the network returns).
-  Future<FlushResult> flushQueue() => queue.flush((write) async {
+  /// Only the current identity's writes are sent; anyone else's stay put.
+  Future<FlushResult> flushQueue() => queue.flush(_owner(), (write) async {
         try {
           final res = await _sendRaw(() => _http.post(_uri(write.path), headers: _replayHeaders(write), body: jsonEncode(write.body)));
           final code = res.statusCode;
@@ -130,11 +141,16 @@ class ApiClient {
     return token;
   }
 
-  Future<Map<String, Object?>> _postJson(String path, Map<String, Object?> body) async {
-    var res = await _send(() => _http.post(_uri(path), headers: _headers(write: true), body: jsonEncode(body)));
+  Future<Map<String, Object?>> _postJson(String path, Map<String, Object?> body) => _writeJson('POST', path, body);
+
+  Future<Map<String, Object?>> _writeJson(String method, String path, Map<String, Object?> body) async {
+    Future<http.Response> send(String csrf) => method == 'PUT'
+        ? _http.put(_uri(path), headers: _headers(write: true, csrf: csrf), body: jsonEncode(body))
+        : _http.post(_uri(path), headers: _headers(write: true, csrf: csrf), body: jsonEncode(body));
+    var res = await _send(() => send(_session().csrfToken));
     if (res.statusCode == 403 && _errorCode(res) == 'csrf_validation_failed') {
       final fresh = await refreshCsrf();
-      res = await _send(() => _http.post(_uri(path), headers: _headers(write: true, csrf: fresh), body: jsonEncode(body)));
+      res = await _send(() => send(fresh));
     }
     return _decode(res);
   }

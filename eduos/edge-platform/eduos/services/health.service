@@ -1,24 +1,33 @@
 [Unit]
-Description=EduOS Health & Telemetry Service
-Documentation=https://eduos.local/docs/health
-After=network-online.target bootstrap.service
+Description=EduOS health agent
+After=network-online.target eduos-update.service
 Wants=network-online.target
 
 [Service]
+# Unprivileged (Edge Phase 2): the eduos-health system user from base.bu.
 Type=simple
+User=eduos-health
+Group=eduos-health
+# As root ("+"), before dropping privileges: the device token, if IT has put
+# it in place, readable by the eduos-health group only.
+ExecStartPre=+/bin/sh -c 'if [ -f /etc/eduos/health-token ]; then chgrp eduos-health /etc/eduos/health-token && chmod 0440 /etc/eduos/health-token; fi'
 ExecStart=/usr/local/bin/eduos-health.sh
 Restart=always
 RestartSec=30
 
-User=root
-Group=root
-
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/eduos/health /var/log/eduos
-
-SupplementaryGroups=systemd-journal
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/eduos/health
 
 [Install]
 WantedBy=multi-user.target
