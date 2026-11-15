@@ -11,7 +11,8 @@ class RoleTab {
 }
 
 /// Same tabs, order and labels as ROLE_TABS in public/app/app.js.
-/// Phase 1 implements the parent app natively.
+/// Phase 1: the parent app. Phase 2: bus driver route, teacher class
+/// register and safety roll call (the offline-critical staff screens).
 const roleTabs = <String, List<RoleTab>>{
   'parent': [
     RoleTab('children', 'Children', Icons.child_care, native: true),
@@ -30,7 +31,7 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('news', 'News', Icons.newspaper),
   ],
   'teacher': [
-    RoleTab('classes', 'Classes', Icons.grid_view),
+    RoleTab('classes', 'Classes', Icons.grid_view, native: true),
     RoleTab('staffing', 'Staffing', Icons.groups_outlined),
     RoleTab('courses', 'Courses', Icons.school_outlined),
     RoleTab('grading', 'Grading', Icons.check_circle_outline),
@@ -66,7 +67,7 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('transport', 'Transport', Icons.directions_bus),
     RoleTab('nodes', 'Nodes', Icons.dns_outlined),
   ],
-  'driver': [RoleTab('route', 'Route', Icons.directions_bus), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
+  'driver': [RoleTab('route', 'Route', Icons.directions_bus, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
   'sro': [RoleTab('safety', 'Safety', Icons.shield_outlined), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
   'it_admin': [RoleTab('nodes', 'Nodes', Icons.dns_outlined), RoleTab('library', 'Library', Icons.menu_book)],
 };

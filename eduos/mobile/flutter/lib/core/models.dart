@@ -306,3 +306,97 @@ class Incident {
   bool get live => status == 'active' || status == 'reunification';
   bool get reunification => status == 'reunification';
 }
+
+// ---- Phase 2: bus driver route, class register, safety roll call ----
+
+class RouteRider {
+  const RouteRider({required this.studentId, required this.name, required this.grade, required this.status});
+  factory RouteRider.fromJson(Json j) =>
+      RouteRider(studentId: str(j['studentId']), name: str(j['name']), grade: str(j['grade']), status: str(j['status'], 'expected'));
+  final String studentId, name, grade, status;
+  RouteRider withStatus(String s) => RouteRider(studentId: studentId, name: name, grade: grade, status: s);
+}
+
+class RouteStop {
+  const RouteStop({required this.id, required this.seq, required this.name, this.time, required this.isSchool, this.riders = const []});
+  factory RouteStop.fromJson(Json j) => RouteStop(
+        id: str(j['id']),
+        seq: integer(j['seq']),
+        name: str(j['name']),
+        time: strOrNull(j['time']),
+        isSchool: boolean(j['is_school']),
+        riders: objs(j['riders']).map(RouteRider.fromJson).toList(),
+      );
+  final String id, name;
+  final int seq;
+  final String? time;
+  final bool isSchool;
+  final List<RouteRider> riders;
+}
+
+class RunInfo {
+  const RunInfo({required this.id, required this.status, this.completedAt});
+  static RunInfo? fromJson(Object? v) {
+    final j = obj(v);
+    if (j['id'] == null) return null;
+    return RunInfo(id: str(j['id']), status: str(j['status']), completedAt: date(j['completed_at']));
+  }
+  final String id, status;
+  final DateTime? completedAt;
+  bool get live => status == 'in_progress';
+}
+
+class DriverRoute {
+  const DriverRoute({required this.id, required this.name, required this.busLabel, required this.direction,
+      required this.schoolName, this.run, this.stops = const [], required this.onBoard, required this.expected, required this.alighted});
+  factory DriverRoute.fromJson(Json j) {
+    final c = obj(j['counts']);
+    return DriverRoute(
+      id: str(j['id']),
+      name: str(j['name']),
+      busLabel: str(j['bus_label']),
+      direction: str(j['direction']),
+      schoolName: str(j['school_name']),
+      run: RunInfo.fromJson(j['run']),
+      stops: objs(j['stops']).map(RouteStop.fromJson).toList(),
+      onBoard: integer(c['onBoard']),
+      expected: integer(c['expected']),
+      alighted: integer(c['alighted']),
+    );
+  }
+  final String id, name, busLabel, direction, schoolName;
+  final RunInfo? run;
+  final List<RouteStop> stops;
+  final int onBoard, expected, alighted;
+}
+
+class RosterLearner {
+  const RosterLearner({required this.studentId, required this.name});
+  factory RosterLearner.fromJson(Json j) => RosterLearner(studentId: str(j['student_id']), name: str(j['student_name']));
+  final String studentId, name;
+}
+
+class AttendanceMark {
+  const AttendanceMark({required this.studentId, required this.day, required this.status});
+  factory AttendanceMark.fromJson(Json j) => AttendanceMark(studentId: str(j['student_id']), day: str(j['event_date']), status: str(j['status']));
+  final String studentId, day, status;
+}
+
+class RollCallLearner {
+  const RollCallLearner({required this.studentId, required this.name, required this.grade, this.status});
+  factory RollCallLearner.fromJson(Json j) =>
+      RollCallLearner(studentId: str(j['studentId']), name: str(j['name']), grade: str(j['grade']), status: strOrNull(j['status']));
+  final String studentId, name, grade;
+  final String? status;
+}
+
+class RollCall {
+  const RollCall({required this.learners, required this.extras, this.submittedAt});
+  factory RollCall.fromJson(Json j) => RollCall(
+        learners: objs(j['learners']).map(RollCallLearner.fromJson).toList(),
+        extras: objs(j['extras']).map(RollCallLearner.fromJson).toList(),
+        submittedAt: date(j['submittedAt']),
+      );
+  final List<RollCallLearner> learners, extras;
+  final DateTime? submittedAt;
+}
