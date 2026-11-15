@@ -1,51 +1,27 @@
-# EduOS Container Images (Containerfiles)
+# EduOS edge container images
 
-This directory contains Containerfiles for building the four core EduOS services as OCI containers. These images are referenced by the Quadlet definitions in `../quadlet/`.
-
-## Building the Images
-
-From the repository root:
+Three images, referenced by the Quadlet definitions in `../quadlet/`. Build
+them from `edge-platform/eduos` (CI builds and vulnerability-scans all three
+on every change):
 
 ```bash
-# Bootstrap
-podman build -f containers/Containerfile.bootstrap \
-    -t quay.io/eduos/eduos-bootstrap:latest .
-
-# Enrollment (includes Python web server)
-podman build -f containers/Containerfile.enrollment \
-    -t quay.io/eduos/eduos-enrollment:latest .
-
-# Health
-podman build -f containers/Containerfile.health \
-    -t quay.io/eduos/eduos-health:latest .
-
-# Update
-podman build -f containers/Containerfile.update \
-    -t quay.io/eduos/eduos-update:latest .
+podman build -f containers/Containerfile.bootstrap  -t quay.io/eduos/eduos-bootstrap:latest .
+podman build -f containers/Containerfile.enrollment -t quay.io/eduos/eduos-enrollment:latest .
+podman build -f containers/Containerfile.health     -t quay.io/eduos/eduos-health:2.0.0 .
 ```
 
-## Pushing to a Registry
+For air-gapped or district-internal use, push to your own registry or
+save/load the images as tarballs (`make containers`).
 
-```bash
-podman push quay.io/eduos/eduos-bootstrap:latest
-podman push quay.io/eduos/eduos-enrollment:latest
-# ... etc
-```
+## Design notes
 
-For air-gapped or district-internal use, push to your own registry or save/load the images as tarballs.
-
-## Design Notes
-
-- Images are based on Fedora 40 for consistency with Fedora CoreOS.
-- Minimal package sets to reduce attack surface and image size.
-- Scripts are copied from `../scripts/` — keep them in sync.
+- **Base image:** every image builds `FROM` the image named in `BASE_IMAGE`
+  (Fedora 45, supported until 2027-12-08). A repository test fails if a
+  Containerfile uses anything else, and 30 days before that end of life.
+- **Users:** enrollment runs as uid 10001 and health as uid 10003 (the same
+  `eduos-health` user the host has, so host folders and the device token
+  line up). Only bootstrap runs as root, because it provisions the node.
+- **No update image:** `eduos-update` runs on the host (`services/update.*`),
+  because it configures the OS updater and can roll the OS back. See
+  `../docs/UPDATES-AND-HEALTH.md`.
 - No secrets or sensitive data are baked into the images.
-- Health and Update containers run as long-lived processes (daemons).
-- Bootstrap is designed as a one-shot / oneshot-style container.
-
-## Future Improvements
-
-- Multi-stage builds to further reduce size
-- Non-root user inside containers where possible
-- Healthchecks in the Containerfiles
-- Version pinning instead of `latest`
