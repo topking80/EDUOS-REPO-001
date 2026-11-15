@@ -3,7 +3,9 @@
 # and if any Containerfile uses a different base, so the move to the next Fedora
 # release happens before this one goes out of support. Containerfiles pin this
 # tag to a digest (FROM IMAGE@sha256:...), the same in all of them; Dependabot's
-# docker updates move the digest to the tag's latest patched build.
+# docker updates move the digest to the tag's latest patched build. The image
+# comes from Docker Hub's official Fedora repository (built from Fedora's own
+# releases) because Dependabot can't reach registry.fedoraproject.org.
 # Fedora 45 released 2026-11-03; end of life 2027-12-08 (about 4 weeks after Fedora 47).
-IMAGE=registry.fedoraproject.org/fedora:45
+IMAGE=docker.io/library/fedora:45
 END_OF_LIFE=2027-12-08

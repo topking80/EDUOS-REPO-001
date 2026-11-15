@@ -2,7 +2,7 @@
 #   podman build -f containers/Containerfile.health -t quay.io/eduos/eduos-health:2.0.0 .
 # Runs as the unprivileged eduos-health user (uid/gid 10003), the same ids the
 # host uses, so the host folder and the device token file line up.
-FROM registry.fedoraproject.org/fedora:45@sha256:b174cd5906c712f59a675cc85ea2ca8ff3bcf3643f1a1f3bc4e14dc28bcf1872
+FROM docker.io/library/fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c
 
 LABEL org.opencontainers.image.title="EduOS Health Agent"
 LABEL org.opencontainers.image.description="Sends device health and OS update status to the district EduOS server"
