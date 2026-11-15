@@ -708,7 +708,7 @@ class CourseDetail {
         standards: objs(j['standards']).map(StandardProgress.fromJson).toList(),
         units: objs(j['units']).map(CourseUnit.fromJson).toList(),
         assignments: objs(j['assignments']).map(AssignmentRef.fromJson).toList(),
-        hasLearner: j['learner'] is Map || j['learner'] == true,
+        hasLearner: !boolean(j['canManage']), // the server sends learner data exactly when the viewer doesn't manage the course
         canManage: boolean(j['canManage']),
       );
   /// A learner's own view (grade and standards mastery), not a staff view.
