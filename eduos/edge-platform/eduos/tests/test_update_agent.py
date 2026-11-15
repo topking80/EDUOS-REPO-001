@@ -18,6 +18,8 @@ SCRIPT = ROOT / "scripts" / "eduos-update.sh"
 SHIPPED_POLICY = (ROOT / "configs" / "update-policy.toml").read_text()
 OLD = "a" * 64
 NEW = "b" * 64
+V1, V2 = "45.20261110.3.0", "45.20261117.3.0"
+TOKEN = "edh1.11111111-2222-4333-8444-555555555555." + "A" * 43
 
 FAKE_RPM_OSTREE = r"""#!/bin/bash
 echo "rpm-ostree $*" >> "$FAKE_CALLS"
@@ -31,6 +33,11 @@ if [[ "$1" == status ]]; then
 fi
 exit 0
 """
+FAKE_CURL = r"""#!/bin/bash
+echo "curl $*" >> "$FAKE_CALLS"
+[[ -n "${FAKE_CURL_FAIL:-}" ]] && exit 22
+printf '%s' "${FAKE_TARGET_BODY:-}"
+"""
 FAKE_SYSTEMCTL = r"""#!/bin/bash
 echo "systemctl $*" >> "$FAKE_CALLS"
 case "$1" in
@@ -41,14 +48,14 @@ exit 0
 """
 
 
-class UpdateAgent(unittest.TestCase):
+class Harness(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="eduos-update-test-"))
         self.etc, self.var, self.bin = self.tmp / "etc", self.tmp / "var", self.tmp / "bin"
         for d in (self.etc / "eduos", self.var, self.bin):
             d.mkdir(parents=True)
         (self.etc / "machine-id").write_text("0123456789abcdef0123456789abcdef\n")
-        for name, body in (("rpm-ostree", FAKE_RPM_OSTREE), ("systemctl", FAKE_SYSTEMCTL), ("logger", "#!/bin/bash\nexit 0\n")):
+        for name, body in (("rpm-ostree", FAKE_RPM_OSTREE), ("systemctl", FAKE_SYSTEMCTL), ("curl", FAKE_CURL), ("logger", "#!/bin/bash\nexit 0\n")):
             p = self.bin / name
             p.write_text(body)
             p.chmod(0o755)
@@ -69,7 +76,7 @@ class UpdateAgent(unittest.TestCase):
         env = {
             "PATH": f"{self.bin}:{os.environ['PATH']}", "EDUOS_ETC": str(self.etc), "EDUOS_VAR": str(self.var),
             "FAKE_CALLS": str(self.calls), "FAKE_BOOTED": booted, "FAKE_BOOTED_VERSION": "45.20261110.3.0",
-            "FAKE_FAILED": failed, "EDUOS_UPTIME": str(self.uptime), "EDUOS_LOADAVG": str(self.loadavg), **extra,
+            "FAKE_FAILED": failed, "EDUOS_CLOCK": "12:00", "EDUOS_UPTIME": str(self.uptime), "EDUOS_LOADAVG": str(self.loadavg), **extra,
         }
         r = subprocess.run(["bash", str(SCRIPT), *args], env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, expect, r.stderr)
@@ -81,12 +88,19 @@ class UpdateAgent(unittest.TestCase):
     def calls_matching(self, pattern):
         return [line for line in self.calls.read_text().splitlines() if re.search(pattern, line)]
 
+    def status(self):
+        return json.loads((self.var / "os-status" / "status.json").read_text())
+
     def state(self, name):
         return (self.var / "updates" / name).read_text().strip()
 
+
+
+class UpdateAgent(Harness):
     # ---- policy -> Zincati ----
 
     def test_shipped_policy_gives_district_windows_and_a_canary_cohort(self):
+        self.policy(SHIPPED_POLICY.replace("require_district_signoff = true", "require_district_signoff = false"))
         self.run_agent("apply-policy")
         f = self.fragment()
         self.assertIn('strategy = "periodic"', f)
@@ -128,6 +142,13 @@ class UpdateAgent(unittest.TestCase):
         self.assertIn("enabled = false", self.fragment())
         self.assertIn("length_minutes = 150", self.fragment(), "a window can wrap past midnight")
         self.assertIn('time_zone = "localtime"', self.fragment())
+
+    def test_shipped_policy_needs_district_sign_off_before_any_update(self):
+        self.run_agent("run")
+        self.assertIn("enabled = false", self.fragment(), "no endpoint or token yet: Zincati must not update on its own")
+        self.assertEqual(self.calls_matching("^curl"), [])
+        self.assertEqual(self.calls_matching("rpm-ostree deploy "), [])
+        self.assertEqual(self.status()["approval"], "unreachable")
 
     def test_a_bad_policy_is_refused_and_the_last_good_config_stays(self):
         self.run_agent("apply-policy")
@@ -204,6 +225,81 @@ class UpdateAgent(unittest.TestCase):
         s = json.loads((self.var / "os-status" / "status.json").read_text())
         self.assertEqual(s["updates"], "enabled")
         self.assertFalse((self.etc / "zincati" / "config.d" / "90-eduos-hold.toml").exists())
+
+
+class DistrictSignoff(Harness):
+    """[approvals].require_district_signoff: install only what EduOS approved."""
+
+    def setUp(self):
+        super().setUp()
+        (self.etc / "eduos" / "health.toml").write_text('[reporting]\nendpoint = "https://eduos.example.org/api/edge/health"\n')
+        (self.etc / "eduos" / "health-token").write_text(TOKEN + "\n")
+        self.policy(SHIPPED_POLICY.replace("percent = 10 ", "percent = 100"))
+
+    def answer(self, target=None, require=True, stage=None, cohort="canary"):
+        t = "null" if target is None else f'"{target}"'
+        return {"FAKE_TARGET_BODY": f'{{"data":{{"requireApproval":{str(require).lower()},"target":{t},"stage":"{stage or "canary"}","cohort":"{cohort}"}}}}'}
+
+    def test_asks_eduos_with_the_device_token_and_cohort(self):
+        self.run_agent("run", **self.answer())
+        (call,) = self.calls_matching("^curl")
+        self.assertIn(f"Authorization: Bearer {TOKEN}", call)
+        self.assertIn("https://eduos.example.org/api/edge/update-target", call)
+        self.assertNotIn("cohort=", call, "the device doesn't choose its cohort")
+        self.assertIn("enabled = false", self.fragment())
+        self.assertEqual(self.status()["approval"], "waiting", "nothing approved: install nothing")
+        self.assertEqual(self.calls_matching("rpm-ostree deploy "), [])
+
+    def test_installs_the_approved_version_inside_the_window_once(self):
+        self.run_agent("run", **self.answer(V2))
+        self.assertEqual(self.calls_matching("rpm-ostree deploy "), [], "12:00 is outside the 02:00-04:00 window")
+        self.assertEqual(self.status()["target_version"], V2)
+        self.assertEqual(self.status()["approval"], "waiting")
+        self.run_agent("run", EDUOS_CLOCK="02:30", **self.answer(V2))
+        self.assertEqual(self.calls_matching("rpm-ostree deploy "), [f"rpm-ostree deploy --bypass-driver --reboot {V2}"])
+        self.assertEqual(self.status()["approval"], "installing")
+        self.run_agent("run", EDUOS_CLOCK="02:45", **self.answer(V2))
+        self.assertEqual(len(self.calls_matching("rpm-ostree deploy ")), 1, "not retried within six hours")
+
+    def test_status_reports_the_district_assigned_cohort(self):
+        self.policy(SHIPPED_POLICY.replace("percent = 10 ", "percent = 100"))  # local split says canary
+        self.run_agent("run", **self.answer(cohort="standard"))
+        self.assertEqual(self.status()["cohort"], "standard", "the district's choice wins")
+
+    def test_already_on_the_approved_version(self):
+        self.run_agent("run", EDUOS_CLOCK="02:30", **self.answer(V1))
+        self.assertEqual(self.calls_matching("rpm-ostree deploy "), [])
+        self.assertEqual(self.status()["approval"], "current")
+
+    def test_held_or_rolled_back_versions_are_not_installed(self):
+        self.run_agent("verify")
+        self.run_agent("verify", booted=NEW, failed="eduos-x.service", FAKE_BOOTED_VERSION=V2)
+        self.assertEqual(self.state("rollback-from-version"), V2)
+        self.run_agent("run", EDUOS_CLOCK="02:30", **self.answer(V2))
+        self.assertEqual(self.calls_matching("rpm-ostree deploy "), [], "held")
+        self.assertEqual(self.status()["rollback_from_version"], V2, "reported so EduOS blocks its promotion")
+        self.run_agent("release-hold")
+        self.run_agent("run", EDUOS_CLOCK="02:30", **self.answer(V2))
+        self.assertEqual(self.calls_matching("rpm-ostree deploy "), [], "never re-installs a version it rolled back from")
+
+    def test_districts_without_approvals_keep_zincati_through_outages(self):
+        self.run_agent("run", **self.answer(require=False))
+        self.assertIn("enabled = true", self.fragment())
+        self.assertEqual(self.status()["approval"], "off")
+        self.run_agent("run", FAKE_CURL_FAIL="1")
+        self.assertIn("enabled = true", self.fragment(), "a network blip doesn't flip Zincati")
+        self.assertEqual(self.status()["approval"], "unreachable")
+
+    def test_bad_answers_and_plain_http_install_nothing(self):
+        self.run_agent("run", EDUOS_CLOCK="02:30", FAKE_TARGET_BODY='{"data":{"requireApproval":true,"target":"$(reboot)"}}')
+        self.run_agent("run", EDUOS_CLOCK="02:30", FAKE_TARGET_BODY="<html>proxy error</html>")
+        self.assertEqual(self.calls_matching("rpm-ostree deploy "), [])
+        self.assertIn("enabled = false", self.fragment())
+        (self.etc / "eduos" / "health.toml").write_text('[reporting]\nendpoint = "http://eduos.example.org/api/edge/health"\n')
+        n = len(self.calls_matching("^curl"))
+        self.run_agent("run", EDUOS_CLOCK="02:30", **self.answer(V2))
+        self.assertEqual(len(self.calls_matching("^curl")), n, "never over plain http")
+        self.assertEqual(self.calls_matching("rpm-ostree deploy "), [])
 
 
 if __name__ == "__main__":

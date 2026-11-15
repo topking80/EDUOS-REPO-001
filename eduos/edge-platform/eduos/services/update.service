@@ -6,7 +6,8 @@ Wants=network-online.target
 [Service]
 # Runs on the host as root: it configures Fedora CoreOS's updater (Zincati),
 # can roll back an unhealthy deployment with rpm-ostree, and writes the OS
-# status file the health agent reports. It never downloads or applies updates.
+# status file the health agent reports. With district sign-off it asks
+# rpm-ostree to deploy the version the district approved, nothing else.
 Type=oneshot
 ExecStart=/usr/local/bin/eduos-update.sh run
 User=root
