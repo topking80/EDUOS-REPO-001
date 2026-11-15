@@ -44,6 +44,28 @@ class CredentialValidation(unittest.TestCase):
             real = subprocess.run([openssl, "passwd", "-6", "pw-for-test"], capture_output=True, text=True).stdout.strip()
             self.assertEqual(cfg.validate_hash("H", real), real)
 
+    def test_synthetic_hashes_always_pass_validation(self):
+        # `make check` draws random throw-away hashes; one containing "..." or
+        # an uppercase placeholder word must never fail CI.
+        draws = iter(["...", "CHANGE"] + [None] * 10)
+        real_choice = cfg.secrets.choice
+        def rigged(alphabet):
+            nxt = next(draws, None)
+            if nxt == "...":
+                return "..."
+            if nxt == "CHANGE":
+                return "CHANGE"
+            return real_choice(alphabet)
+        cfg.secrets.choice = rigged
+        try:
+            value = cfg.synthetic_values(["EDUOS_ADMIN_PASSWORD_HASH"])["EDUOS_ADMIN_PASSWORD_HASH"]
+        finally:
+            cfg.secrets.choice = real_choice
+        cfg.validate_hash("EDUOS_ADMIN_PASSWORD_HASH", value)
+        for _ in range(500):
+            v = cfg.synthetic_values(["X_PASSWORD_HASH"])["X_PASSWORD_HASH"]
+            cfg.validate_hash("X_PASSWORD_HASH", v)
+
     def test_key_formats(self):
         key = good_key()
         self.assertEqual(cfg.validate_key("K", key), key)
