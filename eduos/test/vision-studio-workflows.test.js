@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 const root=process.cwd();
-const app=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
+const app=(fs.readFileSync(path.join(root,'public/index.html'),'utf8')+fs.readFileSync(path.join(root,'public/legacy-app.js'),'utf8'));
 const vision=fs.readFileSync(path.join(root,'public/eduos-vision.js'),'utf8');
 test('Vision Studio maps concepts to existing EduOS workflows',()=>{
  assert.match(vision,/const workflowRoutes =/);

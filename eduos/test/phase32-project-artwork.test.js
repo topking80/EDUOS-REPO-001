@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(".");
-const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
+const html = (fs.readFileSync(path.join(root, "public/index.html"), "utf8")+fs.readFileSync(path.join(root, "public/legacy-app.js"), "utf8"));
 
 test("project architecture, deployment and service-flow artwork is shipped", () => {
   for (const file of [

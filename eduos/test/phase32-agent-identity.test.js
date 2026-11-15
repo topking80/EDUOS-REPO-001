@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+const html=(readFileSync(new URL('../public/index.html',import.meta.url),'utf8')+readFileSync(new URL('../public/legacy-app.js',import.meta.url),'utf8'));
 const root=new URL('../public/assets/',import.meta.url);
 test('four named agent identity SVGs are included and accessible',()=>{
  const agents=[['christie','Christie AI'],['helios','Helios'],['vulcan','Vulcan'],['aurora','Aurora']];

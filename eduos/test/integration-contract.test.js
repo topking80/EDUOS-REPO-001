@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const server = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 const client = await readFile(new URL("../public/api-bridge.js", import.meta.url), "utf8");
-const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
+const html = (await readFile(new URL("../public/index.html", import.meta.url), "utf8")+await readFile(new URL("../public/legacy-app.js", import.meta.url), "utf8"));
 const schema = await readFile(new URL("../db/001_initial.sql", import.meta.url), "utf8");
 
 test("same-origin static app and API bridge are served",()=>{

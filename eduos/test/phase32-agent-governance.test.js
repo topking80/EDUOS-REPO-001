@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+const html = (readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')+readFileSync(new URL('../public/legacy-app.js', import.meta.url), 'utf8'));
 const agents = html.slice(html.indexOf('function agentContract'), html.indexOf('function reports'));
 const runner = html.slice(html.indexOf('function runAgent'), html.indexOf('function exportData'));
 test('four agents have distinct, bounded operational contracts', () => {

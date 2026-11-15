@@ -5,7 +5,7 @@ import { normalizeAgentEvent } from '../src/agent-events.js';
 
 const server = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const bridge = readFileSync(new URL('../public/api-bridge.js', import.meta.url), 'utf8');
-const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+const html = (readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')+readFileSync(new URL('../public/legacy-app.js', import.meta.url), 'utf8'));
 
 test('agent event normalizer accepts only bounded, category-specific routes', () => {
   const event = normalizeAgentEvent({runId:'ORCH-MI9ABC12',category:'attendance',route:['Christie AI','Aurora','Christie AI']});

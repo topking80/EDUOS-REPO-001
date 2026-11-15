@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+const html = (await readFile(new URL('../public/index.html', import.meta.url), 'utf8')+await readFile(new URL('../public/legacy-app.js', import.meta.url), 'utf8'));
 const transport = await readFile(new URL('../src/transport-routes.js', import.meta.url), 'utf8');
 const server = await readFile(new URL('../src/server.js', import.meta.url), 'utf8');
 

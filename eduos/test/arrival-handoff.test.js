@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assertReleaseMetadataAligned } from './helpers/release.js';
 const root=path.resolve(import.meta.dirname,'..');
-const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
+const html=(fs.readFileSync(path.join(root,'public/index.html'),'utf8')+fs.readFileSync(path.join(root,'public/legacy-app.js'),'utf8'));
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 test('32.0.52 exposes arrival workflow to principal, teacher and bus driver workspaces',()=>{
  assertReleaseMetadataAligned();

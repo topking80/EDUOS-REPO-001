@@ -72,11 +72,13 @@ async function mobile(page, name) {
 const browser = await chromium.launch({ executablePath: findChrome(), args: ["--no-sandbox"] });
 const results = []; const shots = [];
 const pageErrors = [];
+const cspViolations = []; // the CSP allows no inline script; anything it blocks is a bug
 
 async function newPage() {
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1366, height: 900 }, acceptDownloads: true });
   const page = await ctx.newPage();
   page.on("pageerror", e => pageErrors.push(e.message));
+  page.on("console", m => { if (/Content Security Policy/i.test(m.text())) cspViolations.push(m.text().slice(0, 200)); });
   page.dialogAnswers = [];
   page.on("dialog", d => { const a = page.dialogAnswers.shift(); a === false ? d.dismiss() : d.accept(a === true || a === undefined ? undefined : a); });
   return page;
@@ -507,6 +509,7 @@ await step("restore the seeded design from history and publish it", async () => 
   await brander.context().close();
 });
 await step("no uncaught page errors", async () => { check(pageErrors.length === 0, pageErrors.join("; ")); });
+await step("nothing blocked by the Content Security Policy", async () => { check(cspViolations.length === 0, cspViolations.join("; ")); });
 await step("axe-core: no WCAG 2.1 A/AA violations on any scanned screen", async () => {
   if (!AXE) { console.log("      (skipped: axe-core not found; npm --prefix ~/tools/pw i axe-core)"); return; }
   fs.writeFileSync(path.join(OUT, "axe-report.json"), JSON.stringify(axeFindings, null, 2));

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+const html=(readFileSync(new URL('../public/index.html',import.meta.url),'utf8')+readFileSync(new URL('../public/legacy-app.js',import.meta.url),'utf8'));
 test('teacher classroom planner is integrated into the home workspace',()=>{
   assert.match(html,/classroomPlanningSuite\(\)/);
   assert.match(html,/Teacher preference/);

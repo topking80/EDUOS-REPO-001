@@ -1,2 +1,4 @@
 # Reviewed findings (test-only values, never real secrets).
 3662f77a135704cd28249cc6246cf928a1882270:eduos/test/integration/integrations.test.js:generic-api-key:67
+# Not a secret: the localStorage key name "eduos_staffing_v1" (moved from public/index.html).
+3a286a69eb9698f69a7d291d427b3931efe10374:eduos/public/legacy-app.js:generic-api-key:938
