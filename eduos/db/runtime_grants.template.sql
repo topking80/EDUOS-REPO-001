@@ -292,3 +292,10 @@ GRANT SELECT, INSERT, UPDATE ON integration_connectors TO eduos_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON integration_school_map TO eduos_app;
 GRANT SELECT, INSERT ON integration_sync_runs TO eduos_app;
 REVOKE DELETE, TRUNCATE ON integration_connectors, integration_sync_runs FROM eduos_app;
+
+-- 041 AI gateway: the superintendent manages the district's AI policy; usage
+-- records are append-only for the app (no prompts or answers are stored).
+GRANT SELECT, INSERT, UPDATE ON ai_district_policy TO eduos_app;
+GRANT SELECT, INSERT ON ai_usage TO eduos_app;
+GRANT USAGE ON SEQUENCE ai_usage_id_seq TO eduos_app;
+REVOKE DELETE, TRUNCATE ON ai_district_policy, ai_usage FROM eduos_app;

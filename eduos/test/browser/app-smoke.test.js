@@ -52,6 +52,11 @@ function mockApi(role, pathname) {
     case "/api/learning/review": return { data: { attempts: [] } };
     case "/api/learning/progress": return { data: { children: [] } };
     case "/api/notifications": return { data: { unread: 0, items: [] } };
+    case "/api/ai/status": return { data: { provider: "local", budget: { district: { used: 100, cap: 200000 }, you: { used: 50, cap: 20000 } },
+      usecases: [{ id: "lesson_draft", label: "Lesson draft", enabled: true, input: { min: 3, max: 500 } }, { id: "ops_brief", label: "Operations brief", enabled: true, input: null }] } };
+    case "/api/ai/policy": return { data: { canEdit: role === "superintendent", provider: "local", usage30d: [{ usecase: "lesson_draft", calls: 4, tokens: 1800 }],
+      policy: { enabled_usecases: ["lesson_draft"], daily_token_cap: 200000, user_daily_token_cap: 20000 },
+      usecases: [{ id: "lesson_draft", label: "Lesson draft", roles: ["teacher"] }, { id: "ops_brief", label: "Operations brief", roles: ["principal"] }] } };
     case "/api/edge/updates": return { data: { canApprove: ["superintendent", "it_admin"].includes(role),
       policy: { require_approval: true, min_canaries: 2, soak_hours: 24 }, fleet: [{ version: "45.20261110.3.0", cohort: "canary", devices: 2 }],
       releases: [{ id: "r1", version: "45.20261117.3.0", stage: "canary", approved_at: now, approved_by_name: "Supt",

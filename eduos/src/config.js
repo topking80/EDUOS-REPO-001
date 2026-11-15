@@ -85,6 +85,15 @@ export const config = {
   webhookAllowedHosts: (process.env.WEBHOOK_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
   // Development aid only: permits http:// to a loopback receiver. Ignored in production.
   webhookAllowInsecureLoopback: process.env.WEBHOOK_ALLOW_INSECURE_LOOPBACK === "true" && (process.env.NODE_ENV || "development") !== "production",
+  // Staff AI gateway (src/ai/). Local templates by default: no network. An
+  // external OpenAI-compatible model is used only when AI_PROVIDER=openai_compatible
+  // AND AI_ALLOW_EXTERNAL_PROVIDER=true; identifiers are redacted first.
+  aiProvider: (process.env.AI_PROVIDER || "local").trim(),
+  aiAllowExternal: process.env.AI_ALLOW_EXTERNAL_PROVIDER === "true",
+  aiProviderUrl: (process.env.AI_PROVIDER_URL || "").trim(),
+  aiProviderModel: (process.env.AI_PROVIDER_MODEL || "").trim(),
+  aiProviderApiKey: process.env.AI_PROVIDER_API_KEY || "",
+  aiProviderTimeoutMs: Number(process.env.AI_PROVIDER_TIMEOUT_MS || 20000),
   // External integrations (OneRoster, Ed-Fi) are off unless INTEGRATIONS_KEY
   // (32+ chars) is set: it encrypts connector client secrets at rest.
   integrationsKey: process.env.INTEGRATIONS_KEY || "",
@@ -239,6 +248,13 @@ for (const [name, value] of [["NOTIFY_EMAIL_ADAPTER", config.notifyEmailAdapter]
 if (config.metricsToken && config.metricsToken.length < 16) {
   throw new Error("METRICS_TOKEN must be at least 16 characters");
 }
+if (!["local", "openai_compatible"].includes(config.aiProvider)) throw new Error("AI_PROVIDER must be local or openai_compatible");
+if (config.aiProvider !== "local") {
+  if (!config.aiAllowExternal) throw new Error("AI_PROVIDER=openai_compatible also requires AI_ALLOW_EXTERNAL_PROVIDER=true");
+  if (!/^https:\/\//.test(config.aiProviderUrl)) throw new Error("AI_PROVIDER_URL must be an https:// URL");
+  if (!config.aiProviderModel) throw new Error("AI_PROVIDER_MODEL is required for an external AI provider");
+}
+intIn("AI_PROVIDER_TIMEOUT_MS", config.aiProviderTimeoutMs, 1000, 120000);
 if (config.integrationsKey && config.integrationsKey.length < 32) {
   throw new Error("INTEGRATIONS_KEY must be at least 32 characters");
 }
