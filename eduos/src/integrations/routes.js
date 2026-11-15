@@ -1,0 +1,233 @@
+// District integrations: OneRoster 1.2 and Ed-Fi connectors (db/040).
+//
+// EduOS doesn't depend on any of them. Nothing runs unless INTEGRATIONS_KEY is
+// set, a district lead adds a connector and a different district lead approves
+// it; syncs run only when someone asks (preview first, then apply). Connectors
+// only read from the external system, and imports go through the same rules
+// as the SIS CSV import.
+import crypto from "node:crypto";
+import rateLimit from "express-rate-limit";
+import { config } from "../config.js";
+import { requireSession, requireCsrf } from "../auth.js";
+import { withTenantTransaction } from "../db.js";
+import { HttpError, audit, rows, one, validId, cleanText, sendError } from "../role-app-util.js";
+import { encryptSecret, decryptSecret } from "./secrets.js";
+import { checkUrl, IntegrationError } from "./http.js";
+import * as oneroster from "./oneroster.js";
+import * as edfi from "./edfi.js";
+import { planImport, loadPlanInputs, applyPlan } from "./sync.js";
+
+const MANAGERS = ["superintendent", "it_admin"];
+const KINDS = { oneroster, edfi };
+const COLS = `c.id, c.kind, c.name, c.base_url, c.token_url, c.client_id, c.scope, c.data_scope, c.status, c.created_at, c.updated_at,
+  c.approved_at, c.disabled_at, c.last_sync_at, c.last_sync_status, uu.display_name AS updated_by_name, ua.display_name AS approved_by_name, c.updated_by`;
+const FROM = `FROM integration_connectors c JOIN users uu ON uu.id=c.updated_by LEFT JOIN users ua ON ua.id=c.approved_by`;
+const urlOptions = () => ({ allowInsecureLoopback: config.integrationsAllowInsecureLoopback, allowedHosts: config.integrationsAllowedHosts });
+
+const manager = (req, res, next) => {
+  if (!MANAGERS.includes(req.actor?.role)) return res.status(403).json({ error: "integrations_access_denied" });
+  if (!config.integrationsKey) return res.status(503).json({ error: "integrations_disabled", hint: "Set INTEGRATIONS_KEY (32+ characters) on the server to use integrations." });
+  next();
+};
+
+function readFields(b, partial) {
+  const out = {};
+  const bad = (f) => { throw new HttpError(400, "invalid_connector", { field: f }); };
+  if (!partial || b.kind !== undefined) { if (!KINDS[b.kind]) bad("kind"); out.kind = b.kind; }
+  if (!partial || b.name !== undefined) { if (!cleanText(b.name, 80)) bad("name"); out.name = b.name.trim(); }
+  for (const [k, col] of [["baseUrl", "base_url"], ["tokenUrl", "token_url"]]) {
+    if (!partial || b[k] !== undefined) {
+      if (typeof b[k] !== "string") bad(k);
+      try { checkUrl(b[k].trim(), urlOptions()); } catch { bad(k); }
+      out[col] = b[k].trim();
+    }
+  }
+  if (!partial || b.clientId !== undefined) { if (!cleanText(b.clientId, 300)) bad("clientId"); out.client_id = b.clientId.trim(); }
+  if (!partial || b.clientSecret !== undefined) { if (!cleanText(b.clientSecret, 2000)) bad("clientSecret"); out.secret = b.clientSecret.trim(); }
+  if (b.scope !== undefined && b.scope !== null && b.scope !== "") { if (!cleanText(b.scope, 1000)) bad("scope"); out.scope = b.scope.trim(); }
+  else if (b.scope === null || b.scope === "") out.scope = null;
+  return out;
+}
+
+const shape = (c) => c && ({ id: c.id, kind: c.kind, name: c.name, baseUrl: c.base_url, tokenUrl: c.token_url, clientId: c.client_id, scope: c.scope,
+  dataScope: c.data_scope, status: c.status, updatedBy: c.updated_by_name, updatedAt: c.updated_at, approvedBy: c.approved_by_name, approvedAt: c.approved_at,
+  disabledAt: c.disabled_at, lastSyncAt: c.last_sync_at, lastSyncStatus: c.last_sync_status, hasSecret: true });
+
+export function registerIntegrationRoutes(app) {
+  const syncLimiter = rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false, keyGenerator: (req) => `integration-sync:${req.actor?.userId}` });
+  const base = "/api/integrations/connectors";
+
+  app.get(base, requireSession, async (req, res, next) => {
+    if (!MANAGERS.includes(req.actor.role)) return res.status(403).json({ error: "integrations_access_denied" });
+    if (!config.integrationsKey) return res.json({ data: { enabled: false, connectors: [] } });
+    try {
+      const data = await withTenantTransaction(req.actor, async (c) => {
+        const list = await rows(c, `SELECT ${COLS} ${FROM} WHERE c.district_id=$1 ORDER BY c.name`, [req.actor.districtId]);
+        const maps = await rows(c, `SELECT m.connector_id, m.external_id, m.school_id, s.name AS school_name FROM integration_school_map m
+          JOIN schools s ON s.id=m.school_id WHERE m.district_id=$1 ORDER BY s.name`, [req.actor.districtId]);
+        const schools = await rows(c, "SELECT id, name FROM schools WHERE district_id=$1 AND status='active' ORDER BY name", [req.actor.districtId]);
+        return { enabled: true, schools, connectors: list.map(x => ({ ...shape(x), canApprove: x.updated_by !== req.actor.userId,
+          schoolMap: maps.filter(m => m.connector_id === x.id).map(m => ({ externalId: m.external_id, schoolId: m.school_id, schoolName: m.school_name })) })) };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  app.post(base, requireSession, requireCsrf, manager, async (req, res, next) => {
+    try {
+      const f = readFields(req.body || {}, false);
+      const data = await withTenantTransaction(req.actor, async (c) => {
+        const a = req.actor, id = crypto.randomUUID();
+        if (await one(c, "SELECT 1 FROM integration_connectors WHERE district_id=$1 AND name=$2", [a.districtId, f.name])) throw new HttpError(409, "connector_name_taken");
+        await c.query(`INSERT INTO integration_connectors(id, district_id, kind, name, base_url, token_url, client_id, client_secret_enc, scope, created_by, updated_by)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`, [id, a.districtId, f.kind, f.name, f.base_url, f.token_url, f.client_id,
+          encryptSecret(config.integrationsKey, a.districtId, id, f.secret), f.scope ?? null, a.userId]);
+        await audit(c, req, "create", "integration_connector", id, `kind=${f.kind}; base_url=${f.base_url}`);
+        return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [id]));
+      });
+      res.status(201).json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  // Any change to where a connector connects or how sends it back for approval.
+  app.patch(`${base}/:id`, requireSession, requireCsrf, manager, async (req, res, next) => {
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
+    try {
+      const f = readFields(req.body || {}, true);
+      if (f.kind) throw new HttpError(400, "invalid_connector", { field: "kind" });
+      const data = await withTenantTransaction(req.actor, async (c) => {
+        const a = req.actor;
+        const cur = await one(c, "SELECT id FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
+        if (!cur) throw new HttpError(404, "connector_not_found");
+        const sets = [], args = [cur.id];
+        const add = (col, v) => { args.push(v); sets.push(`${col}=$${args.length}`); };
+        for (const col of ["name", "base_url", "token_url", "client_id", "scope"]) if (col in f) add(col, f[col]);
+        if (f.secret) add("client_secret_enc", encryptSecret(config.integrationsKey, a.districtId, cur.id, f.secret));
+        if (!sets.length) throw new HttpError(400, "nothing_to_change");
+        add("updated_by", a.userId);
+        await c.query(`UPDATE integration_connectors SET ${sets.join(", ")}, updated_at=now(), status='pending_approval', approved_by=NULL, approved_at=NULL WHERE id=$1`, args)
+          .catch(e => { if (e.code === "23505") throw new HttpError(409, "connector_name_taken"); throw e; });
+        await audit(c, req, "update", "integration_connector", cur.id, `changed=${Object.keys(f).map(k => k === "secret" ? "client_secret" : k).join(",")}; needs approval`);
+        return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [cur.id]));
+      });
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  app.post(`${base}/:id/approve`, requireSession, requireCsrf, manager, async (req, res, next) => {
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
+    try {
+      const data = await withTenantTransaction(req.actor, async (c) => {
+        const a = req.actor;
+        const cur = await one(c, "SELECT id, status, updated_by FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
+        if (!cur) throw new HttpError(404, "connector_not_found");
+        if (cur.status === "active") throw new HttpError(409, "connector_already_active");
+        // Two people: whoever last set it up can't also approve it.
+        if (cur.updated_by === a.userId) throw new HttpError(409, "approver_must_differ");
+        await c.query("UPDATE integration_connectors SET status='active', approved_by=$2, approved_at=now(), disabled_by=NULL, disabled_at=NULL WHERE id=$1", [cur.id, a.userId]);
+        await audit(c, req, "approve", "integration_connector", cur.id, "data_scope=students; read-only");
+        return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [cur.id]));
+      });
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  app.post(`${base}/:id/disable`, requireSession, requireCsrf, manager, async (req, res, next) => {
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
+    try {
+      const data = await withTenantTransaction(req.actor, async (c) => {
+        const r = await one(c, `UPDATE integration_connectors SET status='disabled', disabled_by=$3, disabled_at=now(), updated_by=$3, updated_at=now()
+          WHERE id=$1 AND district_id=$2 AND status<>'disabled' RETURNING id`, [req.params.id, req.actor.districtId, req.actor.userId]);
+        if (!r) throw new HttpError(404, "connector_not_found");
+        await audit(c, req, "disable", "integration_connector", r.id);
+        return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [r.id]));
+      });
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  app.put(`${base}/:id/school-map`, requireSession, requireCsrf, manager, async (req, res, next) => {
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
+    const list = req.body?.mappings;
+    if (!Array.isArray(list) || list.length > 1000 || !list.every(m => cleanText(m?.externalId, 255) && (m.schoolId === null || validId(m.schoolId))))
+      return res.status(400).json({ error: "invalid_school_map" });
+    try {
+      await withTenantTransaction(req.actor, async (c) => {
+        const a = req.actor;
+        if (!await one(c, "SELECT 1 FROM integration_connectors WHERE id=$1 AND district_id=$2", [req.params.id, a.districtId])) throw new HttpError(404, "connector_not_found");
+        for (const m of list) {
+          if (m.schoolId === null) { await c.query("DELETE FROM integration_school_map WHERE connector_id=$1 AND external_id=$2", [req.params.id, m.externalId.trim()]); continue; }
+          if (!await one(c, "SELECT 1 FROM schools WHERE id=$1 AND district_id=$2 AND status='active'", [m.schoolId, a.districtId])) throw new HttpError(400, "school_not_found", { schoolId: m.schoolId });
+          await c.query(`INSERT INTO integration_school_map(district_id, connector_id, external_id, school_id, mapped_by) VALUES ($1,$2,$3,$4,$5)
+            ON CONFLICT (connector_id, external_id) DO UPDATE SET school_id=EXCLUDED.school_id, mapped_by=EXCLUDED.mapped_by, mapped_at=now()`,
+            [a.districtId, req.params.id, m.externalId.trim(), m.schoolId, a.userId]);
+        }
+        await audit(c, req, "update", "integration_school_map", req.params.id, list.map(m => `${m.externalId}=>${m.schoolId ?? "none"}`).join("; "));
+      });
+      res.json({ data: { saved: list.length } });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  app.get(`${base}/:id/runs`, requireSession, manager, async (req, res, next) => {
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
+    try {
+      const data = await withTenantTransaction(req.actor, (c) => rows(c, `SELECT r.id, r.mode, r.status, r.started_at, r.finished_at, r.counts, r.rejected, r.error,
+          u.display_name AS started_by FROM integration_sync_runs r JOIN users u ON u.id=r.started_by
+          WHERE r.connector_id=$1 AND r.district_id=$2 ORDER BY r.started_at DESC LIMIT 20`, [req.params.id, req.actor.districtId]));
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  // Preview (nothing changes) or apply. Fetches from the external system
+  // outside any database transaction, then plans and imports in one.
+  app.post(`${base}/:id/sync`, requireSession, requireCsrf, manager, syncLimiter, async (req, res, next) => {
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
+    const mode = req.body?.mode === "apply" ? "apply" : "preview";
+    const a = req.actor, started = new Date(), runId = crypto.randomUUID();
+    let conn = null;
+    const record = (c, status, extra) => c.query(`INSERT INTO integration_sync_runs(id, district_id, connector_id, mode, status, started_by, started_at, counts, rejected, error)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)`, [runId, a.districtId, conn.id, mode, status, a.userId, started,
+        JSON.stringify(extra.counts || {}), JSON.stringify(extra.rejected || []), extra.error || null])
+      .then(() => c.query("UPDATE integration_connectors SET last_sync_at=now(), last_sync_status=$2 WHERE id=$1", [conn.id, status]));
+    const fail = async (code, detail) => {
+      const error = `${code}${detail ? `: ${detail}` : ""}`.slice(0, 300);
+      await withTenantTransaction(a, async (c) => { await record(c, "failed", { error }); await audit(c, req, `sync_${mode}`, "integration_connector", conn.id, error, "failure"); });
+    };
+    try {
+      conn = await withTenantTransaction(a, (c) => one(c, "SELECT * FROM integration_connectors WHERE id=$1 AND district_id=$2", [req.params.id, a.districtId]));
+      if (!conn) throw new HttpError(404, "connector_not_found");
+      if (conn.status !== "active") throw new HttpError(409, "connector_not_approved");
+      let roster;
+      try {
+        const secret = decryptSecret(config.integrationsKey, a.districtId, conn.id, conn.client_secret_enc);
+        roster = await KINDS[conn.kind].fetchRoster({ baseUrl: conn.base_url, tokenUrl: conn.token_url, clientId: conn.client_id, clientSecret: secret, scope: conn.scope, options: urlOptions() });
+      } catch (e) {
+        // An unreadable secret means INTEGRATIONS_KEY changed: re-enter the secret.
+        const code = e instanceof IntegrationError ? e.code : e.message === "secret_unreadable" || /unable to authenticate data/i.test(e.message) ? "connector_secret_unreadable" : null;
+        if (!code) throw e;
+        await fail(code, e.detail);
+        return res.status(502).json({ error: code, detail: e.detail || null, runId });
+      }
+      const out = await withTenantTransaction(a, async (c) => {
+        await c.query("SELECT pg_advisory_xact_lock(hashtext('integration-sync'), hashtext($1))", [conn.id]);
+        const inputs = await loadPlanInputs(c, a.districtId, conn.id, roster.students.map(s => s.localStudentNumber));
+        const plan = planImport(roster, inputs.map, inputs.existing, inputs.schools);
+        if (mode === "apply") plan.counts.imported = await applyPlan(c, a, conn, runId, plan, req.requestId);
+        await record(c, mode === "apply" ? "completed" : "previewed", { counts: plan.counts, rejected: plan.rejected });
+        await audit(c, req, `sync_${mode}`, "integration_connector", conn.id, `run=${runId}; to_import=${plan.counts.toImport}; not_mapped=${plan.counts.notMapped}; rejected=${plan.counts.rejected}`);
+        return { runId, mode, counts: plan.counts, rejected: plan.rejected, externalSchools: plan.externalSchools };
+      });
+      res.json({ data: out });
+    } catch (e) {
+      if (e.code === "SIS_STUDENT_SCHOOL_CONFLICT" || e.code === "DISTRICT_LIMIT_MAX_STUDENTS" || e.code === "SYNC_SCHOOL_FAILED") {
+        // Nothing was imported (the transaction rolled back); say why.
+        const detail = e.detail || e.code.toLowerCase();
+        try { await fail("sync_not_applied", detail); } catch { /* the response still explains */ }
+        return res.status(409).json({ error: "sync_not_applied", detail, runId });
+      }
+      sendError(res, next, e);
+    }
+  });
+}

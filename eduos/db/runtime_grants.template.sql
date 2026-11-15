@@ -276,3 +276,10 @@ GRANT SELECT ON edge_device_reports TO eduos_app;
 REVOKE DELETE, TRUNCATE ON edge_devices, edge_device_reports FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_edge_record_health(uuid, text, jsonb) TO eduos_app;
 REVOKE ALL ON FUNCTION eduos_retention_purge_edge_reports(int) FROM eduos_app;
+
+-- 040 external integrations: district leads manage connectors (row-level
+-- security keeps them in their district); sync runs are an append-only record.
+GRANT SELECT, INSERT, UPDATE ON integration_connectors TO eduos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON integration_school_map TO eduos_app;
+GRANT SELECT, INSERT ON integration_sync_runs TO eduos_app;
+REVOKE DELETE, TRUNCATE ON integration_connectors, integration_sync_runs FROM eduos_app;

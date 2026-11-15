@@ -85,6 +85,12 @@ export const config = {
   webhookAllowedHosts: (process.env.WEBHOOK_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
   // Development aid only: permits http:// to a loopback receiver. Ignored in production.
   webhookAllowInsecureLoopback: process.env.WEBHOOK_ALLOW_INSECURE_LOOPBACK === "true" && (process.env.NODE_ENV || "development") !== "production",
+  // External integrations (OneRoster, Ed-Fi) are off unless INTEGRATIONS_KEY
+  // (32+ chars) is set: it encrypts connector client secrets at rest.
+  integrationsKey: process.env.INTEGRATIONS_KEY || "",
+  integrationsAllowedHosts: (process.env.INTEGRATIONS_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
+  // Development and tests only: permits http:// to a loopback server. Ignored in production.
+  integrationsAllowInsecureLoopback: process.env.INTEGRATIONS_ALLOW_INSECURE_LOOPBACK === "true" && (process.env.NODE_ENV || "development") !== "production",
   // Native mobile app sign-in (RFC 8252). Comma-separated redirect URIs the
   // EduOS app may return to after district sign-in, e.g.
   // "org.eduos.app:/oauth2redirect". Empty (default) disables native sign-in.
@@ -232,6 +238,9 @@ for (const [name, value] of [["NOTIFY_EMAIL_ADAPTER", config.notifyEmailAdapter]
   if (!["off", "log"].includes(value)) throw new Error(`${name} must be off or log (no real email/SMS/push sender ships with EduOS 32.7.0)`);
 if (config.metricsToken && config.metricsToken.length < 16) {
   throw new Error("METRICS_TOKEN must be at least 16 characters");
+}
+if (config.integrationsKey && config.integrationsKey.length < 32) {
+  throw new Error("INTEGRATIONS_KEY must be at least 32 characters");
 }
 if (config.webhookSigningKey && config.webhookSigningKey.length < 32) {
   throw new Error("WEBHOOK_SIGNING_KEY must be at least 32 characters");
