@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
-const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+const html = (fs.readFileSync(path.join(root, 'public/index.html'), 'utf8')+fs.readFileSync(path.join(root, 'public/legacy-app.js'), 'utf8'));
 const vision = fs.readFileSync(path.join(root, 'public/eduos-vision.js'), 'utf8');
 test('Device & Edge Operations is registered as a role-scoped workspace', () => {
   assert.match(html, /deviceops:deviceOpsPage/);

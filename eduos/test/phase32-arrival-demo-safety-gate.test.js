@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { assertReleaseMetadataAligned } from './helpers/release.js';
 
-const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+const html = (await readFile(new URL('../public/index.html', import.meta.url), 'utf8')+await readFile(new URL('../public/legacy-app.js', import.meta.url), 'utf8'));
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const sw = await readFile(new URL('../public/app/sw.js', import.meta.url), 'utf8');
 

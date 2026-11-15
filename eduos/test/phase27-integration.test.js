@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { RELEASE_RE } from "./helpers/release.js";
 
 const root = new URL("../", import.meta.url);
-const html = await readFile(new URL("public/index.html", root), "utf8");
+const html = (await readFile(new URL("public/index.html", root), "utf8")+await readFile(new URL("public/legacy-app.js", root), "utf8"));
 const bridge = await readFile(new URL("public/api-bridge.js", root), "utf8");
 const server = await readFile(new URL("src/server.js", root), "utf8");
 

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+const html = (fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8")+fs.readFileSync(new URL("../public/legacy-app.js", import.meta.url), "utf8"));
 test("campus explorer is registered as a first-class workspace", () => {
   assert.match(html, /campus:campusExplorerPage/);
   assert.match(html, /campus:"Interactive campus"/);

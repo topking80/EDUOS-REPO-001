@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 const root = process.cwd();
-const html = readFileSync(join(root, "public/index.html"), "utf8");
+const html = (readFileSync(join(root, "public/index.html"), "utf8")+readFileSync(join(root, "public/legacy-app.js"), "utf8"));
 test("parent portal is registered as a distinct page", () => {
   assert.match(html, /parentportal:parentPortalPage/);
   assert.match(html, /parentportal:"Parent & Guardian Portal"/);

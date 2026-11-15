@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+const html = (readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')+readFileSync(new URL('../public/legacy-app.js', import.meta.url), 'utf8'));
 const orchestration = html.slice(html.indexOf('function classifyDistrictQuestion'), html.indexOf('const districtProfiles'));
 test('Christie coordinates bounded topic-specific specialist routing', () => {
   assert.match(orchestration, /function classifyDistrictQuestion/);

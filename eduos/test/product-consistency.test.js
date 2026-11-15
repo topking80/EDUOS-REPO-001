@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { assertReleaseMetadataAligned } from "./helpers/release.js";
 const root=process.cwd();
-const html=readFileSync(join(root,"public/index.html"),"utf8");
+const html=(readFileSync(join(root,"public/index.html"),"utf8")+readFileSync(join(root,"public/legacy-app.js"),"utf8"));
 const bridge=readFileSync(join(root,"public/api-bridge.js"),"utf8");
 test("parent portal is available only in the parent workspace navigation",()=>{
  const start=html.indexOf("const roleMenus="),end=html.indexOf("const personaConfig",start),nav=html.slice(start,end);

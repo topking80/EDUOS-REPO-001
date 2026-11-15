@@ -5,7 +5,7 @@ const server=await readFile(new URL("../src/server.js",import.meta.url),"utf8");
 const bridge=await readFile(new URL("../public/api-bridge.js",import.meta.url),"utf8");
 const schema=await readFile(new URL("../db/001_initial.sql",import.meta.url),"utf8");
 const learning=await readFile(new URL("../db/002_learning_workflows.sql",import.meta.url),"utf8");
-const ui=await readFile(new URL("../public/index.html",import.meta.url),"utf8");
+const ui=(await readFile(new URL("../public/index.html",import.meta.url),"utf8")+await readFile(new URL("../public/legacy-app.js",import.meta.url),"utf8"));
 const auth=await readFile(new URL("../src/auth.js",import.meta.url),"utf8");
 test("uploaded Phase 25 UI and bridge are served together",()=>{
  assert.ok(ui.includes('src="/api-bridge.js"'));
@@ -58,10 +58,13 @@ test("student relationship links require a same-district membership",()=>{
  assert.ok(schema.includes("UNIQUE(district_id,user_id)"));
  assert.ok(schema.includes("FOREIGN KEY(district_id,user_id) REFERENCES memberships(district_id,user_id)"));
 });
-test("CSP permits legacy inline handlers while blocking cross-origin framing",()=>{
- assert.ok(server.includes("scriptSrc: [\"'self'\", \"'unsafe-inline'\"]"));
+test("CSP forbids inline script and handlers while blocking cross-origin framing",async()=>{
+ const csp=await readFile(new URL("../src/csp.js",import.meta.url),"utf8");
+ assert.ok(server.includes("contentSecurityPolicy: { directives: cspDirectives }"));
+ assert.ok(csp.includes("scriptSrc: [\"'self'\"],"));
+ assert.ok(csp.includes("scriptSrcAttr: [\"'none'\"]"));
  // 'self' lets the same-origin Vision Studio iframe load; other origins are blocked.
- assert.ok(server.includes("frameAncestors: [\"'self'\"]"));
+ assert.ok(csp.includes("frameAncestors: [\"'self'\"]"));
 });
 
 test("audit CSV uses real CRLF separators and neutralizes spreadsheet formulas",()=>{

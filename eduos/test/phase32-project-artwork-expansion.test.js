@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 const root=process.cwd();
-const html=fs.readFileSync(path.join(root,"public/index.html"),"utf8");
+const html=(fs.readFileSync(path.join(root,"public/index.html"),"utf8")+fs.readFileSync(path.join(root,"public/legacy-app.js"),"utf8"));
 test("project-derived layered operating model artwork is present",()=>{
  const svg=fs.readFileSync(path.join(root,"public/assets/eduos-operating-model-agent-map.svg"),"utf8");
  for(const term of ["STATE EDUCATION","DISTRICT CONTROL PLANE","SCHOOL / BUILDING EDGE","CHRISTIE AI","HELIOS","VULCAN","AURORA"]) assert.ok(svg.includes(term),`missing ${term}`);

@@ -8,7 +8,7 @@ const server=readFileSync(join(root,"src/server.js"),"utf8");
 const sisImport=readFileSync(join(root,"src/sis-import.js"),"utf8");
 const bridge=readFileSync(join(root,"public/api-bridge.js"),"utf8");
 const migration=readFileSync(join(root,"db/006_connected_workflows.sql"),"utf8");
-const html=readFileSync(join(root,"public/index.html"),"utf8");
+const html=(readFileSync(join(root,"public/index.html"),"utf8")+readFileSync(join(root,"public/legacy-app.js"),"utf8"));
 test("family messages require authenticated supported roles and CSRF on send",()=>{
  assert.match(server,/app\.get\("\/api\/family\/messages",requireSession/);
  assert.match(server,/app\.post\("\/api\/family\/messages",requireSession,requireCsrf/);

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+const html = (readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')+readFileSync(new URL('../public/legacy-app.js', import.meta.url), 'utf8'));
 
 test('workspace navigation includes an accessible search with Escape to clear', () => {
   assert.match(html, /id="workspaceSearch" type="search"/);

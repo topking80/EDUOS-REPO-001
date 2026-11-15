@@ -10,7 +10,7 @@ import vm from "node:vm";
 const sandbox = { module: { exports: {} }, Promise };
 vm.runInNewContext(readFileSync(new URL("../public/eduos-mode.js", import.meta.url), "utf8"), sandbox);
 const mode = sandbox.module.exports;
-const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+const html = (readFileSync(new URL("../public/index.html", import.meta.url), "utf8")+readFileSync(new URL("../public/legacy-app.js", import.meta.url), "utf8"));
 const bridge = readFileSync(new URL("../public/api-bridge.js", import.meta.url), "utf8");
 
 function fakeDocument() {

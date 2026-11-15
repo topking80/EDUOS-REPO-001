@@ -44,8 +44,10 @@ test('security headers and anti-forgery middleware are installed', async () => {
   assert.match(server, /app\.post\("\/api\/session\/membership",requireSession,requireCsrf/);
 });
 
-test('CSP legacy inline allowances remain explicitly documented as remediation debt', async () => {
+test('CSP allows no inline script: the legacy interface migrated to external files', async () => {
   const server = await read('../src/server.js');
-  assert.match(server, /Transitional compatibility.*inline script/s);
-  assert.match(server, /scriptSrc: \["'self'", "'unsafe-inline'"\]/);
+  const { cspDirectives } = await import('../src/csp.js');
+  assert.match(server, /contentSecurityPolicy: \{ directives: cspDirectives \}/);
+  assert.deepEqual(cspDirectives.scriptSrc, ["'self'"]);
+  assert.deepEqual(cspDirectives.scriptSrcAttr, ["'none'"]);
 });

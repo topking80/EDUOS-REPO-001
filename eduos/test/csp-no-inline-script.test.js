@@ -1,0 +1,42 @@
+// The Content Security Policy forbids inline script (no 'unsafe-inline' in
+// script-src or script-src-attr). These checks keep it that way: no inline
+// <script> or on*= handler in any served page or in HTML built by its scripts,
+// and every data-on-* handler is one legacy-events.js knows.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import vm from "node:vm";
+
+const pub = new URL("../public/", import.meta.url).pathname;
+const files = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap(d => d.isDirectory() ? files(join(dir, d.name)) : [join(dir, d.name)]);
+const served = files(pub).filter(f => /\.(html?|js)$/.test(f));
+const read = (f) => readFileSync(f, "utf8");
+
+test("no inline <script> in any served page", () => {
+  for (const f of served.filter(f => /\.html?$/.test(f)))
+    for (const tag of read(f).match(/<script\b[^>]*>/gi) || []) assert.match(tag, /\ssrc=/, `${f}: ${tag}`);
+});
+
+test("no inline event handler attributes, in pages or in HTML built by scripts", () => {
+  for (const f of served) {
+    const hits = read(f).match(/[\s"'`]on(click|change|input|submit|load|error|keydown|keyup|focus|blur|mouseover)\s*=\s*["'`\\]/gi) || [];
+    assert.deepEqual(hits, [], f);
+    assert.doesNotMatch(read(f), /setAttribute\(\s*["']on[a-z]+["']/i, `${f} sets an inline handler`);
+    assert.doesNotMatch(read(f), /href\s*=\s*["']javascript:/i, f);
+  }
+});
+
+test("every data-on-* handler is one legacy-events.js can call, and it can't run arbitrary code", () => {
+  const sandbox = { document: { addEventListener() {} }, window: {}, Element: class {}, console };
+  vm.runInNewContext(read(join(pub, "legacy-events.js")), sandbox);
+  const { parse, handlers } = sandbox.window.EduosLegacyEvents;
+  const all = served.map(read).join("\n");
+  const used = [...all.matchAll(/data-on-(?:click|change|input|submit)=\\?"([^"]*)"/g)].map(m => m[1]);
+  assert.ok(used.length > 50, `found ${used.length} handlers`);
+  // Template placeholders become literals: '${id}' a string, a bare ${i} a number.
+  const literal = (src) => src.replace(/'\$\{[^}]*\}'/g, "'x'").replace(/\$\{[^}]*\}/g, "1");
+  for (const src of used) for (const call of parse(literal(src))) assert.ok(handlers.includes(call.name), call.name);
+  for (const bad of ["alert(document.cookie)", "go(location)", "fetch('x').then(go)", "go('a')+1", "constructor.constructor('x')()"])
+    assert.throws(() => parse(bad), bad);
+});

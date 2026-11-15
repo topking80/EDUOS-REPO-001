@@ -12,7 +12,7 @@ import { ROLE_PERMISSIONS, canPerform, isGrantable } from "../src/policy.js";
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 const [server, migration, grants, migrate, html, bridge, config] = await Promise.all([
   read("../src/server.js"), read("../db/008_flow_events_webhooks.sql"), read("../db/runtime_grants.template.sql"),
-  read("../src/migrate.js"), read("../public/index.html"), read("../public/api-bridge.js"), read("../src/config.js")
+  read("../src/migrate.js"), Promise.all([read("../public/index.html"), read("../public/legacy-app.js")]).then(x => x.join("")), read("../public/api-bridge.js"), read("../src/config.js")
 ]);
 const valid = { type: "pupil.enrolled", refs: { section: "SEC-0001", teacher: "TCH-0001", school: "SCH-001" }, counts: { enrolled: 13, capacity: 50 } };
 

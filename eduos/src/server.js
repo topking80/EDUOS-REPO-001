@@ -11,6 +11,7 @@ import { pool, withTenantTransaction, assertSafeRuntimeRole, assertSchemaReady }
 import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership } from "./auth.js";
 import { requirePermission, requireSchoolScope, canPerform, isGrantable, isDistrictRole } from "./policy.js";
 import { writeAudit } from "./audit.js";
+import { cspDirectives } from "./csp.js";
 import { applySisBatch, districtCap } from "./sis-import.js";
 import { normalizeAgentEvent } from "./agent-events.js";
 import { classifyOperationalEvent } from "./operational-event-taxonomy.js";
@@ -54,23 +55,7 @@ const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const APP_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 app.disable("x-powered-by");
 if (config.trustedProxyIps.length) app.set("trust proxy", config.trustedProxyIps);
-app.use(helmet({ contentSecurityPolicy: { directives: {
-  defaultSrc: ["'self'"],
-  // Transitional compatibility for the uploaded legacy UI's inline script and onclick attributes.
-  // Remove unsafe-inline after migrating those handlers to external modules.
-  scriptSrc: ["'self'", "'unsafe-inline'"],
-  scriptSrcAttr: ["'unsafe-inline'"],
-  styleSrc: ["'self'", "'unsafe-inline'"],
-  imgSrc: ["'self'", "data:", "blob:", "https:"],
-  connectSrc: ["'self'"],
-  fontSrc: ["'self'", "data:"],
-  objectSrc: ["'none'"],
-  baseUri: ["'self'"],
-  formAction: ["'self'"],
-  // 'self' (not 'none') so the same-origin Vision Studio iframe can load;
-  // other origins still cannot frame EduOS.
-  frameAncestors: ["'self'"]
-} } }));
+app.use(helmet({ contentSecurityPolicy: { directives: cspDirectives } }));
 app.use(metricsMiddleware);
 app.use(compression());
 // Request-body size limits are DoS protections, not product caps (docs/LIMITS.md).
