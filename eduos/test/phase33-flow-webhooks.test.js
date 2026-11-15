@@ -100,7 +100,13 @@ test("DNS answers must all be public (no rebinding through a mixed answer)", asy
   assert.equal((await resolveWebhookTarget(url, { lookup: async () => [{ address: "127.0.0.1", family: 4 }] })).ok, false);
   assert.equal((await resolveWebhookTarget(url, { lookup: async () => [] })).reason, "dns_failure");
   assert.equal((await resolveWebhookTarget(url, { lookup: async () => { throw new Error("ENOTFOUND"); } })).reason, "dns_failure");
-  assert.equal((await resolveWebhookTarget(url, { dnsTimeoutMs: 5, lookup: () => new Promise(() => {}) })).reason, "dns_timeout");
+  // The DNS timer is unref'd (it must never hold the server open), so keep the
+  // test process alive while it fires; otherwise Node can see nothing left to
+  // run and fail the test with "Promise resolution is still pending".
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    assert.equal((await resolveWebhookTarget(url, { dnsTimeoutMs: 5, lookup: () => new Promise(() => {}) })).reason, "dns_timeout");
+  } finally { clearInterval(keepAlive); }
 });
 
 test("transient DNS failures retry, while unsafe DNS answers remain blocked", async () => {
