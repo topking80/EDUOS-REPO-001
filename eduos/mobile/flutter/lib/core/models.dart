@@ -6,6 +6,7 @@ typedef Json = Map<String, Object?>;
 
 String str(Object? v, [String fallback = '']) => v == null ? fallback : '$v';
 String? strOrNull(Object? v) => v == null ? null : '$v';
+double? number(Object? v) => v is num ? v.toDouble() : v == null ? null : double.tryParse('$v');
 int integer(Object? v) => v is int ? v : v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 bool boolean(Object? v) => v == true;
 DateTime? date(Object? v) => v == null ? null : DateTime.tryParse('$v')?.toLocal();
@@ -534,3 +535,350 @@ class PastIncident {
   final bool isDrill, debriefed;
   final DateTime? startedAt;
 }
+
+// ---------------- phase 4: learner ----------------
+
+class PathSkill {
+  const PathSkill({required this.id, required this.title, required this.subject, required this.state, required this.mastery,
+      this.standardCode, required this.standardBasis});
+  factory PathSkill.fromJson(Json j) => PathSkill(
+        id: str(j['id']),
+        title: str(j['title']),
+        subject: str(j['subject'], 'Practice'),
+        state: str(j['state'], 'next'),
+        mastery: (number(j['mastery']) ?? 0).round(),
+        standardCode: strOrNull(j['standard_code']),
+        standardBasis: j['mastery_basis'] == 'standard',
+      );
+  final String id, title, subject, state;
+  final int mastery;
+  final String? standardCode;
+  final bool standardBasis;
+}
+
+class LearningPath {
+  const LearningPath({required this.grade, required this.skills, this.activeSessionId});
+  factory LearningPath.fromJson(Json j) => LearningPath(
+        grade: str(obj(j['learner'])['grade']),
+        skills: objs(j['skills']).map(PathSkill.fromJson).toList(),
+        activeSessionId: strOrNull(j['activeSessionId']),
+      );
+  final String grade;
+  final List<PathSkill> skills;
+  final String? activeSessionId;
+  PathSkill? get current => skills.where((s) => s.state == 'current').firstOrNull ?? skills.firstOrNull;
+  int get mastered => skills.where((s) => s.state == 'mastered').length;
+}
+
+class ChristieTurn {
+  const ChristieTurn({required this.speaker, required this.text, required this.kind, this.hintLevel});
+  factory ChristieTurn.fromJson(Json j) =>
+      ChristieTurn(speaker: str(j['speaker']), text: str(j['text']), kind: str(j['kind']), hintLevel: j['hintLevel'] == null ? null : integer(j['hintLevel']));
+  final String speaker, text, kind;
+  final int? hintLevel;
+  bool get mine => speaker == 'student';
+}
+
+class ChristieSession {
+  const ChristieSession({required this.id, required this.skillTitle, required this.mastery, required this.turns});
+  factory ChristieSession.fromJson(Json j) => ChristieSession(
+        id: str(j['id']),
+        skillTitle: str(obj(j['skill'])['title'], 'Practice'),
+        mastery: (number(j['mastery']) ?? 0).round(),
+        turns: objs(j['turns']).map(ChristieTurn.fromJson).toList(),
+      );
+  final String id, skillTitle;
+  final int mastery;
+  final List<ChristieTurn> turns;
+}
+
+class Grade {
+  const Grade({this.letter, this.percent});
+  factory Grade.fromJson(Json j) => Grade(letter: strOrNull(j['letter']), percent: number(j['percent']));
+  final String? letter;
+  final double? percent;
+  String get text => percent == null ? 'No graded work yet' : '$letter · ${_pct(percent!)}%';
+}
+
+String _pct(double v) => v == v.roundToDouble() ? '${v.round()}' : v.toStringAsFixed(1);
+
+class CourseMastery {
+  const CourseMastery({required this.mastered, required this.total, required this.average});
+  factory CourseMastery.fromJson(Json j) =>
+      CourseMastery(mastered: integer(j['mastered']), total: integer(j['total']), average: (number(j['average']) ?? 0).round());
+  final int mastered, total, average;
+}
+
+class NextWork {
+  const NextWork({required this.id, required this.title, this.dueAt});
+  factory NextWork.fromJson(Json j) => NextWork(id: str(j['id']), title: str(j['title']), dueAt: date(j['due_at']));
+  final String id, title;
+  final DateTime? dueAt;
+}
+
+class LearnerCourse {
+  const LearnerCourse({required this.id, required this.title, required this.teacher, required this.term, required this.grade,
+      required this.mastery, this.next});
+  factory LearnerCourse.fromJson(Json j) => LearnerCourse(
+        id: str(j['id']),
+        title: str(j['title']),
+        teacher: str(j['teacher_name']),
+        term: str(j['term']),
+        grade: Grade.fromJson(obj(j['grade'])),
+        mastery: CourseMastery.fromJson(obj(j['mastery'])),
+        next: j['next'] is Map ? NextWork.fromJson(obj(j['next'])) : null,
+      );
+  final String id, title, teacher, term;
+  final Grade grade;
+  final CourseMastery mastery;
+  final NextWork? next;
+}
+
+class StandardProgress {
+  const StandardProgress({required this.id, required this.code, required this.description, required this.level, this.mastery});
+  factory StandardProgress.fromJson(Json j) => StandardProgress(
+      id: str(j['id']), code: str(j['code']), description: str(j['description']), level: str(j['level'], 'not_started'),
+      mastery: number(j['mastery'])?.round());
+  final String id, code, description, level;
+  final int? mastery;
+}
+
+const levelText = {'mastered': 'Mastered', 'developing': 'Developing', 'emerging': 'Emerging', 'not_started': 'Not started'};
+
+class LessonRef {
+  const LessonRef({required this.id, required this.title, required this.standards, required this.sources});
+  factory LessonRef.fromJson(Json j) => LessonRef(
+      id: str(j['id']), title: str(j['title']), standards: (j['standards'] is List ? (j['standards'] as List).map((e) => '$e').toList() : const <String>[]),
+      sources: integer(j['sources']));
+  final String id, title;
+  final List<String> standards;
+  final int sources;
+}
+
+class CourseUnit {
+  const CourseUnit({required this.seq, required this.title, this.summary, required this.lessons});
+  factory CourseUnit.fromJson(Json j) => CourseUnit(
+      seq: integer(j['seq']), title: str(j['title']), summary: strOrNull(j['summary']), lessons: objs(j['lessons']).map(LessonRef.fromJson).toList());
+  final int seq;
+  final String title;
+  final String? summary;
+  final List<LessonRef> lessons;
+}
+
+class MyWork {
+  const MyWork({required this.status, this.earned, required this.missing});
+  factory MyWork.fromJson(Json j) => MyWork(status: str(j['status'], 'not_started'), earned: number(j['earned']), missing: boolean(j['missing']));
+  final String status;
+  final double? earned;
+  final bool missing;
+}
+
+class AssignmentRef {
+  const AssignmentRef({required this.id, required this.title, required this.kind, required this.points, this.dueAt, this.timeLimit, this.mine});
+  factory AssignmentRef.fromJson(Json j) => AssignmentRef(
+        id: str(j['id']),
+        title: str(j['title']),
+        kind: str(j['kind'], 'work'),
+        points: number(j['points']) ?? 0,
+        dueAt: date(j['due_at']),
+        timeLimit: j['time_limit_minutes'] == null ? null : integer(j['time_limit_minutes']),
+        mine: j['mine'] is Map ? MyWork.fromJson(obj(j['mine'])) : null,
+      );
+  final String id, title, kind;
+  final double points;
+  final DateTime? dueAt;
+  final int? timeLimit;
+  final MyWork? mine;
+}
+
+class CourseDetail {
+  const CourseDetail({required this.id, required this.title, required this.subject, required this.gradeLevel, required this.term,
+      required this.teacher, required this.grade, required this.mastery, required this.standards, required this.units, required this.assignments});
+  factory CourseDetail.fromJson(Json j) => CourseDetail(
+        id: str(j['id']),
+        title: str(j['title']),
+        subject: str(j['subject']),
+        gradeLevel: str(j['gradeLevel']),
+        term: str(j['term']),
+        teacher: str(j['teacher']),
+        grade: Grade.fromJson(obj(j['grade'])),
+        mastery: CourseMastery.fromJson(obj(j['mastery'])),
+        standards: objs(j['standards']).map(StandardProgress.fromJson).toList(),
+        units: objs(j['units']).map(CourseUnit.fromJson).toList(),
+        assignments: objs(j['assignments']).map(AssignmentRef.fromJson).toList(),
+      );
+  final String id, title, subject, gradeLevel, term, teacher;
+  final Grade grade;
+  final CourseMastery mastery;
+  final List<StandardProgress> standards;
+  final List<CourseUnit> units;
+  final List<AssignmentRef> assignments;
+}
+
+class PrimarySource {
+  const PrimarySource({required this.title, this.creator, this.date, required this.kind, required this.archive, required this.url,
+      required this.rights, this.excerpt, required this.description, required this.prompts});
+  factory PrimarySource.fromJson(Json j) => PrimarySource(
+        title: str(j['title']),
+        creator: strOrNull(j['creator']),
+        date: strOrNull(j['date']),
+        kind: str(j['kind'], 'source'),
+        archive: str(j['archive'], 'archive'),
+        url: str(j['url']),
+        rights: str(j['rights']),
+        excerpt: strOrNull(j['excerpt']),
+        description: str(j['description']),
+        prompts: j['prompts'] is List ? (j['prompts'] as List).map((e) => '$e').toList() : const [],
+      );
+  final String title, kind, archive, url, rights, description;
+  final String? creator, date, excerpt;
+  final List<String> prompts;
+}
+
+class LessonDetail {
+  const LessonDetail({required this.id, required this.course, required this.unit, required this.title, required this.objective,
+      required this.content, required this.standards, required this.sources, required this.skills, required this.assignments, required this.mastery});
+  factory LessonDetail.fromJson(Json j) => LessonDetail(
+        id: str(j['id']),
+        course: str(j['course']),
+        unit: str(j['unit']),
+        title: str(j['title']),
+        objective: str(j['objective']),
+        content: str(j['content']),
+        standards: objs(j['standards']).map(StandardProgress.fromJson).toList(),
+        sources: objs(j['sources']).map(PrimarySource.fromJson).toList(),
+        skills: [for (final k in objs(j['christieSkills'])) (id: str(k['id']), title: str(k['title']))],
+        assignments: objs(j['assignments']).map(AssignmentRef.fromJson).toList(),
+        mastery: {for (final e in obj(j['mastery']).entries) if (e.value is Map) e.key: (level: str(obj(e.value)['level']), mastery: (number(obj(e.value)['mastery']) ?? 0).round())},
+      );
+  final String id, course, unit, title, objective, content;
+  final List<StandardProgress> standards;
+  final List<PrimarySource> sources;
+  final List<({String id, String title})> skills;
+  final List<AssignmentRef> assignments;
+  final Map<String, ({String level, int mastery})> mastery;
+}
+
+class AttemptSummary {
+  const AttemptSummary({required this.id, required this.no, required this.status, this.total, this.possible, required this.late});
+  factory AttemptSummary.fromJson(Json j) => AttemptSummary(
+      id: str(j['id']), no: integer(j['attempt_no']), status: str(j['status']), total: number(j['total']), possible: number(j['possible']), late: boolean(j['late']));
+  final String id, status;
+  final int no;
+  final double? total, possible;
+  final bool late;
+}
+
+class AssignmentDetail {
+  const AssignmentDetail({required this.id, required this.title, required this.kind, required this.points, this.instructions, this.dueAt,
+      required this.status, required this.standards, required this.itemCount, required this.maxAttempts, required this.retakePolicy,
+      this.timeLimit, this.effectiveMinutes, required this.extraTimePct, this.readAloud = false, required this.attempts, this.submission});
+  factory AssignmentDetail.fromJson(Json j) {
+    final acc = obj(j['accommodations']);
+    return AssignmentDetail(
+      id: str(j['id']),
+      title: str(j['title']),
+      kind: str(j['kind'], 'work'),
+      points: number(j['points']) ?? 0,
+      instructions: strOrNull(j['instructions']),
+      dueAt: date(j['dueAt']),
+      status: str(j['status']),
+      standards: [for (final s in objs(j['standards'])) str(s['code'])],
+      itemCount: integer(j['itemCount']),
+      maxAttempts: integer(j['maxAttempts'] ?? 1),
+      retakePolicy: str(j['retakePolicy'], 'highest'),
+      timeLimit: j['timeLimitMinutes'] == null ? null : integer(j['timeLimitMinutes']),
+      effectiveMinutes: j['effectiveMinutes'] == null ? null : integer(j['effectiveMinutes']),
+      extraTimePct: integer(acc['extraTimePct']),
+      readAloud: boolean(acc['readAloud']),
+      attempts: objs(j['attempts']).map(AttemptSummary.fromJson).toList(),
+      submission: j['submission'] is Map ? obj(j['submission']) : null,
+    );
+  }
+  final String id, title, kind, status, retakePolicy;
+  final double points;
+  final String? instructions;
+  final DateTime? dueAt;
+  final List<String> standards;
+  final int itemCount, maxAttempts, extraTimePct;
+  final bool readAloud;
+  final int? timeLimit, effectiveMinutes;
+  final List<AttemptSummary> attempts;
+  final Json? submission;
+  AttemptSummary? get open => attempts.where((a) => a.status == 'in_progress').firstOrNull;
+  int get left => maxAttempts - attempts.length;
+}
+
+class QuizItem {
+  const QuizItem({required this.id, required this.seq, required this.kind, required this.prompt, required this.choices, required this.response,
+      required this.points, this.earned, required this.needsTeacher, this.answerKey, this.teacherComment, this.source});
+  factory QuizItem.fromJson(Json j) => QuizItem(
+        id: str(j['id']),
+        seq: integer(j['seq']),
+        kind: str(j['kind']),
+        prompt: str(j['prompt']),
+        choices: j['choices'] is List ? (j['choices'] as List).map((e) => '$e').toList() : const [],
+        response: str(j['response']),
+        points: number(j['points']) ?? 0,
+        earned: number(j['earned']),
+        needsTeacher: boolean(j['needsTeacher']),
+        answerKey: j['answerKey'] is Map ? obj(j['answerKey']) : null,
+        teacherComment: strOrNull(j['teacherComment']),
+        source: j['source'] is Map ? obj(j['source']) : null,
+      );
+  final String id, kind, prompt, response;
+  final int seq;
+  final List<String> choices;
+  final double points;
+  final double? earned;
+  final bool needsTeacher;
+  final Json? answerKey, source;
+  final String? teacherComment;
+
+  /// The correct answer as text, once the server reveals it.
+  String? get keyText {
+    final k = answerKey;
+    if (k == null) return null;
+    if (kind == 'mc') {
+      final i = integer(k['index']);
+      return i >= 0 && i < choices.length ? choices[i] : null;
+    }
+    if (kind == 'numeric') return str(k['value']);
+    final accepted = k['accepted'];
+    return accepted is List ? accepted.join(' or ') : null;
+  }
+}
+
+class QuizAttempt {
+  const QuizAttempt({required this.id, required this.title, required this.attemptNo, required this.maxAttempts, required this.attemptsUsed,
+      required this.status, this.deadlineAt, this.secondsLeft, required this.extraTimePct, required this.late, this.totalPoints, this.autoPoints,
+      this.possiblePoints, required this.canRetake, required this.answersShown, required this.items});
+  factory QuizAttempt.fromJson(Json j) => QuizAttempt(
+        id: str(j['id']),
+        title: str(j['title']),
+        attemptNo: integer(j['attemptNo']),
+        maxAttempts: integer(j['maxAttempts']),
+        attemptsUsed: integer(j['attemptsUsed']),
+        status: str(j['status']),
+        deadlineAt: date(j['deadlineAt']),
+        secondsLeft: j['secondsLeft'] == null ? null : integer(j['secondsLeft']),
+        extraTimePct: integer(j['extraTimePct']),
+        late: boolean(j['late']),
+        totalPoints: number(j['totalPoints']),
+        autoPoints: number(j['autoPoints']),
+        possiblePoints: number(j['possiblePoints']),
+        canRetake: boolean(j['canRetake']),
+        answersShown: boolean(j['answersShown']),
+        items: objs(j['items']).map(QuizItem.fromJson).toList(),
+      );
+  final String id, title, status;
+  final int attemptNo, maxAttempts, attemptsUsed, extraTimePct;
+  final DateTime? deadlineAt;
+  final int? secondsLeft;
+  final bool late, canRetake, answersShown;
+  final double? totalPoints, autoPoints, possiblePoints;
+  final List<QuizItem> items;
+  bool get live => status == 'in_progress';
+}
+
+String pts(double? v) => v == null ? '–' : _pct(v);
