@@ -16,6 +16,12 @@ test("every view assigned by name is defined in app.js", () => {
   }
 });
 
+test("every role tab has a view", () => {
+  const tabs = new Set([...ui.slice(ui.indexOf("const ROLE_TABS"), ui.indexOf("};", ui.indexOf("const ROLE_TABS"))).matchAll(/\["(\w+)", "/g)].map(m => m[1]));
+  const views = new Set([...ui.matchAll(/^VIEWS\.(\w+)\s*=/gm)].map(m => m[1]));
+  for (const t of tabs) assert.ok(views.has(t), `tab ${t} has no VIEWS.${t}`);
+});
+
 test("operations consoles never send details for health or counseling work", () => {
   assert.match(ui, /const OPS_SENSITIVE = \["counseling", "health_office"\]/);
   assert.match(ui, /OPS_SENSITIVE\.includes\(d\) \|\| !details\.value\.trim\(\) \? \{\} : \{ details: details\.value \}/);

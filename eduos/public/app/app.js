@@ -1559,6 +1559,20 @@ VIEWS.node = async () => {
     kv("Record transfers (consent)", s.consentExceptions === "on" ? "on" : "off (default)"))));
   return out;
 };
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+VIEWS.attendance = async () => {
+  const today = isoDay(new Date());
+  const r = await api.get("/api/attendance?limit=500");
+  const marks = (r.data || []).filter(e => String(e.event_date).slice(0, 10) === today);
+  const by = (s) => marks.filter(e => e.status === s);
+  const absent = by("absent"), tardy = by("tardy");
+  const row = (e) => h("li", { class: "row" }, h("span", { class: "grow" }, e.display_name), chip(e.status), e.family_acknowledged_at ? h("span", { class: "small muted" }, "Family acknowledged") : null);
+  return [h("h2", {}, "Attendance today"),
+    h("div", { class: "stats" }, stat(by("present").length, "present"), stat(absent.length, "absent", true), stat(tardy.length, "tardy", true)),
+    h("section", { class: "card", "aria-label": "Absent today" }, h("h2", {}, "Absent"), absent.length ? h("ul", { class: "list" }, absent.map(row)) : empty("No absences marked today.")),
+    h("section", { class: "card", "aria-label": "Tardy today" }, h("h2", {}, "Tardy"), tardy.length ? h("ul", { class: "list" }, tardy.map(row)) : empty("No tardies marked today.")),
+    h("p", { class: "notice" }, "Marks come from teachers' class registers. Follow-ups go in the Operations queue.")];
+};
 // Specialized school operations consoles (vice principal, counselor, nurse,
 // facilities, meal service): routing-only work queues on /api/school-operations.
 const OPS_TABS = { guidance: "counseling", healthoffice: "health_office", facilities: "facilities", meals: "meal_service" };

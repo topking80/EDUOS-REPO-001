@@ -35,7 +35,8 @@ export const USERS = {
   // Staff member who is also a parent (finding 24).
   tp: ["a0000000-0000-4000-8000-00000000000a", "Teacher Parent", "tp@d1.test", [["d1", "s1", "teacher", true], ["d1", "s1", "parent", false]]],
   // Parent with children at two schools (finding 24).
-  p2s: ["a0000000-0000-4000-8000-00000000000b", "Two-School Parent", "two.school@d1.test", [["d1", "s1", "parent", true], ["d1", "s2", "parent", false]]]
+  p2s: ["a0000000-0000-4000-8000-00000000000b", "Two-School Parent", "two.school@d1.test", [["d1", "s1", "parent", true], ["d1", "s2", "parent", false]]],
+  vp1: ["a0000000-0000-4000-8000-00000000000c", "Vice Principal S1", "vp1@d1.test", [["d1", "s1", "vice_principal", true]]]
 };
 
 export async function startIdp() {

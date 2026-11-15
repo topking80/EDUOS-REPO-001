@@ -1298,7 +1298,7 @@ app.get("/api/attendance",requireSession,requirePermission("attendance","read"),
     const result=await withTenantTransaction(req.actor,client=>client.query(
       `SELECT e.id,e.event_date,e.status,e.family_acknowledged_at,e.student_id,s.display_name
          FROM attendance_events e JOIN students s ON s.id=e.student_id AND s.district_id=e.district_id
-        WHERE $1='superintendent' OR ($1='principal' AND s.school_id=$2)
+        WHERE $1='superintendent' OR ($1 IN ('principal','vice_principal') AND s.school_id=$2)
            OR ($1='teacher' AND s.school_id=$2 AND ${rosterSql("s.id","$3")})
            OR ($1 IN ('parent','pupil') AND EXISTS (
              SELECT 1 FROM student_user_links l WHERE l.student_id=s.id AND l.user_id=$3 AND l.status='active'
