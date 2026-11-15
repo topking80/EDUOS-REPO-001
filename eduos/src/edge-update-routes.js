@@ -34,7 +34,7 @@ export async function canaryGate(c, districtId, release, policy) {
              WHERE r.device_id = d.id AND r.received_at >= $3
                AND r.report->'os'->>'booted_version' = $2) AS first_on_version
       FROM edge_devices d
-     WHERE d.district_id = $1 AND d.revoked_at IS NULL AND d.last_report->'os'->>'cohort' = 'canary'`,
+     WHERE d.district_id = $1 AND d.revoked_at IS NULL AND d.update_cohort = 'canary'`,
     [districtId, release.version, release.approved_at]);
   const now = Date.now();
   const healthy = canaries.filter(d => d.os?.booted_version === release.version
@@ -63,13 +63,14 @@ export function registerEdgeUpdateRoutes(app) {
     },
   });
 
-  // Device: which OS version should I run? (no session; device token)
+  // Device: which OS version should I run? (no session; device token). The
+  // device's cohort is the one the district assigned (edge_devices.update_cohort);
+  // anything the device sends about its cohort is ignored.
   app.get("/api/edge/update-target", targetLimiter, async (req, res, next) => {
     const m = TOKEN_RE.exec(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
     if (!m) return res.status(401).json({ error: "device_token_required" });
-    const cohort = req.query.cohort === "canary" ? "canary" : "standard";
     try {
-      const r = await pool.query("SELECT eduos_edge_update_target($1, $2, $3) AS out", [m[1], sha256(m[2]), cohort]);
+      const r = await pool.query("SELECT eduos_edge_update_target($1, $2) AS out", [m[1], sha256(m[2])]);
       if (!r.rows[0].out) return res.status(401).json({ error: "invalid_device_token" });
       res.setHeader("Cache-Control", "no-store");
       res.json({ data: r.rows[0].out });
@@ -88,12 +89,30 @@ export function registerEdgeUpdateRoutes(app) {
             WHERE r.district_id = $1 ORDER BY eduos_os_version_key(r.version) DESC LIMIT 50`, [a.districtId]);
         for (const r of releases) if (r.stage === "canary") r.gate = await canaryGate(c, a.districtId, { ...r }, policy);
         const fleet = await rows(c, `SELECT coalesce(last_report->'os'->>'booted_version', 'unknown') AS version,
-              coalesce(last_report->'os'->>'cohort', 'standard') AS cohort, count(*)::int AS devices
+              update_cohort AS cohort, count(*)::int AS devices
             FROM edge_devices WHERE district_id = $1 AND revoked_at IS NULL AND ($2::uuid IS NULL OR school_id = $2)
             GROUP BY 1, 2 ORDER BY 1 DESC, 2`, [a.districtId, APPROVERS.includes(a.role) ? null : a.schoolId]);
         return { policy, releases, fleet, canApprove: APPROVERS.includes(a.role) };
       });
       res.setHeader("Cache-Control", "no-store");
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  // Which devices are canaries: a district decision, audited.
+  app.post("/api/edge/updates/devices/:id/cohort", requireSession, requireCsrf, async (req, res, next) => {
+    const a = req.actor, cohort = req.body?.cohort;
+    if (!APPROVERS.includes(a.role)) return res.status(403).json({ error: "edge_updates_approval_denied" });
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_device_id" });
+    if (!["canary", "standard"].includes(cohort)) return res.status(400).json({ error: "invalid_cohort" });
+    try {
+      const data = await withTenantTransaction(a, async (c) => {
+        const r = await one(c, `UPDATE edge_devices SET update_cohort=$1, cohort_set_by=$2, cohort_set_at=now()
+            WHERE id=$3 AND district_id=$4 AND revoked_at IS NULL RETURNING id, name, update_cohort`, [cohort, a.userId, req.params.id, a.districtId]);
+        if (!r) throw new HttpError(404, "device_not_found");
+        await audit(c, req, "set_cohort", "edge_device", r.id, `cohort=${cohort}`);
+        return r;
+      });
       res.json({ data });
     } catch (e) { sendError(res, next, e); }
   });

@@ -284,4 +284,5 @@ GRANT SELECT, INSERT, UPDATE ON edge_update_policy TO eduos_app;
 GRANT SELECT, INSERT ON edge_update_releases TO eduos_app;
 GRANT UPDATE (stage, promoted_by, promoted_at, withdrawn_by, withdrawn_at, withdraw_reason) ON edge_update_releases TO eduos_app;
 REVOKE DELETE, TRUNCATE ON edge_update_policy, edge_update_releases FROM eduos_app;
-GRANT EXECUTE ON FUNCTION eduos_edge_update_target(uuid, text, text), eduos_os_version_key(text) TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_edge_update_target(uuid, text), eduos_os_version_key(text) TO eduos_app;
+GRANT UPDATE (update_cohort, cohort_set_by, cohort_set_at) ON edge_devices TO eduos_app;

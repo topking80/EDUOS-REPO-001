@@ -27,7 +27,8 @@
 # District sign-off: with [approvals].require_district_signoff = true, Zincati
 # never updates on its own. The agent asks the EduOS server
 # (GET /api/edge/update-target, with the device token from the health agent)
-# which version the district approved for this device's cohort: canaries get
+# which version the district approved for this device. Which devices are
+# canaries is decided by the district in EduOS, not on the device: canaries get
 # an approved version first, everyone else once it's promoted. It asks
 # rpm-ostree to deploy that exact version, inside the maintenance window, and
 # only if updates aren't held. No answer, or nothing approved: no update.
@@ -101,9 +102,9 @@ signoff_required() { [[ "$(toml_get approvals require_district_signoff false)" =
 # ask_district: sets APPROVAL (off|waiting|current|unreachable) and TARGET, and
 # remembers whether the district requires approval (district-requires), so a
 # network outage doesn't flip Zincati on and off.
-APPROVAL=""; TARGET=""
+APPROVAL=""; TARGET=""; DISTRICT_COHORT=""
 ask_district() {
-  local endpoint url token body cohort_name
+  local endpoint url token body
   mkdir -p "$STATE"
   rm -f "$STATE/target-version"
   endpoint=$(toml_from "$HEALTH_CONFIG" reporting endpoint "")
@@ -114,13 +115,13 @@ ask_district() {
     log "district sign-off is required but this device has no EduOS endpoint or device token; no OS updates until it does"
     APPROVAL=unreachable; return 0
   fi
-  cohort_name=$(cohort "$(toml_get canary percent 10)")
-  [[ "$(toml_get general strategy canary)" == canary ]] || cohort_name=standard
-  if ! body=$("$CURL" -sS --fail --max-time 20 -H "Authorization: Bearer $token" "$url?cohort=$cohort_name" 2>/dev/null); then
+  if ! body=$("$CURL" -sS --fail --max-time 20 -H "Authorization: Bearer $token" "$url" 2>/dev/null); then
     log "couldn't ask EduOS for the approved OS version; not updating"
     APPROVAL=unreachable; return 0
   fi
   body=$(printf '%s' "$body" | tr -d '[:space:]' | head -c 2000)
+  # The district-assigned cohort, reported back in status.
+  if [[ "$body" =~ \"cohort\":\"(canary|standard)\" ]]; then DISTRICT_COHORT=${BASH_REMATCH[1]}; fi
   if [[ "$body" == *'"requireApproval":false'* ]]; then
     echo false > "$STATE/district-requires"; APPROVAL=off; return 0
   fi
@@ -228,7 +229,8 @@ strategy = \"immediate\""
 [identity]
 rollout_wariness = $([[ $cohort_name == canary ]] && echo 0.0 || echo 1.0)"
   fi
-  echo "$cohort_name" > "$STATE/cohort"
+  # With sign-off, the district decides the cohort; otherwise the local split.
+  echo "${DISTRICT_COHORT:-$cohort_name}" > "$STATE/cohort"
   if write_if_changed "$FRAGMENT" "$frag"; then
     log "Zincati policy updated (strategy=$strategy, cohort=$cohort_name)"
     "$SYSTEMCTL" try-restart zincati.service || log "couldn't restart zincati.service"

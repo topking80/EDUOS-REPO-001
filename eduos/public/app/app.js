@@ -1560,7 +1560,7 @@ async function edgeDevicesCard() {
   const tokenOut = h("div", { "aria-live": "polite" });
   const line = (d) => {
     const rp = d.last_report || {}, m = rp.metrics || {}, o = rp.os || {};
-    const bits = [d.school_name || "District", d.device_role, d.last_seen_at ? `seen ${ago(d.last_seen_at)}` : "never reported",
+    const bits = [d.school_name || "District", d.device_role, d.update_cohort === "canary" ? "canary (gets approved updates first)" : null, d.last_seen_at ? `seen ${ago(d.last_seen_at)}` : "never reported",
       m.cpu_percent != null ? `CPU ${m.cpu_percent}%` : null, m.root_disk_used_percent != null ? `disk ${m.root_disk_used_percent}%` : null,
       o.booted_version ? `OS ${o.booted_version}` : null, o.updates === "held" ? `updates held${o.hold_reason ? `: ${o.hold_reason}` : ""}` : null,
       o.last_verify === "rolled_back" ? `rolled back${o.rollback_from_version ? ` from ${o.rollback_from_version}` : ""}` : null,
@@ -1568,6 +1568,9 @@ async function edgeDevicesCard() {
       o.approval === "unreachable" ? "can't reach EduOS for approvals" : null].filter(Boolean).join(" · ");
     const [cls, txt] = d.revoked_at ? ["not_started", "Revoked"] : d.stale ? ["absent", d.last_seen_at ? "Stale" : "Waiting"] : o.updates === "held" ? ["expected", "Updates held"] : ["present", "Reporting"];
     return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, d.name), h("br"), h("span", { class: "muted small" }, bits)), chip(cls, txt),
+      district && !d.revoked_at ? h("button", { class: "btn small", type: "button", "aria-label": `${d.update_cohort === "canary" ? "Remove" : "Make"} ${d.name} ${d.update_cohort === "canary" ? "from canaries" : "a canary"}`, onclick: async () => {
+        try { await api.post(`/api/edge/updates/devices/${d.id}/cohort`, { cohort: d.update_cohort === "canary" ? "standard" : "canary" }); toast("Updated"); go(state.tab, { push: false }); } catch { toast("Couldn't change it."); } } },
+        d.update_cohort === "canary" ? "Not a canary" : "Make canary") : null,
       d.revoked_at ? null : h("button", { class: "btn small", type: "button", "aria-label": `Revoke ${d.name}`, onclick: async () => {
         if (!(await ask({ title: `Revoke ${d.name}?`, text: "Its token stops working at once. Register it again to get a new token.", confirm: "Revoke", danger: true }))) return;
         try { await api.post(`/api/edge/devices/${d.id}/revoke`, {}); toast("Revoked"); go(state.tab, { push: false }); } catch { toast("Couldn't revoke."); } } }, "Revoke"));

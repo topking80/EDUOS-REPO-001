@@ -8,6 +8,16 @@
 -- and none has rolled back from it (checked from their health reports, db/038).
 -- Approve and promote are district decisions (superintendent, IT admin);
 -- every step is audited.
+--
+-- Which devices are canaries is also a district decision, stored here per
+-- device (edge_devices.update_cohort). A device never chooses its own cohort:
+-- the update target and the canary gate both use the stored value, not what
+-- the device reports or asks for.
+
+ALTER TABLE edge_devices
+  ADD COLUMN update_cohort text NOT NULL DEFAULT 'standard' CHECK (update_cohort IN ('canary','standard')),
+  ADD COLUMN cohort_set_by uuid REFERENCES users(id),
+  ADD COLUMN cohort_set_at timestamptz;
 
 CREATE TABLE edge_update_policy (
   district_id uuid PRIMARY KEY REFERENCES districts(id) ON DELETE CASCADE,
@@ -53,7 +63,7 @@ LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$ SELECT string_to_
 -- canary devices: the newest approved version that isn't withdrawn;
 -- everyone else: the newest promoted one. NULL target = install nothing.
 -- Returns NULL for a bad token.
-CREATE FUNCTION eduos_edge_update_target(p_device uuid, p_token_hash text, p_cohort text) RETURNS jsonb
+CREATE FUNCTION eduos_edge_update_target(p_device uuid, p_token_hash text) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE dev edge_devices%ROWTYPE; pol edge_update_policy%ROWTYPE; rel edge_update_releases%ROWTYPE;
 BEGIN
@@ -62,12 +72,12 @@ BEGIN
   IF NOT FOUND THEN RETURN NULL; END IF;
   SELECT * INTO pol FROM edge_update_policy WHERE district_id = dev.district_id;
   IF NOT FOUND OR NOT pol.require_approval THEN
-    RETURN jsonb_build_object('requireApproval', false, 'target', NULL, 'stage', NULL);
+    RETURN jsonb_build_object('requireApproval', false, 'target', NULL, 'stage', NULL, 'cohort', dev.update_cohort);
   END IF;
   SELECT * INTO rel FROM edge_update_releases
    WHERE district_id = dev.district_id
-     AND (stage = 'promoted' OR (stage = 'canary' AND p_cohort = 'canary'))
+     AND (stage = 'promoted' OR (stage = 'canary' AND dev.update_cohort = 'canary'))
    ORDER BY eduos_os_version_key(version) DESC LIMIT 1;
-  RETURN jsonb_build_object('requireApproval', true, 'target', rel.version, 'stage', rel.stage);
+  RETURN jsonb_build_object('requireApproval', true, 'target', rel.version, 'stage', rel.stage, 'cohort', dev.update_cohort);
 END; $$;
-REVOKE ALL ON FUNCTION eduos_edge_update_target(uuid, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION eduos_edge_update_target(uuid, text) FROM PUBLIC;

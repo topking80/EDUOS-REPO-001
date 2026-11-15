@@ -236,15 +236,16 @@ class DistrictSignoff(Harness):
         (self.etc / "eduos" / "health-token").write_text(TOKEN + "\n")
         self.policy(SHIPPED_POLICY.replace("percent = 10 ", "percent = 100"))
 
-    def answer(self, target=None, require=True, stage=None):
+    def answer(self, target=None, require=True, stage=None, cohort="canary"):
         t = "null" if target is None else f'"{target}"'
-        return {"FAKE_TARGET_BODY": f'{{"data":{{"requireApproval":{str(require).lower()},"target":{t},"stage":"{stage or "canary"}"}}}}'}
+        return {"FAKE_TARGET_BODY": f'{{"data":{{"requireApproval":{str(require).lower()},"target":{t},"stage":"{stage or "canary"}","cohort":"{cohort}"}}}}'}
 
     def test_asks_eduos_with_the_device_token_and_cohort(self):
         self.run_agent("run", **self.answer())
         (call,) = self.calls_matching("^curl")
         self.assertIn(f"Authorization: Bearer {TOKEN}", call)
-        self.assertIn("https://eduos.example.org/api/edge/update-target?cohort=canary", call)
+        self.assertIn("https://eduos.example.org/api/edge/update-target", call)
+        self.assertNotIn("cohort=", call, "the device doesn't choose its cohort")
         self.assertIn("enabled = false", self.fragment())
         self.assertEqual(self.status()["approval"], "waiting", "nothing approved: install nothing")
         self.assertEqual(self.calls_matching("rpm-ostree deploy "), [])
@@ -259,6 +260,11 @@ class DistrictSignoff(Harness):
         self.assertEqual(self.status()["approval"], "installing")
         self.run_agent("run", EDUOS_CLOCK="02:45", **self.answer(V2))
         self.assertEqual(len(self.calls_matching("rpm-ostree deploy ")), 1, "not retried within six hours")
+
+    def test_status_reports_the_district_assigned_cohort(self):
+        self.policy(SHIPPED_POLICY.replace("percent = 10 ", "percent = 100"))  # local split says canary
+        self.run_agent("run", **self.answer(cohort="standard"))
+        self.assertEqual(self.status()["cohort"], "standard", "the district's choice wins")
 
     def test_already_on_the_approved_version(self):
         self.run_agent("run", EDUOS_CLOCK="02:30", **self.answer(V1))

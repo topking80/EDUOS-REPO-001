@@ -11,7 +11,7 @@ const V1 = "45.20261110.3.0", V2 = "45.20261117.3.0";
 const os = (extra) => ({ timestamp: new Date().toISOString(), role: "edge", metrics: {}, compliance: {}, os: { updates: "enabled", last_verify: "healthy", ...extra } });
 
 describe("district-approved edge updates against real PostgreSQL", { skip }, () => {
-  let db, idp, server, admin, s = {}, dev = {};
+  let db, idp, server, admin, s = {}, dev = {}, devId = {};
   const as = name => client(server.base, s[name]);
   const call = (token, method, path, body) => fetch(`${server.base}${path}`, {
     method, headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined,
@@ -30,13 +30,27 @@ describe("district-approved edge updates against real PostgreSQL", { skip }, () 
     admin = new pg.Client(db.adminUrl); await admin.connect();
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
     for (const name of ["supt1", "supt2", "p1"]) s[name] = await login(server.base, idp, name, { email_verified: true });
-    for (const name of ["can1", "can2", "std1"]) dev[name] = (await as("supt1")("POST", "/api/edge/devices", { name, deviceRole: "edge" })).body.data.token;
+    for (const name of ["can1", "can2", "std1"]) {
+      const d = (await as("supt1")("POST", "/api/edge/devices", { name, deviceRole: "edge" })).body.data;
+      dev[name] = d.token; devId[name] = d.id;
+    }
   });
   after(async () => { await server?.stop(); await admin?.end(); await idp?.close(); await db?.drop(); });
 
   it("with approval off, devices are told approval isn't required", async () => {
-    assert.deepEqual(await target("can1", "canary"), { requireApproval: false, target: null, stage: null });
+    assert.deepEqual(await target("can1", "canary"), { requireApproval: false, target: null, stage: null, cohort: "standard" });
     assert.equal((await call("edh1.00000000-0000-4000-8000-000000000000." + "A".repeat(43), "GET", "/api/edge/update-target")).status, 401);
+  });
+
+  it("district leads choose the canaries; a device can't", async () => {
+    assert.equal((await as("p1")("POST", `/api/edge/updates/devices/${devId.can1}/cohort`, { cohort: "canary" })).status, 403);
+    assert.equal((await as("supt1")("POST", `/api/edge/updates/devices/${devId.can1}/cohort`, { cohort: "beta" })).status, 400);
+    assert.equal((await as("supt2")("POST", `/api/edge/updates/devices/${devId.can1}/cohort`, { cohort: "canary" })).status, 404, "another district");
+    for (const d of ["can1", "can2"]) assert.equal((await as("supt1")("POST", `/api/edge/updates/devices/${devId[d]}/cohort`, { cohort: "canary" })).status, 200);
+    assert.equal((await target("can1", "standard")).cohort, "canary", "the stored cohort, whatever the device asks");
+    assert.equal((await target("std1", "canary")).cohort, "standard");
+    const log = await admin.query("SELECT count(*)::int AS n FROM audit_events WHERE action='set_cohort'");
+    assert.equal(log.rows[0].n, 2);
   });
 
   it("only district leads change the policy or approve; principals can look", async () => {
@@ -50,12 +64,13 @@ describe("district-approved edge updates against real PostgreSQL", { skip }, () 
   });
 
   it("an approved version goes to canaries only; standard devices wait", async () => {
-    assert.deepEqual(await target("can1", "canary"), { requireApproval: true, target: null, stage: null }, "nothing approved yet: install nothing");
+    assert.deepEqual(await target("can1", "canary"), { requireApproval: true, target: null, stage: null, cohort: "canary" }, "nothing approved yet: install nothing");
     const r = await as("supt1")("POST", "/api/edge/updates/releases", { version: V1 });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.equal((await as("supt1")("POST", "/api/edge/updates/releases", { version: V1 })).status, 409);
-    assert.deepEqual(await target("can1", "canary"), { requireApproval: true, target: V1, stage: "canary" });
-    assert.deepEqual(await target("std1", "standard"), { requireApproval: true, target: null, stage: null });
+    assert.deepEqual(await target("can1", "standard"), { requireApproval: true, target: V1, stage: "canary", cohort: "canary" });
+    assert.deepEqual(await target("std1", "canary"), { requireApproval: true, target: null, stage: null, cohort: "standard" },
+      "a standard device asking for the canary cohort still gets nothing");
     assert.equal((await as("supt2")("GET", "/api/edge/updates")).body.data.releases.length, 0, "another district sees nothing");
   });
 
@@ -67,6 +82,8 @@ describe("district-approved edge updates against real PostgreSQL", { skip }, () 
 
     assert.equal((await report("can1", { cohort: "canary", booted_version: V1 })).status, 202);
     assert.equal((await report("can2", { cohort: "canary", booted_version: V1, updates: "held" })).status, 202);
+    // A standard device claiming to be a canary in its report doesn't count either.
+    assert.equal((await report("std1", { cohort: "canary", booted_version: V1 })).status, 202);
     p = await as("supt1")("POST", `/api/edge/updates/releases/${id}/promote`);
     assert.deepEqual(p.body.gate.blockers, ["1 of 2 canaries healthy on it"], "a held canary doesn't count");
 
@@ -82,7 +99,7 @@ describe("district-approved edge updates against real PostgreSQL", { skip }, () 
     assert.equal(gate.ready, true, JSON.stringify(gate));
     p = await as("supt1")("POST", `/api/edge/updates/releases/${id}/promote`);
     assert.equal(p.status, 200, JSON.stringify(p.body)); assert.equal(p.body.data.stage, "promoted");
-    assert.deepEqual(await target("std1", "standard"), { requireApproval: true, target: V1, stage: "promoted" });
+    assert.deepEqual(await target("std1", "standard"), { requireApproval: true, target: V1, stage: "promoted", cohort: "standard" });
     const log = await admin.query("SELECT action, detail FROM audit_events WHERE resource_type IN ('edge_update_release','edge_update_policy') ORDER BY occurred_at");
     assert.deepEqual(log.rows.map(r => r.action), ["update", "approve_canary", "promote"]);
   });
@@ -97,6 +114,6 @@ describe("district-approved edge updates against real PostgreSQL", { skip }, () 
     assert.ok(p.body.gate.blockers.some(b => b === "rolled back on can1"), JSON.stringify(p.body.gate));
     assert.equal((await as("supt1")("POST", `/api/edge/updates/releases/${r.id}/withdraw`, {})).status, 400, "a reason is required");
     assert.equal((await as("supt1")("POST", `/api/edge/updates/releases/${r.id}/withdraw`, { reason: "canary rolled back" })).status, 200);
-    assert.deepEqual(await target("can1", "canary"), { requireApproval: true, target: V1, stage: "promoted" });
+    assert.deepEqual(await target("can1", "canary"), { requireApproval: true, target: V1, stage: "promoted", cohort: "canary" });
   });
 });
