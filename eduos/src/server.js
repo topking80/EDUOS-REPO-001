@@ -1693,8 +1693,9 @@ async function recordFlowEvent(actor,event,schoolId,subjectStudentId=null){
 // Restored in the 37.4.0 audit: the endpoint has called this since 37.3.0, but
 // the function was dropped when the outbox replaced direct delivery, so every
 // test returned 500. One signed webhook.test payload, attempted synchronously
-// (no outbox), recorded in the delivery ledger. A test result never changes the
-// subscription's failure count or status.
+// (no outbox), recorded in the delivery ledger and shown as the subscription's
+// last delivery (the webhooks screen's "Last delivery" column). A test result
+// never changes the failure count or status, so it can't disable or re-arm it.
 async function deliverToSubscription(actor,subscription,event,_eventId=null,maxAttempts=1){
   const deliveryId=crypto.randomUUID();
   const attempts=await deliverWebhook({subscription,secret:deriveWebhookSecret(config.webhookSigningKey,subscription.id),
@@ -1704,6 +1705,8 @@ async function deliverToSubscription(actor,subscription,event,_eventId=null,maxA
       `INSERT INTO webhook_deliveries(district_id,subscription_id,delivery_id,event_id,event_type,attempt,outcome,status_code,duration_ms)
        VALUES($1,$2,$3,NULL,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
       [actor.districtId,subscription.id,deliveryId,event.type,a.attempt,a.outcome,a.statusCode,a.durationMs]);
+    await client.query(`UPDATE webhook_subscriptions SET last_delivery_at=now(),last_outcome=$2 WHERE id=$1`,
+      [subscription.id,attempts[attempts.length-1].outcome]);
   });
   return attempts[attempts.length-1];
 }

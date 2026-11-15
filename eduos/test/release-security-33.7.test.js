@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { readCiWorkflow } from "./helpers/ci-workflow.js";
 
 test("CI includes source secret, IaC, dependency and production-image scans", () => {
-  const workflow = fs.readFileSync(".github/workflows/ci.yml", "utf8");
+  const workflow = readCiWorkflow();
   assert.match(workflow, /gitleaks\/gitleaks-action/);
   assert.match(workflow, /aquasecurity\/trivy-action/);
   assert.match(workflow, /scan-type: fs/);

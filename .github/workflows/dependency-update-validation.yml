@@ -2,12 +2,15 @@ name: dependency-update-validation
 on:
   pull_request:
     paths:
-      - package.json
-      - package-lock.json
+      - eduos/package.json
+      - eduos/package-lock.json
       - .github/dependabot.yml
 permissions:
   contents: read
   pull-requests: read
+defaults:
+  run:
+    working-directory: eduos
 jobs:
   validate-lockfile-change:
     runs-on: ubuntu-24.04
@@ -17,6 +20,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: eduos/package-lock.json
       - name: Require package and lockfile consistency
         run: npm run verify:dependencies
       - name: Reproducible clean install

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readCiWorkflow } from './helpers/ci-workflow.js';
 
 test('CI runs Flutter analysis, tests, and Android compilation', async () => {
-  const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const workflow = readCiWorkflow();
   assert.match(workflow, /flutter-mobile:/);
   assert.match(workflow, /flutter pub get/);
   assert.match(workflow, /flutter analyze --fatal-infos/);

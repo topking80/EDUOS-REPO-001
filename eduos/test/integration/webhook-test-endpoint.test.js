@@ -59,9 +59,12 @@ describe("37.4.0 webhook test delivery endpoint", { skip }, () => {
     const log = await supt("GET", `/api/webhooks/${id}/deliveries`);
     assert.deepEqual(log.body.data.map(d => [d.eventType, d.attempt, d.outcome, d.statusCode]), [["webhook.test", 1, "delivered", 204]]);
     assert.equal(log.body.data[0].deliveryId, got[0].headers["x-eduos-delivery"]);
+    // The webhooks screen shows the test as the last delivery.
+    const listed = (await supt("GET", "/api/webhooks")).body.data.find(w => w.id === id);
+    assert.equal(listed.lastOutcome, "delivered"); assert.ok(listed.lastDeliveryAt);
   });
 
-  it("a failing receiver is reported without counting against the subscription", async () => {
+  it("a failing receiver is shown as the last outcome without counting against the subscription", async () => {
     const { id } = (await supt("POST", "/api/webhooks", { url: `${receiverUrl}/hooks/down`, eventTypes: ["assignment.created"] })).body.data;
     receiverStatus = 503;
     try {
@@ -69,8 +72,8 @@ describe("37.4.0 webhook test delivery endpoint", { skip }, () => {
       assert.equal(test.status, 200, JSON.stringify(test.body));
       assert.deepEqual(test.body, { outcome: "http_error", statusCode: 503 });
     } finally { receiverStatus = 204; }
-    const row = (await admin.query("SELECT status, failure_count FROM webhook_subscriptions WHERE id=$1", [id])).rows[0];
-    assert.deepEqual([row.status, row.failure_count], ["active", 0]);
+    const row = (await admin.query("SELECT status, failure_count, last_outcome FROM webhook_subscriptions WHERE id=$1", [id])).rows[0];
+    assert.deepEqual([row.status, row.failure_count, row.last_outcome], ["active", 0, "http_error"], "shown, but not counted");
     const audit = (await admin.query("SELECT outcome, detail FROM audit_events WHERE resource_type='webhook_subscription' AND resource_id=$1 AND action='test'", [id])).rows;
     assert.deepEqual(audit.map(a => [a.outcome, a.detail]), [["failure", "outcome=http_error"]]);
   });

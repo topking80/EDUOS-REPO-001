@@ -49,7 +49,6 @@ class EduOsMascot extends StatefulWidget {
 class _EduOsMascotState extends State<EduOsMascot>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   Artboard? _artboard;
-  RiveFile? _riveFile;
   StateMachineController? _machine;
   SMITrigger? _onGreet;
   SMITrigger? _onSuccess;
@@ -107,12 +106,10 @@ class _EduOsMascotState extends State<EduOsMascot>
 
   Future<void> _loadBundledArt() async {
     try {
+      // rive 0.13: RiveFile.asset returns a non-null RiveFile (it throws if the
+      // asset can't be read) and RiveFile has no dispose(); the controller does.
       final file = await RiveFile.asset(eduOsMascotAsset);
-      if (!mounted) {
-        file?.dispose();
-        return;
-      }
-      if (file == null) throw StateError('Rive asset could not be loaded');
+      if (!mounted) return;
 
       final artboard = file.artboardByName(eduOsMascotArtboard) ??
           file.mainArtboard;
@@ -121,22 +118,21 @@ class _EduOsMascotState extends State<EduOsMascot>
         eduOsMascotStateMachine,
       );
       if (machine == null) {
-        file.dispose();
         throw StateError('Missing state machine: $eduOsMascotStateMachine');
       }
       artboard.addController(machine);
 
       _fallbackMotion.stop();
       setState(() {
-        _riveFile = file;
         _artboard = artboard;
         _machine = machine;
-        _onGreet = machine.findInput<SMITrigger>('onGreet');
-        _onSuccess = machine.findInput<SMITrigger>('onSuccess');
-        _onError = machine.findInput<SMITrigger>('onError');
-        _mood = machine.findInput<SMINumber>('mood');
-        _lookX = machine.findInput<SMINumber>('lookX');
-        _lookY = machine.findInput<SMINumber>('lookY');
+        // findInput<T> returns SMIInput<T>?; findSMI<T> returns the typed input.
+        _onGreet = machine.findSMI<SMITrigger>('onGreet');
+        _onSuccess = machine.findSMI<SMITrigger>('onSuccess');
+        _onError = machine.findSMI<SMITrigger>('onError');
+        _mood = machine.findSMI<SMINumber>('mood');
+        _lookX = machine.findSMI<SMINumber>('lookX');
+        _lookY = machine.findSMI<SMINumber>('lookY');
       });
       _applyContinuousInputs();
       switch (_runtimeAction) {
@@ -239,7 +235,6 @@ class _EduOsMascotState extends State<EduOsMascot>
     _eventSubscription?.cancel();
     _fallbackMotion.dispose();
     _machine?.dispose();
-    _riveFile?.dispose();
     super.dispose();
   }
 

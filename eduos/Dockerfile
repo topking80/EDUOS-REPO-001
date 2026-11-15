@@ -31,6 +31,12 @@ COPY src ./src
 COPY public ./public
 COPY db ./db
 
+# The runtime only needs node. Remove the package managers bundled in the base
+# image (npm, npx, corepack, yarn): unused here, and their own dependency trees
+# carried 10 HIGH CVEs in the 37.4.0 image scan.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
+ && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
+
 # Drop root. /var/lib/eduos-node (32.7.0) holds a school node's EDEN identity
 # key; it exists in the image so a fresh volume there is owned by eduos.
 RUN addgroup -S eduos && adduser -S eduos -G eduos && chown -R eduos:eduos /app \
