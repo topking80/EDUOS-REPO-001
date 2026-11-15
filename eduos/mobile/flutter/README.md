@@ -15,8 +15,14 @@ superintendent's district overview) with announcements, the pick-up desk
 (pass check, photo-ID and custody acknowledgement, release or refuse) with
 approvals and restrictions, the accountability board during an incident
 (missing, injured, roll calls, responders, reunification, all clear) and
-starting an alert in two confirmed steps, plus debriefs. Other staff and
-learner tabs open the EduOS web app until their phase ships.
+starting an alert in two confirmed steps, plus debriefs.
+
+**Phase 4** adds learners: Home (what to practise next, courses, my bus,
+school news), Courses (grades, standards mastery, lessons with primary
+sources, quizzes with a timer and answers saved as you go, results and
+classwork feedback), Christie practice chats, My path, My library and News.
+Quiz answers are never queued offline; the app says when one isn't saved.
+Other staff tabs open the EduOS web app until their phase ships.
 
 ## How sign-in works (RFC 8252)
 
