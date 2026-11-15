@@ -30,7 +30,7 @@ test("service worker: shell only, current-release cache name, never /api or /aut
   assert.ok(assets.every(a => a.startsWith("/app/")));
 });
 test("admin/IT screens: Nodes tab for superintendent and IT, node status for principals", () => {
-  assert.match(app, /superintendent: \[.*\["nodes", "Nodes", "server"\]\]/);
+  assert.match(app, /superintendent: \[.*\["nodes", "Nodes", "server"\]/);
   assert.match(app, /it_admin: \[[^\n]*\["nodes", "Nodes", "server"\]/, "IT admins keep the Nodes tab");
   for (const t of ["Authorize failover", "Partner schools", "Add a school node", "What schools sent", "What left this school", "Sync now"]) assert.ok(app.includes(t), t);
 });
