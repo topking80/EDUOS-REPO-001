@@ -36,6 +36,15 @@ class _LoaderState<T> extends State<Loader<T>> {
     return FutureBuilder<T>(
       future: _future,
       builder: (context, snap) {
+        // Reloading with data already on screen: keep showing it (with a thin
+        // progress bar) instead of a spinner, so fields keep their focus and
+        // text, e.g. a library desk scanner field after each scan.
+        if (snap.connectionState != ConnectionState.done && snap.hasData) {
+          return Stack(children: [
+            RefreshIndicator(onRefresh: _reload, child: widget.builder(context, snap.data as T, _reload)),
+            const Positioned(top: 0, left: 0, right: 0, child: LinearProgressIndicator(minHeight: 2)),
+          ]);
+        }
         if (snap.connectionState != ConnectionState.done) {
           return const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()));
         }

@@ -30,7 +30,11 @@ export function registerSchoolOperationsRoutes(app){
  });
  app.post("/api/school-operations/:domain/:id/status",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,d=req.params.domain,id=req.params.id,status=req.body?.status;
-  if(!["principal","vice_principal","maintenance","nurse","counselor","lunch_staff","superintendent","it_admin"].includes(a.role)||!["open","in_progress","completed","cancelled"].includes(status))return res.status(403).json({error:"operations_update_denied"});
+  // Only that domain's own team, or school/district leads, may change an item:
+  // a maintenance worker can't close a health-office or counseling item, and a
+  // nurse can't close a facilities work order.
+  const lead=["principal","vice_principal","superintendent","it_admin"].includes(a.role);
+  if(!DOMAIN_ROLES[d]||!(lead||DOMAIN_ROLES[d].includes(a.role))||!["open","in_progress","completed","cancelled"].includes(status))return res.status(403).json({error:"operations_update_denied"});
   try{const data=await withTenantTransaction(a,async c=>{
    const q=await c.query(`UPDATE school_service_work SET status=$4,updated_at=now() WHERE id=$1 AND district_id=$2 AND domain=$3 AND ($5::uuid IS NULL OR school_id=$5) RETURNING id,domain,status,updated_at`,[id,a.districtId,d,status,a.schoolId||null]);
    if(!q.rowCount)throw new HttpError(404,"work_item_not_found");

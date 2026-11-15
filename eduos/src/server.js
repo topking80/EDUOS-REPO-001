@@ -13,6 +13,7 @@ import { requirePermission, requireSchoolScope, canPerform, isGrantable, isDistr
 import { writeAudit } from "./audit.js";
 import { cspDirectives } from "./csp.js";
 import { applySisBatch, districtCap } from "./sis-import.js";
+import { HttpError } from "./role-app-util.js";
 import { normalizeAgentEvent } from "./agent-events.js";
 import { classifyOperationalEvent } from "./operational-event-taxonomy.js";
 import { FLOW_EVENT_TYPES, isFlowEventType, normalizeFlowEvent, serverFlowEvent, webhookPayload } from "./flow-events.js";
@@ -1832,6 +1833,9 @@ app.use((err,req,res,_next)=>{
   // Client errors from body parsing are reported as such, not as 500s.
   if(err?.type==="entity.parse.failed")return res.status(400).json({error:"invalid_json",requestId:req.requestId});
   if(err?.type==="entity.too.large")return res.status(413).json({error:"payload_too_large",requestId:req.requestId});
+  // A route's own 4xx (HttpError) passed to next(): answer it as such. Several
+  // routes did this and turned access denials into 500s.
+  if(err instanceof HttpError&&err.status>=400&&err.status<500)return res.status(err.status).json({error:err.code,...err.extra,requestId:req.requestId});
   if(Number.isInteger(err?.status)&&err.status>=400&&err.status<500&&err.expose)
     return res.status(err.status).json({error:"bad_request",requestId:req.requestId});
   console.error("Request failed", {requestId:req.requestId, message:err.message});

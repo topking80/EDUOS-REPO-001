@@ -52,6 +52,9 @@ class _OperationsScreenState extends State<OperationsScreen> {
   String _priority = 'normal';
   final _summary = TextEditingController(), _details = TextEditingController();
   bool _busy = false;
+  // Work items with a request in flight: their buttons are disabled so a
+  // double tap can't send the same change twice.
+  final Set<String> _pending = {};
 
   @override
   void dispose() {
@@ -62,29 +65,49 @@ class _OperationsScreenState extends State<OperationsScreen> {
 
   void _reload() => setState(() => _key = UniqueKey());
 
-  Future<void> _act(String path, Map<String, Object?> body, String done, String failed) async {
+  /// Sends one change; true only when the server accepted it.
+  Future<bool> _act(String path, Map<String, Object?> body, String done, String failed) async {
     try {
       await AppScope.read(context).api.post(path, body);
-      if (!mounted) return;
+      if (!mounted) return true;
       toast(context, done);
       _reload();
+      return true;
     } on ApiException catch (e) {
-      if (mounted) toast(context, e.isOffline ? 'You\'re offline. This needs a connection.' : failed);
+      if (mounted) toast(context, e.isOffline ? 'You\'re offline. Nothing was sent; try again when you\'re connected.' : failed);
+      return false;
     }
   }
 
+  /// A row action (start, complete, cancel, escalate), at most one at a time per item.
+  Future<void> _item(Json it, String action, Map<String, Object?> body, String done, String failed) async {
+    final id = str(it['id']);
+    if (_pending.contains(id)) return;
+    setState(() => _pending.add(id));
+    await _act('/api/school-operations/${it['domain']}/$id/$action', body, done, failed);
+    if (mounted) setState(() => _pending.remove(id));
+  }
+
   Future<void> _add() async {
+    if (_busy) return;
     if (_summary.text.trim().isEmpty) return toast(context, 'Add a short summary.');
     setState(() => _busy = true);
-    await _act('/api/school-operations/$_area', {
-      'kind': _kind,
-      'priority': _priority,
-      'summary': _summary.text.trim(),
-      // The server refuses free text for health and counseling items.
-      if (!_sensitive.contains(_area) && _details.text.trim().isNotEmpty) 'details': _details.text.trim(),
-    }, 'Work item added.', 'Couldn\'t add that work item.');
-    _summary.clear();
-    _details.clear();
+    final ok = await _act(
+        '/api/school-operations/$_area',
+        {
+          'kind': _kind,
+          'priority': _priority,
+          'summary': _summary.text.trim(),
+          // The server refuses free text for health and counseling items.
+          if (!_sensitive.contains(_area) && _details.text.trim().isNotEmpty) 'details': _details.text.trim(),
+        },
+        'Work item added.',
+        'Couldn\'t add that work item. Your text is still here.');
+    // Clear only what the server accepted; a failure keeps the staff member's text.
+    if (ok) {
+      _summary.clear();
+      _details.clear();
+    }
     if (mounted) setState(() => _busy = false);
   }
 
@@ -143,7 +166,9 @@ class _OperationsScreenState extends State<OperationsScreen> {
               DropdownButtonFormField<String>(
                 value: _priority,
                 decoration: const InputDecoration(labelText: 'Priority'),
-                items: [for (final p in const ['normal', 'low', 'high', 'urgent']) DropdownMenuItem(value: p, child: Text(p))],
+                items: [
+                  for (final p in const ['normal', 'low', 'high', 'urgent']) DropdownMenuItem(value: p, child: Text(p))
+                ],
                 onChanged: (v) => setState(() => _priority = v ?? _priority),
               ),
               TextField(controller: _summary, maxLength: 300, decoration: const InputDecoration(labelText: 'Summary', counterText: '')),
@@ -170,31 +195,33 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     ago(date(it['created_at'])),
                     if (it['due_at'] != null) 'due ${fmtDay(date(it['due_at']))}',
                   ].join(' · ')),
-                  trailing: StatusChip(switch (str(it['status'])) { 'completed' => 'present', 'cancelled' => 'none', 'in_progress' => 'current', _ => 'expected' },
-                      text: _words(it['status'])),
+                  trailing: StatusChip(switch (str(it['status'])) { 'completed' => 'present', 'cancelled' => 'none', 'in_progress' => 'current', _ => 'expected' }, text: _words(it['status'])),
                 ),
                 if (it['status'] == 'open' || it['status'] == 'in_progress')
-                  Wrap(spacing: 8, children: [
-                    if (it['status'] == 'open')
-                      OutlinedButton(
-                        onPressed: () => _act('/api/school-operations/${it['domain']}/${it['id']}/status', {'status': 'in_progress'}, 'Started.', 'Couldn\'t update that work item.'),
-                        child: Text('Start', semanticsLabel: 'Start: ${it['summary']}'),
+                  () {
+                    final busy = _pending.contains(str(it['id']));
+                    return Wrap(spacing: 8, children: [
+                      if (it['status'] == 'open')
+                        OutlinedButton(
+                          onPressed: busy ? null : () => _item(it, 'status', {'status': 'in_progress'}, 'Started.', 'Couldn\'t update that work item.'),
+                          child: Text('Start', semanticsLabel: 'Start: ${it['summary']}'),
+                        ),
+                      FilledButton(
+                        onPressed: busy ? null : () => _item(it, 'status', {'status': 'completed'}, 'Completed.', 'Couldn\'t update that work item.'),
+                        child: Text('Complete', semanticsLabel: 'Complete: ${it['summary']}'),
                       ),
-                    FilledButton(
-                      onPressed: () => _act('/api/school-operations/${it['domain']}/${it['id']}/status', {'status': 'completed'}, 'Completed.', 'Couldn\'t update that work item.'),
-                      child: Text('Complete', semanticsLabel: 'Complete: ${it['summary']}'),
-                    ),
-                    TextButton(
-                      onPressed: () => _act('/api/school-operations/${it['domain']}/${it['id']}/status', {'status': 'cancelled'}, 'Cancelled.', 'Couldn\'t update that work item.'),
-                      child: Text('Cancel', semanticsLabel: 'Cancel: ${it['summary']}'),
-                    ),
-                    if (lead)
-                      OutlinedButton(
-                        style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
-                        onPressed: () => _act('/api/school-operations/${it['domain']}/${it['id']}/escalate', {}, 'Escalated.', 'Couldn\'t escalate that work item.'),
-                        child: Text('Escalate', semanticsLabel: 'Escalate: ${it['summary']}'),
+                      TextButton(
+                        onPressed: busy ? null : () => _item(it, 'status', {'status': 'cancelled'}, 'Cancelled.', 'Couldn\'t update that work item.'),
+                        child: Text('Cancel', semanticsLabel: 'Cancel: ${it['summary']}'),
                       ),
-                  ]),
+                      if (lead)
+                        OutlinedButton(
+                          style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+                          onPressed: busy ? null : () => _item(it, 'escalate', {}, 'Escalated.', 'Couldn\'t escalate that work item.'),
+                          child: Text('Escalate', semanticsLabel: 'Escalate: ${it['summary']}'),
+                        ),
+                    ]);
+                  }(),
                 const Divider(),
               ]),
           ]),
@@ -275,7 +302,17 @@ class TransportScreen extends StatelessWidget {
                     Text('${str(r['school_name'])} · driver ${str(r['driver_name'], 'unassigned')}', style: Theme.of(context).textTheme.bodySmall),
                   ]),
                 ),
-                StatusChip(run == null ? 'not_started' : done ? 'alighted' : 'boarded', text: run == null ? 'Not started' : done ? 'Completed' : 'In progress'),
+                StatusChip(
+                    run == null
+                        ? 'not_started'
+                        : done
+                            ? 'alighted'
+                            : 'boarded',
+                    text: run == null
+                        ? 'Not started'
+                        : done
+                            ? 'Completed'
+                            : 'In progress'),
               ]),
               const SizedBox(height: 8),
               Row(children: [
