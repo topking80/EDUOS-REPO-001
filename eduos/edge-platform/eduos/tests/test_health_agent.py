@@ -69,7 +69,9 @@ class HealthAgent(unittest.TestCase):
             "PATH": f"{self.bin}:{os.environ['PATH']}", "EDUOS_ETC": str(self.etc), "EDUOS_HEALTH_DIR": str(self.dir),
             "EDUOS_OS_STATUS": str(self.status_file), "EDUOS_HEALTH_ONCE": "1",
             "EDUOS_HEALTH_ENDPOINT": self.server.url if endpoint is None else endpoint,
-            "EDUOS_HEALTH_ALLOW_HTTP": "1" if allow_http else "0", **extra,
+            "EDUOS_HEALTH_ALLOW_HTTP": "1" if allow_http else "0",
+            # Don't read the test machine's own firmware (CI runners have UEFI).
+            "EDUOS_SECUREBOOT_VAR": str(self.tmp / "no-SecureBoot-var"), **extra,
         }
         r = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
