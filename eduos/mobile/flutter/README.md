@@ -22,7 +22,15 @@ school news), Courses (grades, standards mastery, lessons with primary
 sources, quizzes with a timer and answers saved as you go, results and
 classwork feedback), Christie practice chats, My path, My library and News.
 Quiz answers are never queued offline; the app says when one isn't saved.
-Other staff tabs open the EduOS web app until their phase ships.
+
+**Phase 5** adds teachers: Courses (course view with lesson approval status
+and accommodations, roster, gradebook with final grades), Grading (quiz
+open answers, rubric grading, hand-ins) and the Christie copilot (class
+mastery, reading and reviewing tutoring conversations). Staffing (time
+away, substitute coverage, shifts; leaders approve) is native for every
+staff role. The remaining staff tabs (library desk, operations, counseling,
+health office, facilities, meals, transport, nodes) open the EduOS web app
+until their phase ships.
 
 ## How sign-in works (RFC 8252)
 
