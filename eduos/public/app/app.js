@@ -1458,7 +1458,7 @@ const NODE_STATE = { online: ["present", "Online"], offline: ["absent", "Offline
 const FO_STATE = { authorized: ["expected", "Authorized"], active: ["absent", "Partner hosting"], handing_back: ["expected", "Handing back"], returned: ["expected", "Returned"], closed: ["present", "Closed"], cancelled: ["present", "Cancelled"] };
 const staffOf = c => (Number(c?.memberships) || 0) + (Number(c?.memberships_reenabled) || 0);
 const kv = (label, value) => h("li", { class: "row" }, h("span", { class: "grow" }, label), h("span", { class: "muted" }, value ?? "—"));
-VIEWS.nodes = async () => {
+async function edenNodesView() {
   const tier = (await safe(api.get("/api/eden/tier")))?.data;
   if (tier?.tier === "school") return VIEWS.node();
   if (tier?.tier !== "district") return [h("h2", {}, "School nodes"), h("section", { class: "card" }, h("p", {}, "This EduOS server is not set up as an EDEN district hub, so there are no school nodes to manage."),
@@ -1532,7 +1532,46 @@ VIEWS.nodes = async () => {
     o.inbound.length ? h("ul", { class: "list" }, o.inbound.slice(0, 8).map(l => h("li", { class: "row" }, h("span", { class: "grow" }, `${byId[l.node_id]?.school_name || "Unknown node"} · ${l.kind}`, h("br"), h("span", { class: "muted small" }, `${ago(l.received_at)}${l.reason ? ` · ${l.reason}` : ""}`)),
       chip(l.decision === "accepted" ? "present" : l.decision === "rejected" ? "absent" : "expected", l.decision)))) : empty("Nothing yet.")));
   return out;
-};
+}
+
+// Edge Phase 2: EduOS edge devices and their health reports (db/038).
+const EDGE_ROLES = ["edge", "school-node", "teacher", "student", "admin", "district", "state"];
+async function edgeDevicesCard() {
+  const r = await safe(api.get("/api/edge/devices"));
+  if (!r) return null;
+  const list = r.data.devices || [];
+  const district = ["superintendent", "it_admin"].includes(state.me.role);
+  const schools = district ? ((await safe(api.get("/api/schools")))?.data || []).filter(x => x.status !== "inactive") : [];
+  const name = h("input", { id: "edge-name", maxlength: 80, required: true, placeholder: "e.g. Maple edge 01" });
+  const role = h("select", { id: "edge-role" }, EDGE_ROLES.map(x => h("option", { value: x }, x)));
+  const school = district ? h("select", { id: "edge-school" }, h("option", { value: "" }, "District-level (no school)"), schools.map(x => h("option", { value: x.id }, x.name))) : null;
+  const tokenOut = h("div", { "aria-live": "polite" });
+  const line = (d) => {
+    const rp = d.last_report || {}, m = rp.metrics || {}, o = rp.os || {};
+    const bits = [d.school_name || "District", d.device_role, d.last_seen_at ? `seen ${ago(d.last_seen_at)}` : "never reported",
+      m.cpu_percent != null ? `CPU ${m.cpu_percent}%` : null, m.root_disk_used_percent != null ? `disk ${m.root_disk_used_percent}%` : null,
+      o.booted_version ? `OS ${o.booted_version}` : null, o.updates === "held" ? `updates held${o.hold_reason ? `: ${o.hold_reason}` : ""}` : null,
+      o.last_verify === "rolled_back" ? "rolled back" : null].filter(Boolean).join(" · ");
+    const [cls, txt] = d.revoked_at ? ["not_started", "Revoked"] : d.stale ? ["absent", d.last_seen_at ? "Stale" : "Waiting"] : o.updates === "held" ? ["expected", "Updates held"] : ["present", "Reporting"];
+    return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, d.name), h("br"), h("span", { class: "muted small" }, bits)), chip(cls, txt),
+      d.revoked_at ? null : h("button", { class: "btn small", type: "button", "aria-label": `Revoke ${d.name}`, onclick: async () => {
+        if (!(await ask({ title: `Revoke ${d.name}?`, text: "Its token stops working at once. Register it again to get a new token.", confirm: "Revoke", danger: true }))) return;
+        try { await api.post(`/api/edge/devices/${d.id}/revoke`, {}); toast("Revoked"); go(state.tab, { push: false }); } catch { toast("Couldn't revoke."); } } }, "Revoke"));
+  };
+  return h("section", { class: "card", "aria-label": "Edge devices" }, h("h2", {}, "Edge devices"),
+    h("p", { class: "muted small" }, `Health reports from EduOS edge devices: metrics, compliance and OS update state only, never student data. A device is stale after ${r.data.staleAfterMinutes} minutes without a report.`),
+    list.length ? h("ul", { class: "list" }, list.map(line)) : empty("No edge devices registered yet."),
+    h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
+      try {
+        const t = (await api.post("/api/edge/devices", { name: name.value, deviceRole: role.value, ...(school && school.value ? { schoolId: school.value } : {}) })).data;
+        tokenOut.replaceChildren(h("p", { class: "notice" }, `Device token for ${t.name}, shown once. Put it in /etc/eduos/health-token on the device (mode 0400): `, h("code", { class: "token" }, t.token)));
+        name.value = "";
+      } catch { toast("Couldn't register the device."); } } },
+      h("h3", {}, "Register a device"), h("label", { for: name.id }, "Name"), name, h("label", { for: role.id }, "Device role"), role,
+      school ? [h("label", { for: school.id }, "School"), school] : null, h("button", { class: "btn", type: "submit" }, "Register and show token")),
+    tokenOut);
+}
+VIEWS.nodes = async () => [...[await edenNodesView()].flat(), await edgeDevicesCard()];
 VIEWS.node = async () => {
   const s = (await safe(api.get("/api/node/status")))?.data;
   if (!s) return [h("h2", {}, "School node"), empty("This server isn't a school node.")];
