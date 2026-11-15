@@ -39,6 +39,10 @@ class AppController extends ChangeNotifier {
   Me? me;
   Brand? brand;
   List<Incident> incidents = const [];
+
+  /// From /api/safety/status: may this person start alerts / lead incidents.
+  bool canInitiateSafety = false;
+  bool canLeadSafety = false;
   int unread = 0;
   int queued = 0;
   String? notice;
@@ -137,6 +141,8 @@ class AppController extends ChangeNotifier {
     try {
       final status = obj((await api.get('/api/safety/status'))['data']);
       incidents = objs(status['incidents']).map(Incident.fromJson).toList();
+      canInitiateSafety = boolean(status['canInitiate']);
+      canLeadSafety = boolean(status['canLead']);
     } on ApiException catch (e) {
       if (e.isUnauthorized) return;
       if (e.status == 403) incidents = const [];
@@ -205,6 +211,8 @@ class AppController extends ChangeNotifier {
     me = null;
     brand = null;
     incidents = const [];
+    canInitiateSafety = false;
+    canLeadSafety = false;
     unread = 0;
     if (notice != null) this.notice = notice;
     await _sessions.clear();
