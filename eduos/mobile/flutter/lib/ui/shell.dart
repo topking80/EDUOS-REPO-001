@@ -18,6 +18,8 @@ import 'screens/messages_screen.dart';
 import 'screens/overview_screen.dart';
 import 'screens/safety_board.dart';
 import 'screens/staff_pickup_screen.dart';
+import 'screens/staffing_screen.dart';
+import 'screens/teacher_screens.dart';
 import 'screens/safety_screen.dart';
 import 'screens/web_fallback_screen.dart';
 
@@ -68,6 +70,10 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       'path' when role == 'pupil' => const PathScreen(),
       'christie' when role == 'pupil' => const ChristieTab(),
       'courses' when role == 'pupil' => const LearnerCoursesScreen(),
+      'courses' when role == 'teacher' => const TeacherCoursesScreen(),
+      'grading' when role == 'teacher' => const GradingScreen(),
+      'copilot' when role == 'teacher' => const CopilotScreen(),
+      'staffing' => const StaffingScreen(),
       'news' when role == 'pupil' => const NewsScreen(),
       'arrival' => const ArrivalScreen(),
       'pickup' when role == 'parent' => const FamilyPickupScreen(),
