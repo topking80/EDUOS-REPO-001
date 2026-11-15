@@ -37,16 +37,6 @@ storage:
       contents:
         local: scripts/eduos-enrollment.py
 
-    - path: /usr/local/bin/eduos-health.sh
-      mode: 0755
-      contents:
-        local: scripts/eduos-health.sh
-
-    - path: /usr/local/bin/eduos-update.sh
-      mode: 0755
-      contents:
-        local: scripts/eduos-update.sh
-
 systemd:
   units:
     - name: eduos-bootstrap.service
@@ -58,9 +48,6 @@ systemd:
     - name: eduos-health.service
       enabled: true
       contents_local: services/health.service
-    - name: eduos-update.service
-      enabled: true
-      contents_local: services/update.service
 
 ignition:
   config:

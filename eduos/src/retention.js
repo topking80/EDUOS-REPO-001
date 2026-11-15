@@ -29,6 +29,8 @@ export function retentionSettings(env = process.env) {
     // 37.4.0 audit item 6: offline replay receipts (Idempotency-Key). The replay
     // window is 24 hours, so at least 2 days are kept; see db/035.
     offlineReplayDays: replayDays(env),
+    // Edge Phase 2: device health report history (the latest report stays on the device).
+    edgeReportDays: days(env, "RETENTION_EDGE_REPORT_DAYS", 30),
     // 32.5.0: role-app records (32.4.0 / 32.5.0 tables).
     roleApps: {
       notificationDays: days(env, "RETENTION_NOTIFICATION_DAYS", 180),  // read in-app + external outbox rows (unread: twice this)
@@ -54,8 +56,10 @@ export async function runRetention(settings = retentionSettings()) {
       const ra = await client.query("SELECT eduos_retention_purge_role_apps($1::jsonb) AS counts", [JSON.stringify(settings.roleApps || retentionSettings({}).roleApps)]);
       const or = await client.query("SELECT eduos_retention_purge_offline_replays($1) AS counts",
         [settings.offlineReplayDays ?? retentionSettings({}).offlineReplayDays]);
+      const er = await client.query("SELECT eduos_retention_purge_edge_reports($1) AS counts",
+        [settings.edgeReportDays ?? retentionSettings({}).edgeReportDays]);
       await client.query("COMMIT");
-      summary.districts[id] = { ...r.rows[0].counts, ...ra.rows[0].counts, ...or.rows[0].counts };
+      summary.districts[id] = { ...r.rows[0].counts, ...ra.rows[0].counts, ...or.rows[0].counts, ...er.rows[0].counts };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;

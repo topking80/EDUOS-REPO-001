@@ -99,21 +99,19 @@ iso-universal: teacher.ign student.ign admin.ign edge.ign
 
 containers:
 	@mkdir -p containers
+	# eduos-update runs on the host (it configures the OS updater), so it has no image.
 	podman build -f containers/Containerfile.bootstrap -t quay.io/eduos/eduos-bootstrap:$(VERSION) .
 	podman build -f containers/Containerfile.enrollment -t quay.io/eduos/eduos-enrollment:$(VERSION) .
 	podman build -f containers/Containerfile.health -t quay.io/eduos/eduos-health:$(VERSION) .
-	podman build -f containers/Containerfile.update -t quay.io/eduos/eduos-update:$(VERSION) .
 	podman save -o containers/eduos-bootstrap-$(VERSION).tar quay.io/eduos/eduos-bootstrap:$(VERSION)
 	podman save -o containers/eduos-enrollment-$(VERSION).tar quay.io/eduos/eduos-enrollment:$(VERSION)
 	podman save -o containers/eduos-health-$(VERSION).tar quay.io/eduos/eduos-health:$(VERSION)
-	podman save -o containers/eduos-update-$(VERSION).tar quay.io/eduos/eduos-update:$(VERSION)
 	@echo "Container images built and saved in containers/"
 
 push-containers:
 	podman push quay.io/eduos/eduos-bootstrap:$(VERSION)
 	podman push quay.io/eduos/eduos-enrollment:$(VERSION)
 	podman push quay.io/eduos/eduos-health:$(VERSION)
-	podman push quay.io/eduos/eduos-update:$(VERSION)
 
 # ============================================================
 # USB Boot Drive Creation

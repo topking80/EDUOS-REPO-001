@@ -266,3 +266,13 @@ GRANT EXECUTE ON FUNCTION
 
 -- 034 transport check-in consistency policy helper (audit 37.4.0 item 4).
 GRANT EXECUTE ON FUNCTION eduos_transport_checkin_consistent(uuid, uuid, uuid, uuid, timestamptz) TO eduos_app;
+
+-- 038 edge device health: staff read and manage devices in their district
+-- (row-level security); devices report only through eduos_edge_record_health,
+-- which checks the device token. Reports are append-only for the app.
+GRANT SELECT, INSERT ON edge_devices TO eduos_app;
+GRANT UPDATE (revoked_at, revoked_by) ON edge_devices TO eduos_app;
+GRANT SELECT ON edge_device_reports TO eduos_app;
+REVOKE DELETE, TRUNCATE ON edge_devices, edge_device_reports FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_edge_record_health(uuid, text, jsonb) TO eduos_app;
+REVOKE ALL ON FUNCTION eduos_retention_purge_edge_reports(int) FROM eduos_app;

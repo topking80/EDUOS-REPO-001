@@ -4,30 +4,21 @@
 # Accepted on 2026-11-14 (audit 37.4.0, addendum 4). Review when the edge agents
 # are next changed.
 misconfigurations:
-  # DS-0002: no non-root USER. These edge-node agents run as root by design today.
-  # - bootstrap: genuinely needs root. It writes /etc/eduos, chowns host folders
-  #   and starts systemd units on the node.
-  # - health, update: write host folders (/var/lib/eduos/health, .../updates)
-  #   that bootstrap creates as root. Running them as non-root needs matching
-  #   folder ownership on the device and testing on edge hardware.
-  #   Follow-up item in AUDIT-37.4.0-ADDENDUM-4.md.
+  # DS-0002: no non-root USER. Only the bootstrap container is excepted: it
+  # genuinely needs root (it writes /etc/eduos, chowns host folders and starts
+  # systemd units on the node). Edge Phase 2 moved the health agent to uid 10003
+  # and the update agent to a host service, so they are no longer excepted.
   # Listed under the current ID and the older aliases, so the exception keeps
   # matching across Trivy versions.
   - id: DS-0002
     paths:
       - "edge-platform/eduos/containers/Containerfile.bootstrap"
-      - "edge-platform/eduos/containers/Containerfile.health"
-      - "edge-platform/eduos/containers/Containerfile.update"
-    statement: "Edge agents run as root by design (bootstrap needs root; health/update pending non-root conversion with device testing)."
+    statement: "The edge bootstrap container runs as root by design (it provisions the node)."
   - id: AVD-DS-0002
     paths:
       - "edge-platform/eduos/containers/Containerfile.bootstrap"
-      - "edge-platform/eduos/containers/Containerfile.health"
-      - "edge-platform/eduos/containers/Containerfile.update"
     statement: "Same exception, older Trivy ID."
   - id: DS002
     paths:
       - "edge-platform/eduos/containers/Containerfile.bootstrap"
-      - "edge-platform/eduos/containers/Containerfile.health"
-      - "edge-platform/eduos/containers/Containerfile.update"
     statement: "Same exception, older Trivy ID."

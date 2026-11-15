@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the EduOS update agent periodically
+
+[Timer]
+# Soon after boot (verify a new deployment once it has settled), then every
+# 15 minutes to keep the status current and pick up policy changes.
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+Persistent=false
+
+[Install]
+WantedBy=timers.target

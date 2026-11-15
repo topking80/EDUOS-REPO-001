@@ -1,15 +1,35 @@
-# EduOS Health & Telemetry Agent - Quadlet version
-
+# EduOS health agent (Edge Phase 2), container form. Runs as uid 10003 (no
+# root), reads the device token and eduos-update's OS status from the host
+# read-only, and keeps its outbox in /var/lib/eduos/health (owned by 10003).
 [Unit]
-Description=EduOS Health Telemetry Agent
-Documentation=https://eduos.local/docs/health
-After=network-online.target eduos-bootstrap.service
+Description=EduOS health agent
+After=network-online.target eduos-update.service
+Wants=network-online.target
 
 [Container]
-Image=quay.io/eduos/eduos-health:latest
+Image=quay.io/eduos/eduos-health:2.0.0
+User=10003:10003
 Volume=/var/lib/eduos/health:/var/lib/eduos/health:Z
+Volume=/var/lib/eduos/os-status:/var/lib/eduos/os-status:ro,z
 Volume=/etc/eduos/health.toml:/etc/eduos/health.toml:ro,Z
-Environment=EDUOS_HEALTH_INTERVAL=300
+Volume=/etc/eduos/role:/etc/eduos/role:ro,z
+Volume=/etc/eduos/health-token:/etc/eduos/health-token:ro,Z
+# Disk usage of the host's root filesystem (the mounted folder lives on it),
+# and the device's own hostname.
+Environment=EDUOS_DISK_PATH=/var/lib/eduos/health
+ReadOnly=true
+Tmpfs=/tmp:rw,noexec,nosuid,nodev,size=8m
+DropCapability=all
+NoNewPrivileges=true
+PodmanArgs=--uts=host --pids-limit=64 --memory=64m
+
+[Service]
+Restart=always
+RestartSec=30
+# The device token is put in place by IT after registration. Until then the
+# mount needs the file to exist: create it empty if missing (keeping any
+# token), readable by uid 10003 only.
+ExecStartPre=/bin/sh -c 'touch /etc/eduos/health-token && chgrp 10003 /etc/eduos/health-token && chmod 0440 /etc/eduos/health-token'
 
 [Install]
 WantedBy=multi-user.target
