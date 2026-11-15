@@ -19,8 +19,11 @@ connection, no redirects), the same rules as outbound webhooks.
 ## Adding a connector (Data links tab)
 
 A superintendent or IT admin adds the connector. **A different** district lead
-approves it before it can sync. Changing its URLs, client ID, secret or scope
-sends it back for approval. Principals and school staff have no access.
+approves it before it can sync. Changing its URLs, client ID, secret or scope,
+or which EduOS school any of their schools is linked to, sends it back for
+approval. A sync that was already reading their roster when such a change (or
+turning it off) happened imports nothing. Principals and school staff have no
+access.
 
 | | OneRoster 1.2 | Ed-Fi API |
 |---|---|---|

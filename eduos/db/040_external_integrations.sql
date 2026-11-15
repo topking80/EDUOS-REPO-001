@@ -3,7 +3,9 @@
 -- EduOS stays the system of record and runs without any of these. A district
 -- adds a connector (IT admin or superintendent), a different district lead
 -- approves it, and only then can anyone sync. Any change to where it connects,
--- its credentials or what it may import sends it back for approval.
+-- its credentials, what it may import or which EduOS school each external
+-- school maps to sends it back for approval and bumps config_version; a sync
+-- that started before such a change is refused when it comes to import.
 -- Connectors only READ from the external system: no EduOS student data is sent
 -- out. Client secrets are stored encrypted (AES-256-GCM, INTEGRATIONS_KEY on
 -- the server) and are never returned by the API.
@@ -21,6 +23,7 @@ CREATE TABLE integration_connectors (
   -- What the connector may change in EduOS. Students only, for now.
   data_scope text[] NOT NULL DEFAULT ARRAY['students'] CHECK (data_scope <@ ARRAY['students']::text[] AND cardinality(data_scope) >= 1),
   status text NOT NULL DEFAULT 'pending_approval' CHECK (status IN ('pending_approval','active','disabled')),
+  config_version integer NOT NULL DEFAULT 1 CHECK (config_version >= 1),
   created_by uuid NOT NULL REFERENCES users(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_by uuid NOT NULL REFERENCES users(id),

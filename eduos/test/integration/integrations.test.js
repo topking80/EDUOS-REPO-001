@@ -14,7 +14,8 @@ const SECRET = "or-secret-123", EDFI_SECRET = "edfi-secret-456";
 
 function fakeServer() {
   const seen = [];
-  const srv = http.createServer((req, res) => {
+  const ctl = { hold: null }; // a promise: /students waits for it (to change things mid-sync)
+  const srv = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://x"); seen.push(`${req.method} ${url.pathname}`);
     const send = (code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     const offset = Number(url.searchParams.get("offset") || 0);
@@ -31,6 +32,7 @@ function fakeServer() {
       if (auth !== "Bearer tok-or-client") return send(401, {});
       if (url.pathname.endsWith("/schools")) return send(200, { orgs: page([{ sourcedId: "or-s1", name: "S1", type: "school", status: "active" },
         { sourcedId: "or-s2", name: "S2", type: "school", status: "active" }, { sourcedId: "or-x", name: "Somewhere Else", type: "school" }]) });
+      if (url.pathname.endsWith("/students") && ctl.hold) { ctl.arrived?.(); await ctl.hold; }
       if (url.pathname.endsWith("/students")) return send(200, { users: page([
         { sourcedId: "u-alice", identifier: "S1-A", givenName: "Alice", familyName: "Anders", grades: ["04"], roles: [{ roleType: "primary", role: "student", org: { sourcedId: "or-s1" } }] },
         { sourcedId: "u-dan", identifier: "S1-D", givenName: "Dan", familyName: "D", grades: ["03"], roles: [{ roleType: "primary", role: "student", org: { sourcedId: "or-s1" } }] },
@@ -52,7 +54,7 @@ function fakeServer() {
     }
     send(404, {});
   });
-  return new Promise(r => srv.listen(0, "127.0.0.1", () => r({ base: `http://127.0.0.1:${srv.address().port}`, seen, close: () => new Promise(x => srv.close(x)) })));
+  return new Promise(r => srv.listen(0, "127.0.0.1", () => r({ base: `http://127.0.0.1:${srv.address().port}`, seen, ctl, close: () => new Promise(x => srv.close(x)) })));
 }
 
 describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () => {
@@ -108,6 +110,9 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
   it("apply imports mapped schools through the SIS rules and reports what it skipped", async () => {
     const m = await as("supt1")("PUT", `/api/integrations/connectors/${or.id}/school-map`, { mappings: [{ externalId: "or-s1", schoolId: ID.s1 }, { externalId: "or-s2", schoolId: ID.s2 }] });
     assert.equal(m.status, 200, JSON.stringify(m.body));
+    assert.equal((await sync("supt1", or.id, "preview")).body.error, "connector_not_approved", "new school links need approval");
+    assert.equal((await as("supt1")("POST", `/api/integrations/connectors/${or.id}/approve`)).body.error, "approver_must_differ");
+    assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${or.id}/approve`)).status, 200);
     const p = await sync("supt1", or.id, "preview");
     assert.equal(p.body.data.counts.toImport, 3, JSON.stringify(p.body.data));
     const a = await sync("supt1", or.id, "apply");
@@ -122,9 +127,25 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     const runs = await admin.query("SELECT source_system FROM sis_sync_runs WHERE source_system=$1", [`oneroster:${or.id}`]);
     assert.equal(runs.rows.length, 2, "one SIS run per school");
     const audit = (await admin.query("SELECT action FROM audit_events WHERE resource_type IN ('integration_connector','integration_school_map') ORDER BY occurred_at")).rows.map(r => r.action);
-    assert.deepEqual(audit, ["create", "approve", "sync_preview", "update", "sync_preview", "sync_apply"]);
+    assert.deepEqual(audit, ["create", "approve", "sync_preview", "update", "approve", "sync_preview", "sync_apply"]);
     const hist = (await as("supt1")("GET", `/api/integrations/connectors/${or.id}/runs`)).body.data;
     assert.deepEqual(hist.map(r => r.status), ["completed", "previewed", "previewed"]);
+  });
+
+  it("a change made while a sync is reading their roster stops that sync importing", async () => {
+    let release; fake.ctl.hold = new Promise(r => { release = r; });
+    const arrived = new Promise(r => { fake.ctl.arrived = r; });
+    const pending = sync("supt1", or.id, "apply");
+    await arrived; // the sync is now waiting on /students
+    assert.equal((await as("supt1b")("PUT", `/api/integrations/connectors/${or.id}/school-map`, { mappings: [{ externalId: "or-s2", schoolId: ID.s1 }] })).status, 200);
+    fake.ctl.hold = null; fake.ctl.arrived = null; release();
+    const r = await pending;
+    assert.equal(r.status, 409, JSON.stringify(r.body)); assert.equal(r.body.error, "connector_changed_during_sync");
+    assert.equal((await student("S2-E")).school_id, ID.s2, "nothing imported under the new, unapproved links");
+    assert.equal((await as("supt1")("GET", `/api/integrations/connectors/${or.id}/runs`)).body.data[0].status, "failed");
+    // Put the link back and re-approve.
+    await as("supt1b")("PUT", `/api/integrations/connectors/${or.id}/school-map`, { mappings: [{ externalId: "or-s2", schoolId: ID.s2 }] });
+    assert.equal((await as("supt1")("POST", `/api/integrations/connectors/${or.id}/approve`)).status, 200);
   });
 
   it("changing where it connects needs approval again", async () => {
@@ -145,6 +166,7 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     await as("supt1")("PATCH", `/api/integrations/connectors/${ef.id}`, { clientSecret: EDFI_SECRET });
     await as("supt1b")("POST", `/api/integrations/connectors/${ef.id}/approve`);
     await as("supt1")("PUT", `/api/integrations/connectors/${ef.id}/school-map`, { mappings: [{ externalId: "255901", schoolId: ID.s1 }] });
+    await as("supt1b")("POST", `/api/integrations/connectors/${ef.id}/approve`);
     const a = await sync("supt1", ef.id, "apply");
     assert.equal(a.status, 200, JSON.stringify(a.body));
     assert.deepEqual(await student("E-100"), { display_name: "Fay F", grade_level: "2", school_id: ID.s1 });

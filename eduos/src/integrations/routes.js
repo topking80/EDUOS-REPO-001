@@ -106,7 +106,7 @@ export function registerIntegrationRoutes(app) {
         if (f.secret) add("client_secret_enc", encryptSecret(config.integrationsKey, a.districtId, cur.id, f.secret));
         if (!sets.length) throw new HttpError(400, "nothing_to_change");
         add("updated_by", a.userId);
-        await c.query(`UPDATE integration_connectors SET ${sets.join(", ")}, updated_at=now(), status='pending_approval', approved_by=NULL, approved_at=NULL WHERE id=$1`, args)
+        await c.query(`UPDATE integration_connectors SET ${sets.join(", ")}, updated_at=now(), config_version=config_version+1, status='pending_approval', approved_by=NULL, approved_at=NULL WHERE id=$1`, args)
           .catch(e => { if (e.code === "23505") throw new HttpError(409, "connector_name_taken"); throw e; });
         await audit(c, req, "update", "integration_connector", cur.id, `changed=${Object.keys(f).map(k => k === "secret" ? "client_secret" : k).join(",")}; needs approval`);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [cur.id]));
@@ -137,7 +137,7 @@ export function registerIntegrationRoutes(app) {
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
     try {
       const data = await withTenantTransaction(req.actor, async (c) => {
-        const r = await one(c, `UPDATE integration_connectors SET status='disabled', disabled_by=$3, disabled_at=now(), updated_by=$3, updated_at=now()
+        const r = await one(c, `UPDATE integration_connectors SET status='disabled', disabled_by=$3, disabled_at=now(), updated_by=$3, updated_at=now(), config_version=config_version+1
           WHERE id=$1 AND district_id=$2 AND status<>'disabled' RETURNING id`, [req.params.id, req.actor.districtId, req.actor.userId]);
         if (!r) throw new HttpError(404, "connector_not_found");
         await audit(c, req, "disable", "integration_connector", r.id);
@@ -155,7 +155,7 @@ export function registerIntegrationRoutes(app) {
     try {
       await withTenantTransaction(req.actor, async (c) => {
         const a = req.actor;
-        if (!await one(c, "SELECT 1 FROM integration_connectors WHERE id=$1 AND district_id=$2", [req.params.id, a.districtId])) throw new HttpError(404, "connector_not_found");
+        if (!await one(c, "SELECT 1 FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId])) throw new HttpError(404, "connector_not_found");
         for (const m of list) {
           if (m.schoolId === null) { await c.query("DELETE FROM integration_school_map WHERE connector_id=$1 AND external_id=$2", [req.params.id, m.externalId.trim()]); continue; }
           if (!await one(c, "SELECT 1 FROM schools WHERE id=$1 AND district_id=$2 AND status='active'", [m.schoolId, a.districtId])) throw new HttpError(400, "school_not_found", { schoolId: m.schoolId });
@@ -163,9 +163,13 @@ export function registerIntegrationRoutes(app) {
             ON CONFLICT (connector_id, external_id) DO UPDATE SET school_id=EXCLUDED.school_id, mapped_by=EXCLUDED.mapped_by, mapped_at=now()`,
             [a.districtId, req.params.id, m.externalId.trim(), m.schoolId, a.userId]);
         }
-        await audit(c, req, "update", "integration_school_map", req.params.id, list.map(m => `${m.externalId}=>${m.schoolId ?? "none"}`).join("; "));
+        // Where students land is part of what was approved: a change needs a
+        // different district lead's approval before the next import.
+        await c.query(`UPDATE integration_connectors SET updated_by=$2, updated_at=now(), config_version=config_version+1,
+            status=CASE WHEN status='disabled' THEN status ELSE 'pending_approval' END, approved_by=NULL, approved_at=NULL WHERE id=$1`, [req.params.id, a.userId]);
+        await audit(c, req, "update", "integration_school_map", req.params.id, `${list.map(m => `${m.externalId}=>${m.schoolId ?? "none"}`).join("; ")}; needs approval`);
       });
-      res.json({ data: { saved: list.length } });
+      res.json({ data: { saved: list.length, status: "pending_approval" } });
     } catch (e) { sendError(res, next, e); }
   });
 
@@ -212,6 +216,12 @@ export function registerIntegrationRoutes(app) {
       }
       const out = await withTenantTransaction(a, async (c) => {
         await c.query("SELECT pg_advisory_xact_lock(hashtext('integration-sync'), hashtext($1))", [conn.id]);
+        // The connector may have been changed, re-mapped or turned off while we
+        // were reading the external roster: import only under the configuration
+        // that was approved when the sync started.
+        const now = await one(c, "SELECT status, config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [conn.id, a.districtId]);
+        if (!now || now.status !== "active" || now.config_version !== conn.config_version)
+          throw Object.assign(new Error("connector_changed_during_sync"), { code: "SYNC_STALE" });
         const inputs = await loadPlanInputs(c, a.districtId, conn.id, roster.students.map(s => s.localStudentNumber));
         const plan = planImport(roster, inputs.map, inputs.existing, inputs.schools);
         if (mode === "apply") plan.counts.imported = await applyPlan(c, a, conn, runId, plan, req.requestId);
@@ -221,6 +231,10 @@ export function registerIntegrationRoutes(app) {
       });
       res.json({ data: out });
     } catch (e) {
+      if (e.code === "SYNC_STALE") {
+        try { await fail("connector_changed_during_sync"); } catch { /* the response still explains */ }
+        return res.status(409).json({ error: "connector_changed_during_sync", runId });
+      }
       if (e.code === "SIS_STUDENT_SCHOOL_CONFLICT" || e.code === "DISTRICT_LIMIT_MAX_STUDENTS" || e.code === "SYNC_SCHOOL_FAILED") {
         // Nothing was imported (the transaction rolled back); say why.
         const detail = e.detail || e.code.toLowerCase();

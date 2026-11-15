@@ -1643,7 +1643,7 @@ VIEWS.integrations = async () => {
         Object.entries(reasons).map(([r, n]) => kv(`Skipped: ${REJECT_TEXT[r] || r}`, String(n)))),
       selects.length ? h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
         const mappings = [...e.target.querySelectorAll("select[data-external]")].map(x => ({ externalId: x.dataset.external, schoolId: x.value || null }));
-        try { await api.req("PUT", `/api/integrations/connectors/${c.id}/school-map`, { mappings }); toast("School links saved. Preview again to check."); }
+        try { await api.req("PUT", `/api/integrations/connectors/${c.id}/school-map`, { mappings }); toast("School links saved. Another district lead needs to approve them before the next sync."); reload(); }
         catch { toast("Couldn't save the school links."); } } },
         h("h3", {}, "Which EduOS school is each of theirs?"), selects, h("button", { class: "btn", type: "submit" }, "Save school links")) : null);
   };
