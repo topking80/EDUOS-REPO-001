@@ -5,6 +5,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import crypto from "node:crypto";
 import pg from "pg";
 import { PG_URL, ID, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
@@ -64,7 +65,7 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     db = await createDatabase();
     idp = await startIdp();
     fake = await fakeServer();
-    const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app, INTEGRATIONS_KEY: "test-integrations-key-0123456789abcdef", INTEGRATIONS_ALLOW_INSECURE_LOOPBACK: "true" });
+    const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app, INTEGRATIONS_KEY: crypto.randomBytes(32).toString("hex"), INTEGRATIONS_ALLOW_INSECURE_LOOPBACK: "true" });
     const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
