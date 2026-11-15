@@ -1,21 +1,20 @@
-# EduOS Health & Telemetry Container
-
-FROM registry.fedoraproject.org/fedora:40
+# EduOS health agent (Edge Phase 2). Build from edge-platform/eduos:
+#   podman build -f containers/Containerfile.health -t quay.io/eduos/eduos-health:2.0.0 .
+# Runs as the unprivileged eduos-health user (uid/gid 10003), the same ids the
+# host uses, so the host folder and the device token file line up.
+FROM registry.fedoraproject.org/fedora:45
 
 LABEL org.opencontainers.image.title="EduOS Health Agent"
-LABEL org.opencontainers.image.description="System metrics and compliance telemetry for EduOS"
+LABEL org.opencontainers.image.description="Sends device health and OS update status to the district EduOS server"
 
-RUN dnf install -y \
-        bash \
-        coreutils \
-        procps-ng \
-        util-linux \
-    && dnf clean all \
-    && rm -rf /var/cache/dnf
+RUN dnf install -y --setopt=install_weak_deps=False bash coreutils gawk curl procps-ng findutils hostname libselinux-utils \
+    && dnf clean all && rm -rf /var/cache/dnf \
+    && groupadd --system --gid 10003 eduos-health \
+    && useradd --system --uid 10003 --gid eduos-health --home-dir /nonexistent --shell /sbin/nologin eduos-health \
+    && install -d -o 10003 -g 10003 -m 0750 /var/lib/eduos/health
 
-COPY ../scripts/eduos-health.sh /usr/local/bin/eduos-health.sh
-RUN chmod +x /usr/local/bin/eduos-health.sh
+COPY scripts/eduos-health.sh /usr/local/bin/eduos-health.sh
+RUN chmod 0555 /usr/local/bin/eduos-health.sh
 
-RUN mkdir -p /var/lib/eduos/health
-
+USER 10003:10003
 ENTRYPOINT ["/usr/local/bin/eduos-health.sh"]

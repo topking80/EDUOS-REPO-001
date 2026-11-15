@@ -3,7 +3,7 @@
 
 [agent]
 interval_seconds = 300
-offline_cache = true
+offline_cache = true        # keep unsent reports and send them later
 max_cache_entries = 1000
 
 [metrics]
@@ -16,11 +16,16 @@ temperature = true
 [compliance]
 check_selinux = true
 check_secure_boot = true
-check_disk_encryption = true
-ferpa_mode = true       # aggregate and anonymize student-related signals
+check_disk_encryption = true   # not reported yet
+ferpa_mode = true       # reports never contain student data either way
 
 [reporting]
-endpoint = "https://district.eduos.local/api/v1/health"
+# Your district EduOS server's device-health address, for example
+#   endpoint = "https://eduos.yourdistrict.org/api/edge/health"
+# Empty: reports stay on this device (/var/lib/eduos/health/report.json).
+# Set it here or in a district overlay. https only.
+endpoint = ""
 timeout_seconds = 30
-retry_attempts = 5
-use_mtls = true
+# The device proves who it is with its device token (Nodes > Edge devices >
+# Register in EduOS), kept in /etc/eduos/health-token. Unsent reports wait in
+# the outbox ([agent].max_cache_entries) and are retried with back-off.
