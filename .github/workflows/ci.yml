@@ -22,11 +22,11 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Scan repository for secrets
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Scan source, dependencies, and IaC configuration
@@ -57,8 +57,8 @@ jobs:
   dependency-security:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22, cache: npm, cache-dependency-path: eduos/package-lock.json }
       - name: Verify lockfile and package registry policy
         run: npm run verify:dependencies
@@ -74,7 +74,7 @@ jobs:
         run: npm run supply-chain:provenance
       - name: Preserve SBOM and license evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dependency-sbom-license-provenance
           path: eduos/artifacts/supply-chain/
@@ -82,7 +82,7 @@ jobs:
           retention-days: 90
       - name: Preserve dependency audit evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dependency-audit-report
           path: eduos/artifacts/dependency-audit/npm-audit.json
@@ -95,8 +95,8 @@ jobs:
   unit:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22, cache: npm, cache-dependency-path: eduos/package-lock.json }
       - run: npm ci
       # Includes test/browser/app-smoke.test.js: the web app booted in headless
@@ -115,8 +115,8 @@ jobs:
           --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
           --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22, cache: npm, cache-dependency-path: eduos/package-lock.json }
       - run: npm ci
       - run: npm run test:integration
@@ -126,7 +126,7 @@ jobs:
   edge:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Edge platform unit tests
         working-directory: eduos/edge-platform/eduos
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_enrollment.py tests/test_enrollment_token.py tests/test_edge_config.py tests/test_update_agent.py tests/test_health_agent.py
@@ -136,6 +136,10 @@ jobs:
       - name: Butane render + checks
         run: |
           curl -fsSL -o /tmp/butane https://github.com/coreos/butane/releases/download/v0.23.0/butane-x86_64-unknown-linux-gnu
+          # Pinned checksum. Taken from a download whose PGP signature verified with
+          # the Fedora 40 primary key (115D F9AE F857 853E E844 5D0A 0727 707E A15B 79CC),
+          # which signs Butane releases. Bumping Butane means re-verifying and updating this.
+          echo "5833ce9f9c2932d9b02bc05821ffb6927d1e896a524c8dd53a4c9d2d90c47e2c  /tmp/butane" | sha256sum -c -
           chmod +x /tmp/butane
           make -C edge-platform/eduos check BUTANE=/tmp/butane
       # Edge Phase 2: build every edge image and scan it, like the app image.
@@ -160,8 +164,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22 }
       - name: Start the stack (make up)
         run: make up
@@ -169,12 +173,12 @@ jobs:
         run: make smoke
       - name: Browser smoke test (headless Chrome)
         run: |
-          npm install --prefix "$RUNNER_TEMP/pw" --no-save playwright-core@1
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save --ignore-scripts playwright-core@1.65.1
           EDUOS_PLAYWRIGHT_DIR="$RUNNER_TEMP/pw" EDUOS_SCREENSHOT_DIR=artifacts/screens CHROME_PATH=$(command -v google-chrome) node dev/browser-smoke.mjs
       - name: Logs on failure
         if: failure()
         run: EDUOS_ENV_FILE=.env.dev docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile edge logs --tail 200
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with: { name: e2e-screenshots, path: eduos/artifacts/screens, if-no-files-found: ignore }
       - name: Stop
@@ -185,8 +189,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: '3.24.5'
           channel: stable
@@ -204,7 +208,7 @@ jobs:
         working-directory: eduos/mobile/flutter
         run: flutter build apk --debug
       - name: Upload debug APK for device testing
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eduos-android-debug-apk
           path: eduos/mobile/flutter/build/app/outputs/flutter-apk/app-debug.apk

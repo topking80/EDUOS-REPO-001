@@ -25,3 +25,22 @@ updates:
         update-types:
           - minor
           - patch
+
+  # CI actions are pinned to full commit SHAs (test/ci-pinning.test.js); this
+  # keeps them current, updating the SHA and its version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security-review
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
