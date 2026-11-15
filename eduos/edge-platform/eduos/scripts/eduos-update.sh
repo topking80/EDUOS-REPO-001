@@ -20,19 +20,34 @@
 #   status        writes /var/lib/eduos/os-status/status.json for the health
 #                 agent to report (booted/staged version, hold, cohort, result).
 #   release-hold  lifts a hold once IT has looked at it.
-#   run           apply-policy, verify, status (what the timer runs).
+#   follow-target with [approvals].require_district_signoff, installs the OS
+#                 version the district approved (see below).
+#   run           apply-policy, verify, follow-target, status (the timer).
+#
+# District sign-off: with [approvals].require_district_signoff = true, Zincati
+# never updates on its own. The agent asks the EduOS server
+# (GET /api/edge/update-target, with the device token from the health agent)
+# which version the district approved for this device's cohort: canaries get
+# an approved version first, everyone else once it's promoted. It asks
+# rpm-ostree to deploy that exact version, inside the maintenance window, and
+# only if updates aren't held. No answer, or nothing approved: no update.
+# If the district hasn't turned approvals on in EduOS, Zincati runs as usual.
 #
 # Runs on the host as root from eduos-update.service (a oneshot, started by
 # eduos-update.timer and when the policy file changes), because it configures
-# the OS updater. It uses only bash, coreutils, awk, sha256sum, systemctl and
-# rpm-ostree, all present on Fedora CoreOS.
+# the OS updater. It uses only bash, coreutils, awk, sha256sum, curl, systemctl
+# and rpm-ostree, all present on Fedora CoreOS.
 set -euo pipefail
 
 ETC="${EDUOS_ETC:-/etc}"
 VAR="${EDUOS_VAR:-/var/lib/eduos}"
 RPM_OSTREE="${RPM_OSTREE:-rpm-ostree}"
 SYSTEMCTL="${SYSTEMCTL:-systemctl}"
+CURL="${CURL:-curl}"
 POLICY="$ETC/eduos/update-policy.toml"
+HEALTH_CONFIG="$ETC/eduos/health.toml"
+TOKEN_FILE="${EDUOS_HEALTH_TOKEN_FILE:-$ETC/eduos/health-token}"
+VERSION_RE='^[0-9]{2,3}\.[0-9]{8}\.[0-9]+\.[0-9]+$'
 ZDIR="$ETC/zincati/config.d"
 FRAGMENT="$ZDIR/55-eduos-policy.toml"
 HOLD="$ZDIR/90-eduos-hold.toml"
@@ -45,16 +60,17 @@ die() { log "error: $1"; exit 2; }
 
 # toml_get SECTION KEY DEFAULT: the value of KEY in [SECTION], quotes and
 # trailing comments removed. Enough for the flat policy file we ship.
-toml_get() {
-  local v=""
-  [[ -f "$POLICY" ]] && v=$(awk -v want="$1" -v key="$2" '
+toml_get() { toml_from "$POLICY" "$@"; }
+toml_from() { # FILE SECTION KEY DEFAULT
+  local v="" file=$1; shift
+  [[ -f "$file" ]] && v=$(awk -v want="$1" -v key="$2" '
     /^[[:space:]]*\[/ { s=$0; gsub(/^[[:space:]]*\[|\][[:space:]]*(#.*)?$/, "", s); sec=s; next }
     sec==want {
       line=$0; sub(/#.*/, "", line)
       if (match(line, "^[[:space:]]*" key "[[:space:]]*=")) {
         val=substr(line, RLENGTH+1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", val); gsub(/^"|"$/, "", val); print val; exit
       }
-    }' "$POLICY")
+    }' "$file")
   echo "${v:-$3}"
 }
 
@@ -80,6 +96,83 @@ write_if_changed() { # path content -> 0 if changed
   return 0
 }
 
+signoff_required() { [[ "$(toml_get approvals require_district_signoff false)" == true ]]; }
+
+# ask_district: sets APPROVAL (off|waiting|current|unreachable) and TARGET, and
+# remembers whether the district requires approval (district-requires), so a
+# network outage doesn't flip Zincati on and off.
+APPROVAL=""; TARGET=""
+ask_district() {
+  local endpoint url token body cohort_name
+  mkdir -p "$STATE"
+  rm -f "$STATE/target-version"
+  endpoint=$(toml_from "$HEALTH_CONFIG" reporting endpoint "")
+  url="${EDUOS_UPDATE_TARGET_URL:-${endpoint%/api/edge/health}/api/edge/update-target}"
+  token=$(head -c 200 "$TOKEN_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+  if [[ -z "$endpoint" && -z "${EDUOS_UPDATE_TARGET_URL:-}" ]] || [[ ! "$url" =~ ^https:// && "${EDUOS_HEALTH_ALLOW_HTTP:-0}" != 1 ]] \
+     || [[ ! "$token" =~ ^edh1\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$ ]]; then
+    log "district sign-off is required but this device has no EduOS endpoint or device token; no OS updates until it does"
+    APPROVAL=unreachable; return 0
+  fi
+  cohort_name=$(cohort "$(toml_get canary percent 10)")
+  [[ "$(toml_get general strategy canary)" == canary ]] || cohort_name=standard
+  if ! body=$("$CURL" -sS --fail --max-time 20 -H "Authorization: Bearer $token" "$url?cohort=$cohort_name" 2>/dev/null); then
+    log "couldn't ask EduOS for the approved OS version; not updating"
+    APPROVAL=unreachable; return 0
+  fi
+  body=$(printf '%s' "$body" | tr -d '[:space:]' | head -c 2000)
+  if [[ "$body" == *'"requireApproval":false'* ]]; then
+    echo false > "$STATE/district-requires"; APPROVAL=off; return 0
+  fi
+  if [[ "$body" != *'"requireApproval":true'* ]]; then log "unexpected answer from EduOS; not updating"; APPROVAL=unreachable; return 0; fi
+  echo true > "$STATE/district-requires"
+  TARGET=$(printf '%s' "$body" | sed -n 's/.*"target":"\([^"]*\)".*/\1/p')
+  if [[ -z "$TARGET" ]]; then APPROVAL=waiting; return 0; fi
+  [[ "$TARGET" =~ $VERSION_RE ]] || { log "EduOS sent an invalid version; not updating"; TARGET=""; APPROVAL=unreachable; return 0; }
+  echo "$TARGET" > "$STATE/target-version"
+  if [[ "$(deployment booted version)" == "$TARGET" ]]; then APPROVAL=current; else APPROVAL=waiting; fi
+}
+
+# in_window: the current time (in the policy's time zone) is inside the
+# maintenance window, or there's no window.
+in_window() {
+  local start end tz now s e n
+  [[ "$(toml_get general strategy canary)" == immediate || "$(toml_get maintenance_window enabled true)" != true ]] && return 0
+  start=$(toml_get maintenance_window start 02:00); end=$(toml_get maintenance_window end 04:00)
+  tz=$(toml_get maintenance_window timezone localtime)
+  if [[ -n "${EDUOS_CLOCK:-}" ]]; then now=$EDUOS_CLOCK
+  elif [[ "$tz" == localtime ]]; then now=$(date +%H:%M)
+  else now=$(TZ="$tz" date +%H:%M); fi
+  s=$(minutes "$start"); e=$(minutes "$end"); n=$(minutes "$now")
+  if (( s < e )); then (( n >= s && n < e )); else (( n >= s || n < e )); fi
+}
+
+# follow_target: deploy the district-approved version when it differs from
+# the booted one. Never while held or disabled, never a version this device
+# rolled back from, outside the window, or twice within six hours.
+follow_target() {
+  signoff_required || return 0
+  [[ -n "$TARGET" && "$APPROVAL" == waiting ]] || return 0
+  if [[ "$(toml_get general enabled true)" != true ]]; then return 0; fi
+  if [[ -f "$HOLD" ]]; then log "district approved $TARGET but updates are held; not installing"; return 0; fi
+  if [[ "$(cat "$STATE/rollback-from-version" 2>/dev/null)" == "$TARGET" ]]; then
+    log "not installing $TARGET again: this device rolled back from it"; return 0
+  fi
+  in_window || return 0
+  local attempted="" when=0 now
+  now=$(date +%s)
+  if [[ -f "$STATE/deploy-attempted" ]]; then read -r attempted when < "$STATE/deploy-attempted" || true; fi
+  if [[ "$attempted" == "$TARGET" && "$when" =~ ^[0-9]+$ ]] && (( now - when < 6 * 3600 )); then
+    APPROVAL=installing; return 0
+  fi
+  echo "$TARGET $now" > "$STATE/deploy-attempted"
+  APPROVAL=installing
+  log "installing district-approved OS version $TARGET"
+  # --bypass-driver: Zincati is registered as the update driver; with
+  # sign-off, the district (through this agent) drives instead.
+  "$RPM_OSTREE" deploy --bypass-driver --reboot "$TARGET" || { log "rpm-ostree couldn't deploy $TARGET"; APPROVAL=waiting; }
+}
+
 apply_policy() {
   local enabled strategy win_on start end tz percent cohort_name="standard" frag
   enabled=$(toml_get general enabled true)
@@ -91,17 +184,24 @@ apply_policy() {
   percent=$(toml_get canary percent 10)
 
   [[ "$enabled" == true || "$enabled" == false ]] || die "[general].enabled must be true or false"
+  mkdir -p "$STATE"
   [[ "$strategy" =~ ^(canary|immediate|maintenance-window-only)$ ]] || die "[general].strategy must be canary, immediate or maintenance-window-only"
   [[ "$start" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ && "$end" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "maintenance window times must be HH:MM"
   [[ "$tz" == localtime || "$tz" =~ ^[A-Za-z_]+(/[A-Za-z0-9_+-]+){0,2}$ ]] || die "[maintenance_window].timezone must be an IANA name or localtime"
   if ! [[ "$percent" =~ ^[0-9]{1,3}$ ]] || (( percent > 100 )); then die "[canary].percent must be 0-100"; fi
-  if [[ "$(toml_get approvals require_district_signoff false)" == true ]]; then
-    log "note: require_district_signoff isn't enforced by the updater; hold updates with [general].enabled = false until the district signs off"
+  local zincati_on=$enabled
+  if signoff_required; then
+    ask_district
+    # Zincati picks versions itself, so it stays off while the district
+    # decides; follow-target installs the approved version instead.
+    if [[ "$(cat "$STATE/district-requires" 2>/dev/null || echo true)" != false ]]; then zincati_on=false; fi
+  else
+    APPROVAL=off
   fi
 
   frag="# Generated by eduos-update from $POLICY. Do not edit; edit the policy.
 [updates]
-enabled = $enabled"
+enabled = $zincati_on"
   if [[ "$strategy" != immediate && "$win_on" == true ]]; then
     local len=$(( ( $(minutes "$end") - $(minutes "$start") + 1440 ) % 1440 ))
     (( len > 0 )) || die "the maintenance window must be longer than 0 minutes"
@@ -128,7 +228,6 @@ strategy = \"immediate\""
 [identity]
 rollout_wariness = $([[ $cohort_name == canary ]] && echo 0.0 || echo 1.0)"
   fi
-  mkdir -p "$STATE"
   echo "$cohort_name" > "$STATE/cohort"
   if write_if_changed "$FRAGMENT" "$frag"; then
     log "Zincati policy updated (strategy=$strategy, cohort=$cohort_name)"
@@ -182,6 +281,8 @@ verify() {
 
   if why=$(healthy); then
     echo "$booted" > "$STATE/known-good"
+    # Healthy on a version it once rolled back from: that version is fine now.
+    if [[ "$(cat "$STATE/rollback-from-version" 2>/dev/null)" == "$(deployment booted version)" ]]; then rm -f "$STATE/rollback-from-version"; fi
     if [[ -z "$known" ]]; then echo first_boot; else echo healthy; fi > "$STATE/last-verify"
     log "deployment ${booted:0:12} is healthy and now known-good"
     return 0
@@ -192,6 +293,7 @@ verify() {
   if [[ -z "$known" ]]; then echo unhealthy > "$STATE/last-verify"; return 0; fi   # nothing known-good to go back to
   if [[ "$(toml_get rollback automatic true)" == true && "$attempted" != "$booted" ]]; then
     echo "$booted" > "$STATE/rollback-attempted"
+    deployment booted version > "$STATE/rollback-from-version"
     echo rolled_back > "$STATE/last-verify"
     log "rolling back to the previous deployment"
     "$RPM_OSTREE" rollback --reboot || { echo unhealthy > "$STATE/last-verify"; log "rollback failed"; }
@@ -203,7 +305,12 @@ verify() {
 json_str() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '"%s"' "${s//$'\n'/ }"; }
 
 status() {
-  local booted_v booted_c staged_v updates="enabled" reason="" cohort_name verify z out
+  local booted_v booted_c staged_v updates="enabled" reason="" cohort_name verify z out target="" rollback_from="" approval
+  approval=${APPROVAL:-$(cat "$STATE/approval" 2>/dev/null || echo off)}
+  signoff_required || approval=off
+  echo "$approval" > "$STATE/approval" 2>/dev/null || true
+  target=$(cat "$STATE/target-version" 2>/dev/null || true)
+  rollback_from=$(cat "$STATE/rollback-from-version" 2>/dev/null || true)
   booted_v=$(deployment booted version); booted_c=$(deployment booted checksum); staged_v=$(deployment staged version)
   if [[ -f "$HOLD" ]]; then updates=held; reason=$(cat "$STATE/hold-reason" 2>/dev/null || echo "held"); fi
   [[ "$(toml_get general enabled true)" == false ]] && updates=disabled
@@ -211,7 +318,8 @@ status() {
   verify=$(cat "$STATE/last-verify" 2>/dev/null || echo pending)
   z=$("$SYSTEMCTL" is-active zincati.service 2>/dev/null || true); [[ "$z" =~ ^(active|inactive|failed)$ ]] || z=unknown
   out="{\"booted_version\":$(json_str "$booted_v"),\"booted_checksum\":$(json_str "$booted_c"),\"staged_version\":$(json_str "$staged_v"),"
-  out+="\"updates\":\"$updates\",\"hold_reason\":$(json_str "${reason:0:200}"),\"cohort\":\"$cohort_name\",\"last_verify\":\"$verify\",\"zincati\":\"$z\"}"
+  out+="\"updates\":\"$updates\",\"hold_reason\":$(json_str "${reason:0:200}"),\"cohort\":\"$cohort_name\",\"last_verify\":\"$verify\",\"zincati\":\"$z\","
+  out+="\"approval\":\"$approval\",\"target_version\":$(json_str "$target"),\"rollback_from_version\":$(json_str "$rollback_from")}"
   mkdir -p "$STATUS_DIR"
   write_if_changed "$STATUS_DIR/status.json" "$out" || true
 }
@@ -225,8 +333,9 @@ release_hold() {
 case "${1:-run}" in
   apply-policy) apply_policy ;;
   verify) verify ;;
-  status) status ;;
+  status) mkdir -p "$STATE"; status ;;
   release-hold) release_hold; status ;;
-  run) apply_policy; verify; status ;;
-  *) echo "usage: $0 [run|apply-policy|verify|status|release-hold]" >&2; exit 64 ;;
+  follow-target) apply_policy; follow_target; status ;;
+  run) apply_policy; verify; follow_target; status ;;
+  *) echo "usage: $0 [run|apply-policy|verify|follow-target|status|release-hold]" >&2; exit 64 ;;
 esac
