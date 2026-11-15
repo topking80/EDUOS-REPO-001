@@ -35,6 +35,11 @@ updates:
       day: monday
       time: "09:00"
     open-pull-requests-limit: 5
+    # Patched builds and minor/patch releases only. Major upgrades (a new Node
+    # runtime, a new action major) change behaviour and are done deliberately.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels:
       - dependencies
       - security-review
@@ -52,6 +57,11 @@ updates:
       interval: weekly
       day: monday
       time: "09:00"
+    # Patched builds and minor/patch releases only. Major upgrades (a new Node
+    # runtime, a new action major) change behaviour and are done deliberately.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels:
       - dependencies
       - security-review
@@ -63,6 +73,11 @@ updates:
       interval: weekly
       day: monday
       time: "09:00"
+    # Patched builds and minor/patch releases only. Major upgrades (a new Node
+    # runtime, a new action major) change behaviour and are done deliberately.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels:
       - dependencies
       - security-review

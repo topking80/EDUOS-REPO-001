@@ -40,6 +40,7 @@ import { registerSchoolOperationsNotificationRoutes } from "./school-operations-
 import { registerStaffDailyWorkspaceRoutes } from "./staff-daily-workspace-routes.js";
 import { registerStaffManagementRoutes } from "./staff-management-routes.js";
 import { registerEdgeDeviceRoutes } from "./edge-device-routes.js";
+import { registerEdgeUpdateRoutes } from "./edge-update-routes.js";
 import { registerIntegrationRoutes } from "./integrations/routes.js";
 import { registerEdenHub } from "./eden/hub.js";
 import { registerEdenNode, startAgent } from "./eden/node.js";
@@ -1828,6 +1829,7 @@ registerSchoolOperationsNotificationRoutes(app);
 registerStaffDailyWorkspaceRoutes(app);
 registerStaffManagementRoutes(app);
 registerEdgeDeviceRoutes(app);
+registerEdgeUpdateRoutes(app);
 registerIntegrationRoutes(app);
 // 32.7.0 EDEN: a district hub or a school node (EDUOS_NODE_TIER).
 const edenStatus = config.nodeTier === "district" ? registerEdenHub(app) : config.nodeTier === "school" ? registerEdenNode(app) : null;

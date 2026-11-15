@@ -4,7 +4,7 @@ import { requireSession, requireCsrf } from "./auth.js";
 import { requirePermission } from "./policy.js";
 import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
-import { arrivalInitiationDenial, arrivalReceiptDenial, firstAttendanceDenial } from "./arrival-workflow.js";
+import { arrivalInitiationDenial, arrivalReceiptDenial, firstAttendanceDenial, isFirstAttendanceOverride } from "./arrival-workflow.js";
 import { reconcileTransportArrival } from "./arrival-reconciliation.js";
 
 const staff = (req,res,next) => ["principal","teacher"].includes(req.actor?.role) ? next() : res.status(403).json({error:"school_staff_only"});
@@ -139,9 +139,12 @@ export function registerArrivalRoutes(app) {
     }catch(e){sendError(res,next,e)}
   });
 
-  // First attendance is recorded only after the independent arrival receipt.
+  // First attendance is recorded only after the independent arrival receipt,
+  // by the staff member who received the student. A principal can record it
+  // for someone else only as an override with a reason (overrideReason).
   app.post("/api/arrival/handoffs/:handoffId/first-attendance",requireSession,requireCsrf,requirePermission("attendance","create"),async(req,res,next)=>{
     const status=req.body?.status||"present";
+    const overrideReason=typeof req.body?.overrideReason==="string"?req.body.overrideReason.trim():null;
     if(!validId(req.params.handoffId)||!["present","tardy"].includes(status)) return res.status(400).json({error:"invalid_first_attendance"});
     try{
       const result=await withTenantTransaction(req.actor,async client=>{
@@ -152,8 +155,9 @@ export function registerArrivalRoutes(app) {
         if(a.role==="teacher"&&h.assigned_teacher_user_id!==a.userId){
           isRostered=!!(await one(client,`SELECT 1 FROM teacher_student_rosters WHERE student_id=$1 AND teacher_user_id=$2`,[h.student_id,a.userId]));
         }
-        const denial=firstAttendanceDenial({role:a.role,actorUserId:a.userId,actorSchoolId:a.schoolId,handoffSchoolId:h.school_id,status:h.status,assignedTeacherUserId:h.assigned_teacher_user_id,isRostered});
-        if(denial) throw new HttpError(denial==="attendance_requires_received_handoff"?409:403,denial);
+        const denial=firstAttendanceDenial({role:a.role,actorUserId:a.userId,actorSchoolId:a.schoolId,handoffSchoolId:h.school_id,status:h.status,assignedTeacherUserId:h.assigned_teacher_user_id,isRostered,receivedByUserId:h.received_by,overrideReason});
+        if(denial) throw new HttpError(denial==="attendance_requires_received_handoff"?409:denial==="override_reason_required"?400:403,denial);
+        const override=isFirstAttendanceOverride({actorUserId:a.userId,receivedByUserId:h.received_by});
         const day=await one(client,`SELECT eduos_school_today($1) AS day`,[h.school_id]);
         await client.query(`SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))`,[h.student_id,String(day.day)]);
         const existing=await one(client,`SELECT id,status FROM attendance_events WHERE district_id=$1 AND student_id=$2 AND event_date=$3 ORDER BY id LIMIT 1`,[a.districtId,h.student_id,day.day]);
@@ -161,8 +165,9 @@ export function registerArrivalRoutes(app) {
         const attendance=await one(client,`INSERT INTO attendance_events(district_id,student_id,event_date,status) VALUES($1,$2,$3,$4) RETURNING id,status,event_date`,
           [a.districtId,h.student_id,day.day,status]);
         await client.query(`INSERT INTO arrival_handoff_events(district_id,handoff_id,actor_user_id,event,detail) VALUES($1,$2,$3,'attendance_recorded',$4::jsonb)`,
-          [a.districtId,h.id,a.userId,JSON.stringify({attendanceId:attendance.id,status})]);
-        await audit(client,req,"create","attendance_event",attendance.id,`arrival_handoff=${h.id}`);
+          [a.districtId,h.id,a.userId,JSON.stringify(override?{attendanceId:attendance.id,status,override:true,receivedBy:h.received_by,reason:overrideReason}:{attendanceId:attendance.id,status})]);
+        await audit(client,req,override?"override":"create","attendance_event",attendance.id,
+          override?`arrival_handoff=${h.id}; principal override for receiver ${h.received_by}; reason: ${overrideReason}`:`arrival_handoff=${h.id}`);
         return {attendance,created:true};
       });
       res.status(result.created?201:200).json({data:result});

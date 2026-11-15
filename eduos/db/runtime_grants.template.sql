@@ -277,6 +277,15 @@ REVOKE DELETE, TRUNCATE ON edge_devices, edge_device_reports FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_edge_record_health(uuid, text, jsonb) TO eduos_app;
 REVOKE ALL ON FUNCTION eduos_retention_purge_edge_reports(int) FROM eduos_app;
 
+-- 039 district-approved edge updates: district leads manage the policy and
+-- releases (row-level security; the API limits who may change them); devices
+-- learn their target only through eduos_edge_update_target.
+GRANT SELECT, INSERT, UPDATE ON edge_update_policy TO eduos_app;
+GRANT SELECT, INSERT ON edge_update_releases TO eduos_app;
+GRANT UPDATE (stage, promoted_by, promoted_at, withdrawn_by, withdrawn_at, withdraw_reason) ON edge_update_releases TO eduos_app;
+REVOKE DELETE, TRUNCATE ON edge_update_policy, edge_update_releases FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_edge_update_target(uuid, text), eduos_os_version_key(text) TO eduos_app;
+GRANT UPDATE (update_cohort, cohort_set_by, cohort_set_at) ON edge_devices TO eduos_app;
 -- 040 external integrations: district leads manage connectors (row-level
 -- security keeps them in their district); sync runs are an append-only record.
 GRANT SELECT, INSERT, UPDATE ON integration_connectors TO eduos_app;

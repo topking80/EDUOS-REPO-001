@@ -60,7 +60,7 @@ export function registerEdgeDeviceRoutes(app) {
     try {
       const data = await withTenantTransaction(a, async (c) => {
         const list = await rows(c, `SELECT d.id, d.name, d.device_role, d.school_id, s.name AS school_name, d.created_at, d.revoked_at,
-              d.last_seen_at, d.last_report, d.report_count,
+              d.last_seen_at, d.last_report, d.report_count, d.update_cohort,
               (d.revoked_at IS NULL AND (d.last_seen_at IS NULL OR d.last_seen_at < now() - make_interval(mins => $3))) AS stale
             FROM edge_devices d LEFT JOIN schools s ON s.id = d.school_id
             WHERE d.district_id = $1 AND ($2::uuid IS NULL OR d.school_id = $2)

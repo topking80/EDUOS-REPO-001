@@ -23,5 +23,10 @@ threshold_cpu_percent = 85
 threshold_disk_percent = 90
 
 [approvals]
+# true: Zincati never updates on its own. The device installs only the OS
+# version the district approved in EduOS (Nodes > OS updates), canaries
+# first, in the maintenance window. Needs [reporting].endpoint in health.toml
+# and the device token; without them, or if EduOS can't be reached, no update.
+# If the district hasn't turned approvals on in EduOS, Zincati runs as usual.
 require_district_signoff = true
 state_override_allowed = false
