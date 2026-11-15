@@ -46,7 +46,9 @@ EduOS is derived from Fedora CoreOS (or RHEL CoreOS / Flatcar) with:
 - Podman + systemd (Quadlet) for all workloads
 - SELinux enforcing + locked-down users by default
 - Read-only rootfs with /etc and /var overlays
-- Automatic zincati / rpm-ostree style updates (customized)
+- Signed, atomic OS updates from Fedora CoreOS (Zincati + rpm-ostree), on the
+  district's maintenance windows and canary cohort, with post-update health
+  checks and rollback (docs/UPDATES-AND-HEALTH.md)
 
 The ISO can be written to USB, used for PXE, or installed via coreos-installer.
 
