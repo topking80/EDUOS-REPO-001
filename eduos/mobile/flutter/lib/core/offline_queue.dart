@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'key_value_store.dart';
 
 /// Who a queued write belongs to: the server, user, district and membership
-/// (role and school) it was made under. A write is only ever replayed under
+/// (role and school) it was made under. (user, district, school, role) is
+/// exactly what identifies a membership: db/009 makes it unique with
+/// UNIQUE NULLS NOT DISTINCT, so no two memberships share an owner key
+/// (test/offline-queue-owner-key.test.js keeps the two in step). A write is only ever replayed under
 /// exactly the same identity, so an expired session, a different account, a
 /// membership switch or a new server can never send someone else's attendance
 /// or check-ins under their own name.
