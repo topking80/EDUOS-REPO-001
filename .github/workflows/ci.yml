@@ -168,20 +168,22 @@ jobs:
           flutter-version: '3.24.5'
           channel: stable
           cache: true
-      - name: Resolve Flutter dependencies
+      - name: Resolve Flutter dependencies (from the committed lockfile)
         working-directory: eduos/mobile/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
       - name: Analyze Dart sources
         working-directory: eduos/mobile/flutter
         run: flutter analyze --fatal-infos
       - name: Run Flutter unit and widget tests
         working-directory: eduos/mobile/flutter
         run: flutter test --reporter expanded
-      # The starter ships Dart code only (no android/ folder). Generate the
-      # platform scaffolding in CI; existing files (lib/, test/, pubspec) are kept.
-      - name: Generate Android platform scaffolding
-        working-directory: eduos/mobile/flutter
-        run: flutter create --platforms=android --project-name eduos_mobile_branding --org org.eduos .
       - name: Compile Android debug application
         working-directory: eduos/mobile/flutter
         run: flutter build apk --debug
+      - name: Upload debug APK for device testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: eduos-android-debug-apk
+          path: eduos/mobile/flutter/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
