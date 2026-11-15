@@ -6,6 +6,8 @@
 import crypto from "node:crypto";
 import http from "node:http";
 import { spawn } from "node:child_process";
+import { after } from "node:test";
+import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { SignJWT, exportJWK, generateKeyPair } from "jose";
@@ -138,8 +140,19 @@ export async function startServer(env) {
     child.stdout.on("data", onData); child.stderr.on("data", onData);
     child.on("exit", code => reject(new Error(`server exited (${code}): ${out}`)));
   });
+  servers.push({ log: () => out });
   return { base: `http://127.0.0.1:${port}`, child, log: () => out, stop: () => new Promise(r => { if (child.exitCode !== null || child.signalCode !== null) return r(); child.removeAllListeners("exit"); child.on("exit", r); child.kill(); }) };
 }
+
+// express-rate-limit logs (rather than throws) when a limiter is misconfigured,
+// for example a custom key that uses req.ip directly. Every integration file
+// imports this harness, so this file-level hook (after the suite's own cleanup)
+// fails the run if any server it started logged such an error.
+const servers = [];
+after(() => {
+  const bad = servers.flatMap(s => s.log().split("\n").filter(l => /ERR_ERL_[A-Z_]+/.test(l)));
+  assert.deepEqual(bad, [], "the server logged rate-limiter validation errors");
+});
 
 const cookieName = "eduos_session";
 const pickCookie = (res, prefix) => res.headers.getSetCookie().map(c => c.split(";")[0]).find(c => c.startsWith(prefix) && !c.endsWith("="));
