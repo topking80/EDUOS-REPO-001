@@ -9,9 +9,11 @@ import 'screens/alerts_screen.dart';
 import 'screens/arrival_screen.dart';
 import 'screens/children_screen.dart';
 import 'screens/class_register_screen.dart';
+import 'screens/courses_screen.dart';
 import 'screens/driver_route_screen.dart';
 import 'screens/family_library_screen.dart';
 import 'screens/family_pickup_screen.dart';
+import 'screens/learner_screens.dart';
 import 'screens/messages_screen.dart';
 import 'screens/overview_screen.dart';
 import 'screens/safety_board.dart';
@@ -61,6 +63,12 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       'route' => const DriverRouteScreen(),
       'classes' when role == 'teacher' => const ClassRegisterScreen(),
       'library' when role == 'parent' => const FamilyLibraryScreen(),
+      'library' when role == 'pupil' => const FamilyLibraryScreen(mine: true),
+      'home' when role == 'pupil' => const LearnerHomeScreen(),
+      'path' when role == 'pupil' => const PathScreen(),
+      'christie' when role == 'pupil' => const ChristieTab(),
+      'courses' when role == 'pupil' => const LearnerCoursesScreen(),
+      'news' when role == 'pupil' => const NewsScreen(),
       'arrival' => const ArrivalScreen(),
       'pickup' when role == 'parent' => const FamilyPickupScreen(),
       'pickup' => const StaffPickupScreen(),
