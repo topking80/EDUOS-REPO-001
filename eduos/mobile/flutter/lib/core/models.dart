@@ -646,13 +646,14 @@ class StandardProgress {
 const levelText = {'mastered': 'Mastered', 'developing': 'Developing', 'emerging': 'Emerging', 'not_started': 'Not started'};
 
 class LessonRef {
-  const LessonRef({required this.id, required this.title, required this.standards, required this.sources});
+  const LessonRef({required this.id, required this.title, required this.standards, required this.sources, this.approved = false});
   factory LessonRef.fromJson(Json j) => LessonRef(
       id: str(j['id']), title: str(j['title']), standards: (j['standards'] is List ? (j['standards'] as List).map((e) => '$e').toList() : const <String>[]),
-      sources: integer(j['sources']));
+      sources: integer(j['sources']), approved: boolean(j['approved']));
   final String id, title;
   final List<String> standards;
   final int sources;
+  final bool approved;
 }
 
 class CourseUnit {
@@ -693,7 +694,8 @@ class AssignmentRef {
 
 class CourseDetail {
   const CourseDetail({required this.id, required this.title, required this.subject, required this.gradeLevel, required this.term,
-      required this.teacher, required this.grade, required this.mastery, required this.standards, required this.units, required this.assignments});
+      required this.teacher, required this.grade, required this.mastery, required this.standards, required this.units, required this.assignments,
+      this.hasLearner = true, this.canManage = false});
   factory CourseDetail.fromJson(Json j) => CourseDetail(
         id: str(j['id']),
         title: str(j['title']),
@@ -706,7 +708,12 @@ class CourseDetail {
         standards: objs(j['standards']).map(StandardProgress.fromJson).toList(),
         units: objs(j['units']).map(CourseUnit.fromJson).toList(),
         assignments: objs(j['assignments']).map(AssignmentRef.fromJson).toList(),
+        hasLearner: j['learner'] is Map || j['learner'] == true,
+        canManage: boolean(j['canManage']),
       );
+  /// A learner's own view (grade and standards mastery), not a staff view.
+  final bool hasLearner;
+  final bool canManage;
   final String id, title, subject, gradeLevel, term, teacher;
   final Grade grade;
   final CourseMastery mastery;
@@ -772,7 +779,8 @@ class AttemptSummary {
 class AssignmentDetail {
   const AssignmentDetail({required this.id, required this.title, required this.kind, required this.points, this.instructions, this.dueAt,
       required this.status, required this.standards, required this.itemCount, required this.maxAttempts, required this.retakePolicy,
-      this.timeLimit, this.effectiveMinutes, required this.extraTimePct, this.readAloud = false, required this.attempts, this.submission});
+      this.timeLimit, this.effectiveMinutes, required this.extraTimePct, this.readAloud = false, required this.attempts, this.submission,
+      this.canManage = false, this.submissions = const []});
   factory AssignmentDetail.fromJson(Json j) {
     final acc = obj(j['accommodations']);
     return AssignmentDetail(
@@ -793,6 +801,8 @@ class AssignmentDetail {
       readAloud: boolean(acc['readAloud']),
       attempts: objs(j['attempts']).map(AttemptSummary.fromJson).toList(),
       submission: j['submission'] is Map ? obj(j['submission']) : null,
+      canManage: boolean(j['canManage']),
+      submissions: objs(j['submissions']),
     );
   }
   final String id, title, kind, status, retakePolicy;
@@ -805,6 +815,9 @@ class AssignmentDetail {
   final int? timeLimit, effectiveMinutes;
   final List<AttemptSummary> attempts;
   final Json? submission;
+  /// Staff view: every learner's attempts (quiz) or hand-ins (classwork).
+  final bool canManage;
+  final List<Json> submissions;
   AttemptSummary? get open => attempts.where((a) => a.status == 'in_progress').firstOrNull;
   int get left => maxAttempts - attempts.length;
 }

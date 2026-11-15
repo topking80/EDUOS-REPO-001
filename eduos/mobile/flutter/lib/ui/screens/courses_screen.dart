@@ -10,6 +10,7 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
 import 'learner_screens.dart';
+import 'teacher_screens.dart';
 
 const _kindText = {'quiz': 'Quiz', 'work': 'Classwork'};
 const _workStatus = {'not_started': 'Not started', 'in_progress': 'In progress', 'needs_review': 'With your teacher', 'graded': 'Graded', 'submitted': 'Handed in'};
@@ -76,9 +77,9 @@ class CourseScreen extends StatelessWidget {
           SectionCard(children: [
             Text('${c.subject} · Grade ${c.gradeLevel} · ${c.term} · ${c.teacher}', style: Theme.of(context).textTheme.bodySmall),
             Semantics(header: true, child: Text(c.title, style: Theme.of(context).textTheme.titleLarge)),
-            Text('Grade so far: ${c.grade.text} · ${c.mastery.mastered} of ${c.mastery.total} standards mastered'),
+            if (c.hasLearner) Text('Grade so far: ${c.grade.text} · ${c.mastery.mastered} of ${c.mastery.total} standards mastered'),
           ]),
-          if (c.standards.isNotEmpty)
+          if (c.hasLearner && c.standards.isNotEmpty)
             SectionCard(title: 'Standards', children: [
               for (final s in c.standards)
                 ListTile(
@@ -96,7 +97,7 @@ class CourseScreen extends StatelessWidget {
                   contentPadding: EdgeInsets.zero,
                   title: Text(l.title),
                   subtitle: Text([l.standards.join(', '), if (l.sources > 0) '${l.sources} primary source${l.sources > 1 ? 's' : ''}'].where((x) => x.isNotEmpty).join(' · ')),
-                  trailing: const Icon(Icons.chevron_right),
+                  trailing: c.canManage ? StatusChip(l.approved ? 'present' : 'expected', text: l.approved ? 'Approved' : 'Needs approval') : const Icon(Icons.chevron_right),
                   onTap: () => _push(context, LessonScreen(lessonId: l.id)),
                 ),
             ]),
@@ -104,6 +105,7 @@ class CourseScreen extends StatelessWidget {
             if (c.assignments.isEmpty) const EmptyState('Nothing assigned yet.'),
             for (final a in c.assignments) AssignmentTile(a, onReturn: reload),
           ]),
+          if (c.canManage && AppScope.of(context).me?.role != 'superintendent') AccommodationsCard(courseId: c.id),
         ]),
       ),
     );
@@ -251,6 +253,7 @@ class AssignmentScreen extends StatelessWidget {
             if (a.instructions != null && a.instructions!.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(a.instructions!)),
             if (a.dueAt != null) Text('Due ${fmtDay(a.dueAt)}'),
           ]);
+          if (a.canManage) return ListView(padding: const EdgeInsets.all(16), children: [head, StaffSubmissions(a, onReturn: reload)]);
           if (a.kind != 'quiz') return ListView(padding: const EdgeInsets.all(16), children: [head, _WorkResult(a)]);
           final open = a.open;
           final canStart = (open != null || a.left > 0) && a.status == 'published';
