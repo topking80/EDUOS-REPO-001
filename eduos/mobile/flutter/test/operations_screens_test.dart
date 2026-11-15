@@ -42,7 +42,8 @@ class FakeServer {
           'GET /api/school-operations/health_office': (_) => {'data': [{'id': 'w1', 'domain': 'health_office', 'kind': 'supply', 'status': 'open', 'priority': 'urgent', 'summary': 'Restock first-aid kits', 'created_at': now}]},
         };
         final handler = routes[key] ?? common[key];
-        final body = handler?.call(r);
+        var body = handler?.call(r);
+        if (body is Future) body = await body; // a handler can hold its reply (in-flight tests)
         if (body == null) return http.Response('{"error":"not_found"}', 404);
         if (body is http.Response) return body;
         return http.Response(jsonEncode(body), r.method == 'POST' ? 201 : 200);

@@ -26,9 +26,12 @@ class LibraryDeskScreen extends StatefulWidget {
 }
 
 class _LibraryDeskScreenState extends State<LibraryDeskScreen> {
-  Key _key = UniqueKey();
+  final Key _key = UniqueKey();
   final _checkIn = TextEditingController(), _book = TextEditingController(), _borrower = TextEditingController();
-  final _checkInFocus = FocusNode();
+  final _checkInFocus = FocusNode(), _bookFocus = FocusNode();
+  // One desk transaction at a time: a double scan or double tap can't send a
+  // second return or checkout while the first is in flight.
+  bool _busy = false;
   late DateTime _due = DateUtils.dateOnly(DateTime.now()).add(const Duration(days: 14));
   String _status = 'Ready for scan.';
   bool _ok = true;
@@ -39,6 +42,7 @@ class _LibraryDeskScreenState extends State<LibraryDeskScreen> {
       c.dispose();
     }
     _checkInFocus.dispose();
+    _bookFocus.dispose();
     super.dispose();
   }
 
@@ -52,30 +56,50 @@ class _LibraryDeskScreenState extends State<LibraryDeskScreen> {
 
   String _err(ApiException e, String fallback) => e.isOffline ? 'You\'re offline. The desk needs a connection.' : (e.error ?? fallback).replaceAll('_', ' ');
 
-  Future<void> _return(_Desk d) async {
+  /// Puts the cursor back in [field] for the next scan; after a problem the
+  /// text is selected, so the next scan replaces it.
+  void _ready(FocusNode node, TextEditingController field, {bool select = false}) {
+    if (select) field.selection = TextSelection(baseOffset: 0, extentOffset: field.text.length);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) node.requestFocus();
+    });
+  }
+
+  Future<void> _return(_Desk d, Future<void> Function() reload) async {
+    if (_busy) return;
     final code = _checkIn.text.trim();
-    if (code.isEmpty) return _say('Scan a barcode first.', good: false);
+    void problem(String msg) {
+      _say(msg, good: false);
+      _ready(_checkInFocus, _checkIn, select: true);
+    }
+
+    if (code.isEmpty) return problem('Scan a barcode first.');
     final item = d.inventory.where((x) => x['barcode'] == code).firstOrNull;
-    if (item == null) return _say('No matching book barcode in this school\'s inventory.', good: false);
+    if (item == null) return problem('No matching book barcode in this school\'s inventory.');
     final loan = d.activeLoans.where((x) => x['item_id'] == item['id']).firstOrNull;
-    if (loan == null) return _say('No active loan for this book.', good: false);
+    if (loan == null) return problem('No active loan for this book.');
+    setState(() => _busy = true);
     try {
       await AppScope.read(context).api.post('/api/library/loans/${loan['id']}/return', {'disposition': 'returned'});
       _checkIn.clear();
       _say('Returned: ${item['title']}');
-      setState(() => _key = UniqueKey());
-      _checkInFocus.requestFocus();
+      await reload();
+      _ready(_checkInFocus, _checkIn);
     } on ApiException catch (e) {
-      _say(_err(e, 'Return could not be completed.'), good: false);
+      problem(_err(e, 'Return could not be completed.'));
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _checkout(_Desk d) async {
+  Future<void> _checkout(_Desk d, Future<void> Function() reload) async {
+    if (_busy) return;
     final api = AppScope.read(context).api;
     final item = d.inventory.where((x) => x['barcode'] == _book.text.trim()).firstOrNull;
     if (item == null) return _say('Book barcode not found.', good: false);
     var borrower = _borrower.text.trim();
     if (borrower.isEmpty) return _say('Scan the borrower\'s card first.', good: false);
+    setState(() => _busy = true);
     try {
       if (!_uuid.hasMatch(borrower)) {
         borrower = str(obj((await api.post('/api/library/borrower-cards/lookup', {'barcode': borrower})).data)['borrowerUserId']);
@@ -89,9 +113,12 @@ class _LibraryDeskScreenState extends State<LibraryDeskScreen> {
       _book.clear();
       _borrower.clear();
       _say('Checked out: ${item['title']}');
-      setState(() => _key = UniqueKey());
+      await reload();
+      _ready(_bookFocus, _book);
     } on ApiException catch (e) {
       _say(e.status == 404 ? 'Student card was not recognized.' : _err(e, 'Checkout could not be completed.'), good: false);
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -114,7 +141,7 @@ class _LibraryDeskScreenState extends State<LibraryDeskScreen> {
         final r = await Future.wait([optional('/api/library/inventory'), optional('/api/library/loans'), optional('/api/library/summary')]);
         return _Desk(objs(r[0]?['data']), objs(r[1]?['data']).where((x) => x['returned_at'] == null).toList(), obj(obj(r[2]?['data'])['totals']));
       },
-      builder: (context, d, _) => ListView(padding: const EdgeInsets.all(16), children: [
+      builder: (context, d, reload) => ListView(padding: const EdgeInsets.all(16), children: [
         Semantics(header: true, child: Text('Library desk', style: Theme.of(context).textTheme.titleLarge)),
         Text('Pair a Bluetooth barcode scanner as a keyboard, tap a field and scan. Most scanners send Enter automatically.', style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 8),
@@ -143,20 +170,20 @@ class _LibraryDeskScreenState extends State<LibraryDeskScreen> {
             focusNode: _checkInFocus,
             autocorrect: false,
             textInputAction: TextInputAction.done,
-            onSubmitted: (_) => _return(d),
+            onSubmitted: (_) => _return(d, reload),
             decoration: const InputDecoration(labelText: 'Book barcode for check-in'),
           ),
           const SizedBox(height: 8),
-          FilledButton(onPressed: () => _return(d), child: const Text('Check in')),
+          FilledButton(onPressed: _busy ? null : () => _return(d, reload), child: const Text('Check in')),
         ]),
         if (circulate)
           SectionCard(title: 'Check out a book', children: [
-            TextField(controller: _book, autocorrect: false, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Book barcode for checkout')),
+            TextField(controller: _book, focusNode: _bookFocus, autocorrect: false, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Book barcode for checkout')),
             TextField(
               controller: _borrower,
               autocorrect: false,
               textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _checkout(d),
+              onSubmitted: (_) => _checkout(d, reload),
               decoration: const InputDecoration(labelText: 'Borrower card or account ID'),
             ),
             const SizedBox(height: 8),
@@ -169,7 +196,7 @@ class _LibraryDeskScreenState extends State<LibraryDeskScreen> {
                 if (p != null) setState(() => _due = p);
               },
             ),
-            FilledButton(onPressed: () => _checkout(d), child: const Text('Check out')),
+            FilledButton(onPressed: _busy ? null : () => _checkout(d, reload), child: const Text('Check out')),
           ]),
         SectionCard(title: 'Active loans', children: [
           if (d.activeLoans.isEmpty) const EmptyState('No active loans.'),
