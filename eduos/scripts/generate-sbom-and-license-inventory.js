@@ -1,6 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
+// Write via a temp file and rename, so a reader (another test running the
+// generator at the same time) never sees a half-written file.
+function writeAtomic(file, data) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, file);
+}
+
 const root = process.cwd();
 const lockPath = path.join(root, "package-lock.json");
 const pkgPath = path.join(root, "package.json");
@@ -40,7 +48,7 @@ const sbom = {
   })),
   relationships: packages.map(x => ({ spdxElementId: "SPDXRef-DOCUMENT", relationshipType: "DESCRIBES", relatedSpdxElement: spdxId(x) }))
 };
-fs.writeFileSync(path.join(outDir, "eduos-sbom.spdx.json"), JSON.stringify(sbom, null, 2) + "\n");
+writeAtomic(path.join(outDir, "eduos-sbom.spdx.json"), JSON.stringify(sbom, null, 2) + "\n");
 
 const restricted = /^(AGPL-\d(?:\\.\d)?|GPL-\d(?:\\.\d)?|SSPL-\d(?:\\.\d)?|BUSL-\d(?:\\.\d)?)/i;
 const unknown = packages.filter(x => !x.license);
@@ -55,6 +63,6 @@ const report = {
   restrictedLicensePackages: flagged.map(({name,version,license}) => ({name,version,license})),
   policy: "Restricted licenses are flagged for legal review; unknown licenses are reported but do not automatically fail."
 };
-fs.writeFileSync(path.join(outDir, "license-inventory.json"), JSON.stringify(report, null, 2) + "\n");
+writeAtomic(path.join(outDir, "license-inventory.json"), JSON.stringify(report, null, 2) + "\n");
 console.log(`SBOM: ${packages.length} locked packages; ${unknown.length} unknown licenses; ${flagged.length} restricted-license candidates.`);
 if (process.argv.includes("--check") && flagged.length) process.exitCode = 1;

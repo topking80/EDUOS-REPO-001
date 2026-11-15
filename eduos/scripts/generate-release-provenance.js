@@ -3,6 +3,14 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 
+// Write via a temp file and rename, so a reader (another test running the
+// generator at the same time) never sees a half-written file.
+function writeAtomic(file, data) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, file);
+}
+
 const root = process.cwd();
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const lock = fs.readFileSync(path.join(root, "package-lock.json"));
@@ -32,5 +40,5 @@ const record = {
 };
 const out = path.join(root, "artifacts", "supply-chain", "release-provenance.json");
 fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, JSON.stringify(record, null, 2) + "\n");
+writeAtomic(out, JSON.stringify(record, null, 2) + "\n");
 console.log(`Wrote ${path.relative(root, out)}; source revision ${record.sourceRevisionStatus}; signing not configured.`);
