@@ -1988,6 +1988,59 @@ function renderSignIn() {
     h("p", { class: "muted" }, "Student, teacher, family, school leader and driver apps."),
     h("a", { class: "btn primary big block", href: "/auth/login?next=/app/" }, "Sign in with your school account"))));
 }
+// Staff AI assistant (src/ai/): only the use cases the district enabled for
+// this role. Nothing about students is sent unless the person types it, and
+// the operations brief uses only counts EduOS computes from their own scope.
+async function aiAssistantCard() {
+  if (["pupil", "parent", "driver", "sro"].includes(state.me.role)) return null;
+  const st = (await safe(api.get("/api/ai/status")))?.data;
+  if (!st?.usecases?.length) return null;
+  const on = st.usecases.filter(u => u.enabled);
+  const out = h("div", { "aria-live": "polite" });
+  const left = (b) => Math.max(0, b.cap - b.used);
+  const body = [h("h2", {}, "Assistant"),
+    h("p", { class: "muted small" }, `${st.provider === "external" ? "Uses the district's external AI service; names and contact details are removed first." : "Runs on EduOS itself; nothing leaves the server."} ${left(st.budget.you).toLocaleString()} of your ${st.budget.you.cap.toLocaleString()} tokens left today.`)];
+  if (!on.length) return h("section", { class: "card", "aria-label": "Assistant" }, ...body, empty("Your district hasn't turned on any assistant tools yet."));
+  const pick = h("select", { id: "ai-usecase" }, on.map(u => h("option", { value: u.id }, u.label)));
+  const text = h("textarea", { id: "ai-text", rows: 5, maxlength: 12000 });
+  const label = h("label", { for: text.id });
+  const hints = { lesson_draft: ["Topic", "e.g. Fractions on a number line"], resource_summary: ["Resource text", "Paste an article, policy or handout"],
+    writing_feedback: ["Student writing", "Paste the writing (leave out the student's name)"] };
+  const sync = () => { const u = on.find(x => x.id === pick.value); const hint = hints[pick.value];
+    label.textContent = hint?.[0] || ""; text.placeholder = hint?.[1] || ""; label.hidden = text.hidden = !u.input; text.required = !!u.input; };
+  pick.addEventListener("change", sync); sync();
+  const errors = { ai_usecase_not_enabled: "Your district hasn't turned this on.", ai_your_budget_reached: "You've used today's assistant budget.",
+    ai_district_budget_reached: "The district's assistant budget for today is used up.", ai_input_length: "That's too short or too long." };
+  return h("section", { class: "card", "aria-label": "Assistant" }, ...body,
+    h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
+      out.replaceChildren(h("p", { class: "muted" }, "Working…"));
+      try { const r = (await api.post("/api/ai/run", { usecase: pick.value, ...(text.hidden ? {} : { text: text.value }) })).data;
+        out.replaceChildren(h("pre", { class: "ai-out" }, r.text), h("p", { class: "muted small" }, `${r.source === "external" ? "External AI" : "EduOS"} · ${r.tokens} tokens · check before you use it`)); }
+      catch (err) { out.replaceChildren(h("p", { class: "notice", role: "alert" }, errors[err.body?.error] || "The assistant couldn't answer.")); } } },
+      h("label", { for: pick.id }, "Tool"), pick, label, text, h("button", { class: "btn primary", type: "submit" }, "Ask")), out);
+}
+// Superintendent: which assistant tools the district allows, and its budgets.
+async function aiPolicyCard() {
+  const r = (await safe(api.get("/api/ai/policy")))?.data;
+  if (!r?.policy) return null;
+  const boxes = r.usecases.map(u => { const b = h("input", { id: `aip-${u.id}`, type: "checkbox", class: "check", value: u.id }); b.checked = r.policy.enabled_usecases.includes(u.id); b.disabled = !r.canEdit;
+    return h("div", { class: "row" }, b, h("label", { for: b.id, class: "grow" }, `${u.label} · ${u.roles.join(", ").replace(/_/g, " ")}`)); });
+  const cap = h("input", { id: "aip-cap", type: "number", min: 0, value: String(r.policy.daily_token_cap), disabled: !r.canEdit });
+  const ucap = h("input", { id: "aip-ucap", type: "number", min: 0, value: String(r.policy.user_daily_token_cap), disabled: !r.canEdit });
+  return h("section", { class: "card", "aria-label": "Assistant settings" }, h("h2", {}, "Assistant settings"),
+    h("p", { class: "muted small" }, `Off until you turn a tool on. Prompts and answers aren't stored; only usage is. AI service: ${r.provider === "external" ? "external (names and contact details removed first)" : "EduOS only, no network"}.`),
+    r.usage30d.length ? h("ul", { class: "list" }, r.usage30d.map(u => kv(r.usecases.find(x => x.id === u.usecase)?.label || u.usecase, `${u.calls} uses · ${u.tokens.toLocaleString()} tokens (30 days)`))) : null,
+    h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
+      try { await api.req("PUT", "/api/ai/policy", { enabledUsecases: boxes.map(x => x.querySelector("input")).filter(x => x.checked).map(x => x.value), dailyTokenCap: Number(cap.value), userDailyTokenCap: Number(ucap.value) }); toast("Saved"); }
+      catch { toast("Couldn't save."); } } },
+      boxes, h("label", { for: cap.id }, "District tokens per day"), cap, h("label", { for: ucap.id }, "Tokens per person per day"), ucap,
+      r.canEdit ? h("button", { class: "btn", type: "submit" }, "Save") : null));
+}
+for (const [view, extra] of [["copilot", [aiAssistantCard]], ["operations", [aiAssistantCard]], ["guidance", [aiAssistantCard]], ["library", [aiAssistantCard]],
+  ["overview", [aiAssistantCard, () => state.me.role === "superintendent" ? aiPolicyCard() : null]]]) {
+  const base = VIEWS[view];
+  VIEWS[view] = async () => [...[await base()].flat(), ...(await Promise.all(extra.map(f => f())))];
+}
 async function boot() {
   try {
     state.me = await api.get("/api/me");
