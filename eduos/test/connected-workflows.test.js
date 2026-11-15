@@ -4,6 +4,8 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 const root=process.cwd();
 const server=readFileSync(join(root,"src/server.js"),"utf8");
+// The SIS batch writer moved to src/sis-import.js (shared with the OneRoster/Ed-Fi connectors).
+const sisImport=readFileSync(join(root,"src/sis-import.js"),"utf8");
 const bridge=readFileSync(join(root,"public/api-bridge.js"),"utf8");
 const migration=readFileSync(join(root,"db/006_connected_workflows.sql"),"utf8");
 const html=readFileSync(join(root,"public/index.html"),"utf8");
@@ -27,9 +29,10 @@ test("teacher preferences are stored by authenticated teacher and school",()=>{
 test("SIS import is authenticated, idempotent and audited",()=>{
  assert.match(server,/app\.post\("\/api\/integrations\/sis\/import",requireSession,requireCsrf,requirePermission\("schools","update"\)/);
  assert.match(migration,/UNIQUE\(district_id,source_system,source_batch_id\)/);
- assert.match(server,/sis_attendance_imports/);
- assert.match(server,/payload_sha256/);
- assert.match(server,/sis_import/);
+ assert.match(server,/applySisBatch\(/);
+ assert.match(sisImport,/sis_attendance_imports/);
+ assert.match(sisImport,/payload_sha256/);
+ assert.match(sisImport,/'sis_import'/);
 });
 test("front end connects family messages and classroom preferences to server API",()=>{
  assert.match(bridge,/familyMessages\(studentId\)/);

@@ -1,0 +1,2 @@
+# Reviewed findings (test-only values, never real secrets).
+3662f77a135704cd28249cc6246cf928a1882270:eduos/test/integration/integrations.test.js:generic-api-key:67

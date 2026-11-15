@@ -286,3 +286,9 @@ GRANT UPDATE (stage, promoted_by, promoted_at, withdrawn_by, withdrawn_at, withd
 REVOKE DELETE, TRUNCATE ON edge_update_policy, edge_update_releases FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_edge_update_target(uuid, text), eduos_os_version_key(text) TO eduos_app;
 GRANT UPDATE (update_cohort, cohort_set_by, cohort_set_at) ON edge_devices TO eduos_app;
+-- 040 external integrations: district leads manage connectors (row-level
+-- security keeps them in their district); sync runs are an append-only record.
+GRANT SELECT, INSERT, UPDATE ON integration_connectors TO eduos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON integration_school_map TO eduos_app;
+GRANT SELECT, INSERT ON integration_sync_runs TO eduos_app;
+REVOKE DELETE, TRUNCATE ON integration_connectors, integration_sync_runs FROM eduos_app;
