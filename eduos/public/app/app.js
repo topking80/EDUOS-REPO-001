@@ -1559,27 +1559,98 @@ VIEWS.node = async () => {
     kv("Record transfers (consent)", s.consentExceptions === "on" ? "on" : "off (default)"))));
   return out;
 };
-VIEWS.overview = async () => {
-  const role=state.me.role;
-  const config={
-    vice_principal:{domain:"facilities",title:"Vice Principal Operations",desc:"Coordinate school-day exceptions, attendance follow-up, safety coordination and facilities escalations.",kind:"operations_followup",placeholder:"Describe the operational follow-up needed"},
-    counselor:{domain:"counseling",title:"Guidance Counselor Console",desc:"Manage a routing queue for non-confidential follow-ups. Keep counseling narratives and student clinical details in the district-approved case system.",kind:"student_support_referral",placeholder:"Brief non-sensitive routing summary"},
-    nurse:{domain:"health_office",title:"School Nurse Console",desc:"Coordinate health-office operational tasks only. Do not enter diagnoses, medications, treatment notes or student-identifying health details here.",kind:"health_office_task",placeholder:"Brief non-sensitive operational summary"},
-    maintenance:{domain:"facilities",title:"Maintenance Console",desc:"Submit and track facility work orders, safety repairs and building service requests.",kind:"repair",placeholder:"Describe the facility issue and location (no student names)"},
-    lunch_staff:{domain:"meal_service",title:"Meal Service Console",desc:"Coordinate meal service tasks, stock issues, equipment problems and daily service operations.",kind:"meal_service_issue",placeholder:"Describe the meal service issue"}
-  }[role];
-  if(!config) return h("section",{class:"card"},h("h2",{},"School operations"),h("p",{class:"muted"},"Choose a workspace."));
-  const result=await safe(api.get(`/api/school-operations/${config.domain}`));
-  const items=result?.data||[];
-  const form=h("form",{class:"card",onsubmit:async e=>{e.preventDefault();const f=e.currentTarget,summary=f.elements.summary.value.trim();if(!summary)return;await api.post(`/api/school-operations/${config.domain}`,{kind:config.kind,summary,priority:f.elements.priority.value});go("overview",{push:false});}},
-    h("h3",{},"Create work item"),h("label",{}, "Summary"),h("input",{name:"summary",required:true,maxlength:300,placeholder:config.placeholder}),
-    h("label",{},"Priority"),h("select",{name:"priority"},h("option",{value:"normal"},"Normal"),h("option",{value:"high"},"High"),h("option",{value:"urgent"},"Urgent"),h("option",{value:"low"},"Low")),
-    h("button",{class:"btn",type:"submit"},"Add to queue"));
-  return [h("h2",{},config.title),h("p",{class:"muted"},config.desc),
-    h("section",{class:"card"},h("h3",{},"Queue summary"),h("p",{},`${items.filter(x=>x.status==="open").length} open · ${items.filter(x=>x.status==="in_progress").length} in progress · ${items.filter(x=>x.status==="completed").length} completed`)),
-    form,
-    h("section",{class:"card"},h("h3",{},"Work queue"),items.length?h("ul",{class:"list"},items.map(x=>h("li",{class:"row"},h("span",{class:"grow"},h("b",{},x.summary),h("br"),h("span",{class:"muted small"},`${x.kind} · ${x.priority} · ${x.status}`)),h("button",{class:"btn secondary",type:"button",onclick:async()=>{await api.post(`/api/school-operations/${config.domain}/${x.id}/status`,{status:x.status==="open"?"in_progress":"completed"});go("overview",{push:false});}},x.status==="open"?"Start":"Complete")))):empty("No work items in this queue."))];
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+VIEWS.attendance = async () => {
+  const today = isoDay(new Date());
+  const r = await api.get("/api/attendance?limit=500");
+  const marks = (r.data || []).filter(e => String(e.event_date).slice(0, 10) === today);
+  const by = (s) => marks.filter(e => e.status === s);
+  const absent = by("absent"), tardy = by("tardy");
+  const row = (e) => h("li", { class: "row" }, h("span", { class: "grow" }, e.display_name), chip(e.status), e.family_acknowledged_at ? h("span", { class: "small muted" }, "Family acknowledged") : null);
+  return [h("h2", {}, "Attendance today"),
+    h("div", { class: "stats" }, stat(by("present").length, "present"), stat(absent.length, "absent", true), stat(tardy.length, "tardy", true)),
+    h("section", { class: "card", "aria-label": "Absent today" }, h("h2", {}, "Absent"), absent.length ? h("ul", { class: "list" }, absent.map(row)) : empty("No absences marked today.")),
+    h("section", { class: "card", "aria-label": "Tardy today" }, h("h2", {}, "Tardy"), tardy.length ? h("ul", { class: "list" }, tardy.map(row)) : empty("No tardies marked today.")),
+    h("p", { class: "notice" }, "Marks come from teachers' class registers. Follow-ups go in the Operations queue.")];
 };
+// Specialized school operations consoles (vice principal, counselor, nurse,
+// facilities, meal service): routing-only work queues on /api/school-operations.
+const OPS_TABS = { guidance: "counseling", healthoffice: "health_office", facilities: "facilities", meals: "meal_service" };
+const OPS_TEXT = { counseling: "Counseling", health_office: "Health office", facilities: "Facilities", meal_service: "Meal service" };
+const OPS_SENSITIVE = ["counseling", "health_office"];
+const OPS_KINDS = {
+  facilities: ["repair", "cleaning", "safety_hazard", "setup", "other"],
+  meal_service: ["supply", "equipment", "menu", "staffing", "other"],
+  counseling: ["check_in_request", "referral_follow_up", "schedule_change", "other"],
+  health_office: ["supply", "screening_logistics", "room_coverage", "other"],
+};
+// Role-specific titles and guidance (from the 36.4 console config).
+const OPS_ROLE = {
+  vice_principal: ["Vice Principal Operations", "Coordinate school-day exceptions, attendance follow-up, safety coordination and facilities escalations."],
+  counselor: ["Guidance Counselor Console", "A routing queue for non-confidential follow-ups. Keep counseling narratives and student clinical details in the district-approved case system."],
+  nurse: ["School Nurse Console", "Health-office operational tasks only. Do not enter diagnoses, medications, treatment notes or student-identifying health details here."],
+  maintenance: ["Maintenance Console", "Submit and track facility work orders, safety repairs and building service requests."],
+  lunch_staff: ["Meal Service Console", "Coordinate meal service tasks, stock issues, equipment problems and daily service operations."],
+};
+const OPS_STATUS_CHIP = { open: "expected", in_progress: "boarded", completed: "present", cancelled: "not_started" };
+const opsWords = (v) => String(v || "").replaceAll("_", " ");
+async function specializedOpsView() {
+  const tab = state.tab, lead = ["principal", "vice_principal", "superintendent", "it_admin"].includes(state.me.role);
+  const domain = OPS_TABS[tab] || null; // null: the vice principal's operations view across every domain
+  const [center, list] = await Promise.all([api.get("/api/school-operations/command-center"), domain ? api.get(`/api/school-operations/${domain}`) : Promise.resolve(null)]);
+  const summary = center.data.summary || [];
+  const sum = (k) => summary.filter(r => !domain || r.domain === domain).reduce((n, r) => n + (k === "active" ? (["open", "in_progress"].includes(r.status) ? r.count : 0) : r[k] || 0), 0);
+  const items = domain ? list.data : center.data.work;
+  const creatable = domain ? [domain] : ["facilities", "meal_service"];
+  const refresh = () => go(tab, { push: false });
+  const setStatus = async (it, status) => {
+    try { await api.post(`/api/school-operations/${it.domain}/${it.id}/status`, { status }); toast(`Marked ${opsWords(status)}.`); refresh(); }
+    catch { toast("Couldn't update that work item."); }
+  };
+  const escalate = async (it) => {
+    try { await api.post(`/api/school-operations/${it.domain}/${it.id}/escalate`, {}); toast("Escalated."); refresh(); }
+    catch { toast("Couldn't escalate that work item."); }
+  };
+  const dom = h("select", { id: "ops-domain" }, creatable.map(d => h("option", { value: d }, OPS_TEXT[d])));
+  const kind = h("select", { id: "ops-kind" });
+  const fillKinds = () => { kind.replaceChildren(...OPS_KINDS[dom.value].map(k => h("option", { value: k }, opsWords(k)))); details.hidden = detailsLabel.hidden = OPS_SENSITIVE.includes(dom.value); };
+  const priority = h("select", { id: "ops-priority" }, ["normal", "low", "high", "urgent"].map(p => h("option", { value: p }, p)));
+  const summaryIn = h("input", { id: "ops-summary", type: "text", maxlength: 300, required: true });
+  const details = h("textarea", { id: "ops-details", maxlength: 500, rows: 2 });
+  const detailsLabel = h("label", { for: "ops-details" }, "Details (optional)");
+  dom.addEventListener("change", fillKinds);
+  fillKinds();
+  const form = h("form", { class: "card stack", "aria-label": "New work item", onsubmit: async (e) => {
+    e.preventDefault();
+    const d = dom.value;
+    try {
+      await api.post(`/api/school-operations/${d}`, { kind: kind.value, priority: priority.value, summary: summaryIn.value, ...(OPS_SENSITIVE.includes(d) || !details.value.trim() ? {} : { details: details.value }) });
+      toast("Work item added."); refresh();
+    } catch (err) { toast(err.body?.error === "kind_and_summary_required" ? "Add a short summary." : "Couldn't add that work item."); }
+  } }, h("h2", {}, "New work item"),
+    creatable.length > 1 ? [h("label", { for: dom.id }, "Area"), dom] : null,
+    h("label", { for: kind.id }, "Kind"), kind, h("label", { for: priority.id }, "Priority"), priority,
+    h("label", { for: summaryIn.id }, "Summary"), summaryIn, detailsLabel, details,
+    OPS_SENSITIVE.includes(creatable[0]) && creatable.length === 1 ? h("p", { class: "small muted" }, "Routing only. Never enter student names, health details or counseling notes here; use the approved student health or counseling system.") : null,
+    h("button", { class: "btn primary", type: "submit" }, "Add work item"));
+  const canCreate = creatable.some(d => ({ facilities: ["maintenance", "principal", "vice_principal"], health_office: ["nurse"], counseling: ["counselor"], meal_service: ["lunch_staff", "principal", "vice_principal"] })[d].includes(state.me.role));
+  return [
+    h("section", { class: "card hero" }, h("p", { class: "small muted" }, "SCHOOL OPERATIONS"), h("h2", {}, OPS_ROLE[state.me.role]?.[0] || (domain ? OPS_TEXT[domain] : "Operations")),
+      h("p", { class: "muted" }, OPS_ROLE[state.me.role]?.[1] || (domain ? "Your team's work queue." : "Work queues for facilities, meal service, counseling and the health office."))),
+    h("div", { class: "stats" }, stat(sum("active"), "open"), stat(sum("urgent"), "urgent", true), stat(sum("overdue"), "overdue", true)),
+    canCreate ? form : null,
+    h("section", { class: "card", "aria-label": "Work items" }, h("h2", {}, domain ? "Work queue" : "Open work"),
+      items.length ? h("ul", { class: "list" }, items.map(it => h("li", {},
+        h("div", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, it.summary),
+          h("p", { class: "small muted" }, `${domain ? "" : `${OPS_TEXT[it.domain]} · `}${opsWords(it.kind)} · ${it.priority}${it.escalation_level ? ` · escalated ×${it.escalation_level}` : ""} · ${ago(it.created_at)}${it.due_at ? ` · due ${fmtDay(it.due_at)}` : ""}`)),
+          chip(OPS_STATUS_CHIP[it.status] || "expected", opsWords(it.status))),
+        ["open", "in_progress"].includes(it.status) ? h("div", { class: "btns" },
+          it.status === "open" ? h("button", { class: "btn small", type: "button", "aria-label": `Start: ${it.summary}`, onclick: () => setStatus(it, "in_progress") }, "Start") : null,
+          h("button", { class: "btn primary small", type: "button", "aria-label": `Complete: ${it.summary}`, onclick: () => setStatus(it, "completed") }, "Complete"),
+          h("button", { class: "btn small", type: "button", "aria-label": `Cancel: ${it.summary}`, onclick: () => setStatus(it, "cancelled") }, "Cancel"),
+          lead ? h("button", { class: "btn danger small", type: "button", "aria-label": `Escalate: ${it.summary}`, onclick: () => escalate(it) }, "Escalate") : null) : null))) : empty("Nothing in the queue.")),
+  ];
+}
 VIEWS.operations = specializedOpsView;
 VIEWS.guidance = specializedOpsView;
 VIEWS.healthoffice = specializedOpsView;

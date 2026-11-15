@@ -99,7 +99,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: eduos/package-lock.json }
       - run: npm ci
+      # Includes test/browser/app-smoke.test.js: the web app booted in headless
+      # Chrome (preinstalled on the runner) for every role and tab.
       - run: npm test
+        env: { EDUOS_REQUIRE_BROWSER: "1" }
 
   integration:
     runs-on: ubuntu-24.04

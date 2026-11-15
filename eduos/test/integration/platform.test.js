@@ -21,7 +21,7 @@ describe("EduOS 32.1.0 platform flows against real PostgreSQL", { skip }, () => 
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
-    for (const name of ["supt1", "p1", "p2", "t1", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
+    for (const name of ["supt1", "p1", "p2", "t1", "pu", "vp1"]) s[name] = await login(server.base, idp, name, { email_verified: true });
   });
   after(async () => { await server?.stop(); await admin?.end(); await idp?.close(); await db?.drop(); });
 
@@ -120,6 +120,17 @@ describe("EduOS 32.1.0 platform flows against real PostgreSQL", { skip }, () => 
     assert.ok(runs.body.data.some(x => x.source_batch_id === "b-1"));
     // JSON attendance with an impossible date is a 400, not a database error.
     assert.equal((await as("t1")("POST", "/api/attendance", { studentId: ID.alice, eventDate: "2026-02-30", status: "present" })).status, 400);
+  });
+
+  it("a vice principal reads their own school's attendance, and only theirs", async () => {
+    assert.equal((await as("p1")("POST", "/api/attendance", { studentId: ID.bob, eventDate: "2026-11-03", status: "tardy" })).status, 201);
+    assert.equal((await as("p2")("POST", "/api/attendance", { studentId: ID.carol, eventDate: "2026-11-03", status: "absent" })).status, 201);
+    const r = await as("vp1")("GET", "/api/attendance?limit=500");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const names = new Set(r.body.data.map(e => e.display_name));
+    assert.ok(names.has("Bob B"), "sees a learner at their school");
+    assert.ok(!names.has("Carol C"), "never sees another school's learners");
+    assert.equal(r.body.data.find(e => e.display_name === "Bob B" && e.event_date === "2026-11-03")?.status, "tardy");
   });
 
   it("assignments can be saved as drafts and published later; pupils only see published work", async () => {
