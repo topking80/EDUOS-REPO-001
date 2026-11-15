@@ -38,6 +38,7 @@ import { registerSchoolOperationsAutomationRoutes } from "./school-operations-au
 import { registerSchoolOperationsNotificationRoutes } from "./school-operations-notification-routes.js";
 import { registerStaffDailyWorkspaceRoutes } from "./staff-daily-workspace-routes.js";
 import { registerStaffManagementRoutes } from "./staff-management-routes.js";
+import { registerEdgeDeviceRoutes } from "./edge-device-routes.js";
 import { registerEdenHub } from "./eden/hub.js";
 import { registerEdenNode, startAgent } from "./eden/node.js";
 import { parseSisCsv, isCalendarDate } from "./csv.js";
@@ -1906,6 +1907,7 @@ registerSchoolOperationsAutomationRoutes(app);
 registerSchoolOperationsNotificationRoutes(app);
 registerStaffDailyWorkspaceRoutes(app);
 registerStaffManagementRoutes(app);
+registerEdgeDeviceRoutes(app);
 // 32.7.0 EDEN: a district hub or a school node (EDUOS_NODE_TIER).
 const edenStatus = config.nodeTier === "district" ? registerEdenHub(app) : config.nodeTier === "school" ? registerEdenNode(app) : null;
 app.get("/api/eden/tier",requireSession,(req,res)=>{res.setHeader("Cache-Control","no-store");res.json({data:{tier:config.nodeTier||"classic",enabled:Boolean(edenStatus?.enabled),reason:edenStatus?.reason||null}})});
