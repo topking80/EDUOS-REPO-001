@@ -52,6 +52,9 @@ function mockApi(role, pathname) {
     case "/api/learning/review": return { data: { attempts: [] } };
     case "/api/learning/progress": return { data: { children: [] } };
     case "/api/notifications": return { data: { unread: 0, items: [] } };
+    case "/api/integrations/connectors": return { data: { enabled: true, schools: [{ id: "s1", name: "Maple" }], connectors: [
+      { id: "c1", kind: "oneroster", name: "District SIS", baseUrl: "https://sis.example.org/ims/oneroster/rostering/v1p2", status: "active", updatedBy: "IT", approvedBy: "Supt", canApprove: false, lastSyncAt: now, lastSyncStatus: "completed", schoolMap: [] },
+      { id: "c2", kind: "edfi", name: "State Ed-Fi", baseUrl: "https://edfi.example.org/api/data", status: "pending_approval", updatedBy: "IT", canApprove: true, schoolMap: [] }] } };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
       return { data: [] };

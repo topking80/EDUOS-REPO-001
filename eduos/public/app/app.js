@@ -43,7 +43,8 @@ const ICONS = {
   qr: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2",
   book: "M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 19V5M8 7h7",
   ledger: "M6 3h12v18H6zM9 7h6M9 11h6M9 15h4",
-  server: "M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01"
+  server: "M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01",
+  link: "M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1"
 };
 const icon = (name) => svg("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", focusable: "false" }, svg("path", { d: ICONS[name] || ICONS.grid }));
 
@@ -125,10 +126,10 @@ const ROLE_TABS = {
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   principal: [["overview", "School", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
-  superintendent: [["overview", "District", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"]],
+  superintendent: [["overview", "District", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
-  it_admin: [["nodes", "Nodes", "server"], ["library", "Library", "book"]]
+  it_admin: [["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
 };
 const APP_NAME = { pupil: "Student", teacher: "Teacher", parent: "Family", principal: "School leader", superintendent: "District leader", driver: "Driver", sro: "School Resource Officer", librarian: "Librarian", vice_principal: "Vice Principal", counselor: "Guidance Counselor", nurse: "School Nurse", maintenance: "Maintenance", lunch_staff: "Lunch Staff", it_admin: "District IT" };
 const state = { me: null, brand: null, tab: null, unread: 0, home: null, safety: [], safetySig: "" };
@@ -1607,6 +1608,94 @@ VIEWS.node = async () => {
       chip(e.decision === "sent" ? "present" : e.decision === "blocked" ? "absent" : "expected", e.decision)))) : empty("Nothing has left this school.")));
   out.push(h("section", { class: "card", "aria-label": "Device" }, h("h2", {}, "This device"), h("ul", { class: "list" }, kv("Memory used by EduOS", `${s.resources.rssMb} MB of ${s.resources.limitMb || s.resources.totalMemMb} MB${s.resources.limitMb ? " (container limit)" : ""}`), kv("Load", String(s.resources.loadAvg1)),
     kv("Record transfers (consent)", s.consentExceptions === "on" ? "on" : "off (default)"))));
+  return out;
+};
+// District data links (src/integrations/): OneRoster 1.2 and Ed-Fi connectors.
+// Read-only, off until the server has INTEGRATIONS_KEY, and each connector
+// needs a second district lead's approval before it can sync.
+const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API" };
+const CONNECTOR_STATUS = { pending_approval: ["expected", "Needs approval"], active: ["present", "Active"], disabled: ["not_started", "Off"] };
+const REJECT_TEXT = { duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
+  no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id" };
+VIEWS.integrations = async () => {
+  const r = await api.get("/api/integrations/connectors");
+  const { enabled, connectors = [], schools = [] } = r.data;
+  const reload = () => go(state.tab, { push: false });
+  const out = [h("h2", {}, "Data links"),
+    h("p", { class: "muted" }, "Bring student rosters in from your SIS or state system (OneRoster 1.2 or Ed-Fi). EduOS only reads from them, never sends student data out, and keeps working without them.")];
+  if (!enabled) return [...out, h("p", { class: "notice" }, "Data links are off on this server. District IT turns them on by setting INTEGRATIONS_KEY.")];
+  const results = new Map(); // connector id -> last preview/apply result (this page view)
+  const resultCard = (c, res) => {
+    const k = res.counts, map = new Map((res.externalSchools || []).map(x => [x.externalId, x]));
+    const selects = [...map.values()].map(x => {
+      const sel = h("select", { id: `map-${c.id}-${x.externalId}`, "data-external": x.externalId },
+        h("option", { value: "" }, "Don't import"), schools.map(sc => h("option", { value: sc.id }, sc.name)));
+      sel.value = x.schoolId || x.suggestedSchoolId || "";
+      return [h("label", { for: sel.id }, `${x.name}${x.unmappedStudents ? ` · ${x.unmappedStudents} waiting` : ""}${!x.schoolId && x.suggestedSchoolId ? " · suggested" : ""}`), sel];
+    });
+    const reasons = {};
+    for (const x of res.rejected || []) reasons[x.reason] = (reasons[x.reason] || 0) + 1;
+    return h("div", { class: "stack" },
+      h("p", { class: "notice" }, res.mode === "apply"
+        ? `Imported ${Object.values(k.imported || {}).reduce((a, b) => a + b, 0)} students.`
+        : `Preview: ${k.toImport} students would be added or updated. Nothing has changed yet.`),
+      h("ul", { class: "list" }, kv("Students found", String(k.studentsFetched)), kv("At schools not linked yet", String(k.notMapped)),
+        Object.entries(reasons).map(([r, n]) => kv(`Skipped: ${REJECT_TEXT[r] || r}`, String(n)))),
+      selects.length ? h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
+        const mappings = [...e.target.querySelectorAll("select[data-external]")].map(x => ({ externalId: x.dataset.external, schoolId: x.value || null }));
+        try { await api.req("PUT", `/api/integrations/connectors/${c.id}/school-map`, { mappings }); toast("School links saved. Preview again to check."); }
+        catch { toast("Couldn't save the school links."); } } },
+        h("h3", {}, "Which EduOS school is each of theirs?"), selects, h("button", { class: "btn", type: "submit" }, "Save school links")) : null);
+  };
+  const card = (c) => {
+    const [cls, txt] = CONNECTOR_STATUS[c.status] || ["expected", c.status];
+    const slot = h("div", { "aria-live": "polite" });
+    const sync = async (mode) => {
+      if (mode === "apply" && !(await ask({ title: `Import from ${c.name}?`, text: "Students at linked schools are added or updated in EduOS. Students already at another school aren't moved.", confirm: "Import" }))) return;
+      slot.replaceChildren(h("p", { class: "muted" }, mode === "apply" ? "Importing…" : "Reading their roster…"));
+      try { const res = (await api.post(`/api/integrations/connectors/${c.id}/sync`, { mode })).data; results.set(c.id, res); slot.replaceChildren(resultCard(c, res)); }
+      catch (e) { slot.replaceChildren(h("p", { class: "notice", role: "alert" }, ({ connector_auth_failed: "They refused the client ID or secret.", connector_unreachable: "Couldn't reach their server.",
+        connector_timeout: "Their server took too long.", connector_url_not_allowed: "That address isn't allowed (EduOS only connects to public HTTPS servers).", sync_not_applied: "Nothing was imported: " + (e.body?.detail || ""),
+        connector_secret_unreadable: "The saved secret can't be read on this server any more. Enter it again." })[e.body?.error] || "The sync didn't work. Check its history." )); }
+    };
+    const act = async (path, ok, fail, body = {}) => { try { await api.post(`/api/integrations/connectors/${c.id}/${path}`, body); toast(ok); reload(); } catch (e) { toast(e.body?.error === "approver_must_differ" ? "Someone else has to approve it: you set it up last." : fail); } };
+    return h("li", { class: "stack" },
+      h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, c.name), h("br"),
+        h("span", { class: "muted small" }, [CONNECTOR_KIND[c.kind], (() => { try { return new URL(c.baseUrl).host; } catch { return ""; } })(), `set up by ${c.updatedBy}`, c.approvedBy ? `approved by ${c.approvedBy}` : null,
+          c.lastSyncAt ? `last ${c.lastSyncStatus} ${ago(c.lastSyncAt)}` : "never synced"].filter(Boolean).join(" · "))), chip(cls, txt)),
+      h("div", { class: "row wrap" },
+        c.status !== "active" && c.canApprove ? h("button", { class: "btn small primary", type: "button", onclick: () => act("approve", "Approved", "Couldn't approve.") }, "Approve") : null,
+        c.status !== "active" && !c.canApprove ? h("span", { class: "muted small" }, "Waiting for another district lead to approve.") : null,
+        c.status === "active" ? [h("button", { class: "btn small", type: "button", onclick: () => sync("preview") }, "Preview"),
+          h("button", { class: "btn small primary", type: "button", onclick: () => sync("apply") }, "Import")] : null,
+        h("button", { class: "btn small", type: "button", onclick: async () => {
+          const secret = await ask({ title: `New client secret for ${c.name}`, text: "It's stored encrypted. The connector then needs approval again.", label: "Client secret", confirm: "Save", maxlength: 2000 });
+          if (secret) try { await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { clientSecret: secret }); toast("Saved. It needs approval again."); reload(); } catch { toast("Couldn't save."); } } }, "Change secret"),
+        c.status !== "disabled" ? h("button", { class: "btn small", type: "button", onclick: () => act("disable", "Turned off", "Couldn't turn it off.") }, "Turn off") : null),
+      slot);
+  };
+  out.push(h("section", { class: "card", "aria-label": "Connectors" }, h("h2", {}, "Connectors"),
+    connectors.length ? h("ul", { class: "list" }, connectors.map(card)) : empty("No data links yet.")));
+  const kind = h("select", { id: "dl-kind" }, Object.entries(CONNECTOR_KIND).map(([v, t]) => h("option", { value: v }, t)));
+  const field = (id, label, attrs = {}) => ({ label: h("label", { for: id }, label), el: h("input", { id, required: true, ...attrs }) });
+  const name = field("dl-name", "Name", { maxlength: 80, placeholder: "e.g. District SIS" });
+  const base = field("dl-base", "Base URL", { type: "url", maxlength: 2048 });
+  const token = field("dl-token", "Token URL", { type: "url", maxlength: 2048 });
+  const cid = field("dl-client", "Client ID", { maxlength: 300, autocomplete: "off" });
+  const secret = field("dl-secret", "Client secret", { type: "password", maxlength: 2000, autocomplete: "new-password" });
+  const hint = h("p", { class: "muted small" });
+  const setHint = () => {
+    base.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/api/data" : "https://sis.district.org/ims/oneroster/rostering/v1p2";
+    token.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/oauth/token" : "https://sis.district.org/oauth/token";
+    hint.textContent = kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
+  };
+  kind.addEventListener("change", setHint); setHint();
+  out.push(h("section", { class: "card", "aria-label": "Add a data link" }, h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
+      try { await api.post("/api/integrations/connectors", { kind: kind.value, name: name.el.value, baseUrl: base.el.value, tokenUrl: token.el.value, clientId: cid.el.value, clientSecret: secret.el.value });
+        toast("Added. Another district lead needs to approve it."); reload(); }
+      catch (e2) { toast(e2.body?.error === "invalid_connector" ? `Check the ${e2.body.field}.` : e2.body?.error === "connector_name_taken" ? "That name is taken." : "Couldn't add it."); } } },
+    h("h2", {}, "Add a data link"), h("label", { for: kind.id }, "Type"), kind, hint,
+    [name, base, token, cid, secret].map(x => [x.label, x.el]), h("button", { class: "btn", type: "submit" }, "Add"))));
   return out;
 };
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
