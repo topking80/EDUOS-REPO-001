@@ -1,6 +1,6 @@
-# EduOS District Edition 32.7.0
+# EduOS District Edition 37.4.0
 
-**Current release: 32.7.0. Offline school nodes, the aggregation gate, EDEN and DECN.**
+**Package version: 37.4.0.** This README's detailed feature inventory below is the 32.7.0 baseline; it is retained as historical context and is not a complete inventory of changes through 37.4.0. Consult the release notes and upgrade guide for the exact 37.4.0 changes before deploying.
 - **School node:** a small box at each school (Pi 5-class profile; arm64 not
   yet tested on hardware). It runs one school's EduOS, so attendance, bus
   check-ins, SafetyOS roll call, pick-up, Christie and gradebook reads keep
@@ -20,7 +20,7 @@
 - **Phones:** an encrypted (non-extractable key) 24-hour queue for roll call,
   check-ins and attendance. Nothing else is cached.
 - **Admin/IT:** a Nodes screen and a school-node status screen.
-- Documents: `FIX-REPORT-32.7.0.md`, **`docs/EDEN-32.7.0.md`** (design and
+- Historical 32.7.0 documents: `FIX-REPORT-32.7.0.md`, **`docs/EDEN-32.7.0.md`** (design and
   what is simulated vs proven) and `docs/UPGRADING-32.7.0.md`. School-node
   install: `deploy/school-node/`. Local simulation: `make eden-sim`.
 
