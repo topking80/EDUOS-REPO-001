@@ -5,15 +5,17 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
 
-/// The family's library loans (GET /api/library/family-loans).
+/// Library loans: the family's (GET /api/library/family-loans) or, for a
+/// learner, their own (GET /api/library/my-loans).
 class FamilyLibraryScreen extends StatelessWidget {
-  const FamilyLibraryScreen({super.key});
+  const FamilyLibraryScreen({super.key, this.mine = false});
+  final bool mine;
 
   @override
   Widget build(BuildContext context) {
     final app = AppScope.read(context);
     return Loader<List<Loan>>(
-      load: () async => objs((await app.api.get('/api/library/family-loans'))['data']).map(Loan.fromJson).toList(),
+      load: () async => objs((await app.api.get(mine ? '/api/library/my-loans' : '/api/library/family-loans'))['data']).map(Loan.fromJson).toList(),
       builder: (context, loans, _) => ListView(padding: const EdgeInsets.all(16), children: [
         const Text('Current loans, due dates, returns and overdue items. Renewals follow your school library\'s rules.'),
         const SizedBox(height: 12),
