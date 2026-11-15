@@ -83,6 +83,20 @@ function idpUnavailable(req, res, error) {
 }
 
 export const RETURN_PATHS = new Set(["/", "/app/"]);
+export const NATIVE_HANDOFF_TTL_MS = 60_000;
+const PKCE_S256 = /^[A-Za-z0-9_-]{43}$/;
+const pkceS256 = verifier => crypto.createHash("sha256").update(verifier).digest("base64url");
+
+/** Validate the app's half of a native sign-in: its PKCE challenge and an allow-listed redirect. */
+export function nativeLoginRequest(query, allowed = config.nativeAppRedirectUris) {
+  if (!allowed.length) return { error: "Native app sign-in is not enabled" };
+  const { app_challenge: challenge, app_challenge_method: method = "S256", app_redirect: redirect } = query;
+  if (method !== "S256") return { error: "Only S256 app challenges are supported" };
+  if (typeof challenge !== "string" || !PKCE_S256.test(challenge)) return { error: "Invalid app challenge" };
+  // Exact match only: no prefix or pattern matching, so the list can't be widened.
+  if (typeof redirect !== "string" || !allowed.includes(redirect)) return { error: "App redirect is not registered" };
+  return { challenge, redirect };
+}
 export async function beginLogin(req, res, next) {
   let meta;
   try { meta = await getOidcMetadata(); } catch (error) { return idpUnavailable(req, res, error); }
@@ -96,11 +110,18 @@ export async function beginLogin(req, res, next) {
     // 32.4.0: the mobile role app signs in through the same flow and asks to
     // come back to /app/. Only the two allow-listed paths are accepted, so the
     // parameter cannot become an open redirect.
-    const returnPath = RETURN_PATHS.has(req.query.next) ? req.query.next : "/";
+    // Native app sign-in (RFC 8252): the app supplies its own PKCE challenge
+    // and one of the configured redirect URIs; see nativeLoginRequest().
+    let native = null;
+    if (req.query.next === "native") {
+      native = nativeLoginRequest(req.query);
+      if (native.error) return res.status(400).type("text/plain").send(native.error);
+    }
+    const returnPath = native ? "native" : RETURN_PATHS.has(req.query.next) ? req.query.next : "/";
     await pool.query(
-      `INSERT INTO oidc_pending_logins(state_hash,nonce,code_verifier,expires_at,return_path)
-       VALUES($1,$2,$3,now() + make_interval(secs => $4),$5)`,
-      [sha256(state), nonce, verifier, PENDING_LOGIN_TTL_MS / 1000, returnPath]
+      `INSERT INTO oidc_pending_logins(state_hash,nonce,code_verifier,expires_at,return_path,app_challenge,app_redirect)
+       VALUES($1,$2,$3,now() + make_interval(secs => $4),$5,$6,$7)`,
+      [sha256(state), nonce, verifier, PENDING_LOGIN_TTL_MS / 1000, returnPath, native?.challenge ?? null, native?.redirect ?? null]
     );
     // Bind this authorization response to its initiating browser and allow
     // independent login attempts in multiple tabs.
@@ -156,7 +177,7 @@ export async function completeLogin(req, res, next) {
       return res.status(400).send("Invalid login response");
     // Consume before validation: every callback is single-use, on any instance.
     const consumed = await pool.query(
-      "DELETE FROM oidc_pending_logins WHERE state_hash=$1 RETURNING nonce, code_verifier, expires_at, return_path",
+      "DELETE FROM oidc_pending_logins WHERE state_hash=$1 RETURNING nonce, code_verifier, expires_at, return_path, app_challenge, app_redirect",
       [sha256(state)]
     );
     const transaction = consumed.rows[0];
@@ -201,6 +222,25 @@ export async function completeLogin(req, res, next) {
     if (userResult.rowCount !== 1) return res.status(403).send("Account is not provisioned for EduOS");
     const user = userResult.rows[0];
 
+    // Native app sign-in: hand the app a single-use code bound to its PKCE
+    // challenge. No session exists until the app redeems it, and nothing
+    // secret is stored or put in the browser.
+    if (transaction.return_path === "native") {
+      if (!config.nativeAppRedirectUris.includes(transaction.app_redirect))
+        return res.status(400).send("App redirect is no longer registered");
+      const handoff = randomSecret(32);
+      await pool.query("DELETE FROM native_login_handoffs WHERE expires_at <= now()");
+      await pool.query(
+        `INSERT INTO native_login_handoffs(code_hash,app_challenge,user_id,district_id,school_id,role,verified_email,expires_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,now() + make_interval(secs => $8))`,
+        [sha256(handoff), transaction.app_challenge, user.id, user.district_id, user.school_id, user.role,
+         verifiedEmailFromClaims(claims), NATIVE_HANDOFF_TTL_MS / 1000]);
+      const back = new URL(transaction.app_redirect);
+      back.searchParams.set("code", handoff);
+      res.setHeader("Cache-Control", "no-store");
+      return res.redirect(303, back.toString());
+    }
+
     // Never keep the browser's previous session alive after a new sign-in.
     const previous = browserCookies[config.cookieName];
     if (previous && previous.length <= 256) {
@@ -219,6 +259,47 @@ export async function completeLogin(req, res, next) {
   } catch (error) { next(error); }
 }
 
+/**
+ * POST /auth/native/token {code, code_verifier}. Redeems a native sign-in
+ * handoff once. The membership is re-checked so a user disabled during the
+ * 60-second window doesn't get a session.
+ */
+export async function exchangeNativeLogin(req, res, next) {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    if (!config.nativeAppRedirectUris.length) return res.status(404).json({ error: "native_login_disabled" });
+    const { code, code_verifier: verifier } = req.body || {};
+    if (typeof code !== "string" || code.length > 128 || typeof verifier !== "string" ||
+        !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier))
+      return res.status(400).json({ error: "invalid_request" });
+    const consumed = await pool.query(
+      "DELETE FROM native_login_handoffs WHERE code_hash=$1 RETURNING *", [sha256(code)]);
+    const h = consumed.rows[0];
+    if (!h || new Date(h.expires_at).getTime() < Date.now() || !safeEqual(pkceS256(verifier), h.app_challenge))
+      return res.status(400).json({ error: "invalid_grant" });
+    const active = await pool.query(
+      `SELECT 1 FROM users u JOIN memberships m ON m.user_id=u.id
+         JOIN districts d ON d.id=m.district_id AND d.status='active'
+        WHERE u.id=$1 AND u.status='active' AND m.status='active'
+          AND m.district_id=$2 AND m.school_id IS NOT DISTINCT FROM $3 AND m.role=$4`,
+      [h.user_id, h.district_id, h.school_id, h.role]);
+    if (!active.rowCount) return res.status(403).json({ error: "account_not_active" });
+    const { rawSession, expiresAt } = await createSession(pool, {
+      userId: h.user_id, districtId: h.district_id, schoolId: h.school_id, role: h.role, verifiedEmail: h.verified_email
+    });
+    res.json({ tokenType: "Bearer", sessionToken: rawSession, csrfToken: csrfTokenFor(rawSession),
+      expiresAt: expiresAt.toISOString(), role: h.role, idleMinutes: config.sessionIdleMinutes });
+  } catch (error) { next(error); }
+}
+
+/** The session token from the cookie, or (native app) from "Authorization: Bearer". */
+function sessionTokenFrom(req) {
+  const cookie = parse(req.headers.cookie || "")[config.cookieName];
+  if (cookie) return { raw: cookie, bearer: false };
+  const match = /^Bearer ([A-Za-z0-9_-]{16,256})$/.exec(req.get?.("authorization") || req.headers.authorization || "");
+  return match ? { raw: match[1], bearer: true } : { raw: null, bearer: false };
+}
+
 // 32.7.0: extra per-request checks after the session is known (a DECN partner
 // node limits hosted staff to the continuity services). A guard returns an
 // error code to refuse the request, or a falsy value to allow it.
@@ -228,10 +309,10 @@ function guardRefusal(req) { for (const g of sessionGuards) { const code = g(req
 
 export async function requireSession(req, res, next) {
   try {
-    const cookies = parse(req.headers.cookie || "");
-    const raw = cookies[config.cookieName];
+    const { raw, bearer } = sessionTokenFrom(req);
     if (!raw || raw.length > 256) return res.status(401).json({ error: "authentication_required" });
     const hash = sha256(raw);
+    req._sessionViaBearer = bearer;
     req._sessionTokenHash = hash; // used by logout / membership switch to evict the cache
     req._sessionRaw = raw;
     const cached = cacheGetSession(hash);
@@ -271,8 +352,7 @@ export async function requireSession(req, res, next) {
 
 export async function logout(req, res, next) {
   try {
-    const cookies = parse(req.headers.cookie || "");
-    const raw = cookies[config.cookieName];
+    const { raw } = sessionTokenFrom(req);
     if (raw) {
       const h = sha256(raw);
       await pool.query("UPDATE sessions SET revoked_at=now() WHERE token_hash=$1 AND revoked_at IS NULL", [h]);
@@ -343,8 +423,11 @@ export async function switchMembership(req, res, next) {
       userId: req.actor.userId, districtId: m.district_id, schoolId: m.school_id, role: m.role,
       verifiedEmail: current.rows[0]?.verified_email || null
     });
-    setSessionCookie(res, rawSession, expiresAt);
+    if (!req._sessionViaBearer) setSessionCookie(res, rawSession, expiresAt);
     res.setHeader("Cache-Control", "no-store");
-    res.json({ role: m.role, districtId: m.district_id, schoolId: m.school_id, csrfToken: csrfTokenFor(rawSession) });
+    // Browsers get the new session only as an HttpOnly cookie. The native app
+    // authenticates with a bearer token, so it receives the replacement here.
+    res.json({ role: m.role, districtId: m.district_id, schoolId: m.school_id, csrfToken: csrfTokenFor(rawSession),
+      ...(req._sessionViaBearer ? { sessionToken: rawSession, expiresAt: expiresAt.toISOString() } : {}) });
   } catch (error) { next(error); }
 }

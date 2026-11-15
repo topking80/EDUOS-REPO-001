@@ -23,7 +23,8 @@ test('OIDC state cookies are unique per authorization attempt', () => {
 // behaviour is exercised end-to-end in test/integration/postgres.test.js.
 test('OIDC pending logins are durable, expire and are pruned', () => {
   assert.match(auth, /DELETE FROM oidc_pending_logins WHERE expires_at <= now\(\)/);
-  assert.match(auth, /INSERT INTO oidc_pending_logins\(state_hash,nonce,code_verifier,expires_at,return_path\)/);
+  // 037 added the native app's PKCE challenge and redirect to the same row.
+  assert.match(auth, /INSERT INTO oidc_pending_logins\(state_hash,nonce,code_verifier,expires_at,return_path,app_challenge,app_redirect\)/);
 });
 
 test('OIDC callback consumes state once and rejects oversized state values', () => {
