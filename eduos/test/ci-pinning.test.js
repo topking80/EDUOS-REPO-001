@@ -39,3 +39,10 @@ test("tools installed during CI name an exact version", () => {
     }
   }
 });
+
+test("the app image's base images are pinned by digest", () => {
+  const docker = fs.readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
+  const froms = [...docker.matchAll(/^FROM\s+(\S+)/gm)].map(m => m[1]);
+  assert.ok(froms.length >= 1);
+  for (const f of froms) assert.match(f, /^[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}$/, `Dockerfile: FROM ${f} must be tag@sha256:digest`);
+});

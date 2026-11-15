@@ -44,3 +44,27 @@ updates:
       github-actions:
         patterns: ["*"]
 
+  # Base images are pinned by digest (FROM image:tag@sha256:...); these move the
+  # digest to the tag's latest build, so pinning never means missing patches.
+  - package-ecosystem: docker
+    directory: /eduos
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - security-review
+    commit-message:
+      prefix: "docker"
+  - package-ecosystem: docker
+    directory: /eduos/edge-platform/eduos/containers
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - security-review
+    commit-message:
+      prefix: "docker"

@@ -1,7 +1,9 @@
 # The base image every edge container uses, and when Fedora stops supporting it.
 # test/edge-base-image.test.js (repo unit tests) fails 30 days before END_OF_LIFE,
 # and if any Containerfile uses a different base, so the move to the next Fedora
-# release happens before this one goes out of support.
+# release happens before this one goes out of support. Containerfiles pin this
+# tag to a digest (FROM IMAGE@sha256:...), the same in all of them; Dependabot's
+# docker updates move the digest to the tag's latest patched build.
 # Fedora 45 released 2026-11-03; end of life 2027-12-08 (about 4 weeks after Fedora 47).
 IMAGE=registry.fedoraproject.org/fedora:45
 END_OF_LIFE=2027-12-08

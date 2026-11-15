@@ -14,10 +14,16 @@ test("every edge Containerfile uses the recorded base image", () => {
   assert.match(meta.IMAGE, /^registry\.fedoraproject\.org\/fedora:\d+$/);
   const files = fs.readdirSync(dir).filter(f => f.startsWith("Containerfile."));
   assert.ok(files.length >= 3, "bootstrap, enrollment and health");
+  const digests = new Set();
   for (const f of files) {
     const froms = [...fs.readFileSync(new URL(f, dir), "utf8").matchAll(/^FROM\s+(\S+)/gim)].map(m => m[1]);
-    assert.deepEqual(froms, [meta.IMAGE], `${f} must build FROM ${meta.IMAGE}`);
+    assert.equal(froms.length, 1, `${f}: one FROM`);
+    const [image, digest] = froms[0].split("@");
+    assert.equal(image, meta.IMAGE, `${f} must build FROM ${meta.IMAGE}`);
+    assert.match(digest || "", /^sha256:[0-9a-f]{64}$/, `${f}: pin ${meta.IMAGE} to a digest`);
+    digests.add(digest);
   }
+  assert.equal(digests.size, 1, "every edge image uses the same base build");
 });
 
 test("the edge base image is at least 30 days from end of life", () => {
