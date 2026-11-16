@@ -20,7 +20,7 @@ function fakeProvider() {
     req.on("end", () => {
       received.push(JSON.parse(body));
       setTimeout(() => { res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ choices: [{ message: { content: "OK from the model" } }], usage: { prompt_tokens: 50, completion_tokens: 20 } })); }, 150);
+        res.end(JSON.stringify({ choices: [{ message: { content: "OK from the model" } }], usage: { prompt_tokens: 50, completion_tokens: 900 } })); }, 150);
     });
   });
   return new Promise(r => srv.listen(0, "127.0.0.1", () => r({ url: `http://127.0.0.1:${srv.address().port}/v1`, received, close: () => new Promise(x => srv.close(x)) })));
@@ -75,12 +75,15 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
 
   it("20 simultaneous requests against a nearly spent budget stay within it", async () => {
     const used = (await admin.query("SELECT coalesce(sum(tokens_in + tokens_out), 0)::int AS n FROM ai_usage WHERE district_id = $1", [ID.d1])).rows[0].n;
-    const cap = used + 3100; // room for three reservations (input estimate + 1000 output allowance)
+    // Room for three requests at what each really uses (950 tokens: the fake
+    // provider reports 50 in + 900 out) and for three reservations (1,003 each),
+    // never four, however the requests interleave.
+    const cap = used + 3100;
     await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: cap, userDailyTokenCap: 1000000 });
     const sentBefore = provider.received.length;
     const results = await Promise.all(Array.from({ length: 20 }, (_, i) => runAi(i % 2 ? "p1" : "supt1", "lesson_draft", "Volcanoes")));
     const ok = results.filter(r => r.status === 200).length;
-    assert.ok(ok >= 1 && ok <= 3, `${ok} requests got through`);
+    assert.ok(ok >= 1 && ok <= 3, `${ok} requests got through (each uses 950 of the 3,100 left)`);
     assert.ok(results.every(r => r.status === 200 || r.body.error === "ai_district_budget_reached"), JSON.stringify(results.map(r => r.status)));
     assert.equal(provider.received.length - sentBefore, ok, "only requests within budget reached the provider");
     const after = (await admin.query("SELECT coalesce(sum(tokens_in + tokens_out), 0)::int AS n, count(*) FILTER (WHERE outcome = 'pending')::int AS pending FROM ai_usage WHERE district_id = $1", [ID.d1])).rows[0];
