@@ -246,6 +246,38 @@ test("real HTTP delivery: 2xx delivered, redirect not followed, timeout enforced
   } finally { receiver.closeAllConnections?.(); await new Promise(resolve => receiver.close(resolve)); }
 });
 
+test("real HTTP 429 and 503 responses preserve bounded Retry-After metadata", async () => {
+  const receiver = http.createServer((req, res) => {
+    req.resume();
+    if (req.url === "/delta") {
+      res.writeHead(429, { "Retry-After": "90" });
+      return res.end();
+    }
+    res.writeHead(503, { "Retry-After": "Mon, 16 Nov 2026 14:02:00 GMT" });
+    res.end();
+  });
+  await new Promise(resolve => receiver.listen(0, "127.0.0.1", resolve));
+  const base = new URL(`http://127.0.0.1:${receiver.address().port}`);
+  try {
+    const delta = await deliverOnce({
+      url: new URL("/delta", base), address: "127.0.0.1", family: 4,
+      headers: {}, body: "{}", timeoutMs: 1000
+    });
+    assert.deepEqual([delta.outcome, delta.statusCode, delta.retryAfterSeconds], ["http_error", 429, 90]);
+
+    const date = await deliverOnce({
+      url: new URL("/date", base), address: "127.0.0.1", family: 4,
+      headers: {}, body: "{}", timeoutMs: 1000
+    });
+    assert.deepEqual([date.outcome, date.statusCode], ["http_error", 503]);
+    assert.equal(Number.isFinite(date.retryAfterSeconds), true);
+    assert.ok(date.retryAfterSeconds >= 0 && date.retryAfterSeconds <= 3600);
+  } finally {
+    receiver.closeAllConnections?.();
+    await new Promise(resolve => receiver.close(resolve));
+  }
+});
+
 test("truncated or oversized webhook responses are never classified as delivered", async () => {
   const receiver = http.createServer((req, res) => {
     req.resume();
