@@ -13,7 +13,7 @@ const canPerform = (role, res, act) => canActor({ role, districtId: "d", userId:
 const ENV = { DATABASE_URL: "postgres://eduos:test@127.0.0.1:1/eduos", PUBLIC_ORIGIN: "http://localhost:8080", OIDC_ISSUER: "https://idp.example.test",
   OIDC_CLIENT_ID: "eduos-test", OIDC_CLIENT_SECRET: "test-secret", OIDC_REDIRECT_URI: "http://localhost:8080/auth/callback" };
 for (const [k, v] of Object.entries(ENV)) process.env[k] ||= v;
-const { outboxRows, enabledExternalChannels, adapterFor, EXTERNAL_TEXT } = await import("../src/notify.js");
+const { outboxRows, enabledExternalChannels, adapterFor, EXTERNAL_TEXT, attemptOutcome, retryDelaySeconds, MAX_ATTEMPTS } = await import("../src/notify.js");
 const read = p => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 const cfgOff = { notifyEmailAdapter: "off", notifySmsAdapter: "off", notifyPushAdapter: "off" };
 
@@ -89,12 +89,28 @@ test("notifications: in-app only by default; external rows carry generic text on
   const on = { notifyEmailAdapter: "log", notifySmsAdapter: "log", notifyPushAdapter: "off" };
   const ext = outboxRows({ districtId: "d", recipients: ["u1"], kind: "message", title: "About Ava: reading log", body: "private" }, on).filter(r => r.channel !== "in_app");
   assert.deepEqual(ext.map(r => r.channel), ["email", "sms"]);
-  for (const r of ext) { assert.equal(r.title, EXTERNAL_TEXT); assert.equal(r.body, null); assert.equal(r.refId, null); }
+  // Reference ids stay on the row (for delivery reports); the adapter never gets them.
+  for (const r of ext) { assert.equal(r.title, EXTERNAL_TEXT); assert.equal(r.body, null); }
   const logged = [];
   const res = await adapterFor("email", on).send({ id: "n1", channel: "email", recipient_user_id: "u1", title: "secret" }, m => logged.push(m));
   assert.equal(res.status, "skipped"); assert.ok(!logged.join().includes("secret"));
   assert.equal((await adapterFor("push", on).send({})).status, "skipped");
   assert.throws(() => outboxRows({ districtId: "d", recipients: ["u"], kind: "marketing", title: "x" }, cfgOff));
+});
+
+test("notification attempts: only a confirmed delivery counts; failures back off and then stop", () => {
+  assert.deepEqual(attemptOutcome({ status: "delivered" }, 0), { status: "delivered", note: null, attempts: 1, retryInSeconds: null });
+  assert.equal(attemptOutcome({ status: "skipped", note: "dry run" }, 0).status, "skipped");
+  const retry = attemptOutcome({ status: "pending", note: "smtp 451" }, 0);
+  assert.deepEqual([retry.status, retry.retryInSeconds], ["pending", 30]);
+  assert.equal(attemptOutcome({ status: "pending" }, 2).retryInSeconds, 120);
+  assert.equal(retryDelaySeconds(30), 3600, "at most an hour");
+  const last = attemptOutcome({ status: "pending", note: "smtp 451" }, MAX_ATTEMPTS - 1);
+  assert.equal(last.status, "failed"); assert.match(last.note, /gave up after 5 attempts: smtp 451/);
+  for (const bad of [undefined, null, {}, { status: "sent" }, { status: "DELIVERED" }]) {
+    const o = attemptOutcome(bad, 0);
+    assert.equal(o.status, "failed", JSON.stringify(bad)); assert.match(o.note, /unknown status/);
+  }
 });
 
 test("policy: driver role is narrow; pupils tutor and read but cannot message", () => {

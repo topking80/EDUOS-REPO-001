@@ -36,7 +36,31 @@ async function notifyIncident(client, req, incident, status) {
   const a = await enqueueNotifications(client, { ...base, recipients: staff, title: staffTitle, body: status === "closed" ? "Normal operations resume." : incidentMessage(incident.kind, status, "staff", { reunificationPoint: incident.reunification_point }) });
   const b = await enqueueNotifications(client, { ...base, recipients: families.filter(u => !staff.includes(u)), title: familyTitle(incident.kind, incident.is_drill, incident.school_name, status),
     body: status === "closed" ? "The school has given the all clear. Thank you for your patience." : incidentMessage(incident.kind, status, "family", { reunificationPoint: incident.reunification_point }) });
-  return { staff: staff.length, families: families.length, notifications: a + b };
+  return notificationSummary(staff.length, families.filter(u => !staff.includes(u)).length, a + b);
+}
+
+/**
+ * What an incident change put in the outbox. In-app notices are available to
+ * the recipient as soon as the transaction commits; email/SMS/push rows are
+ * only queued here (src/notify-dispatch.js hands them to a channel adapter
+ * later, and only an adapter can confirm a delivery). EduOS never contacts
+ * emergency services.
+ */
+export function notificationSummary(staff, families, rowsWritten) {
+  const inApp = staff + families;
+  return { recipients: { staff, families }, inAppAvailable: inApp, externalQueued: rowsWritten - inApp, externalDelivered: 0,
+    emergencyServicesContacted: false };
+}
+
+/** Delivery report rows (channel, status, n, read_n) -> counts for the board. */
+export function deliveryReport(rows) {
+  const out = { inApp: { available: 0, read: 0 }, external: { pending: 0, delivered: 0, skipped: 0, failed: 0 }, byChannel: {}, emergencyServicesContacted: false };
+  for (const r of rows) {
+    if (r.channel === "in_app") { out.inApp.available += r.n; out.inApp.read += r.read_n; continue; }
+    out.external[r.status] = (out.external[r.status] || 0) + r.n;
+    (out.byChannel[r.channel] ||= { pending: 0, delivered: 0, skipped: 0, failed: 0 })[r.status] += r.n;
+  }
+  return out;
 }
 
 const loadIncident = (client, id) => one(client, `SELECT ${INCIDENT_COLS} FROM safety_incidents i JOIN schools sc ON sc.id=i.school_id WHERE i.id=$1`, [id]);
@@ -131,8 +155,8 @@ export function registerSafetyRoutes(app) {
         } catch (e) { if (e?.code === "23505") throw new HttpError(409, "incident_already_live"); throw e; }
         await logEvent(client, req, i, "confirmed", i.is_drill ? "drill" : "real");
         const sent = await notifyIncident(client, req, i, "active");
-        await audit(client, req, "confirm", "safety_incident", i.id, `${i.kind};drill=${i.is_drill};staff=${sent.staff};families=${sent.families}`);
-        return { ...present(await loadIncident(client, i.id), a.role, a.userId), notified: sent };
+        await audit(client, req, "confirm", "safety_incident", i.id, `${i.kind};drill=${i.is_drill};staff=${sent.recipients.staff};families=${sent.recipients.families};external_queued=${sent.externalQueued}`);
+        return { ...present(await loadIncident(client, i.id), a.role, a.userId), notifications: sent };
       });
       if (out.expired) return res.status(410).json({ error: "confirmation_expired" });
       res.json({ data: out });
@@ -407,8 +431,9 @@ export function registerSafetyRoutes(app) {
         const events = await rows(client, `SELECT e.event,e.detail,e.at,e.actor_role,u.display_name AS actor_name FROM safety_events e JOIN users u ON u.id=e.actor_user_id
             WHERE e.incident_id=$1 ORDER BY e.at,e.id`, [i.id]);
         const pick = st => latest.filter(l => l.status === st).map(l => ({ studentId: l.student_id, name: l.display_name, grade: l.grade_level, note: l.note, by: l.recorded_by_name, at: l.recorded_at }));
+        const notifications = deliveryReport(await rows(client, `SELECT channel,status,n,read_n FROM eduos_safety_delivery($1)`, [i.id]));
         await audit(client, req, "read", "safety_board", i.id, `enrolled=${enrolled}`);
-        return { incident: { ...present(i, req.actor.role, req.actor.userId), debrief: i.debrief }, totals: { ...totals, released },
+        return { incident: { ...present(i, req.actor.role, req.actor.userId), debrief: i.debrief }, totals: { ...totals, released }, notifications,
           teachers: teachers.map(t => ({ name: t.display_name, roster: t.roster, submittedAt: t.submitted_at })),
           missing: pick("missing"), injured: pick("injured"), extra: pick("extra"), unaccounted, events };
       });
@@ -437,12 +462,14 @@ export function registerSafetyRoutes(app) {
     } catch (e) { sendError(res, next, e); }
   });
 
-  // First responders on scene / called, or a free-text log note (no student data expected).
+  // A staff member's note that first responders were called or are on scene,
+  // or a free-text log note (no student data expected). EduOS records what
+  // staff report; it does not contact emergency services itself.
   transition("events", async (client, req, i) => {
     const { event, detail = null } = req.body || {};
     if (!["responders", "note"].includes(event) || (detail !== null && !cleanText(detail, 500))) throw new HttpError(400, "invalid_event");
     if (!LIVE.includes(i.status) && event === "responders") throw new HttpError(409, "incident_not_live");
-    await logEvent(client, req, i, event, detail?.trim() || (event === "responders" ? "First responders notified / on scene" : null));
+    await logEvent(client, req, i, event, detail?.trim() || (event === "responders" ? "Staff reported a first-responder update" : null));
     await audit(client, req, event, "safety_incident", i.id);
     return { logged: event };
   });
@@ -455,8 +482,8 @@ export function registerSafetyRoutes(app) {
     await logEvent(client, req, i, "reunification", point.trim());
     const fresh = await loadIncident(client, i.id);
     const sent = await notifyIncident(client, req, fresh, "reunification");
-    await audit(client, req, "reunification", "safety_incident", i.id, `families=${sent.families}`);
-    return { ...present(fresh, req.actor.role, req.actor.userId), notified: sent };
+    await audit(client, req, "reunification", "safety_incident", i.id, `families=${sent.recipients.families};external_queued=${sent.externalQueued}`);
+    return { ...present(fresh, req.actor.role, req.actor.userId), notifications: sent };
   });
 
   // All clear is also two-step in the app; the API wants the kind repeated.
@@ -466,8 +493,8 @@ export function registerSafetyRoutes(app) {
     await client.query(`UPDATE safety_incidents SET status='closed',closed_at=now(),closed_by=$2 WHERE id=$1`, [i.id, req.actor.userId]);
     await logEvent(client, req, i, "all_clear");
     const sent = await notifyIncident(client, req, i, "closed");
-    await audit(client, req, "all_clear", "safety_incident", i.id, `families=${sent.families}`);
-    return { id: i.id, status: "closed", notified: sent };
+    await audit(client, req, "all_clear", "safety_incident", i.id, `families=${sent.recipients.families};external_queued=${sent.externalQueued}`);
+    return { id: i.id, status: "closed", notifications: sent };
   });
 
   transition("debrief", async (client, req, i) => {

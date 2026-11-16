@@ -134,7 +134,8 @@ REVOKE UPDATE, DELETE, TRUNCATE ON pickup_events FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON pickup_adults, pickup_tags, pickup_restrictions, pickup_early_dismissals FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_school_today(uuid), eduos_safety_find_student(uuid,text), eduos_pickup_lookup(text),
   eduos_safety_student_at_school(uuid,uuid), eduos_safety_recipients(uuid,text), eduos_pickup_ensure_guardian(uuid),
-  eduos_pickup_today(), eduos_pickup_early_today(), eduos_school_leads(), eduos_pickup_guardians(uuid) TO eduos_app;
+  eduos_pickup_today(), eduos_pickup_early_today(), eduos_school_leads(), eduos_pickup_guardians(uuid),
+  eduos_safety_delivery(uuid) TO eduos_app;
 REVOKE ALL ON FUNCTION eduos_purge_student_324(uuid), eduos_retention_purge_role_apps(jsonb) FROM eduos_app;
 -- 035 (audit 37.4.0 item 6): replay-receipt purge is owner-only, like the other retention functions.
 REVOKE ALL ON FUNCTION eduos_retention_purge_offline_replays(int) FROM eduos_app;
