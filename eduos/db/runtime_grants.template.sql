@@ -331,3 +331,8 @@ REVOKE DELETE, TRUNCATE ON school_activities, activity_staff, activity_membershi
 -- 37.7.0 Sports roster and result records.
 GRANT SELECT, INSERT, UPDATE ON activity_roster_entries, activity_event_results TO eduos_app;
 REVOKE DELETE, TRUNCATE ON activity_roster_entries, activity_event_results FROM eduos_app;
+
+-- 37.8.0 media governance.
+GRANT SELECT, INSERT, UPDATE ON activity_media_participants, activity_media_consents TO eduos_app;
+REVOKE DELETE, TRUNCATE ON activity_media_participants, activity_media_consents FROM eduos_app;
+GRANT UPDATE (consent_status, moderation_status, approved_by) ON activity_media_assets TO eduos_app;
