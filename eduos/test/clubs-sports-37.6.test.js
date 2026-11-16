@@ -8,6 +8,7 @@ test("clubs and sports permissions are role-bounded", () => {
  assert.equal(canPerform(actor("principal"), "activities", "manage"), true);
  assert.equal(canPerform(actor("superintendent"), "activities", "manage"), true);
  assert.equal(canPerform(actor("teacher"), "activities", "manage"), true);
+ assert.equal(canPerform(actor("teacher"), "activities", "read"), true);
  assert.equal(canPerform(actor("pupil"), "activities", "join"), true);
  assert.equal(canPerform(actor("parent"), "activities", "read"), true);
  assert.equal(canPerform(actor("pupil"), "activities", "manage"), false);
@@ -19,6 +20,10 @@ test("clubs and sports permissions are role-bounded", () => {
 test("migration establishes forced district RLS and protected ticket codes", async () => {
  const sql = await readFile(new URL("db/051_clubs_sports_multimedia.sql", root), "utf8");
  for (const name of ["school_activities","activity_staff","activity_memberships","school_events","event_ticket_types","event_ticket_orders","event_tickets","event_streams","activity_media_assets"]) assert.ok(sql.includes(name), "missing "+name);
+ const sports = await readFile(new URL("db/052_sports_rosters_results.sql", root), "utf8");
+ assert.match(sports, /activity_roster_entries/);
+ assert.match(sports, /activity_event_results/);
+ assert.match(sports, /FORCE ROW LEVEL SECURITY/);
  assert.match(sql, /FORCE ROW LEVEL SECURITY/);
  assert.match(sql, /app\.district_id/);
  assert.match(sql, /ticket_code_hash/);
@@ -29,6 +34,8 @@ test("paid checkout and livestream playback remain fail-closed", async () => {
  assert.match(routes, /playbackEnabled:false/);
  assert.match(routes, /ticket_code_hash|ticketCode/);
  assert.match(routes, /event_checkin_staff_required/);
+ assert.match(routes, /student_activity_membership_required/);
+ assert.match(routes, /event_not_completed/);
  assert.match(routes, /recording_allowed,created_by\)[\s\S]*false/);
  assert.doesNotMatch(routes, /cardNumber|cvv|payment_secret/i);
 });
