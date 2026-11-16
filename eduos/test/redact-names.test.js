@@ -5,7 +5,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { removeNames, removeIdentifiers } from "../src/redact-names.js";
 import { redact, redactContent, outboundHelpFields, externalRequestBody as christieBody } from "../src/christie/providers.js";
-import { RESERVATION_TTL_MINUTES, MAX_REQUEST_MS } from "../src/ai/gateway.js";
 import { externalRequestBody, maxTokensFor, localProvider, capLocalOutput, localUnits, validUsage, OUTPUT_MAX_TOKENS, LOCAL_OUTPUT_MAX_BYTES } from "../src/ai/providers.js";
 
 const CASES = [
@@ -103,6 +102,14 @@ test("a usage report counts only if it is two non-negative integers", () => {
     assert.equal(validUsage(bad), null);
 });
 
-test("a reservation outlives any request", () => {
-  assert.ok(RESERVATION_TTL_MINUTES * 60_000 > MAX_REQUEST_MS * 5);
+test("Christie lesson content also loses phone numbers, web and street addresses and labelled birth dates", () => {
+  const out = redactContent("Call (555) 123-4567 or 555-123-4567 or +1 555.123.4567. See https://example.org/x and www.example.org. " +
+    "Sam lives at 42 Maple Tree Avenue, Apt 3B. DOB: 03/14/2015; born on March 14, 2015; date of birth 14 March 2015.");
+  for (const leak of ["555", "4567", "example.org", "42 Maple", "Avenue", "03/14/2015", "March 14, 2015", "14 March 2015"]) assert.ok(!out.includes(leak), `${leak} in ${out}`);
+});
+
+test("...while maths and history are left exactly as written", () => {
+  for (const keep of ["123456 - 654321 = ?", "1/2 + 3/4 = 5/4", "10 - 3 - 2 = 5", "3.14159 × 2", "The treaty was signed on 28 June 1919.", "On 07/04/1776 the declaration was adopted.",
+    "Add 4 three times: 4 + 4 + 4.", "A rectangle is 12 cm by 5 cm.", "Lincoln was born in 1809.", "Drive 3 laps of the 400 m track."])
+    assert.equal(redactContent(keep), keep);
 });

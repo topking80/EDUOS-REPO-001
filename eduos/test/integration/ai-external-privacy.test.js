@@ -220,6 +220,33 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM ai_usage WHERE outcome='pending'")).rows[0].n, 0);
   });
 
+  it("bookkeeping that fails after the provider was called never gives the budget back", async () => {
+    // Make every settlement of a reservation fail in the database.
+    await admin.query(`CREATE FUNCTION test_block_settlement() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF OLD.outcome = 'pending' AND NEW.outcome <> 'pending' THEN RAISE EXCEPTION 'settlement blocked for the test'; END IF; RETURN NEW; END $$`);
+    await admin.query("CREATE TRIGGER test_block_settlement BEFORE UPDATE ON ai_usage FOR EACH ROW EXECUTE FUNCTION test_block_settlement()");
+    try {
+      const before = provider.received.length;
+      const usedBefore = (await as("supt1")("GET", "/api/ai/status")).body.data.budget.district.used;
+      const r = await runAi("p1", "resource_summary", "A resource about rivers, deltas and flood plains for year five.");
+      assert.equal(r.status, 500, "the request fails: its usage could not be recorded");
+      assert.equal(provider.received.length, before + 1, "but the provider did receive (and may bill) it");
+      const row = (await admin.query("SELECT id, outcome, tokens_in + tokens_out AS n FROM ai_usage ORDER BY id DESC LIMIT 1")).rows[0];
+      assert.equal(row.outcome, "pending", "the reservation was not released");
+      assert.ok(row.n > 900, `still holds its full reservation (${row.n})`);
+      const usedAfter = (await as("supt1")("GET", "/api/ai/status")).body.data.budget.district.used;
+      assert.equal(usedAfter - usedBefore, row.n, "and it still counts against the budget");
+      // It never lapses on a timer either.
+      await admin.query("UPDATE ai_usage SET created_at = created_at - interval '3 hours' WHERE id = $1 AND created_at - interval '3 hours' >= date_trunc('day', now())", [row.id]);
+      assert.equal((await as("supt1")("GET", "/api/ai/status")).body.data.budget.district.used, usedAfter);
+      await admin.query("DROP TRIGGER test_block_settlement ON ai_usage");
+      await admin.query("DELETE FROM ai_usage WHERE id = $1", [row.id]); // keep the next tests' arithmetic simple
+    } finally {
+      await admin.query("DROP TRIGGER IF EXISTS test_block_settlement ON ai_usage");
+      await admin.query("DROP FUNCTION IF EXISTS test_block_settlement()");
+    }
+  });
+
   it("one person's 20 simultaneous requests stay within their own budget", async () => {
     const u = (await admin.query("SELECT coalesce(sum(tokens_in + tokens_out), 0)::int AS n FROM ai_usage WHERE user_id = $1", [USERS.vp1[0]])).rows[0].n;
     // A "Volcanoes" lesson draft reserves about 1,300 tokens (system prompt +

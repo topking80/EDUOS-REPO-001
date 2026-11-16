@@ -39,13 +39,28 @@ export function redact(text, { names = [], numbers = [], max = 500 } = {}) {
     .replace(PHONE, m => (m.replace(/\D/g, "").length >= 9 ? "[removed]" : m)).replace(LONG_DIGITS, "[removed]");
 }
 
+// Personal details that can sit in teaching content, matched narrowly enough
+// to leave arithmetic, fractions and historical dates alone.
+const CONTENT_PHONE = /(?<![\d.])(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)\s?|\d{2,4}[.-])\d{3,4}[.-]\d{3,4}(?!\d|\.\d)/g;
+const CONTENT_URL = /\b(?:https?:\/\/|www\.)\S+/gi;
+const DATE = "(?:\\d{1,4}[\\/.-]\\d{1,2}[\\/.-]\\d{1,4}|\\d{1,2}(?:st|nd|rd|th)?\\s+\\p{L}{3,9}\\.?,?\\s+\\d{4}|\\p{L}{3,9}\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?,?\\s+\\d{4})";
+// A date only when it is labelled as someone's birthday.
+const CONTENT_DOB = new RegExp(`\\b(d\\.?o\\.?b\\.?|date of birth|birth ?date|birthday|born(?: on)?)(\\s*(?:is|was|:|-)?\\s*)${DATE}`, "giu");
+const CONTENT_ADDRESS = /\b\d{1,6}[A-Za-z]?\s+(?:[\p{L}'.-]+\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Place|Pl|Way|Terrace|Ter|Circle|Cir|Highway|Hwy)\b\.?(?:,?\s+(?:Apt|Apartment|Unit|Suite|Ste|#)\.?\s*[\w-]+)?/giu;
+
 /**
- * Approved teaching content on its way out: student names and numbers and
- * email addresses are removed. Unlike redact(), digits are left alone (a
- * maths problem is full of them) and nothing is cut.
+ * Approved teaching content on its way out: student names and numbers, email
+ * addresses, web addresses, phone-shaped numbers, street addresses and dates
+ * labelled as a birth date are removed. Unlike redact(), other digits are
+ * left alone (a maths problem is full of them) and nothing is cut.
+ * Pattern-matching can't recognize every personal detail (an unlabelled
+ * birthday, an address written unusually, a staff or family name): lessons
+ * should be written without them, and external tutoring is off by default.
  */
 export function redactContent(text, identifiers = {}) {
-  return removeIdentifiers(String(text ?? "").replace(EMAIL, "[removed]"), { names: identifiers.names || [], numbers: identifiers.numbers || [] });
+  const out = removeIdentifiers(String(text ?? ""), { names: identifiers.names || [], numbers: identifiers.numbers || [] });
+  return out.replace(EMAIL, "[removed]").replace(CONTENT_URL, "[removed]").replace(CONTENT_DOB, "$1$2[removed]")
+    .replace(CONTENT_ADDRESS, "[removed]").replace(CONTENT_PHONE, "[removed]");
 }
 
 /**

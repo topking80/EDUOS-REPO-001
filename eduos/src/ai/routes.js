@@ -39,7 +39,7 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!u) return res.status(400).json({ error: "unknown_ai_usecase" });
     if (u.input && (text.length < u.input.min || text.length > u.input.max)) return res.status(400).json({ error: "ai_input_length", min: u.input.min, max: u.input.max });
-    let reservation = null;
+    let reservation = null, reserved = 0, sentOut = false;
     try {
       // 1. Policy, role, the data (for the brief) and the redaction list, in
       //    the caller's own scope; then reserve budget atomically.
@@ -57,8 +57,11 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
         const id = await reserveBudget(c, a, usecase, reserve).catch(e => { if (e.status === 429 || e.status === 403) throw new HttpError(e.status, e.message); throw e; });
         return { input, identifiers, id, reserve };
       });
-      reservation = prep.id;
-      // 2. The model (outside any transaction).
+      reservation = prep.id; reserved = prep.reserve;
+      // 2. The model (outside any transaction). From here an external
+      //    provider may have received, processed and billed the request,
+      //    whatever happens next.
+      sentOut = external;
       const out = await withDeadline(provider.generate(usecase, prep.input, { identifiers: prep.identifiers }), config.aiProviderTimeoutMs + 5000,
         async () => ({ text: capLocalOutput(await localProvider.generate(usecase, prep.input)), fallback: true }));
       // 3. Settle the reservation (no prompt, no answer) and audit. Never
@@ -87,8 +90,19 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
       res.json({ data: { usecase, text: out.text, source: external && !out.fallback ? "external" : "local", tokens: tokensIn + tokensOut,
         ...(usecase === "ops_brief" ? { basis: prep.input.context } : {}) } });
     } catch (e) {
-      // A request that failed after reserving gives its reservation back.
-      if (reservation) await withTenantTransaction(a, (c) => c.query("UPDATE ai_usage SET outcome='failed', tokens_in=0, tokens_out=0 WHERE id=$1 AND outcome='pending'", [reservation])).catch(() => {});
+      if (reservation && !sentOut) {
+        // Nothing left the server: the reservation is given back.
+        await withTenantTransaction(a, (c) => c.query("UPDATE ai_usage SET outcome='failed', tokens_in=0, tokens_out=0 WHERE id=$1 AND outcome='pending'", [reservation])).catch(() => {});
+      } else if (reservation) {
+        // The provider was called and then our bookkeeping failed. Never give
+        // that budget back: record the full reservation as used. If even this
+        // fails, the row stays 'pending', which counts in full all day.
+        console.error(`ai accounting failed after a provider call (district ${a.districtId}); keeping the reservation of ${reserved}: ${e.message}`);
+        await withTenantTransaction(a, async (c) => {
+          await c.query("UPDATE ai_usage SET provider='openai_compatible', outcome='fallback', tokens_in=$2, tokens_out=$3 WHERE id=$1 AND outcome='pending'", [reservation, reserved - OUTPUT_MAX_TOKENS, OUTPUT_MAX_TOKENS]);
+          await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${reserved}; usage=reserved; reserved=${reserved}; accounting_failed_after_provider_call`, "failure");
+        }).catch(() => {});
+      }
       if (e.status === 403 && e.message === "school_scope_required") return res.status(403).json({ error: "school_scope_required" });
       sendError(res, next, e);
     }

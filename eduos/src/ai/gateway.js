@@ -37,18 +37,12 @@ export async function policyOf(c, districtId) {
   return r || { enabled_usecases: [], daily_token_cap: 200000, user_daily_token_cap: 20000, updated_at: null };
 }
 
-/**
- * A reservation older than this belongs to a request that never finished. It
- * must outlast any request: the provider call is cut off at
- * AI_PROVIDER_TIMEOUT_MS (at most 120 s, enforced by config) plus a 5 s
- * margin (routes.js), far inside this.
- */
-export const RESERVATION_TTL_MINUTES = 15;
-export const RESERVATION_TTL = `${RESERVATION_TTL_MINUTES} minutes`;
-export const MAX_REQUEST_MS = 120_000 + 5_000;
-
-// Today's tokens, counting requests in flight at what they reserved.
-const USED = `CASE WHEN outcome = 'pending' AND created_at < now() - interval '${RESERVATION_TTL}' THEN 0 ELSE tokens_in + tokens_out END`;
+// Today's tokens. A reservation ('pending') counts in full until it is
+// settled or given back, for the rest of the day if need be: it never lapses
+// on a timer. A request whose bookkeeping failed after the provider was
+// called, or a server that stopped mid-request, therefore leaves the budget
+// over-counted (safe), never under-counted.
+const USED = `tokens_in + tokens_out`;
 export async function usedToday(c, districtId, userId) {
   const r = (await c.query(`SELECT coalesce(sum(${USED}), 0)::int AS district,
       coalesce(sum(${USED}) FILTER (WHERE user_id = $2), 0)::int AS mine

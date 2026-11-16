@@ -41,8 +41,12 @@ sign-in, roles and row-level security. Student tutoring stays with Christie
   - *What it can't do:* stop a provider billing more than `max_tokens` allows.
     If a report exceeds the reservation it is recorded (it is what will be
     billed) and flagged `over_reservation` in the audit log.
-  - The provider call is cut off at AI_PROVIDER_TIMEOUT_MS (at most 120 s); a
-    reservation only stops counting after 15 minutes.
+  - *Never released after a provider call.* If recording the result fails
+    after an external provider was called, the reservation is recorded as used
+    in full; if that fails too, it stays reserved and keeps counting. A
+    reservation never lapses on a timer: it counts until it is settled or
+    given back, so a failure can over-count a day's budget but not under-count
+    it. The provider call is cut off at AI_PROVIDER_TIMEOUT_MS (at most 120 s).
 - **Kept:** use case, role, tokens and provider for each use; every use is in
   the audit log. **Not kept:** the prompt or the answer.
 
@@ -89,8 +93,12 @@ The same rules protect the staff assistant and the student tutor (Christie).
 Off by default (`CHRISTIE_PROVIDER`, `CHRISTIE_ALLOW_EXTERNAL_PROVIDER`). When
 on, **every field** of the request is sanitized, not only the learner's
 question: lesson title, approved lesson, problem and hints lose the names and
-numbers of any district student and email addresses (digits are left alone:
-maths is full of them). "Approved for teaching" doesn't mean free of personal
+numbers of any district student, email and web addresses, phone-shaped
+numbers, street addresses and dates labelled as a birth date. Other digits and
+dates are left alone: maths and history are full of them. Pattern-matching
+can't recognize every personal detail (an unlabelled birthday, an unusually
+written address, a staff or family member's name), so lessons should be
+written without them. "Approved for teaching" doesn't mean free of personal
 information. The provider serializes only that sanitized copy; without one it
 sends nothing. The learner still sees the original content, and the local
 tutor still uses it.
