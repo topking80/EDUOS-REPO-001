@@ -20,20 +20,29 @@
 // `leaseSeconds`; the next run claims those rows again. The adapter is handed
 // the row id, which a real sender passes on as its idempotency key, so a row
 // sent just before a crash isn't delivered twice by a provider that honours it.
+//
+// Slow senders: a batch is claimed together but sent one row at a time, so a
+// row's claim could run out while earlier rows are still being sent, and a
+// second dispatcher could take it. So just before each send the dispatcher
+// renews that row's lease (only if it still holds it; otherwise it skips the
+// row), and every send is cut off at `sendTimeoutSeconds`, which must be well
+// inside the lease: a row is never sent under a lease that can run out mid-send.
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool } from "./db.js";
 import { adapterFor, attemptOutcome } from "./notify.js";
 
-export async function dispatchPending({ db = pool, limit = 500, batch = 50, leaseSeconds = 120, log = console.log, adapters = adapterFor } = {}) {
+export async function dispatchPending({ db = pool, limit = 500, batch = 50, leaseSeconds = 120, sendTimeoutSeconds = Math.floor(leaseSeconds / 2),
+  log = console.log, adapters = adapterFor } = {}) {
+  if (!(sendTimeoutSeconds > 0 && sendTimeoutSeconds < leaseSeconds)) throw new Error("sendTimeoutSeconds must be above 0 and below leaseSeconds");
   const districts = (await db.query("SELECT id FROM districts WHERE status='active'")).rows;
   const tally = { handled: 0, delivered: 0, skipped: 0, retrying: 0, failed: 0, lostLease: 0 };
   for (const d of districts) {
     for (let done = 0; done < limit;) {
       const token = crypto.randomUUID();
       const claimed = await inTx(db, d.id, c => c.query(
-        `UPDATE notification_outbox o SET lease_token=$2, lease_expires_at=now()+make_interval(secs => $3::int)
+        `UPDATE notification_outbox o SET lease_token=$2, lease_expires_at=now()+make_interval(secs => $3::float8)
           WHERE o.id IN (SELECT id FROM notification_outbox
                           WHERE district_id=$1 AND status='pending' AND channel<>'in_app'
                             AND (next_attempt_at IS NULL OR next_attempt_at<=now())
@@ -44,9 +53,20 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
       const rows = claimed.rows.sort((a, b) => a.created_at - b.created_at || String(a.id).localeCompare(String(b.id)));
       if (!rows.length) break;
       for (const row of rows) {
-        let result;
-        try { result = await adapters(row.channel).send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id }, log); }
-        catch (e) { result = { status: "pending", note: String(e?.message || e).slice(0, 300) }; }
+        // Renew this row's lease for the length of its send; skip it if another
+        // dispatcher took it over while earlier rows were being sent.
+        const renewed = await inTx(db, d.id, c => c.query(
+          `UPDATE notification_outbox SET lease_expires_at=now()+make_interval(secs => $3::float8)
+            WHERE id=$1 AND lease_token=$2 AND lease_expires_at>now() AND status='pending'`, [row.id, token, leaseSeconds]));
+        if (!renewed.rowCount) { done++; tally.lostLease++; continue; }
+        let result, timer;
+        try {
+          result = await Promise.race([
+            adapters(row.channel).send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id }, log),
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
+          ]);
+        } catch (e) { result = { status: "pending", note: String(e?.message || e).slice(0, 300) }; }
+        finally { clearTimeout(timer); }
         const out = attemptOutcome(result, row.attempts);
         const settled = await inTx(db, d.id, c => c.query(
           `UPDATE notification_outbox SET status=$2, attempts=$3, last_error=$4, last_attempt_at=now(),
