@@ -20,9 +20,10 @@
 	# Security headers for everything the edge serves (32.0.53). Static assets
 	# never reach the Node app, so helmet's headers must be repeated here. The
 	# "?" form only sets a header when the upstream did not, so API responses
-	# keep the app's own values. Keep the CSP in sync with src/server.js.
+	# keep the app's own values. The CSP must match src/csp.js exactly: no
+	# inline script (test/csp-caddy-matches-app.test.js compares the two).
 	header {
-		?Content-Security-Policy "default-src 'self'; base-uri 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https:; object-src 'none'; script-src 'self' 'unsafe-inline'; script-src-attr 'unsafe-inline'; style-src 'self' 'unsafe-inline'; upgrade-insecure-requests; connect-src 'self'"
+		?Content-Security-Policy "default-src 'self'; base-uri 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https:; object-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; upgrade-insecure-requests; connect-src 'self'"
 		?X-Content-Type-Options "nosniff"
 		?X-Frame-Options "SAMEORIGIN"
 		?Referrer-Policy "no-referrer"
