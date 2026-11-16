@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { FLOW_EVENT_TYPES, normalizeFlowEvent, serverFlowEvent, webhookPayload } from "../src/flow-events.js";
 import {
   deliverOnce, deliverWebhook, deriveWebhookSecret, isBlockedAddress, resolveWebhookTarget,
-  signatureHeader, validateWebhookUrl, verifySignature
+  parseRetryAfter, signatureHeader, validateWebhookUrl, verifySignature
 } from "../src/webhooks.js";
 import { ROLE_PERMISSIONS, canPerform, isGrantable } from "../src/policy.js";
 
@@ -67,6 +67,29 @@ test("non-public addresses are blocked, public ones are not", () => {
     assert.equal(isBlockedAddress(ip), true, ip);
   for (const ip of ["93.184.216.34", "8.8.8.8", "172.32.0.1", "2606:4700:4700::1111", "::ffff:8.8.8.8"]) assert.equal(isBlockedAddress(ip), false, ip);
 });
+test("IANA special-purpose IPv6 ranges are rejected while global unicast remains allowed", () => {
+  // Regression coverage for protocol-assignment, benchmarking, ORCHID,
+  // SRv6, AS112, documentation, NAT64-local-use and 6to4 ranges.
+  for (const ip of [
+    "2001::1", "2001:1::1", "2001:2::1", "2001:10::1", "2001:20::1",
+    "5f00::1", "2620:4f:8000::1", "3fff::1", "64:ff9b:1::1",
+    "2002:0808:0808::1", "fec0::1", "::ffff:192.0.2.1"
+  ]) assert.equal(isBlockedAddress(ip), true, ip);
+  for (const ip of ["2001:4860:4860::8888", "2606:4700:4700::1111"])
+    assert.equal(isBlockedAddress(ip), false, ip);
+});
+
+test("Retry-After accepts bounded delta-seconds and HTTP dates, rejects malformed values", () => {
+  const now = Date.parse("2026-11-16T14:00:00.000Z");
+  assert.equal(parseRetryAfter("120", now), 120);
+  assert.equal(parseRetryAfter("0", now), 0);
+  assert.equal(parseRetryAfter("7200", now), 3600, "receiver delay is capped at one hour");
+  assert.equal(parseRetryAfter("Sun, 16 Nov 2026 14:02:30 GMT", now), 150);
+  assert.equal(parseRetryAfter("Sun, 16 Nov 2026 13:59:00 GMT", now), 0);
+  for (const bad of [undefined, null, "", "soon", "-1", "1.5", "999999999999", "Mon, not-a-date"])
+    assert.equal(parseRetryAfter(bad, now), null, String(bad));
+});
+
 test("destination URLs must be https, credential-free, public and on a safe port", () => {
   const reason = (url, opts) => validateWebhookUrl(url, opts).reason;
   assert.equal(validateWebhookUrl("https://hooks.example.org/eduos?x=1").ok, true);
