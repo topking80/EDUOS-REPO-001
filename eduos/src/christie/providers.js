@@ -23,8 +23,8 @@ const STUDENT_NO = /\b[A-Z]{2,5}-\d{2,}\b/g;
 const LONG_DIGITS = /\b\d{6,}\b/g;
 
 /** Remove identifiers from learner text before it could leave the server. */
-export function redact(text, { names = [] } = {}) {
-  let out = String(text || "").slice(0, 500);
+export function redact(text, { names = [], max = 500 } = {}) {
+  let out = String(text || "").slice(0, max);
   out = out.replace(EMAIL, "[removed]").replace(URL_RE, "[removed]").replace(STUDENT_NO, "[removed]")
     .replace(PHONE, m => (m.replace(/\D/g, "").length >= 9 ? "[removed]" : m)).replace(LONG_DIGITS, "[removed]");
   const tokens = [...new Set(names.flatMap(n => String(n || "").split(/\s+/)).filter(t => t.length >= 2))];

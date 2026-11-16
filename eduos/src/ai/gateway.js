@@ -38,11 +38,34 @@ export async function policyOf(c, districtId) {
   return r || { enabled_usecases: [], daily_token_cap: 200000, user_daily_token_cap: 20000, updated_at: null };
 }
 
+/** Most a single request may use: its input estimate plus this much output. */
+export const OUTPUT_ALLOWANCE = 1000;
+/** A reservation older than this belongs to a request that never finished. */
+export const RESERVATION_TTL = "15 minutes";
+
+// Today's tokens, counting requests in flight at what they reserved.
+const USED = `CASE WHEN outcome = 'pending' AND created_at < now() - interval '${RESERVATION_TTL}' THEN 0 ELSE tokens_in + tokens_out END`;
 export async function usedToday(c, districtId, userId) {
-  const r = (await c.query(`SELECT coalesce(sum(tokens_in + tokens_out), 0)::int AS district,
-      coalesce(sum(tokens_in + tokens_out) FILTER (WHERE user_id = $2), 0)::int AS mine
+  const r = (await c.query(`SELECT coalesce(sum(${USED}), 0)::int AS district,
+      coalesce(sum(${USED}) FILTER (WHERE user_id = $2), 0)::int AS mine
     FROM ai_usage WHERE district_id = $1 AND created_at >= date_trunc('day', now())`, [districtId, userId])).rows[0];
   return { district: r.district, user: r.mine };
+}
+
+/**
+ * Atomically checks both daily budgets and reserves room for this request
+ * (a 'pending' usage row) before anything is sent to a model. Requests in one
+ * district take turns here (a transaction-scoped advisory lock), so
+ * simultaneous requests can't all pass the same check. Returns the
+ * reservation id, or throws a 429 code.
+ */
+export async function reserveBudget(c, actor, policy, usecase, reserve) {
+  await c.query("SELECT pg_advisory_xact_lock(hashtext('eduos-ai-budget'), hashtext($1::text))", [actor.districtId]);
+  const used = await usedToday(c, actor.districtId, actor.userId);
+  if (used.district + reserve > policy.daily_token_cap) throw Object.assign(new Error("ai_district_budget_reached"), { status: 429 });
+  if (used.user + reserve > policy.user_daily_token_cap) throw Object.assign(new Error("ai_your_budget_reached"), { status: 429 });
+  return (await c.query(`INSERT INTO ai_usage(district_id, school_id, user_id, role, usecase, provider, outcome, tokens_in, tokens_out)
+      VALUES ($1,$2,$3,$4,$5,'local','pending',$6,0) RETURNING id`, [actor.districtId, actor.schoolId || null, actor.userId, actor.role, usecase, reserve])).rows[0].id;
 }
 
 /**
@@ -71,13 +94,28 @@ export async function opsContext(c, actor) {
   };
 }
 
-/** Names and student numbers of the students the caller could see, removed
- *  from text before it leaves the server (on top of the generic redaction of
- *  emails, phone numbers, URLs and id-like strings). */
-export async function namesToRedact(c, actor) {
-  const r = actor.role === "teacher"
-    ? await c.query(`SELECT s.display_name, s.local_student_number FROM teacher_student_rosters r JOIN students s ON s.id = r.student_id AND s.district_id = r.district_id
-        WHERE r.district_id = $1 AND r.teacher_user_id = $2 LIMIT 2000`, [actor.districtId, actor.userId])
-    : await c.query("SELECT display_name, local_student_number FROM students WHERE district_id = $1 AND school_id = $2 LIMIT 5000", [actor.districtId, actor.schoolId]);
+/** The words of a text, for matching against student names and numbers. */
+export function candidateTokens(text) {
+  return [...new Set(String(text || "").split(/[^\p{L}\p{N}'\-]+/u).filter(t => t.length >= 2))].slice(0, 5000);
+}
+
+/**
+ * Names and student numbers of any student in the district that appear in the
+ * text, removed before it leaves the server (on top of the generic redaction
+ * of emails, phone numbers, URLs and id-like strings).
+ *
+ * District-wide for every role, with no row limit: the database finds the
+ * students whose number or a word of whose name occurs in the text, so the
+ * answer is complete whatever the district's size, and only the matches come
+ * back. (It used to look up only the caller's school, which for a
+ * superintendent, who has none, matched nobody, and stopped at 5,000 names.)
+ */
+export async function namesToRedact(c, actor, text) {
+  const raw = candidateTokens(text);
+  if (!raw.length) return [];
+  const r = await c.query(`SELECT display_name, local_student_number FROM students
+     WHERE district_id = $1 AND (local_student_number = ANY($2::text[])
+       OR EXISTS (SELECT 1 FROM regexp_split_to_table(lower(display_name), '\\s+') AS w WHERE w = ANY($3::text[])))`,
+    [actor.districtId, raw, raw.map(t => t.toLowerCase())]);
   return r.rows.flatMap(x => [x.display_name, x.local_student_number]);
 }

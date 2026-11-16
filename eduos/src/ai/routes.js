@@ -4,7 +4,7 @@ import { config } from "../config.js";
 import { requireSession, requireCsrf } from "../auth.js";
 import { withTenantTransaction } from "../db.js";
 import { HttpError, audit, sendError } from "../role-app-util.js";
-import { USECASES, POLICY_EDITORS, POLICY_READERS, denial, policyOf, usedToday, opsContext, namesToRedact, estimateTokens } from "./gateway.js";
+import { USECASES, POLICY_EDITORS, POLICY_READERS, OUTPUT_ALLOWANCE, denial, policyOf, usedToday, reserveBudget, opsContext, namesToRedact, estimateTokens } from "./gateway.js";
 import { createProvider } from "./providers.js";
 
 export function registerAiRoutes(app, { provider = createProvider(config) } = {}) {
@@ -31,34 +31,40 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!u) return res.status(400).json({ error: "unknown_ai_usecase" });
     if (u.input && (text.length < u.input.min || text.length > u.input.max)) return res.status(400).json({ error: "ai_input_length", min: u.input.min, max: u.input.max });
+    let reservation = null;
     try {
-      // 1. Policy, role, budget and (for the brief) the data, in the caller's own scope.
+      // 1. Policy, role, the data (for the brief) and the redaction list, in
+      //    the caller's own scope; then reserve budget atomically.
       const prep = await withTenantTransaction(a, async (c) => {
         const p = await policyOf(c, a.districtId);
         const why = denial({ usecase, role: a.role, enabled: p.enabled_usecases });
         if (why) throw new HttpError(403, why);
-        const used = await usedToday(c, a.districtId, a.userId), est = estimateTokens(text) + 300;
-        if (used.district + est > p.daily_token_cap) throw new HttpError(429, "ai_district_budget_reached");
-        if (used.user + est > p.user_daily_token_cap) throw new HttpError(429, "ai_your_budget_reached");
         const input = usecase === "ops_brief" ? { context: await opsContext(c, a) } : { text };
-        const names = external && usecase !== "ops_brief" ? await namesToRedact(c, a) : []; // any pasted text may name a student
-        return { input, names };
+        // Any pasted text may name a student: find every student in the
+        // district it names (failing here sends nothing anywhere).
+        const names = external && usecase !== "ops_brief" ? await namesToRedact(c, a, text) : [];
+        const reserve = estimateTokens(input.text ?? JSON.stringify(input.context)) + OUTPUT_ALLOWANCE;
+        const id = await reserveBudget(c, a, p, usecase, reserve).catch(e => { if (e.status === 429) throw new HttpError(429, e.message); throw e; });
+        return { input, names, id };
       });
+      reservation = prep.id;
       // 2. The model (outside any transaction).
       const out = await provider.generate(usecase, prep.input, { names: prep.names });
       const tokensIn = out.usage?.prompt_tokens ?? estimateTokens(prep.input.text ?? JSON.stringify(prep.input.context));
       const tokensOut = out.usage?.completion_tokens ?? estimateTokens(out.text);
-      // 3. Usage (no prompt, no answer) and audit.
+      // 3. Settle the reservation to what was used (no prompt, no answer) and audit.
       await withTenantTransaction(a, async (c) => {
-        await c.query(`INSERT INTO ai_usage(district_id, school_id, user_id, role, usecase, provider, outcome, tokens_in, tokens_out)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [a.districtId, a.schoolId || null, a.userId, a.role, usecase, out.fallback || !external ? "local" : "openai_compatible",
-          out.fallback ? "fallback" : "ok", tokensIn, tokensOut]);
+        await c.query(`UPDATE ai_usage SET provider=$2, outcome=$3, tokens_in=$4, tokens_out=$5 WHERE id=$1 AND outcome='pending'`,
+          [reservation, out.fallback || !external ? "local" : "openai_compatible", out.fallback ? "fallback" : "ok", tokensIn, tokensOut]);
         await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${tokensIn}+${tokensOut}; provider=${external && !out.fallback ? "external" : "local"}`);
       });
+      reservation = null;
       res.setHeader("Cache-Control", "no-store");
       res.json({ data: { usecase, text: out.text, source: external && !out.fallback ? "external" : "local", tokens: tokensIn + tokensOut,
         ...(usecase === "ops_brief" ? { basis: prep.input.context } : {}) } });
     } catch (e) {
+      // A request that failed after reserving gives its reservation back.
+      if (reservation) await withTenantTransaction(a, (c) => c.query("UPDATE ai_usage SET outcome='failed', tokens_in=0, tokens_out=0 WHERE id=$1 AND outcome='pending'", [reservation])).catch(() => {});
       if (e.status === 403 && e.message === "school_scope_required") return res.status(403).json({ error: "school_scope_required" });
       sendError(res, next, e);
     }
@@ -70,7 +76,7 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
       const data = await withTenantTransaction(req.actor, async (c) => {
         const p = await policyOf(c, req.actor.districtId);
         const usage = (await c.query(`SELECT usecase, count(*)::int AS calls, sum(tokens_in + tokens_out)::int AS tokens
-            FROM ai_usage WHERE district_id = $1 AND created_at >= now() - interval '30 days' GROUP BY usecase ORDER BY usecase`, [req.actor.districtId])).rows;
+            FROM ai_usage WHERE district_id = $1 AND outcome IN ('ok','fallback') AND created_at >= now() - interval '30 days' GROUP BY usecase ORDER BY usecase`, [req.actor.districtId])).rows;
         return { policy: p, usecases: Object.entries(USECASES).map(([id, u]) => ({ id, label: u.label, roles: u.roles })),
           usage30d: usage, provider: external ? "external" : "local", canEdit: POLICY_EDITORS.includes(req.actor.role) };
       });

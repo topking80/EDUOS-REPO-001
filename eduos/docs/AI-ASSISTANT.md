@@ -20,7 +20,10 @@ sign-in, roles and row-level security. Student tutoring stays with Christie
   safety incidents, open service work, substitute coverage needed) for the
   person's own school, or the district for a superintendent, computed under
   row-level security.
-- **Budgets:** district tokens per day and tokens per person per day.
+- **Budgets:** district tokens per day and tokens per person per day. Each
+  request reserves the most it may use (its input plus a 1,000-token output
+  allowance) before anything is sent, one request at a time per district, then
+  settles to what it used; simultaneous requests can't overrun a budget.
 - **Kept:** use case, role, tokens and provider for each use; every use is in
   the audit log. **Not kept:** the prompt or the answer.
 
@@ -31,5 +34,7 @@ on the server, with no network. `AI_PROVIDER=openai_compatible` with
 `AI_ALLOW_EXTERNAL_PROVIDER=true`, `AI_PROVIDER_URL` (https) and
 `AI_PROVIDER_MODEL` uses an external chat-completions API. Before anything is
 sent, emails, phone numbers, URLs and id-like strings are removed, as are the
-names and student numbers of the students the person can see. The operations
+names and student numbers of every student in the district that appear in the
+text, for every role (the database finds them, with no size limit). If that
+lookup fails, nothing is sent. The operations
 brief sends only its counts. If the service fails, the local answer is used.

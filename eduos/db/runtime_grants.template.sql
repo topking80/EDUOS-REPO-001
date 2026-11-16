@@ -299,3 +299,6 @@ GRANT SELECT, INSERT, UPDATE ON ai_district_policy TO eduos_app;
 GRANT SELECT, INSERT ON ai_usage TO eduos_app;
 GRANT USAGE ON SEQUENCE ai_usage_id_seq TO eduos_app;
 REVOKE DELETE, TRUNCATE ON ai_district_policy, ai_usage FROM eduos_app;
+
+-- 042: a usage row is reserved, then settled (only these columns change).
+GRANT UPDATE (outcome, provider, tokens_in, tokens_out) ON ai_usage TO eduos_app;

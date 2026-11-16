@@ -67,7 +67,8 @@ export const localProvider = Object.freeze({
 
 /** Exact request body sent to an external provider (exported for tests). */
 export function externalRequestBody({ model, usecase, input, names = [] }) {
-  const content = usecase === "ops_brief" ? JSON.stringify(input.context) : redact(input.text, { names }).slice(0, 8000);
+  // Redact the whole text, then cut: the tutor's redact() stops at 500 characters by default.
+  const content = usecase === "ops_brief" ? JSON.stringify(input.context) : redact(input.text, { names, max: 12000 }).slice(0, 8000);
   return { model, temperature: 0.3, max_tokens: 900, messages: [{ role: "system", content: SYSTEM_PROMPTS[usecase] }, { role: "user", content }] };
 }
 
