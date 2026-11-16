@@ -6,6 +6,12 @@
 -- The runtime role must NOT be a superuser, must NOT have BYPASSRLS and must
 -- NOT own the tables (the server refuses to start otherwise).
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+-- Functions are executable by every database role (PUBLIC) unless revoked,
+-- and many here are SECURITY DEFINER: a reporting or other role in the same
+-- cluster could set app.district_id itself and call them. Only the runtime
+-- role gets EXECUTE, function by function, below. Re-applied after every
+-- migration, so new functions start revoked too.
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
 GRANT CONNECT ON DATABASE eduos TO eduos_app;
 GRANT USAGE ON SCHEMA public TO eduos_app;
 -- 32.0.54: the API checks at startup that every migration has been applied.
