@@ -321,8 +321,8 @@ GRANT EXECUTE ON FUNCTION eduos_queue_backlog() TO eduos_app;
 -- 37.6.0 Clubs, sports, school events and ticket inventory. The API emits
 -- audit events and applies school/assignment checks; RLS is district-wide.
 GRANT SELECT, INSERT, UPDATE ON school_activities, activity_staff, activity_memberships,
-  school_events, event_ticket_types, event_ticket_orders, event_tickets, event_streams,
-  activity_media_assets TO eduos_app;
+  school_events, event_ticket_types, event_streams TO eduos_app;
+GRANT SELECT, INSERT ON event_ticket_orders, event_tickets, activity_media_assets TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON event_ticket_orders, event_tickets, activity_media_assets FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON school_activities, activity_staff, activity_memberships,
-  school_events, event_ticket_types, event_ticket_orders, event_tickets, event_streams,
-  activity_media_assets FROM eduos_app;
+  school_events, event_ticket_types, event_streams FROM eduos_app;
