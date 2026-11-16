@@ -17,11 +17,11 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
   const supt2 = { districtId: ID.d2, userId: USERS.supt2[0], role: "superintendent", schoolId: null };
 
   // One worker run. `lookup` and `send` replace DNS and HTTP; everything else is the real code.
-  const work = (actor, { lookup = async () => PUBLIC_IP, send, limit = 10 } = {}) =>
+  const work = (actor, { lookup = async () => PUBLIC_IP, send, limit = 10, ...extra } = {}) =>
     processWebhookOutbox(actor, { limit }, {
       withTenantTransaction, signingKey: SIGNING_KEY,
       deliveryOptions: { lookup, send, sleep: async () => {} },
-      log: { error: () => {} }
+      log: { error: () => {}, warn: () => {} }, ...extra
     });
   const delivered = async () => ({ outcome: "delivered", statusCode: 204, durationMs: 1 });
 
@@ -225,6 +225,165 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
       assert.equal((await outbox(backedOff.id)).status, "pending", "a backed-off retry waits for its time");
       assert.equal((await dispatchWebhooks({ db: ownerPool, signingKey: SIGNING_KEY, deliveryOptions: options })).claimed, 0, "nothing left to do");
     } finally { await ownerPool.end(); }
+  });
+
+  it("a batch slower than its lease: each job's lease is renewed before it's sent, so a second worker never sends it too (2026-11-16 audit)", async () => {
+    await clearQueue();
+    const s = await subscription();
+    const jobs = []; for (let i = 0; i < 6; i++) jobs.push(await job(s));
+    const sends = [];
+    const slow = async req => { sends.push(req.headers["X-EduOS-Delivery"]); await new Promise(r => setTimeout(r, 400)); return delivered(); };
+    // A claims all six with a 1 s lease and needs 400 ms each; B starts after A's claims ran out.
+    const a = work(supt1, { send: slow, limit: 25, leaseSeconds: 1, jobDeadlineMs: 800 });
+    await new Promise(r => setTimeout(r, 1100));
+    const b = work(supt1, { send: slow, limit: 25, leaseSeconds: 1, jobDeadlineMs: 800 });
+    await Promise.all([a, b]);
+    assert.equal(sends.length, new Set(sends).size, `a job was sent twice: ${sends.length} sends for ${new Set(sends).size} jobs`);
+    assert.equal(new Set(sends).size, 6);
+    for (const j of jobs) assert.equal((await outbox(j.id)).status, "delivered");
+  });
+
+  it("a worker queued for delivery capacity cannot send after its lease is reclaimed", async () => {
+    await clearQueue();
+    const s = await subscription();
+    const j = await job(s);
+    const { createLimiter } = await import("../../src/webhook-outbox.js");
+    const limiter = createLimiter(1);
+    let release;
+    const occupied = limiter.run(() => new Promise(resolve => { release = resolve; }));
+    const waitForQueue = async expected => {
+      for (let i = 0; i < 100; i++) {
+        if (limiter.waiting >= expected) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.fail(`expected ${expected} queued deliveries, saw ${limiter.waiting}`);
+    };
+    const sends = [];
+    const send = async req => { sends.push(req.headers["X-EduOS-Delivery"]); return delivered(); };
+
+    // A claims the event but cannot start delivery because the only slot is busy.
+    const a = work(supt1, { send, limit: 1, limiter, leaseSeconds: 1, jobDeadlineMs: 800 });
+    await waitForQueue(1);
+    // Its lease expires while waiting. B legitimately reclaims the same row.
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    const b = work(supt1, { send, limit: 1, limiter, leaseSeconds: 1, jobDeadlineMs: 800 });
+    await waitForQueue(2);
+    release();
+    await Promise.all([occupied, a, b]);
+
+    assert.deepEqual(sends, [j.delivery_id], "only the current lease holder may send");
+    assert.equal((await outbox(j.id)).status, "delivered");
+    assert.equal((await ledger(j.delivery_id)).length, 1, "only one attempt is recorded");
+  });
+
+  it("a delivery that hangs is cut off inside its lease and retried later", async () => {
+    await clearQueue();
+    const s = await subscription();
+    const j = await job(s);
+    await work(supt1, { send: () => new Promise(() => {}), leaseSeconds: 2, jobDeadlineMs: 300 });
+    const row = await outbox(j.id);
+    assert.deepEqual([row.status, row.last_outcome, row.last_error, row.lease_token], ["pending", "timeout", "job_deadline", null]);
+    await assert.rejects(work(supt1, { send: delivered, leaseSeconds: 1, jobDeadlineMs: 1000 }), /jobDeadlineMs/);
+  });
+
+  it("a 429 with Retry-After waits as long as the receiver asked (capped at an hour)", async () => {
+    await clearQueue();
+    const s = await subscription();
+    const j = await job(s);
+    const busy = async () => ({ outcome: "http_error", statusCode: 429, durationMs: 1, retryAfterSeconds: 600 });
+    await work(supt1, { send: busy });
+    const wait = (await admin.query("SELECT extract(epoch FROM available_at-now())::int AS s FROM webhook_outbox WHERE id=$1", [j.id])).rows[0].s;
+    assert.ok(wait > 590 && wait <= 600, `waits ${wait} s, not the 15 s back-off`);
+    await makeDue(j.id);
+    await work(supt1, { send: async () => ({ outcome: "http_error", statusCode: 503, durationMs: 1, retryAfterSeconds: 3600 }) });
+    const later = (await admin.query("SELECT extract(epoch FROM available_at-now())::int AS s FROM webhook_outbox WHERE id=$1", [j.id])).rows[0].s;
+    assert.ok(later > 3590 && later <= 3600, `${later}`);
+  });
+
+  it("deliveries from many workers at once never exceed WEBHOOK_MAX_IN_FLIGHT", async () => {
+    await clearQueue();
+    const { createLimiter } = await import("../../src/webhook-outbox.js");
+    const limiter = createLimiter(2);
+    const subs = [await subscription(), await subscription(), await subscription()];
+    for (const sid of subs) for (let i = 0; i < 3; i++) await job(sid);
+    let now = 0, peak = 0;
+    const send = async () => { now++; peak = Math.max(peak, now); await new Promise(r => setTimeout(r, 30)); now--; return delivered(); };
+    // Workers claim only what the limiter can start (one each when it's full),
+    // so keep running rounds of four until the queue is empty.
+    let total = 0;
+    for (let round = 0; round < 10 && total < 9; round++) {
+      total += (await Promise.all([1, 2, 3, 4].map(() => work(supt1, { send, limit: 3, limiter })))).reduce((a, b) => a + b, 0);
+    }
+    assert.equal(total, 9, "every job delivered");
+    assert.equal(peak, 2, `at most two deliveries at once (saw ${peak})`);
+    const left = await admin.query("SELECT count(*)::int AS n FROM webhook_outbox WHERE subscription_id = ANY($1) AND status<>'delivered'", [subs]);
+    assert.equal(left.rows[0].n, 0);
+  });
+
+  it("during a signing-key rotation each delivery carries both signatures; the receiver's old secret still verifies", async () => {
+    await clearQueue();
+    const { verifySignature, deriveWebhookSecret } = await import("../../src/webhooks.js");
+    const PREVIOUS = "p".repeat(40);
+    const s = await subscription();
+    await job(s);
+    let seen;
+    await work(supt1, { previousSigningKey: PREVIOUS, send: async req => { seen = req; return delivered(); } });
+    const header = seen.headers["X-EduOS-Signature"];
+    assert.match(header, /^t=\d+,v1=[0-9a-f]{64},v1=[0-9a-f]{64}$/);
+    assert.ok(verifySignature(deriveWebhookSecret(SIGNING_KEY, s), header, seen.body), "the new secret verifies");
+    assert.ok(verifySignature(deriveWebhookSecret(PREVIOUS, s), header, seen.body), "the old secret still verifies");
+    assert.ok(!verifySignature(deriveWebhookSecret("x".repeat(40), s), header, seen.body), "an unrelated secret doesn't");
+  });
+
+  it("the API's own sweep (runtime role, no user) drains the queue", async () => {
+    await clearQueue();
+    const { dispatchWebhooks } = await import("../../src/webhook-dispatch.js");
+    const s = await subscription();
+    const j = await job(s);
+    const r = await dispatchWebhooks({ db: pool, signingKey: SIGNING_KEY, log: { error: () => {}, warn: () => {} },
+      deliveryOptions: { lookup: async () => PUBLIC_IP, send: delivered, sleep: async () => {} } });
+    assert.equal(r.claimed, 1);
+    assert.equal((await outbox(j.id)).status, "delivered");
+  });
+
+  it("a stale worker cannot win the delivery ledger before the current lease holder", async () => {
+    await clearQueue();
+    const sid = await subscription();
+    const j = await job(sid);
+    let signalBStarted;
+    const bStarted = new Promise(resolve => { signalBStarted = resolve; });
+    let releaseB;
+    const holdB = new Promise(resolve => { releaseB = resolve; });
+    let workerB;
+
+    const workerASend = async () => {
+      // Expire A's lease while its delivery callback is still running.
+      await admin.query("UPDATE webhook_outbox SET lease_until=now()-interval '1 second' WHERE id=$1", [j.id]);
+      workerB = work(supt1, {
+        send: async () => {
+          signalBStarted();
+          await holdB;
+          return delivered();
+        }
+      });
+      await bStarted;
+      // A returns first, but no longer owns the lease.
+      return { outcome: "http_error", statusCode: 500, durationMs: 1 };
+    };
+
+    const warnings = [];
+    const workerA = work(supt1, { send: workerASend, log: { error: () => {}, warn: (msg, detail) => warnings.push([msg, detail]) } });
+    await workerA;
+    assert.equal(warnings.length, 1, "the stale worker's request is logged, not lost");
+    assert.match(warnings[0][0], /lost its lease was not recorded/);
+    assert.deepEqual([warnings[0][1].deliveryId, warnings[0][1].outcome, warnings[0][1].statusCode], [j.delivery_id, "http_error", 500]);
+    assert.equal((await ledger(j.delivery_id)).length, 0,
+      "the stale worker must not reserve the unique attempt row");
+    releaseB();
+    await workerB;
+    assert.deepEqual(await ledger(j.delivery_id).then(rows => rows.map(x => [x.outcome, x.status_code])),
+      [["delivered", 204]]);
+    assert.equal((await outbox(j.id)).status, "delivered");
   });
 
   it("a worker only sees its own district's queue", async () => {

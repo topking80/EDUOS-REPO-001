@@ -89,8 +89,15 @@ export const ROLE_PERMISSIONS = Object.freeze({
   // 36.0.0: dedicated school librarian; library-only access.
   librarian: { schools: ["read"], branding: ["read"], library: ["read", "circulate", "manage"] },
   // 36.4.0 specialized school operations roles.
-  vice_principal: { schools:["read"], students:["read"], attendance:["read","create","update"], cases:["read","create","update"], safety:["read","initiate"], pickup:["read","verify"], transport:["read"], branding:["read"] },
-  counselor: { schools:["read"], cases:["read","create","update"] },
+  // The registry lists only what the routes actually let a role do (2026-11-16
+  // audit). Vice principals had cases, pickup, safety:initiate and
+  // attendance:update here, and counselors cases, but no route served them:
+  // case lists and writes, the pick-up desk and starting an alert are for
+  // principals and teachers (and the superintendent), and the counselor works
+  // the "counseling" operations queue. Granting any of these later means
+  // changing the route and its row policies too, with tests.
+  vice_principal: { schools:["read"], students:["read"], attendance:["read","create"], safety:["read"], transport:["read"], branding:["read"] },
+  counselor: { schools:["read"] },
   nurse: { schools:["read"], health_office:["read","create","update"] },
   maintenance: { schools:["read"], facilities:["read","create","update"] },
   lunch_staff: { schools:["read"], meal_service:["read","create","update"] }

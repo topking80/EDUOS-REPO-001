@@ -64,7 +64,9 @@ describe("EduOS 32.5.0 SafetyOS and pick-up against real PostgreSQL", { skip }, 
     const ok = await as("t1")("POST", `/api/safety/incidents/${incident.id}/confirm`, { kind: "lockdown", isDrill: true });
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
     assert.equal(ok.body.data.status, "active");
-    assert.ok(ok.body.data.notified.families >= 2 && ok.body.data.notified.staff >= 3, JSON.stringify(ok.body.data.notified));
+    const n = ok.body.data.notifications;
+    assert.ok(n.recipients.families >= 2 && n.recipients.staff >= 3, JSON.stringify(n));
+    assert.equal(n.emergencyServicesContacted, false);
     assert.equal((await as("p1")("POST", "/api/safety/incidents", { kind: "evacuate", isDrill: false })).status, 409, "one live incident per school");
   });
 

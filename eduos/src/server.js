@@ -8,17 +8,19 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { config } from "./config.js";
 import { pool, withTenantTransaction, assertSafeRuntimeRole, assertSchemaReady } from "./db.js";
-import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership } from "./auth.js";
+import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership, sessionIsLive } from "./auth.js";
 import { requirePermission, requireSchoolScope, canPerform, isGrantable, isDistrictRole } from "./policy.js";
 import { writeAudit } from "./audit.js";
 import { cspDirectives } from "./csp.js";
 import { applySisBatch, districtCap } from "./sis-import.js";
 import { HttpError } from "./role-app-util.js";
+import { lockStudentDay } from "./attendance-day.js";
 import { normalizeAgentEvent } from "./agent-events.js";
 import { classifyOperationalEvent } from "./operational-event-taxonomy.js";
 import { FLOW_EVENT_TYPES, isFlowEventType, normalizeFlowEvent, serverFlowEvent, webhookPayload } from "./flow-events.js";
 import { deliverWebhook, deriveWebhookSecret, resolveWebhookTarget, validateWebhookUrl } from "./webhooks.js";
-import { processWebhookOutbox as processOutbox } from "./webhook-outbox.js";
+import { processWebhookOutbox as processOutbox, createLimiter } from "./webhook-outbox.js";
+import { dispatchWebhooks } from "./webhook-dispatch.js";
 import { registerAdminRoutes } from "./admin-routes.js";
 import { registerMeshRoutes } from "./mesh-routes.js";
 import { registerHomeRoutes } from "./home-routes.js";
@@ -82,6 +84,26 @@ const guardianInviteLimiter=rateLimit({windowMs:60*60_000,limit:config.guardianI
 const guardianAcceptLimiter=rateLimit({windowMs:15*60_000,limit:config.guardianAcceptRateLimit,standardHeaders:true,legacyHeaders:false});
 // Teachers see only students on their roster (teacher_student_rosters).
 const rosterSql=(studentCol,userParam)=>`EXISTS(SELECT 1 FROM teacher_student_rosters tr WHERE tr.student_id=${studentCol} AND tr.teacher_user_id=${userParam})`;
+/**
+ * Which students a caller may see: the one rule for every student-record read
+ * (directory, profile, Student 360, attendance list and day). Fail-closed: a
+ * role not named here sees no student.
+ *   superintendent              the district (RLS keeps it to the district)
+ *   principal, vice_principal   their school
+ *   teacher                     their school, students on their roster
+ *   parent                      children they're an active parent/guardian of
+ *   pupil                       themselves (their active pupil link)
+ * The arguments are SQL expressions (column and parameter references).
+ */
+const studentVisibleSql=(st,role,school,user)=>`(
+  ${role}='superintendent'
+  OR (${role} IN ('principal','vice_principal') AND ${st}.school_id=${school})
+  OR (${role}='teacher' AND ${st}.school_id=${school} AND ${rosterSql(`${st}.id`,user)})
+  OR (${role}='parent' AND EXISTS(SELECT 1 FROM student_user_links l WHERE l.student_id=${st}.id AND l.district_id=${st}.district_id
+        AND l.user_id=${user} AND l.status='active' AND l.relationship IN ('parent','guardian')))
+  OR (${role}='pupil' AND EXISTS(SELECT 1 FROM student_user_links l WHERE l.student_id=${st}.id AND l.district_id=${st}.district_id
+        AND l.user_id=${user} AND l.status='active' AND l.relationship='pupil'))
+)`;
 // FERPA: record reads of student education records inside the same transaction.
 function auditRead(client,req,resourceType,resourceId,detail=null){
   return client.query(
@@ -133,16 +155,7 @@ app.get("/api/students",requireSession,requirePermission("students","read"),requ
       `SELECT s.id,s.local_student_number,s.display_name,s.grade_level,s.school_id,sc.name AS school_name,count(*) OVER() AS total
          FROM students s JOIN schools sc ON sc.id=s.school_id AND sc.district_id=s.district_id
         WHERE ($1::uuid IS NULL OR s.school_id=$1::uuid)
-          AND (
-            $2::text NOT IN ('parent','pupil')
-            OR EXISTS (
-              SELECT 1 FROM student_user_links l
-               WHERE l.student_id=s.id AND l.user_id=$3 AND l.status='active'
-                 AND (($2='parent' AND l.relationship IN ('parent','guardian')) OR ($2='pupil' AND l.relationship='pupil'))
-            )
-          )
-          AND ($2 NOT IN ('teacher','principal') OR s.school_id=$4::uuid)
-          AND ($2<>'teacher' OR ${rosterSql("s.id","$3")})
+          AND ${studentVisibleSql("s","$2::text","$4::uuid","$3::uuid")}
           AND ($5::text='' OR s.display_name ILIKE '%'||$6||'%' OR s.local_student_number LIKE $6||'%')
         ORDER BY s.display_name,s.id ${pageSql(pgn)}`,
       [req.query.schoolId || null, req.actor.role, req.actor.userId, req.actor.schoolId, q, q.replace(/[\\%_]/g,m=>"\\"+m)]
@@ -767,9 +780,11 @@ app.get("/api/audit",requireSession,requirePermission("audit","read"),async(req,
 // LISTEN/NOTIFY. The notification contains only a tenant ID and event UUID;
 // every event is re-read under the subscriber's tenant/RLS context before it
 // is emitted. Resource IDs, details, prompts and student data are not streamed.
+const SESSION_RECHECK_MS=config.streamSessionRecheckMs;
 app.get("/api/operations/stream",requireSession,requirePermission("audit","read"),async(req,res,next)=>{
   let listener;
   let heartbeat;
+  let recheck;
   let onNotification;
   let onListenerError;
   let closed=false;
@@ -810,6 +825,17 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
     writeFrame(`id: ${row.id}\nevent: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
   const visibleSql=`($1 IN ('superintendent','it_admin') OR school_id=$2::uuid)`;
+  // The session is checked when the stream opens, again before every event
+  // and every SESSION_RECHECK_MS while idle: signing out, an expired or idle
+  // session, or a revoked account or membership ends the stream (release
+  // gate: a revoked session can't keep receiving events).
+  let lastLiveCheck=Date.now();
+  const stillLive=async()=>{
+    if(closed)return false;
+    if(await sessionIsLive(req.actor.sessionId)){lastLiveCheck=Date.now();return true;}
+    if(!closed){writeFrame("event: session_ended\ndata: {}\n\n");res.end();close();}
+    return false;
+  };
   const readEvent=async eventId=>withTenantTransaction(req.actor,async client=>{
     const result=await client.query(
       `SELECT id,occurred_at,actor_role,action,resource_type,outcome
@@ -822,6 +848,7 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
     if(closed)return;
     closed=true;
     clearInterval(heartbeat);
+    clearInterval(recheck);
     pendingFrames.length=0;
     notificationBacklog.length=0;
     res.off("drain",onDrain);
@@ -852,7 +879,10 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
       let notice;
       try{notice=JSON.parse(message.payload||"{}")}catch{return}
       if(notice.districtId!==req.actor.districtId||typeof notice.eventId!=="string")return;
-      try{send(await readEvent(notice.eventId))}catch(error){
+      try{
+        const row=await readEvent(notice.eventId);
+        if(row&&await stillLive())send(row);
+      }catch(error){
         console.error("Operational stream event lookup failed",{requestId:req.requestId,message:error.message});
       }
     };
@@ -898,6 +928,8 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
     }
     heartbeat=setInterval(()=>{if(!closed)writeFrame(`: heartbeat ${Date.now()}\n\n`)},25_000);
     heartbeat.unref?.();
+    recheck=setInterval(()=>{if(!closed&&Date.now()-lastLiveCheck>=SESSION_RECHECK_MS)stillLive().catch(()=>{if(!closed){res.end();close();}})},Math.min(SESSION_RECHECK_MS,5_000));
+    recheck.unref?.();
   }catch(error){
     if(listener){try{listener.release()}catch{}listener=null;}
     if(!res.headersSent)return next(error);
@@ -1015,15 +1047,7 @@ app.get("/api/students/:studentId",requireSession,requirePermission("students","
     const result=await withTenantTransaction(req.actor,async client=>{const found=await client.query(
       `SELECT s.id,s.local_student_number,s.display_name,s.grade_level,s.school_id,sc.name AS school_name
          FROM students s JOIN schools sc ON sc.id=s.school_id AND sc.district_id=s.district_id
-        WHERE s.id=$1 AND (
-          $2='superintendent'
-          OR ($2='principal' AND s.school_id=$3)
-          OR ($2='teacher' AND s.school_id=$3 AND ${rosterSql("s.id","$4")})
-          OR ($2 IN ('parent','pupil') AND EXISTS (
-            SELECT 1 FROM student_user_links l WHERE l.student_id=s.id AND l.user_id=$4 AND l.status='active'
-              AND (($2='parent' AND l.relationship IN ('parent','guardian')) OR ($2='pupil' AND l.relationship='pupil'))
-          ))
-        )`,[req.params.studentId,req.actor.role,req.actor.schoolId,req.actor.userId]
+        WHERE s.id=$1 AND ${studentVisibleSql("s","$2::text","$3::uuid","$4::uuid")}`,[req.params.studentId,req.actor.role,req.actor.schoolId,req.actor.userId]
     );if(found.rowCount)await auditRead(client,req,"student_profile",req.params.studentId);return found;});
     if(!result.rowCount) return res.status(404).json({error:"student_not_found"});
     res.json({data:result.rows[0]});
@@ -1201,18 +1225,46 @@ app.post("/api/assignments/:assignmentId/submissions/:submissionId/grade",requir
   }catch(e){next(e)}
 });
 
+// One school day at a glance: each student's status that day (their latest
+// observation, as everywhere else) counted by status, plus the students who
+// weren't present. For the role apps' "Attendance today", which used to fetch
+// the latest 500 events of every day and filter on the phone: a school with
+// more than 500 marks a day lost some, and a corrected mark counted twice.
+// Same visibility as GET /api/attendance (studentVisibleSql): a parent or
+// pupil gets their own children's day.
+app.get("/api/attendance/day",requireSession,requirePermission("attendance","read"),async(req,res,next)=>{
+  const date=String(req.query.date||"");
+  if(!isCalendarDate(date))return res.status(400).json({error:"invalid_date"});
+  try{
+    const data=await withTenantTransaction(req.actor,async client=>{
+      const latest=`WITH day AS (
+          SELECT DISTINCT ON (e.student_id) e.student_id,e.status,e.family_acknowledged_at,s.display_name
+            FROM attendance_events e JOIN students s ON s.id=e.student_id AND s.district_id=e.district_id
+           WHERE e.event_date=$4::date AND ${studentVisibleSql("s","$1::text","$2::uuid","$3::uuid")}
+           ORDER BY e.student_id,e.observed_at DESC NULLS LAST,e.id DESC)`;
+      const args=[req.actor.role,req.actor.schoolId,req.actor.userId,date];
+      const counts=(await client.query(`${latest} SELECT status,count(*)::int AS n FROM day GROUP BY status`,args)).rows;
+      // The students who weren't present, a page at a time (?limit, ?offset);
+      // the counts always cover the whole day.
+      const page=pageOf(req,{defaultLimit:config.pageSizeMax});
+      const found=(await client.query(`${latest} SELECT student_id,display_name,status,family_acknowledged_at FROM day
+          WHERE status<>'present' ORDER BY status,display_name,student_id ${pageSql(page)}`,args)).rows;
+      const more=found.length>page.limit;
+      return {date,counts:Object.fromEntries(["present","absent","tardy","excused"].map(k=>[k,counts.find(c=>c.status===k)?.n||0])),
+        exceptions:more?found.slice(0,page.limit):found,page:{limit:page.limit,offset:page.offset,nextOffset:more?page.offset+page.limit:null}};
+    });
+    res.setHeader("Cache-Control","no-store");
+    res.json({data});
+  }catch(e){next(e)}
+});
+
 app.get("/api/attendance",requireSession,requirePermission("attendance","read"),async(req,res,next)=>{
   const pgn=pageOf(req);
   try{
     const result=await withTenantTransaction(req.actor,client=>client.query(
       `SELECT e.id,e.event_date,e.status,e.family_acknowledged_at,e.student_id,s.display_name
          FROM attendance_events e JOIN students s ON s.id=e.student_id AND s.district_id=e.district_id
-        WHERE $1='superintendent' OR ($1 IN ('principal','vice_principal') AND s.school_id=$2)
-           OR ($1='teacher' AND s.school_id=$2 AND ${rosterSql("s.id","$3")})
-           OR ($1 IN ('parent','pupil') AND EXISTS (
-             SELECT 1 FROM student_user_links l WHERE l.student_id=s.id AND l.user_id=$3 AND l.status='active'
-              AND (($1='parent' AND l.relationship IN ('parent','guardian')) OR ($1='pupil' AND l.relationship='pupil'))
-           ))
+        WHERE ${studentVisibleSql("s","$1::text","$2::uuid","$3::uuid")}
         ORDER BY e.event_date DESC ${pageSql(pgn)}`,[req.actor.role,req.actor.schoolId,req.actor.userId]
     ));
     res.json(paged(result.rows,pgn));
@@ -1234,6 +1286,28 @@ app.post("/api/attendance",requireSession,requireCsrf,requirePermission("attenda
         [studentId,req.actor.role,req.actor.schoolId,req.actor.userId]
       );
       if(!student.rowCount)return null;
+      // Attendance is an append-only log of observations; the latest observed
+      // one is the day's status (offline replays and corrections append). The
+      // release gate adds, under one lock per student and day shared with the
+      // arrival route:
+      //  - a repeat of the status already in force adds nothing (a double tap
+      //    or a retry without an idempotency key isn't a second record);
+      //  - on a day that began with an arrival handoff, the first attendance
+      //    comes only through the handoff, from the staff member who received
+      //    the student (or a principal's override with a reason).
+      await lockStudentDay(client,studentId,eventDate);
+      const latest=(await client.query(
+        `SELECT id,status FROM attendance_events WHERE student_id=$1 AND event_date=$2::date
+          ORDER BY observed_at DESC NULLS LAST,id DESC LIMIT 1`,[studentId,eventDate])).rows[0];
+      if(!latest){
+        const handoff=await client.query(
+          `SELECT h.id FROM arrival_handoffs h JOIN schools sc ON sc.id=h.school_id
+            WHERE h.student_id=$1 AND h.status<>'cancelled' AND (h.initiated_at AT TIME ZONE sc.timezone)::date=$2::date LIMIT 1`,
+          [studentId,eventDate]);
+        if(handoff.rowCount)throw new HttpError(409,"attendance_via_arrival_handoff",{handoffId:handoff.rows[0].id});
+      }else if(latest.status===status){
+        return {duplicate:true,id:latest.id,status:latest.status};
+      }
       const saved=await client.query(
         `INSERT INTO attendance_events(district_id,student_id,event_date,status,observed_at)
          VALUES($1,$2,$3,$4,coalesce($5::timestamptz,now())) RETURNING id,event_date,status,student_id`,
@@ -1247,7 +1321,7 @@ app.post("/api/attendance",requireSession,requireCsrf,requirePermission("attenda
       return {...saved.rows[0],school_id:student.rows[0].school_id};
     });
     if(!result)return res.status(404).json({error:"student_not_found"});
-    if(result.duplicate)return res.status(200).json({data:{duplicate:true}});
+    if(result.duplicate)return res.status(200).json({data:{duplicate:true,...(result.id?{id:result.id,status:result.status}:{})}});
     const {school_id:attendanceSchoolId,...attendanceRow}=result;
     res.status(201).json({data:attendanceRow});
     // Scoped to the learner's school and subject so only linked families see it.
@@ -1257,13 +1331,7 @@ app.post("/api/attendance",requireSession,requireCsrf,requirePermission("attenda
 
 // Phase 32: unified Student 360 read model and server-backed intervention workflow.
 const staffRoles = ["superintendent", "principal", "teacher"];
-const studentScopeSql = `(
-  $2='superintendent'
-  OR ($2='principal' AND st.school_id=$3)
-  OR ($2='teacher' AND st.school_id=$3 AND EXISTS(SELECT 1 FROM teacher_student_rosters tr WHERE tr.student_id=st.id AND tr.teacher_user_id=$4))
-  OR ($2='parent' AND EXISTS (SELECT 1 FROM student_user_links l WHERE l.student_id=st.id AND l.user_id=$4 AND l.status='active' AND l.relationship IN ('parent','guardian')))
-  OR ($2='pupil' AND EXISTS (SELECT 1 FROM student_user_links l WHERE l.student_id=st.id AND l.user_id=$4 AND l.status='active' AND l.relationship='pupil'))
-)`;
+const studentScopeSql = studentVisibleSql("st","$2::text","$3::uuid","$4::uuid");
 
 app.get("/api/student-360/:studentId",requireSession,requirePermission("students","read"),async(req,res,next)=>{
   if(!validId(req.params.studentId))return res.status(400).json({error:"invalid_student_id"});
@@ -1558,16 +1626,11 @@ app.post("/api/students/:studentId/records-delete",requireSession,requireCsrf,as
 const flowLimiter=rateLimit({windowMs:60_000,limit:config.flowEventRateLimit,standardHeaders:true,legacyHeaders:false});
 const webhookAdminLimiter=rateLimit({windowMs:15*60_000,limit:config.webhookAdminRateLimit,standardHeaders:true,legacyHeaders:false});
 // 32.2.0: no fixed number of subscriptions (was 10). A district may set its own
-// cap in district_settings.max_active_webhooks (NULL = unlimited). Deliveries
-// to every matching subscription are queued behind a concurrency bound instead
-// of being dropped when the dispatcher was busy.
-const webhookSlots=[];
-async function acquireWebhookSlot(){
-  if(webhooksInFlight<config.webhookMaxInFlight){webhooksInFlight++;return;}
-  await new Promise(resolve=>webhookSlots.push(resolve));
-}
-function releaseWebhookSlot(){const next=webhookSlots.shift();if(next)next();else webhooksInFlight--;}
-let webhooksInFlight=0;
+// cap in district_settings.max_active_webhooks (NULL = unlimited). Every
+// delivery from this process (outbox workers, the scheduled sweep, "Send
+// test") goes through one limiter of WEBHOOK_MAX_IN_FLIGHT. (A limiter was
+// defined here before but never used; 2026-11-16 audit.)
+const webhookLimiter=createLimiter(config.webhookMaxInFlight);
 const webhookOptions=()=>({allowInsecureLoopback:config.webhookAllowInsecureLoopback,allowedHosts:config.webhookAllowedHosts});
 const tenantActor=actor=>({districtId:actor.districtId,userId:actor.userId,role:actor.role,schoolId:actor.schoolId||null});
 const webhooksEnabled=(_req,res,next)=>config.webhookSigningKey?next():res.status(503).json({error:"webhooks_not_configured"});
@@ -1608,8 +1671,8 @@ async function recordFlowEvent(actor,event,schoolId,subjectStudentId=null){
 // never changes the failure count or status, so it can't disable or re-arm it.
 async function deliverToSubscription(actor,subscription,event,_eventId=null,maxAttempts=1){
   const deliveryId=crypto.randomUUID();
-  const attempts=await deliverWebhook({subscription,secret:deriveWebhookSecret(config.webhookSigningKey,subscription.id),
-    eventType:event.type,deliveryId,body:JSON.stringify(webhookPayload(event)),options:{...webhookOptions(),maxAttempts}});
+  const attempts=await webhookLimiter.run(()=>deliverWebhook({subscription,secrets:webhookSecrets(subscription.id),
+    eventType:event.type,deliveryId,body:JSON.stringify(webhookPayload(event)),options:{...webhookOptions(),maxAttempts}}));
   await withTenantTransaction(actor,async client=>{
     for(const a of attempts) await client.query(
       `INSERT INTO webhook_deliveries(district_id,subscription_id,delivery_id,event_id,event_type,attempt,outcome,status_code,duration_ms)
@@ -1623,7 +1686,13 @@ async function deliverToSubscription(actor,subscription,event,_eventId=null,maxA
 
 // Durable outbox worker: src/webhook-outbox.js (extracted for lifecycle tests).
 async function processWebhookOutbox(actorInput,{limit=10}={}){
-  return processOutbox(actorInput,{limit},{withTenantTransaction,signingKey:config.webhookSigningKey,deliveryOptions:webhookOptions()});
+  return processOutbox(actorInput,{limit},{withTenantTransaction,signingKey:config.webhookSigningKey,
+    previousSigningKey:config.webhookPreviousSigningKey||null,deliveryOptions:webhookOptions(),limiter:webhookLimiter});
+}
+/** The secrets a subscription's deliveries are signed with: current, then previous during a key rotation. */
+function webhookSecrets(subscriptionId){
+  return [deriveWebhookSecret(config.webhookSigningKey,subscriptionId),
+    ...(config.webhookPreviousSigningKey?[deriveWebhookSecret(config.webhookPreviousSigningKey,subscriptionId)]:[])];
 }
 
 function dispatchFlowWebhooks(actorInput,_event){
@@ -1733,7 +1802,7 @@ app.post("/api/webhooks",webhookAdminLimiter,requireSession,requireCsrf,requireP
     res.status(201).json({
       data:{id:row.id,url:row.url,eventTypes:row.event_types,status:row.status,createdAt:row.created_at},
       secret:deriveWebhookSecret(config.webhookSigningKey,row.id),
-      signature:{header:"X-EduOS-Signature",format:"t=<unix seconds>,v1=<hex hmac-sha256(secret, t + \".\" + raw body)>",toleranceSeconds:300}
+      signature:{header:"X-EduOS-Signature",format:"t=<unix seconds>,v1=<hex hmac-sha256(secret, t + \".\" + raw body)>[,v1=<…>] (accept any v1; a second one appears during a signing-key rotation)",toleranceSeconds:300}
     });
   }catch(e){next(e)}
 });
@@ -1757,6 +1826,27 @@ app.delete("/api/webhooks/:webhookId",webhookAdminLimiter,requireSession,require
     });
     if(!disabled)return res.status(404).json({error:"webhook_not_found"});
     res.json({disabled:true});
+  }catch(e){next(e)}
+});
+
+// The subscription's signing secret under the current key, again. Created
+// subscriptions show it once; after a signing-key rotation (or a lost secret)
+// an administrator fetches it here and updates the receiver. Audited.
+app.post("/api/webhooks/:webhookId/secret",webhookAdminLimiter,requireSession,requireCsrf,requirePermission("webhooks","manage"),webhooksEnabled,async(req,res,next)=>{
+  if(!validId(req.params.webhookId))return res.status(400).json({error:"invalid_webhook_id"});
+  try{
+    const found=await withTenantTransaction(req.actor,async client=>{
+      const row=await client.query(`SELECT id FROM webhook_subscriptions WHERE id=$1 AND status='active'`,[req.params.webhookId]);
+      if(!row.rowCount)return false;
+      await client.query(
+        `INSERT INTO audit_events(district_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
+         VALUES($1,$2,$3,'reveal_secret','webhook_subscription',$4,'success',$5,$6)`,
+        [req.actor.districtId,req.actor.userId,req.actor.role,req.params.webhookId,config.webhookPreviousSigningKey?"rotation_in_progress":null,req.requestId]);
+      return true;
+    });
+    if(!found)return res.status(404).json({error:"webhook_not_found"});
+    res.setHeader("Cache-Control","no-store");
+    res.json({secret:deriveWebhookSecret(config.webhookSigningKey,req.params.webhookId),rotationInProgress:Boolean(config.webhookPreviousSigningKey)});
   }catch(e){next(e)}
 });
 
@@ -1842,6 +1932,24 @@ app.use((err,req,res,_next)=>{
   res.status(500).json({error:"internal_server_error",requestId:req.requestId});
 });
 
+// Scheduled webhook delivery without cron (2026-11-16 audit): every
+// WEBHOOK_DISPATCH_INTERVAL_SECONDS the API drains due webhook jobs for every
+// district, through the same leases and limiter as request-triggered delivery,
+// so several API instances (and src/webhook-dispatch.js) can run it at once.
+// A sweep that's still running when the next is due is skipped.
+let webhookSweepRunning=false;
+function startWebhookSweep(){
+  if(!config.webhookSigningKey||!config.webhookDispatchIntervalSeconds)return;
+  const timer=setInterval(()=>{
+    if(webhookSweepRunning)return;
+    webhookSweepRunning=true;
+    dispatchWebhooks({db:pool,limiter:webhookLimiter,maxPerDistrict:100})
+      .catch(error=>console.error("Webhook sweep failed",{message:error.message}))
+      .finally(()=>{webhookSweepRunning=false;});
+  },config.webhookDispatchIntervalSeconds*1000);
+  timer.unref?.();
+}
+
 export { app };
 
 // Start only when run directly (tests import the app without listening).
@@ -1850,6 +1958,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
   catch(error){console.error(error.message);process.exit(1);}
   app.listen(config.port,()=>{
     console.log(`EduOS API listening on ${config.port}${config.nodeTier?` (EDEN ${config.nodeTier} tier)`:""}`);
+    startWebhookSweep();
     if(config.nodeTier==="school"&&process.env.EDEN_AGENT!=="off")startAgent();
   });
 }

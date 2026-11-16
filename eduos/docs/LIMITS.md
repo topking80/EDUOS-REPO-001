@@ -38,7 +38,7 @@ admin can call. They are enforced when the matching record is created.
 | SIS CSV import body 5 MB; CSV text 2 MB | size | Both follow `SIS_IMPORT_MAX_MB`. The body is parsed only after the session, CSRF token and permission have been checked. |
 | JSON `/api/integrations/sis/import` limited to the global 256 KB parser | size | Uses the bulk parser (`SIS_IMPORT_MAX_MB`) after authentication |
 | `MAX_ACTIVE_WEBHOOKS = 10` | product cap | Removed. The district can set `max_active_webhooks` if it wants a cap. |
-| Webhook dispatch: `LIMIT 10` subscriptions per event; a delivery was **dropped** when 16 were already in flight | truncation | Every matching subscription receives the event. Deliveries queue behind `WEBHOOK_MAX_IN_FLIGHT` (16) instead of being dropped. |
+| Webhook dispatch: `LIMIT 10` subscriptions per event; a delivery was **dropped** when 16 were already in flight | truncation | Every matching subscription receives the event. Deliveries queue behind `WEBHOOK_MAX_IN_FLIGHT` (16) instead of being dropped. (The limiter wasn't applied until the 2026-11-16 audit; it now covers every delivery in the process.) |
 | Flow-event counters at most 100,000 | data bound | Raised to 1,000,000,000 |
 | Guardian invitations: 20 per hour per IP | rate limit | 1,000 per hour, set by `GUARDIAN_INVITE_RATE_LIMIT_PER_HOUR`. The old value blocked a school office sending its back-to-school invitations. |
 | Webhook admin: 40 per 15 minutes | rate limit | 200, set by `WEBHOOK_ADMIN_RATE_LIMIT_PER_15M` |

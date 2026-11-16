@@ -350,6 +350,26 @@ export async function requireSession(req, res, next) {
   } catch (error) { next(error); }
 }
 
+/**
+ * Is a session still good for what it was opened for? The same test
+ * requireSession applies (not revoked or expired, not idle past the timeout,
+ * the account, membership and district still active), for connections that
+ * outlive the request that opened them, such as the operations event stream.
+ * Never answered from the session cache.
+ */
+export async function sessionIsLive(sessionId, db = pool) {
+  const r = await db.query(
+    `SELECT 1 FROM sessions s
+       JOIN users u ON u.id=s.user_id AND u.status='active'
+       JOIN memberships m ON m.user_id=s.user_id AND m.district_id=s.district_id
+                         AND m.school_id IS NOT DISTINCT FROM s.school_id AND m.role=s.role AND m.status='active'
+       JOIN districts d ON d.id=s.district_id AND d.status='active'
+      WHERE s.id=$1 AND s.revoked_at IS NULL AND s.expires_at>now()
+        AND s.last_seen_at > now() - make_interval(mins => $2)`,
+    [sessionId, config.sessionIdleMinutes]);
+  return r.rowCount === 1;
+}
+
 export async function logout(req, res, next) {
   try {
     const { raw } = sessionTokenFrom(req);

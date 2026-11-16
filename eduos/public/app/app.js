@@ -216,7 +216,8 @@ async function checkSafety({ rerender = true } = {}) {
   }
 }
 async function refreshUnread() {
-  const n = await safe(api.get("/api/notifications"));
+  // The count only: the badge doesn't need the latest 50 notifications.
+  const n = await safe(api.get("/api/notifications?summary=1"));
   const u = n?.data?.unread || 0;
   if (u !== state.unread) { state.unread = u; renderTop(); }
 }
@@ -874,6 +875,18 @@ async function rollCallCard(i) {
   draw();
   return card;
 }
+// What the alert reached. In-app notices are in each person's app; email,
+// SMS and push are only queued until a channel confirms them, and nothing
+// here means emergency services were contacted.
+function notificationCard(n) {
+  const x = n.external, queued = x.pending + x.delivered + x.skipped + x.failed;
+  return h("section", { class: "card", "aria-label": "Alert delivery" }, h("h2", {}, "Alert delivery"),
+    h("div", { class: "stats" }, stat(n.inApp.available, "in the EduOS app"), stat(n.inApp.read, "opened"),
+      queued ? stat(x.delivered, "email/SMS/push confirmed") : null, queued ? stat(x.pending, "email/SMS/push waiting", true) : null,
+      x.failed ? stat(x.failed, "email/SMS/push failed", true) : null),
+    h("p", { class: "small muted" }, queued ? "Email, SMS and push count as delivered only when the channel confirms it." : "Email, SMS and push are not set up, so alerts go to the EduOS app only."),
+    h("p", { class: "small" }, "EduOS does not contact 911 or other emergency services. Call them directly."));
+}
 async function boardCards(i) {
   const b = (await api.get(`/api/safety/incidents/${i.id}/board`)).data, t = b.totals;
   const names = (list, empty_) => list.length ? h("ul", { class: "list" }, list.map(x => h("li", {}, h("strong", {}, x.name), h("span", { class: "small muted" }, `${x.grade ? ` · gr ${x.grade}` : ""}${x.by ? ` · ${x.by}` : ""}${x.note ? ` · ${x.note}` : ""}`)))) : empty(empty_);
@@ -897,6 +910,7 @@ async function boardCards(i) {
         if (!(await ask({ title: `All clear: end the ${i.isDrill ? "drill" : KIND_TEXT[i.kind].toLowerCase()}?`, text: "Everyone at the school, its drivers and families are told that normal operations resume.", confirm: "Yes, all clear", danger: true }))) return;
         try { await api.post(`/api/safety/incidents/${i.id}/all-clear`, { kind: i.kind }); toast("All clear sent"); await checkSafety(); } catch { toast("Couldn't send the all clear."); }
       } }, "All clear"))),
+    b.notifications ? notificationCard(b.notifications) : null,
     h("section", { class: "card", "aria-label": "Incident log" }, h("h2", {}, "Incident log"), h("ol", { class: "timeline" }, b.events.map(e => h("li", {}, h("time", { datetime: e.at }, fmtTime(e.at)), h("span", {}, `${EVENT_TEXT[e.event] || e.event}${e.detail ? `: ${e.detail}` : ""} · ${e.actor_name}`))))),
     h("p", { class: "notice" }, "Counts come from teachers' roll calls. EduOS does not use cameras, location, facial recognition or threat scores.")
   ];
@@ -1752,15 +1766,28 @@ VIEWS.integrations = async () => {
   return out;
 };
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Today at a glance from the server (counts plus who wasn't present), instead
+// of the latest 500 marks of every day filtered here.
 VIEWS.attendance = async () => {
-  const today = isoDay(new Date());
-  const r = await api.get("/api/attendance?limit=500");
-  const marks = (r.data || []).filter(e => String(e.event_date).slice(0, 10) === today);
-  const by = (s) => marks.filter(e => e.status === s);
-  const absent = by("absent"), tardy = by("tardy");
+  const base = `/api/attendance/day?date=${isoDay(new Date())}`;
+  const r = await api.get(base);
+  const counts = r.data?.counts || {}, exceptions = [...(r.data?.exceptions || [])];
+  // The students who weren't present come a page at a time; every page is
+  // fetched, and if one fails what arrived is shown with a notice.
+  let incomplete = false;
+  for (let next = r.data?.page?.nextOffset; Number.isInteger(next) && next > 0 && next >= exceptions.length;) {
+    try {
+      const more = await api.get(`${base}&offset=${next}`);
+      const page = more.data?.exceptions || [];
+      exceptions.push(...page);
+      next = page.length ? more.data?.page?.nextOffset : null;
+    } catch { incomplete = true; break; }
+  }
+  const absent = exceptions.filter(e => e.status === "absent"), tardy = exceptions.filter(e => e.status === "tardy");
   const row = (e) => h("li", { class: "row" }, h("span", { class: "grow" }, e.display_name), chip(e.status), e.family_acknowledged_at ? h("span", { class: "small muted" }, "Family acknowledged") : null);
   return [h("h2", {}, "Attendance today"),
-    h("div", { class: "stats" }, stat(by("present").length, "present"), stat(absent.length, "absent", true), stat(tardy.length, "tardy", true)),
+    h("div", { class: "stats" }, stat(counts.present || 0, "present"), stat(counts.absent || 0, "absent", true), stat(counts.tardy || 0, "tardy", true)),
+    incomplete ? h("p", { class: "notice", role: "status" }, `Showing ${exceptions.length} of ${(counts.absent || 0) + (counts.tardy || 0) + (counts.excused || 0)} students who weren't present; the rest didn't load. Reload to try again.`) : null,
     h("section", { class: "card", "aria-label": "Absent today" }, h("h2", {}, "Absent"), absent.length ? h("ul", { class: "list" }, absent.map(row)) : empty("No absences marked today.")),
     h("section", { class: "card", "aria-label": "Tardy today" }, h("h2", {}, "Tardy"), tardy.length ? h("ul", { class: "list" }, tardy.map(row)) : empty("No tardies marked today.")),
     h("p", { class: "notice" }, "Marks come from teachers' class registers. Follow-ups go in the Operations queue.")];

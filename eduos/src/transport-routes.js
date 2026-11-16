@@ -103,8 +103,9 @@ export function registerTransportRoutes(app) {
           await audit(client, req, "read", "transport_manifest", null, `routes=${out.length}`);
           return { role: a.role, routes: out };
         }
-        if (a.role === "principal" || a.role === "superintendent") {
-          const schoolId = a.role === "principal" ? a.schoolId : (validId(req.query.schoolId) ? req.query.schoolId : null);
+        // School leaders: their school's runs (the superintendent: any school).
+        if (["principal", "vice_principal", "superintendent"].includes(a.role)) {
+          const schoolId = a.role === "superintendent" ? (validId(req.query.schoolId) ? req.query.schoolId : null) : a.schoolId;
           const routes = await rows(client, `SELECT r.id,r.name,r.bus_label,r.direction,r.school_id,sc.name AS school_name,u.display_name AS driver_name
               FROM transport_routes r JOIN schools sc ON sc.id=r.school_id LEFT JOIN users u ON u.id=r.driver_user_id
              WHERE r.status='active' AND ($1::uuid IS NULL OR r.school_id=$1) ORDER BY sc.name,r.direction,r.name`, [schoolId]);
@@ -113,7 +114,8 @@ export function registerTransportRoutes(app) {
           await audit(client, req, "read", "transport_status", schoolId, `routes=${out.length}`);
           return { role: a.role, routes: out };
         }
-        // teacher (roster learners), parent/pupil (linked children)
+        // teacher (roster learners), parent/pupil (linked children); no other role sees riders.
+        if (!["teacher", "parent", "pupil"].includes(a.role)) return { role: a.role, riders: [] };
         const scope = a.role === "teacher"
           ? `s.school_id=$2::uuid AND EXISTS(SELECT 1 FROM teacher_student_rosters tr WHERE tr.student_id=s.id AND tr.teacher_user_id=$1)`
           : `EXISTS(SELECT 1 FROM student_user_links l WHERE l.student_id=s.id AND l.user_id=$1 AND l.status='active'

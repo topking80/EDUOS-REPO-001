@@ -57,6 +57,9 @@ export const config = {
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS || 8),
   // Sessions unused for this many minutes are rejected (idle timeout).
   sessionIdleMinutes: Number(process.env.SESSION_IDLE_MINUTES || 30),
+  // How often a long-lived connection (the operations event stream) re-checks
+  // its session while idle; it is also checked before every event it sends.
+  streamSessionRecheckMs: Number(process.env.STREAM_SESSION_RECHECK_MS || 15_000),
   // Concurrent active sessions per user; the oldest are revoked beyond this.
   sessionMaxPerUser: Number(process.env.SESSION_MAX_PER_USER || 5),
   // Optional in-process session-validation cache. 0 (default) = disabled:
@@ -82,7 +85,18 @@ export const config = {
   demoMode: process.env.EDUOS_DEMO_MODE === "true",
   // Outbound webhooks are disabled unless WEBHOOK_SIGNING_KEY (32+ chars) is set.
   webhookSigningKey: process.env.WEBHOOK_SIGNING_KEY || "",
+  // Signing-key rotation: while set, deliveries carry a second signature made
+  // with the previous key, so receivers keep verifying until they switch to the
+  // new per-subscription secret (docs/WEBHOOKS.md, "Rotating the signing key").
+  webhookPreviousSigningKey: process.env.WEBHOOK_SIGNING_KEY_PREVIOUS || "",
   webhookAllowedHosts: (process.env.WEBHOOK_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
+  // In production an empty WEBHOOK_ALLOWED_HOSTS must be a decision, not an
+  // omission: set this to "true" to allow any public HTTPS receiver.
+  webhookAllowAnyPublicHost: process.env.WEBHOOK_ALLOW_ANY_PUBLIC_HOST === "true",
+  // The API drains the webhook outbox for every district on this interval, so
+  // queued webhooks and their retries go out in a quiet district without cron.
+  // 0 turns it off (then run src/webhook-dispatch.js on a schedule).
+  webhookDispatchIntervalSeconds: Number(process.env.WEBHOOK_DISPATCH_INTERVAL_SECONDS ?? 60),
   // Development aid only: permits http:// to a loopback receiver. Ignored in production.
   webhookAllowInsecureLoopback: process.env.WEBHOOK_ALLOW_INSECURE_LOOPBACK === "true" && (process.env.NODE_ENV || "development") !== "production",
   // Staff AI gateway (src/ai/). Local templates by default: no network. An
@@ -200,6 +214,9 @@ if (config.nodeEnv === "production" && !config.databaseSsl &&
 if (config.cookieName.startsWith("__Host-") && !config.secureCookies) {
   throw new Error("__Host- session cookies require an https:// PUBLIC_ORIGIN");
 }
+if (!Number.isInteger(config.streamSessionRecheckMs) || config.streamSessionRecheckMs < 1000 || config.streamSessionRecheckMs > 300_000) {
+  throw new Error("STREAM_SESSION_RECHECK_MS must be an integer between 1000 and 300000");
+}
 if (!Number.isInteger(config.sessionIdleMinutes) || config.sessionIdleMinutes < 5 || config.sessionIdleMinutes > 1440) {
   throw new Error("SESSION_IDLE_MINUTES must be between 5 and 1440");
 }
@@ -264,4 +281,13 @@ if (config.integrationsKey && config.integrationsKey.length < 32) {
 }
 if (config.webhookSigningKey && config.webhookSigningKey.length < 32) {
   throw new Error("WEBHOOK_SIGNING_KEY must be at least 32 characters");
+}
+if (config.webhookPreviousSigningKey) {
+  if (!config.webhookSigningKey) throw new Error("WEBHOOK_SIGNING_KEY_PREVIOUS needs WEBHOOK_SIGNING_KEY");
+  if (config.webhookPreviousSigningKey.length < 32) throw new Error("WEBHOOK_SIGNING_KEY_PREVIOUS must be at least 32 characters");
+  if (config.webhookPreviousSigningKey === config.webhookSigningKey) throw new Error("WEBHOOK_SIGNING_KEY_PREVIOUS must differ from WEBHOOK_SIGNING_KEY");
+}
+intIn("WEBHOOK_DISPATCH_INTERVAL_SECONDS", config.webhookDispatchIntervalSeconds, 0, 3600);
+if (config.nodeEnv === "production" && config.webhookSigningKey && !config.webhookAllowedHosts.length && !config.webhookAllowAnyPublicHost) {
+  throw new Error("Webhooks are on in production without WEBHOOK_ALLOWED_HOSTS: list the receivers' domains, or set WEBHOOK_ALLOW_ANY_PUBLIC_HOST=true to allow any public HTTPS receiver");
 }

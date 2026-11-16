@@ -6,6 +6,12 @@
 -- The runtime role must NOT be a superuser, must NOT have BYPASSRLS and must
 -- NOT own the tables (the server refuses to start otherwise).
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+-- Functions are executable by every database role (PUBLIC) unless revoked,
+-- and many here are SECURITY DEFINER: a reporting or other role in the same
+-- cluster could set app.district_id itself and call them. Only the runtime
+-- role gets EXECUTE, function by function, below. Re-applied after every
+-- migration, so new functions start revoked too.
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
 GRANT CONNECT ON DATABASE eduos TO eduos_app;
 GRANT USAGE ON SCHEMA public TO eduos_app;
 -- 32.0.54: the API checks at startup that every migration has been applied.
@@ -134,7 +140,8 @@ REVOKE UPDATE, DELETE, TRUNCATE ON pickup_events FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON pickup_adults, pickup_tags, pickup_restrictions, pickup_early_dismissals FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_school_today(uuid), eduos_safety_find_student(uuid,text), eduos_pickup_lookup(text),
   eduos_safety_student_at_school(uuid,uuid), eduos_safety_recipients(uuid,text), eduos_pickup_ensure_guardian(uuid),
-  eduos_pickup_today(), eduos_pickup_early_today(), eduos_school_leads(), eduos_pickup_guardians(uuid) TO eduos_app;
+  eduos_pickup_today(), eduos_pickup_early_today(), eduos_school_leads(), eduos_pickup_guardians(uuid),
+  eduos_safety_delivery(uuid) TO eduos_app;
 REVOKE ALL ON FUNCTION eduos_purge_student_324(uuid), eduos_retention_purge_role_apps(jsonb) FROM eduos_app;
 -- 035 (audit 37.4.0 item 6): replay-receipt purge is owner-only, like the other retention functions.
 REVOKE ALL ON FUNCTION eduos_retention_purge_offline_replays(int) FROM eduos_app;

@@ -503,9 +503,10 @@ class IncidentLogEntry {
 /// GET /api/safety/incidents/:id/board (school leaders).
 class SafetyBoard {
   const SafetyBoard({required this.totals, required this.missing, required this.injured, required this.teachers,
-      required this.unaccounted, required this.events});
+      required this.unaccounted, required this.events, this.delivery});
   factory SafetyBoard.fromJson(Json j) => SafetyBoard(
         totals: {for (final e in obj(j['totals']).entries) e.key: integer(e.value)},
+        delivery: j['notifications'] is Map ? AlertDelivery.fromJson(obj(j['notifications'])) : null,
         missing: objs(j['missing']).map(BoardPerson.fromJson).toList(),
         injured: objs(j['injured']).map(BoardPerson.fromJson).toList(),
         teachers: objs(j['teachers']).map(BoardTeacher.fromJson).toList(),
@@ -516,7 +517,23 @@ class SafetyBoard {
   final List<BoardPerson> missing, injured, unaccounted;
   final List<BoardTeacher> teachers;
   final List<IncidentLogEntry> events;
+  final AlertDelivery? delivery;
   int total(String k) => totals[k] ?? 0;
+}
+
+/// What a safety alert reached (the board's `notifications`). In-app notices
+/// are in each person's app; email/SMS/push count as delivered only when the
+/// channel confirms them. EduOS never contacts emergency services.
+class AlertDelivery {
+  const AlertDelivery({required this.inApp, required this.opened, required this.externalConfirmed,
+      required this.externalWaiting, required this.externalFailed, required this.externalTotal});
+  factory AlertDelivery.fromJson(Json j) {
+    final inApp = obj(j['inApp']), x = obj(j['external']);
+    final pending = integer(x['pending']), delivered = integer(x['delivered']), skipped = integer(x['skipped']), failed = integer(x['failed']);
+    return AlertDelivery(inApp: integer(inApp['available']), opened: integer(inApp['read']), externalConfirmed: delivered,
+        externalWaiting: pending, externalFailed: failed, externalTotal: pending + delivered + skipped + failed);
+  }
+  final int inApp, opened, externalConfirmed, externalWaiting, externalFailed, externalTotal;
 }
 
 class PastIncident {
