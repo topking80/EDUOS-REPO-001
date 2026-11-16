@@ -28,7 +28,7 @@ const LATEST = `SELECT DISTINCT ON (c.student_id) c.student_id, c.event, c.recor
 // Hydrate a whole authorized route set with a fixed number of queries.
 // The route list is selected inside the caller's tenant transaction; all child
 // queries are constrained to those route/run IDs and remain under the same RLS.
-async function routeDetails(client, routes, { withRiders }) {
+export async function routeDetails(client, routes, { withRiders }) {
   if (!routes.length) return [];
   const routeIds = routes.map(r => r.id);
   const stops = await rows(client, `SELECT id,route_id,seq,name,to_char(scheduled_time,'HH24:MI') AS time,is_school
@@ -37,9 +37,10 @@ async function routeDetails(client, routes, { withRiders }) {
     FROM transport_runs x JOIN transport_routes r ON r.id=x.route_id
     WHERE x.route_id=ANY($1::uuid[]) AND x.service_date=eduos_school_today(r.school_id)`, [routeIds]);
   const stopsByRoute = new Map();
-  for (const stop of stops) {
-    if (!stopsByRoute.has(stop.route_id)) stopsByRoute.set(stop.route_id, []);
-    stopsByRoute.get(stop.route_id).push(stop);
+  for (const { route_id: routeId, ...stop } of stops) {
+    // Same stop shape as before batching (no route_id on each stop).
+    if (!stopsByRoute.has(routeId)) stopsByRoute.set(routeId, []);
+    stopsByRoute.get(routeId).push(stop);
   }
   const runByRoute = new Map(runs.map(run => [run.route_id, run]));
   if (!withRiders) return routes.map(route => ({

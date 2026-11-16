@@ -92,21 +92,21 @@ Use warm-up plus repeated runs, report medians and confidence intervals, and com
 
 1. Complete driver/principal route hydration batching and add response/query-count regression tests.
 2. Inspect PostgreSQL plans and migration indexes for transport/arrival paths; add only plan-validated indexes.
-3. Refactor notification dispatch to claim/send/settle leases before any real external adapter is enabled.
+3. ~~Refactor notification dispatch to claim/send/settle leases before any real external adapter is enabled.~~ Done on main (#35, #38).
 4. Add histogram and DB/event-loop metrics with bounded labels. (HTTP latency histogram implemented; DB/event-loop metrics remain.)
 5. Add keyset pagination to the largest high-volume feeds while retaining offset compatibility.
 6. Run full unit, PostgreSQL integration, security regression, and load suites; publish before/after results.
 
 ## Status
 
-- [x] Source-level audit started on dedicated branch.
+- [x] Source-level audit started on a dedicated branch.
 - [ ] Production-like baseline load test.
-- [x] Teacher/family transport check-in N+1 reduced to one batched query; grouping unit tests added and passed in an isolated Node test run.
-- [x] Driver/principal/superintendent route hydration moved to batched child queries.
-- [ ] Full repository regression tests and PostgreSQL query-count verification.
+- [x] Teacher/family transport check-in N+1 reduced to one batched query; grouping unit tests.
+- [x] Driver/principal/vice-principal/superintendent route hydration moved to batched child queries.
+- [x] PostgreSQL query-count verification: `test/integration/transport-batching.test.js` (one route and six routes take the same 4 queries; per-route stops, runs, riders and counts unchanged, same stop shape).
+- [x] Full unit and PostgreSQL integration suites on the branch, after merging current main.
 - [ ] Query-plan/index validation.
-- [ ] Notification worker lease refactor.
-- [x] Bounded HTTP latency histogram implemented with route-template/method/status labels and no raw URL labels; focused unit test added (CI pending).\n- [ ] DB query latency, pool acquisition wait, event-loop delay, CPU/heap/GC metrics.
-- [ ] Full regression and load verification.
-
-No merge or deployment is authorized by this branch.
+- [x] Notification worker lease refactor (on main: claim, send with nothing open, settle under the lease; #35, #38).
+- [x] Bounded HTTP latency histogram (route template, method, status class; no raw URLs), with metric families kept contiguous in the text format.
+- [ ] DB query latency, pool acquisition wait, event-loop delay, CPU/heap/GC metrics.
+- [ ] Load verification.
