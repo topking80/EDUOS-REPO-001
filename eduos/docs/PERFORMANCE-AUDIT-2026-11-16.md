@@ -93,7 +93,7 @@ Use warm-up plus repeated runs, report medians and confidence intervals, and com
 1. Complete driver/principal route hydration batching and add response/query-count regression tests.
 2. Inspect PostgreSQL plans and migration indexes for transport/arrival paths; add only plan-validated indexes.
 3. Refactor notification dispatch to claim/send/settle leases before any real external adapter is enabled.
-4. Add histogram and DB/event-loop metrics with bounded labels.
+4. Add histogram and DB/event-loop metrics with bounded labels. (HTTP latency histogram implemented; DB/event-loop metrics remain.)
 5. Add keyset pagination to the largest high-volume feeds while retaining offset compatibility.
 6. Run full unit, PostgreSQL integration, security regression, and load suites; publish before/after results.
 
@@ -106,7 +106,7 @@ Use warm-up plus repeated runs, report medians and confidence intervals, and com
 - [ ] Full repository regression tests and PostgreSQL query-count verification.
 - [ ] Query-plan/index validation.
 - [ ] Notification worker lease refactor.
-- [ ] Metrics histograms and DB latency instrumentation.
+- [x] Bounded HTTP latency histogram implemented with route-template/method/status labels and no raw URL labels; focused unit test added (CI pending).\n- [ ] DB query latency, pool acquisition wait, event-loop delay, CPU/heap/GC metrics.
 - [ ] Full regression and load verification.
 
 No merge or deployment is authorized by this branch.
