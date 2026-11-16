@@ -83,6 +83,26 @@ const guardianInviteLimiter=rateLimit({windowMs:60*60_000,limit:config.guardianI
 const guardianAcceptLimiter=rateLimit({windowMs:15*60_000,limit:config.guardianAcceptRateLimit,standardHeaders:true,legacyHeaders:false});
 // Teachers see only students on their roster (teacher_student_rosters).
 const rosterSql=(studentCol,userParam)=>`EXISTS(SELECT 1 FROM teacher_student_rosters tr WHERE tr.student_id=${studentCol} AND tr.teacher_user_id=${userParam})`;
+/**
+ * Which students a caller may see: the one rule for every student-record read
+ * (directory, profile, Student 360, attendance list and day). Fail-closed: a
+ * role not named here sees no student.
+ *   superintendent              the district (RLS keeps it to the district)
+ *   principal, vice_principal   their school
+ *   teacher                     their school, students on their roster
+ *   parent                      children they're an active parent/guardian of
+ *   pupil                       themselves (their active pupil link)
+ * The arguments are SQL expressions (column and parameter references).
+ */
+const studentVisibleSql=(st,role,school,user)=>`(
+  ${role}='superintendent'
+  OR (${role} IN ('principal','vice_principal') AND ${st}.school_id=${school})
+  OR (${role}='teacher' AND ${st}.school_id=${school} AND ${rosterSql(`${st}.id`,user)})
+  OR (${role}='parent' AND EXISTS(SELECT 1 FROM student_user_links l WHERE l.student_id=${st}.id AND l.district_id=${st}.district_id
+        AND l.user_id=${user} AND l.status='active' AND l.relationship IN ('parent','guardian')))
+  OR (${role}='pupil' AND EXISTS(SELECT 1 FROM student_user_links l WHERE l.student_id=${st}.id AND l.district_id=${st}.district_id
+        AND l.user_id=${user} AND l.status='active' AND l.relationship='pupil'))
+)`;
 // FERPA: record reads of student education records inside the same transaction.
 function auditRead(client,req,resourceType,resourceId,detail=null){
   return client.query(
@@ -134,16 +154,7 @@ app.get("/api/students",requireSession,requirePermission("students","read"),requ
       `SELECT s.id,s.local_student_number,s.display_name,s.grade_level,s.school_id,sc.name AS school_name,count(*) OVER() AS total
          FROM students s JOIN schools sc ON sc.id=s.school_id AND sc.district_id=s.district_id
         WHERE ($1::uuid IS NULL OR s.school_id=$1::uuid)
-          AND (
-            $2::text NOT IN ('parent','pupil')
-            OR EXISTS (
-              SELECT 1 FROM student_user_links l
-               WHERE l.student_id=s.id AND l.user_id=$3 AND l.status='active'
-                 AND (($2='parent' AND l.relationship IN ('parent','guardian')) OR ($2='pupil' AND l.relationship='pupil'))
-            )
-          )
-          AND ($2 NOT IN ('teacher','principal') OR s.school_id=$4::uuid)
-          AND ($2<>'teacher' OR ${rosterSql("s.id","$3")})
+          AND ${studentVisibleSql("s","$2::text","$4::uuid","$3::uuid")}
           AND ($5::text='' OR s.display_name ILIKE '%'||$6||'%' OR s.local_student_number LIKE $6||'%')
         ORDER BY s.display_name,s.id ${pageSql(pgn)}`,
       [req.query.schoolId || null, req.actor.role, req.actor.userId, req.actor.schoolId, q, q.replace(/[\\%_]/g,m=>"\\"+m)]
@@ -1035,15 +1046,7 @@ app.get("/api/students/:studentId",requireSession,requirePermission("students","
     const result=await withTenantTransaction(req.actor,async client=>{const found=await client.query(
       `SELECT s.id,s.local_student_number,s.display_name,s.grade_level,s.school_id,sc.name AS school_name
          FROM students s JOIN schools sc ON sc.id=s.school_id AND sc.district_id=s.district_id
-        WHERE s.id=$1 AND (
-          $2='superintendent'
-          OR ($2='principal' AND s.school_id=$3)
-          OR ($2='teacher' AND s.school_id=$3 AND ${rosterSql("s.id","$4")})
-          OR ($2 IN ('parent','pupil') AND EXISTS (
-            SELECT 1 FROM student_user_links l WHERE l.student_id=s.id AND l.user_id=$4 AND l.status='active'
-              AND (($2='parent' AND l.relationship IN ('parent','guardian')) OR ($2='pupil' AND l.relationship='pupil'))
-          ))
-        )`,[req.params.studentId,req.actor.role,req.actor.schoolId,req.actor.userId]
+        WHERE s.id=$1 AND ${studentVisibleSql("s","$2::text","$3::uuid","$4::uuid")}`,[req.params.studentId,req.actor.role,req.actor.schoolId,req.actor.userId]
     );if(found.rowCount)await auditRead(client,req,"student_profile",req.params.studentId);return found;});
     if(!result.rowCount) return res.status(404).json({error:"student_not_found"});
     res.json({data:result.rows[0]});
@@ -1226,7 +1229,8 @@ app.post("/api/assignments/:assignmentId/submissions/:submissionId/grade",requir
 // weren't present. For the role apps' "Attendance today", which used to fetch
 // the latest 500 events of every day and filter on the phone: a school with
 // more than 500 marks a day lost some, and a corrected mark counted twice.
-// Same visibility as GET /api/attendance.
+// Same visibility as GET /api/attendance (studentVisibleSql): a parent or
+// pupil gets their own children's day.
 app.get("/api/attendance/day",requireSession,requirePermission("attendance","read"),async(req,res,next)=>{
   const date=String(req.query.date||"");
   if(!isCalendarDate(date))return res.status(400).json({error:"invalid_date"});
@@ -1235,14 +1239,18 @@ app.get("/api/attendance/day",requireSession,requirePermission("attendance","rea
       const latest=`WITH day AS (
           SELECT DISTINCT ON (e.student_id) e.student_id,e.status,e.family_acknowledged_at,s.display_name
             FROM attendance_events e JOIN students s ON s.id=e.student_id AND s.district_id=e.district_id
-           WHERE e.event_date=$4::date AND ($1='superintendent' OR ($1 IN ('principal','vice_principal') AND s.school_id=$2)
-              OR ($1='teacher' AND s.school_id=$2 AND ${rosterSql("s.id","$3")}))
+           WHERE e.event_date=$4::date AND ${studentVisibleSql("s","$1::text","$2::uuid","$3::uuid")}
            ORDER BY e.student_id,e.observed_at DESC NULLS LAST,e.id DESC)`;
       const args=[req.actor.role,req.actor.schoolId,req.actor.userId,date];
       const counts=(await client.query(`${latest} SELECT status,count(*)::int AS n FROM day GROUP BY status`,args)).rows;
-      const exceptions=(await client.query(`${latest} SELECT student_id,display_name,status,family_acknowledged_at FROM day
-          WHERE status<>'present' ORDER BY status,display_name LIMIT 1000`,args)).rows;
-      return {date,counts:Object.fromEntries(["present","absent","tardy","excused"].map(k=>[k,counts.find(c=>c.status===k)?.n||0])),exceptions};
+      // The students who weren't present, a page at a time (?limit, ?offset);
+      // the counts always cover the whole day.
+      const page=pageOf(req,{defaultLimit:config.pageSizeMax});
+      const found=(await client.query(`${latest} SELECT student_id,display_name,status,family_acknowledged_at FROM day
+          WHERE status<>'present' ORDER BY status,display_name,student_id ${pageSql(page)}`,args)).rows;
+      const more=found.length>page.limit;
+      return {date,counts:Object.fromEntries(["present","absent","tardy","excused"].map(k=>[k,counts.find(c=>c.status===k)?.n||0])),
+        exceptions:more?found.slice(0,page.limit):found,page:{limit:page.limit,offset:page.offset,nextOffset:more?page.offset+page.limit:null}};
     });
     res.setHeader("Cache-Control","no-store");
     res.json({data});
@@ -1255,12 +1263,7 @@ app.get("/api/attendance",requireSession,requirePermission("attendance","read"),
     const result=await withTenantTransaction(req.actor,client=>client.query(
       `SELECT e.id,e.event_date,e.status,e.family_acknowledged_at,e.student_id,s.display_name
          FROM attendance_events e JOIN students s ON s.id=e.student_id AND s.district_id=e.district_id
-        WHERE $1='superintendent' OR ($1 IN ('principal','vice_principal') AND s.school_id=$2)
-           OR ($1='teacher' AND s.school_id=$2 AND ${rosterSql("s.id","$3")})
-           OR ($1 IN ('parent','pupil') AND EXISTS (
-             SELECT 1 FROM student_user_links l WHERE l.student_id=s.id AND l.user_id=$3 AND l.status='active'
-              AND (($1='parent' AND l.relationship IN ('parent','guardian')) OR ($1='pupil' AND l.relationship='pupil'))
-           ))
+        WHERE ${studentVisibleSql("s","$1::text","$2::uuid","$3::uuid")}
         ORDER BY e.event_date DESC ${pageSql(pgn)}`,[req.actor.role,req.actor.schoolId,req.actor.userId]
     ));
     res.json(paged(result.rows,pgn));
@@ -1327,13 +1330,7 @@ app.post("/api/attendance",requireSession,requireCsrf,requirePermission("attenda
 
 // Phase 32: unified Student 360 read model and server-backed intervention workflow.
 const staffRoles = ["superintendent", "principal", "teacher"];
-const studentScopeSql = `(
-  $2='superintendent'
-  OR ($2='principal' AND st.school_id=$3)
-  OR ($2='teacher' AND st.school_id=$3 AND EXISTS(SELECT 1 FROM teacher_student_rosters tr WHERE tr.student_id=st.id AND tr.teacher_user_id=$4))
-  OR ($2='parent' AND EXISTS (SELECT 1 FROM student_user_links l WHERE l.student_id=st.id AND l.user_id=$4 AND l.status='active' AND l.relationship IN ('parent','guardian')))
-  OR ($2='pupil' AND EXISTS (SELECT 1 FROM student_user_links l WHERE l.student_id=st.id AND l.user_id=$4 AND l.status='active' AND l.relationship='pupil'))
-)`;
+const studentScopeSql = studentVisibleSql("st","$2::text","$3::uuid","$4::uuid");
 
 app.get("/api/student-360/:studentId",requireSession,requirePermission("students","read"),async(req,res,next)=>{
   if(!validId(req.params.studentId))return res.status(400).json({error:"invalid_student_id"});

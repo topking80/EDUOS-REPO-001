@@ -82,14 +82,21 @@ export function registerSafetyRoutes(app) {
   const lead = requirePermission("safety", "lead");
 
   // ---- everyone: is anything live for me? (polled by the role apps) ----
+  // The superintendent sees the district; a parent sees schools where they
+  // have a child (an active parent/guardian link); everyone else sees their
+  // own school. Row-level security enforces the same (scope_read on
+  // safety_incidents); the query states it too rather than relying on it.
   app.get("/api/safety/status", requireSession, requirePermission("safety", "read"), async (req, res, next) => {
     const a = req.actor;
     try {
       const data = await withTenantTransaction(a, async client => {
         const list = await rows(client, `SELECT ${INCIDENT_COLS} FROM safety_incidents i JOIN schools sc ON sc.id=i.school_id
             WHERE (i.status IN ('active','reunification') OR (i.status='pending' AND i.initiated_by=$1 AND i.confirm_by>now()))
-              AND ($2::uuid IS NULL OR i.school_id=$2 OR $3='parent')
-            ORDER BY i.initiated_at`, [a.userId, a.role === "superintendent" ? null : a.schoolId, a.role]);
+              AND ($3='superintendent'
+                OR ($3='parent' AND EXISTS(SELECT 1 FROM student_user_links l JOIN students s ON s.id=l.student_id AND s.district_id=l.district_id
+                      WHERE l.user_id=$1 AND l.status='active' AND l.relationship IN ('parent','guardian') AND s.school_id=i.school_id))
+                OR ($3 NOT IN ('superintendent','parent') AND i.school_id=$2))
+            ORDER BY i.initiated_at`, [a.userId, a.schoolId, a.role]);
         const incidents = list.map(i => present(i, a.role, a.userId));
         // Families: their own children at a school in reunification, with release status.
         if (a.role === "parent" && incidents.some(i => i.status === "reunification")) {
@@ -118,6 +125,9 @@ export function registerSafetyRoutes(app) {
     if (!validId(schoolId)) return res.status(400).json({ error: "invalid_school_id" });
     try {
       const out = await withTenantTransaction(a, async client => {
+        // A superintendent names the school; it must be one of their district's
+        // (row security refuses the insert otherwise, which used to surface as a 500).
+        if (!(await one(client, `SELECT 1 AS ok FROM schools WHERE id=$1 AND district_id=$2`, [schoolId, a.districtId]))) throw new HttpError(404, "school_not_found");
         const live = await one(client, `SELECT id,kind,status FROM safety_incidents WHERE school_id=$1 AND status IN ('active','reunification')`, [schoolId]);
         if (live) throw new HttpError(409, "incident_already_live", { incidentId: live.id });
         // Unconfirmed starts that ran out of time are closed off and logged.

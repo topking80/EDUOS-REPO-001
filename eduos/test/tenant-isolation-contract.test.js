@@ -43,7 +43,10 @@ test("tenant transaction sets district, user and role transaction-locally before
 
 test("school-sensitive SQL binds district scope and restricts staff to assigned schools", () => {
   const checks = [
-    /s\.school_id=\$4::uuid/,
+    // The student directory uses the shared fail-closed rule, which keeps
+    // school staff (principal, vice principal, teacher) to their own school.
+    /studentVisibleSql\("s","\$2::text","\$4::uuid","\$3::uuid"\)/,
+    /\(\$\{role\} IN \('principal','vice_principal'\) AND \$\{st\}\.school_id=\$\{school\}\)/,
     /WHERE l\.district_id=\$1 AND l\.user_id=\$2 AND l\.status='active'/,
     /WHERE r\.district_id=\$1 AND \(\$2 IN \('superintendent','it_admin'\) OR r\.school_id=\$3\)/,
     /if\(req\.actor\.role!=="superintendent"&&student\.rows\[0\]\.school_id!==req\.actor\.schoolId\)/

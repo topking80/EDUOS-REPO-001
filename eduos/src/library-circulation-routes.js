@@ -19,7 +19,7 @@ export function registerLibraryCirculationRoutes(app) {
  });
  app.get("/api/library/loans",requireSession,wrap(async(c,req)=>{
   const a=req.actor;if(!STAFF.includes(a.role))throw new HttpError(403,"library_access_forbidden");
-  const schoolFilter=districtWide(a.role)?"true":"l.school_id=$2";
+  const schoolFilter=districtWide(a.role)?"$2::uuid IS NULL":"l.school_id=$2";
   return rows(c,`SELECT l.id,l.school_id,l.item_id,i.title,i.isbn,i.barcode,l.borrower_user_id,l.checked_out_at,l.due_at,l.returned_at,l.status,(l.returned_at IS NULL AND l.due_at<now()) AS overdue FROM library_loans l JOIN library_items i ON i.id=l.item_id AND i.district_id=l.district_id WHERE l.district_id=$1 AND ${schoolFilter} ORDER BY l.returned_at NULLS FIRST,l.due_at LIMIT 1000`,[a.districtId,a.schoolId||null]);
  }));
  app.post("/api/library/loans/checkout",requireSession,requireCsrf,async(req,res,next)=>{
@@ -79,7 +79,7 @@ export function registerLibraryCirculationRoutes(app) {
   });res.json({data});}catch(e){sendError(res,next,e)}
  });
  app.get("/api/library/overdue",requireSession,wrap(async(c,req)=>{
-  const a=req.actor;if(!STAFF.includes(a.role))throw new HttpError(403,"library_access_forbidden");const scope=districtWide(a.role)?"true":"l.school_id=$2";
+  const a=req.actor;if(!STAFF.includes(a.role))throw new HttpError(403,"library_access_forbidden");const scope=districtWide(a.role)?"$2::uuid IS NULL":"l.school_id=$2";
   return rows(c,`SELECT l.id,l.school_id,i.title,i.isbn,i.barcode,l.borrower_user_id,l.due_at,now()-l.due_at AS overdue_by FROM library_loans l JOIN library_items i ON i.id=l.item_id AND i.district_id=l.district_id WHERE l.district_id=$1 AND ${scope} AND l.returned_at IS NULL AND l.due_at<now() ORDER BY l.due_at LIMIT 1000`,[a.districtId,a.schoolId||null]);
  }));
  app.get("/api/library/policy",requireSession,wrap(async(c,req)=>{
