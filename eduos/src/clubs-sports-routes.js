@@ -108,10 +108,16 @@ export function registerClubsSportsRoutes(app) {
   if(!["pupil","parent"].includes(a.role))return res.status(403).json({error:"ticket_buyer_role_required"});
   if(!validId(req.params.id)||!validId(b.ticketTypeId)||!Number.isInteger(quantity)||quantity<1||quantity>10||typeof key!=="string"||key.length<16||key.length>120)return res.status(400).json({error:"invalid_ticket_order"});
   try{const data=await withTenantTransaction(a,async c=>{
+   await c.query("SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",[a.districtId,a.userId+":"+key]);
    const prior=await one(c,"SELECT id,status,total_cents,currency FROM event_ticket_orders WHERE district_id=$1 AND buyer_user_id=$2 AND idempotency_key=$3",[a.districtId,a.userId,key]);
    if(prior)return {order:prior,replayed:true,tickets:await rows(c,"SELECT id,status FROM event_tickets WHERE order_id=$1",[prior.id])};
    const event=await one(c,"SELECT * FROM school_events WHERE id=$1 AND district_id=$2 AND status='published' AND starts_at>now()",[req.params.id,a.districtId]);
-   if(!event)throw new HttpError(404,"event_not_available");if(a.schoolId!==event.school_id)throw new HttpError(403,"event_school_scope_denied");
+   if(!event)throw new HttpError(404,"event_not_available");
+   if(a.role==="parent"){
+    const linked=await one(c,`SELECT 1 FROM student_user_links l JOIN students s ON s.id=l.student_id AND s.district_id=l.district_id
+      WHERE l.district_id=$1 AND l.user_id=$2 AND l.status='active' AND l.relationship IN ('parent','guardian') AND s.school_id=$3 LIMIT 1`,[a.districtId,a.userId,event.school_id]);
+    if(!linked)throw new HttpError(403,"guardian_school_link_required");
+   } else if(a.schoolId!==event.school_id)throw new HttpError(403,"event_school_scope_denied");
    const type=await one(c,"SELECT * FROM event_ticket_types WHERE id=$1 AND event_id=$2 AND district_id=$3 AND sales_open FOR UPDATE",[b.ticketTypeId,event.id,a.districtId]);
    if(!type)throw new HttpError(404,"ticket_type_not_available");
    if(type.price_cents>0)throw new HttpError(503,"paid_ticketing_not_configured",{checkoutEnabled:false,reason:"district_payment_provider_not_connected"});
