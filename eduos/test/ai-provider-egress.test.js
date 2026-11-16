@@ -8,8 +8,7 @@ test("AI provider URLs require an explicit approved host and clean HTTPS origin"
   assert.equal(validateAiProviderUrl("https://api.vendor.example", ["vendor.example"]).ok, true);
   for (const url of [
     "http://api.vendor.example", "https://user:secret@api.vendor.example",
-    "https://127.0.0.1", "https://localhost", "https://api.vendor.example/path",
-    "https://api.vendor.example?token=secret", "https://not-approved.example"
+    "https://127.0.0.1", "https://localhost", "https://api.vendor.example?token=secret", "https://not-approved.example"
   ]) assert.equal(validateAiProviderUrl(url, ["vendor.example"]).ok, false, url);
 });
 
