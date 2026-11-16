@@ -31,3 +31,11 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - A principal/superintendent may approve moderation only after every registered participant has approved guardian consent.
 - APIs: `GET /api/activities/:id/media`, `POST /api/media/:id/participants`, `POST /api/media/:id/consent`, `PATCH /api/media/:id/moderation`.
 - Responses omit storage keys. No upload endpoint, public URL, signed URL, playback, or publication is enabled. A district-approved private object-storage adapter, content scanning/re-encoding, EXIF stripping, retention policy and authenticated delivery are required before media can be uploaded or viewed.
+
+
+## Private media pipeline contract (37.9.0)
+- Added a provider-neutral adapter contract for private object storage, authenticated object metadata checks, malware scanning, image re-encoding and short-lived private read URLs.
+- Upload intent validation allowlists JPEG/PNG/WebP and MP4/WebM/QuickTime with 20 MiB image and 50 MiB video caps. SVG and caller-selected storage keys are rejected.
+- The pipeline requires storage, scanning and image-processing adapters; it is disabled by default and returns `private_media_pipeline_not_configured` when adapters are absent. No upload endpoint or public URL is enabled by this change.
+- Delivery requires all three states: guardian consent approved, moderation approved and security scan clean. Read URLs are capped at 60 seconds.
+- Video processing is explicitly blocked until a video transcode/sanitization adapter is implemented.
