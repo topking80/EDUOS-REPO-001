@@ -58,3 +58,32 @@ test("media consent is participant-specific and publication fails closed", async
  assert.match(routes, /private_storage_and_publication_adapter_not_configured/);
  assert.doesNotMatch(routes, /publicUrl|signedUrl/);
 });
+
+test("private media pipeline validates types and fails closed without configured adapters", async () => {
+ const { createMediaPipeline, validateMediaIntent, MediaPipelineError, MEDIA_LIMITS } = await import("../src/media-pipeline.js");
+ assert.throws(() => validateMediaIntent({kind:"image",mimeType:"image/svg+xml",byteSize:100}), e => e instanceof MediaPipelineError && e.status===415);
+ assert.throws(() => validateMediaIntent({kind:"video",mimeType:"video/mp4",byteSize:MEDIA_LIMITS.videoBytes+1}), e => e.status===413);
+ const disabled=createMediaPipeline();
+ assert.equal(disabled.enabled,false);
+ await assert.rejects(() => disabled.beginUpload({districtId:"d",schoolId:"s",input:{kind:"image",mimeType:"image/png",byteSize:100}}), e => e.code==="private_media_pipeline_not_configured");
+});
+
+test("private media pipeline uses server-generated object references and gates delivery", async () => {
+ const calls=[];
+ const storage={
+  async createPrivateUpload(v){calls.push(v);return {uploadUrl:"https://upload.example.invalid/one-use",storageKey:"private/district/object",expiresAt:new Date(Date.now()+30000).toISOString()};},
+  async headPrivateObject(){return {byteSize:100,mimeType:"image/png",checksum:"sha256:abc"};},
+  async createPrivateReadUrl(v){assert.equal(v.expiresInSeconds,60);return {url:"https://read.example.invalid/short",expiresAt:new Date(Date.now()+30000).toISOString()};}
+ };
+ const scanner={async scanPrivateObject(){return {verdict:"clean"};}};
+ const processor={async processImage(v){return {storageKey:v.storageKey+"-clean",mimeType:"image/png",byteSize:90,checksum:"sha256:def"};}};
+ const pipeline=(await import("../src/media-pipeline.js")).createMediaPipeline({storage,scanner,processor});
+ const intent=await pipeline.beginUpload({districtId:"district-id",schoolId:"school-id",input:{kind:"image",mimeType:"image/png",byteSize:100}});
+ assert.ok(intent.assetId);
+ assert.equal(calls[0].assetId,intent.assetId);
+ assert.equal(Object.hasOwn(calls[0],"storageKey"),false);
+ await assert.rejects(()=>pipeline.createReadUrl({storageKey:intent.storageKey,consentStatus:"pending",moderationStatus:"approved",scanStatus:"clean"}),e=>e.code==="media_not_approved");
+ const url=await pipeline.createReadUrl({storageKey:intent.storageKey,consentStatus:"approved",moderationStatus:"approved",scanStatus:"clean"});
+ assert.match(url.url,/read\.example/);
+ await assert.rejects(()=>pipeline.verifyUploadedObject({storageKey:intent.storageKey,expected:{id:intent.assetId,kind:"video",mimeType:"video/mp4",byteSize:100}}),e=>e.code==="uploaded_object_mismatch");
+});
