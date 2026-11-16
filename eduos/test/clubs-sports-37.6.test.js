@@ -41,3 +41,18 @@ test("paid checkout and livestream playback remain fail-closed", async () => {
  assert.match(routes, /recording_allowed,created_by\)[\s\S]*false/);
  assert.doesNotMatch(routes, /cardNumber|cvv|payment_secret/i);
 });
+
+test("media consent is participant-specific and publication fails closed", async () => {
+ const sql = await readFile(new URL("db/053_activity_media_guardian_consent.sql", root), "utf8");
+ assert.match(sql, /activity_media_participants/);
+ assert.match(sql, /activity_media_consents/);
+ assert.match(sql, /FOREIGN KEY\(district_id,student_id\)/);
+ assert.match(sql, /FORCE ROW LEVEL SECURITY/);
+ const routes = await readFile(new URL("src/clubs-sports-routes.js", root), "utf8");
+ assert.match(routes, /active_guardian_link_required/);
+ assert.match(routes, /media_participant_not_registered/);
+ assert.match(routes, /all_guardian_consents_required/);
+ assert.match(routes, /publicationEnabled:false/);
+ assert.match(routes, /private_storage_and_publication_adapter_not_configured/);
+ assert.doesNotMatch(routes, /publicUrl|signedUrl/);
+});
