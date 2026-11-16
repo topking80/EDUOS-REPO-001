@@ -101,12 +101,14 @@ export function registerClubsSportsRoutes(app) {
    }
    const membership=await one(c,"SELECT id FROM activity_memberships WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id IN (SELECT user_id FROM student_user_links WHERE district_id=$1 AND student_id=$4 AND relationship='pupil' AND status='active') AND status='active' LIMIT 1",[a.districtId,activity.school_id,activity.id,b.studentId]);
    if(!membership)throw new HttpError(409,"student_activity_membership_required");
+   const numberTaken=b.jerseyNumber==null?null:await one(c,"SELECT id FROM activity_roster_entries WHERE district_id=$1 AND activity_id=$2 AND jersey_number=$3 AND status='active' AND student_id<>$4",[a.districtId,activity.id,b.jerseyNumber,b.studentId]);
+   if(numberTaken)throw new HttpError(409,"jersey_number_already_in_use");
    const r=await one(c,`INSERT INTO activity_roster_entries(district_id,school_id,activity_id,student_id,jersey_number,position,status,added_by)
     VALUES($1,$2,$3,$4,$5,$6,'active',$7)
     ON CONFLICT(district_id,activity_id,student_id) DO UPDATE SET jersey_number=EXCLUDED.jersey_number,position=EXCLUDED.position,status='active',added_by=EXCLUDED.added_by,updated_at=now()
     RETURNING id,student_id,jersey_number,position,status`,[a.districtId,activity.school_id,activity.id,b.studentId,b.jerseyNumber??null,(b.position||"").trim(),a.userId]);
    await audit(c,req,"roster_add","activity_roster_entry",r.id,`activity=${activity.id};student=${b.studentId}`);return r;
-  });res.status(201).json({data});}catch(e){sendError(res,next,e)}
+  });res.status(201).json({data});}catch(e){if(e?.code==="23505")return res.status(409).json({error:"jersey_number_already_in_use"});sendError(res,next,e)}
  });
  app.get("/api/activities/:id/results",requireSession,wrap(async(c,req)=>{
   const a=req.actor;if(!validId(req.params.id))throw new HttpError(400,"invalid_activity_id");
@@ -126,6 +128,8 @@ export function registerClubsSportsRoutes(app) {
    const activity=await requireActivityManager(c,a,event.activity_id);
    if(activity.kind!=="sport")throw new HttpError(400,"result_requires_sport_event");
    if(event.ends_at>new Date())throw new HttpError(409,"event_not_completed");
+   const existing=await one(c,"SELECT id,status FROM activity_event_results WHERE district_id=$1 AND event_id=$2 FOR UPDATE",[a.districtId,event.id]);
+   if(existing?.status==="published"&&!LEAD(a.role))throw new HttpError(403,"published_result_requires_school_lead");
    const publish=LEAD(a.role)&&b.publish===true;
    const r=await one(c,`INSERT INTO activity_event_results(district_id,school_id,activity_id,event_id,opponent,home_score,away_score,summary,status,recorded_by,approved_by)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
