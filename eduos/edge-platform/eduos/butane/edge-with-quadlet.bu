@@ -22,18 +22,15 @@ storage:
         inline: |
           edge
 
-    # Include Quadlet definitions (these will be picked up by systemd)
-    - path: /etc/containers/systemd/eduos-bootstrap.container
-      mode: 0644
-      contents:
-        local: quadlet/eduos-bootstrap.container
-
+    # Include Quadlet definitions (these will be picked up by systemd).
+    # Bootstrap is not one of them: it provisions the host (users, /run,
+    # systemd units), so it runs as the host unit below, under its
+    # NoNewPrivileges/ProtectSystem limits. There is no root container.
     - path: /etc/containers/systemd/eduos-health.container
       mode: 0644
       contents:
         local: quadlet/eduos-health.container
 
-    # Scripts still needed for the containers to exec
     - path: /usr/local/bin/eduos-bootstrap.sh
       mode: 0755
       contents:

@@ -18,9 +18,21 @@ export async function startChrome(t) {
   const proc = spawn(CHROME, ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check",
     "--remote-debugging-port=0", `--user-data-dir=${dir}`, "about:blank"], { stdio: "ignore" });
   proc.unref();
-  const close = () => { try { proc.kill("SIGKILL"); } catch {} fs.rmSync(dir, { recursive: true, force: true }); };
-  t.after(close);
-  process.once("exit", close);
+  // Removing the profile is best effort: Chrome's helper processes can still
+  // be writing into it for a moment after the kill, and a failed cleanup
+  // (ENOTEMPTY) must not fail the test that used the browser. The test-end
+  // hook waits for the browser to exit and retries; the process-exit hook
+  // can only be synchronous.
+  const kill = () => { try { proc.kill("SIGKILL"); } catch {} };
+  const remove = () => { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {} };
+  t.after(async () => {
+    kill();
+    // A referenced timer keeps the event loop alive while we wait (the child
+    // itself is unref'd), so the hook can't be cut short.
+    if (proc.exitCode === null && proc.signalCode === null) await new Promise(r => { const t = setTimeout(r, 5000); proc.once("exit", () => { clearTimeout(t); r(); }); });
+    remove();
+  });
+  process.once("exit", () => { kill(); remove(); });
   const portFile = path.join(dir, "DevToolsActivePort");
   for (let i = 0; i < 300 && !fs.existsSync(portFile) && proc.exitCode === null; i++) await sleep(100);
   assert.ok(fs.existsSync(portFile), `Chrome didn't start within 30 s (exit code ${proc.exitCode})`);

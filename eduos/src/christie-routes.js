@@ -10,6 +10,16 @@ import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { createProvider, outboundHelpFields, helpFieldsText } from "./christie/providers.js";
 import { findStudentIdentifiers } from "./student-identifiers.js";
+
+// The adults closest to a learner (linked family and rostered teachers): the
+// names a learner is most likely to type, removed before anything leaves for
+// an external tutor model. Untitled names of other adults are not known here.
+async function peopleAround(client, studentId) {
+  const { rows } = await client.query(`
+    SELECT u.display_name FROM student_user_links l JOIN users u ON u.id=l.user_id WHERE l.student_id=$1
+    UNION SELECT u.display_name FROM teacher_student_rosters r JOIN users u ON u.id=r.teacher_user_id WHERE r.student_id=$1`, [studentId]);
+  return rows.map(r => r.display_name).filter(Boolean);
+}
 import { MESSAGES, MASTERED_AT, pick, isCorrect, classifyQuestion, itemScore, nextMastery } from "./christie/tutor.js";
 import { enqueueNotifications } from "./notify.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError, roleIn } from "./role-app-util.js";
@@ -210,7 +220,8 @@ export function registerChristieRoutes(app) {
             // (another learner in the question, a name in a lesson or hint).
             // If that lookup fails, the request fails: nothing is sent.
             const outbound = p.name === "local" ? null
-              : outboundHelpFields(fields, await findStudentIdentifiers(client, session.district_id, helpFieldsText(fields)), [learner?.display_name, me?.display_name]);
+              : outboundHelpFields(fields, await findStudentIdentifiers(client, session.district_id, helpFieldsText(fields)),
+                  [learner?.display_name, me?.display_name, ...(await peopleAround(client, session.student_id))]);
             const reply = await p.help({ ...fields, firstHint: item.hints[0], answer: item.answer, outbound });
             await say("hint", reply.text, { provider: reply.fallback ? "local" : p.name });
           }

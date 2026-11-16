@@ -18,7 +18,12 @@ Benefits:
 2. Run `systemctl daemon-reload`
 3. Enable and start the services:
    ```bash
-   systemctl enable --now eduos-bootstrap eduos-enrollment eduos-health eduos-update
+   systemctl enable --now eduos-enrollment eduos-health
+   ```
+   Bootstrap and update are host units (`../services/`), not containers:
+   they provision and update the node itself.
+   ```bash
+   systemctl enable --now eduos-bootstrap eduos-update
    ```
 
 ## Image References
@@ -31,7 +36,7 @@ The Quadlet files reference images under `quay.io/eduos/...`. These are placehol
 
 ## Volume & Configuration Notes
 
-- All services expect `/etc/eduos/` and `/var/lib/eduos/` to exist (created by bootstrap or Ignition)
+- All services expect `/etc/eduos/` and `/var/lib/eduos/` to exist (created by the bootstrap host unit or Ignition)
 - Configuration TOML files are mounted read-only where appropriate
 - The enrollment service publishes port 8080 by default
 

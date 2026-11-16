@@ -66,6 +66,27 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
   });
   after(async () => { await server?.stop(); await admin?.end(); await provider?.close(); await idp?.close(); await db?.drop(); });
 
+  it("Christie: a learner's question loses the names of their family and teachers, titled adults, addresses, birth dates and links (EDUOS-PRIV-01)", async () => {
+    await admin.query("UPDATE users SET display_name='Grace Okafor' WHERE id=$1", [USERS.pa[0]]);
+    await admin.query("UPDATE users SET display_name='Hollis Varga' WHERE id=$1", [USERS.t1[0]]);
+    await admin.query("INSERT INTO teacher_student_rosters(district_id,school_id,teacher_user_id,student_id,created_by) VALUES ($1,$2,$3,$4,$3) ON CONFLICT DO NOTHING",
+      [ID.d1, ID.s1, USERS.t1[0], ID.alice]);
+    const made = await as("t1")("POST", "/api/christie/skills", { subject: "Math", gradeLevel: "3", code: "G3.PRIV", title: "Thirds",
+      explanation: "Split a whole into three equal parts.", items: [{ prompt: "What is 1/3 of 9?", answer: "3", hints: ["Make three groups."] }] });
+    assert.equal(made.status, 201, JSON.stringify(made.body));
+    assert.equal((await as("p1")("POST", `/api/christie/skills/${made.body.data.id}/approve`)).status, 200);
+    const sid = (await as("pu")("POST", "/api/christie/sessions", { skillId: made.body.data.id })).body.data.session.id;
+    const before = provider.received.length;
+    const asked = await as("pu")("POST", `/api/christie/sessions/${sid}/turns`, { kind: "question",
+      text: "Grace Okafor and Mr Varga said Coach Bellweather knows, I live at 42 Maple Street Apt 3, birthday March 4, 2015, see www.example.org/me" });
+    assert.equal(asked.status, 200, JSON.stringify(asked.body));
+    assert.equal(provider.received.length, before + 1, "the external tutor was asked");
+    const whole = JSON.stringify(provider.received.at(-1));
+    for (const leak of ["Grace", "Okafor", "Varga", "Hollis", "Bellweather", "42 Maple", "Maple Street", "March 4, 2015", "example.org"])
+      assert.ok(!whole.includes(leak), `"${leak}" reached the tutor provider: ${whole}`);
+    assert.match(whole, /What is 1\/3 of 9\?/, "the problem itself still goes");
+  });
+
   it("a superintendent's text loses every student name and number in the district before it leaves", async () => {
     const filler = "The visit covered reading groups and the new schedule. ".repeat(12);
     const text = `Visit notes. Marisol Okonkwo-Reyes (2026-55417) and Carol C need follow-up; Pupil5999 Sample too. ${filler} Final line: END-OF-NOTES marker.`;

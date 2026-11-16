@@ -1,11 +1,10 @@
 # EduOS edge container images
 
-Three images, referenced by the Quadlet definitions in `../quadlet/`. Build
+Two images, referenced by the Quadlet definitions in `../quadlet/`. Build
 them from `edge-platform/eduos` (CI builds and vulnerability-scans all three
-on every change):
+on every change). Bootstrap and update run on the host, not in images:
 
 ```bash
-podman build -f containers/Containerfile.bootstrap  -t quay.io/eduos/eduos-bootstrap:latest .
 podman build -f containers/Containerfile.enrollment -t quay.io/eduos/eduos-enrollment:latest .
 podman build -f containers/Containerfile.health     -t quay.io/eduos/eduos-health:2.0.0 .
 ```
@@ -20,7 +19,10 @@ save/load the images as tarballs (`make containers`).
   Containerfile uses anything else, and 30 days before that end of life.
 - **Users:** enrollment runs as uid 10001 and health as uid 10003 (the same
   `eduos-health` user the host has, so host folders and the device token
-  line up). Only bootstrap runs as root, because it provisions the node.
+  line up). No image runs as root. Bootstrap provisions the node (users,
+  `/run/eduos`, systemd units), so it is a host unit
+  (`services/bootstrap.service`, with NoNewPrivileges and ProtectSystem),
+  not a container; a test keeps every image non-root.
 - **No update image:** `eduos-update` runs on the host (`services/update.*`),
   because it configures the OS updater and can roll the OS back. See
   `../docs/UPDATES-AND-HEALTH.md`.
