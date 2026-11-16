@@ -13,6 +13,38 @@ No confirmed unauthenticated remote-code-execution or direct cross-district webh
 
 The webhook reliability controls have material gaps. The highest-priority finding is that the two-minute lease is applied to an entire sequentially processed batch of up to 25 jobs. The worst-case bounded delivery time for a batch can exceed the lease, allowing another worker to reclaim a job while the first worker is still processing earlier jobs. A second issue is that WEBHOOK_MAX_IN_FLIGHT is configured but the corresponding acquire/release helpers are never called, so it does not actually bound request-triggered dispatch concurrency.
 
+## Resolution (added after the audit)
+
+Every finding below was confirmed against the audited commit and is fixed on
+main. The findings are kept as written; this table records what changed.
+
+| Finding | Fixed in | How it's verified |
+|---|---|---|
+| P2 Batch lease can expire before later jobs start | #37, #38 | Each job gets a delivery slot first, then renews its lease just before sending; it's skipped if another worker holds it. A send is cut off at 45 s, inside the 2-minute lease. Only the current lease holder writes the delivery ledger and failure counts. A worker claims only as many jobs as it can start. `test/integration/webhook-outbox.test.js`: a batch slower than its lease, a worker queued for capacity, a stale worker racing the ledger. |
+| P2 `WEBHOOK_MAX_IN_FLIGHT` not enforced | #37 | One limiter covers every delivery in the process (workers, the API sweep, "Send test"). Test: four workers with limit 2 never exceed 2. |
+| P2 Scheduled delivery needs an external scheduler | #37 | The API drains every district every `WEBHOOK_DISPATCH_INTERVAL_SECONDS` (default 60). The dispatcher script is optional. Test: the sweep drains the queue as the runtime role. |
+| P2 429 ignores Retry-After | #37 | Retry-After (seconds or HTTP date, capped at an hour) on a 429 or 503 sets the next attempt. Unit and integration tests cover both forms. |
+| P2 No signing-key rotation overlap | #37 | `WEBHOOK_SIGNING_KEY_PREVIOUS` adds a second `v1` signature. `POST /api/webhooks/:id/secret` (audited) shows the current secret again. The procedure is in `docs/WEBHOOKS.md`. |
+| P3 Incomplete IANA special-purpose IPv6 | #37, #38 | Teredo and the rest of 2001::/23, 5f00::/16, 2620:4f:8000::/48, 3fff::/20 and three IPv4 ranges are refused. Unit tests list blocked and still-allowed addresses. |
+| P3 Allowlisting optional in production | #37 | In production, webhooks don't start without `WEBHOOK_ALLOWED_HOSTS` unless `WEBHOOK_ALLOW_ANY_PUBLIC_HOST=true`. Tested in production mode. |
+
+The release gates listed under "Broader code and release review":
+
+1. Done in #35: `test/integration/role-scope-matrix.test.js` reads routes
+   from the running app, calls every GET and write route as each role,
+   asserts expected status codes for student-facing routes, and fails on
+   any 5xx.
+2. Not yet done as a separate check: migrations from an empty database run
+   in every integration test, but an upgrade copy and the real production
+   roles still need verifying.
+3. Done in #37 and #38.
+4. Open: the API now sweeps on its own, but observability (queue age,
+   backlog) in each production environment still needs setting up.
+5. Partly done: transport hydration batching with a query-count test is in
+   #32. Load tests and query-plan review remain.
+6. Open: no real email/SMS/push sender exists yet.
+7. Open: physical-device tests.
+
 ## Findings
 
 ### P2 — Webhook batch lease can expire before later jobs start
