@@ -120,10 +120,10 @@ for (const key of ROLES) {
     await p.click(`button[data-sub="${u.sub}"]`);
     await p.waitForURL(x => x.href.startsWith(`${BASE}/app/`));
     await p.locator(".top h1").waitFor({ timeout: 15000 });
-    await settle(p);
-    // Some roles (the superintendent) use the desktop interface and have no
-    // phone tabs; their mobile home is still checked.
+    // The tab bar is drawn once the role's home has loaded.
+    await p.locator("#tabs a").first().waitFor({ timeout: 15000 });
     const tabs = await p.locator("#tabs a").evaluateAll(els => els.map(e => e.getAttribute("href")));
+    check(tabs.length > 0, "no tabs");
     for (const h of tabs) { await p.goto(`${BASE}/app/${h}`); await settle(p); }
     await p.context().close();
   });
