@@ -8,7 +8,7 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { config } from "./config.js";
 import { pool, withTenantTransaction, assertSafeRuntimeRole, assertSchemaReady } from "./db.js";
-import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership } from "./auth.js";
+import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership, sessionIsLive } from "./auth.js";
 import { requirePermission, requireSchoolScope, canPerform, isGrantable, isDistrictRole } from "./policy.js";
 import { writeAudit } from "./audit.js";
 import { cspDirectives } from "./csp.js";
@@ -768,9 +768,11 @@ app.get("/api/audit",requireSession,requirePermission("audit","read"),async(req,
 // LISTEN/NOTIFY. The notification contains only a tenant ID and event UUID;
 // every event is re-read under the subscriber's tenant/RLS context before it
 // is emitted. Resource IDs, details, prompts and student data are not streamed.
+const SESSION_RECHECK_MS=config.streamSessionRecheckMs;
 app.get("/api/operations/stream",requireSession,requirePermission("audit","read"),async(req,res,next)=>{
   let listener;
   let heartbeat;
+  let recheck;
   let onNotification;
   let onListenerError;
   let closed=false;
@@ -811,6 +813,17 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
     writeFrame(`id: ${row.id}\nevent: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
   const visibleSql=`($1 IN ('superintendent','it_admin') OR school_id=$2::uuid)`;
+  // The session is checked when the stream opens, again before every event
+  // and every SESSION_RECHECK_MS while idle: signing out, an expired or idle
+  // session, or a revoked account or membership ends the stream (release
+  // gate: a revoked session can't keep receiving events).
+  let lastLiveCheck=Date.now();
+  const stillLive=async()=>{
+    if(closed)return false;
+    if(await sessionIsLive(req.actor.sessionId)){lastLiveCheck=Date.now();return true;}
+    if(!closed){writeFrame("event: session_ended\ndata: {}\n\n");res.end();close();}
+    return false;
+  };
   const readEvent=async eventId=>withTenantTransaction(req.actor,async client=>{
     const result=await client.query(
       `SELECT id,occurred_at,actor_role,action,resource_type,outcome
@@ -823,6 +836,7 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
     if(closed)return;
     closed=true;
     clearInterval(heartbeat);
+    clearInterval(recheck);
     pendingFrames.length=0;
     notificationBacklog.length=0;
     res.off("drain",onDrain);
@@ -853,7 +867,10 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
       let notice;
       try{notice=JSON.parse(message.payload||"{}")}catch{return}
       if(notice.districtId!==req.actor.districtId||typeof notice.eventId!=="string")return;
-      try{send(await readEvent(notice.eventId))}catch(error){
+      try{
+        const row=await readEvent(notice.eventId);
+        if(row&&await stillLive())send(row);
+      }catch(error){
         console.error("Operational stream event lookup failed",{requestId:req.requestId,message:error.message});
       }
     };
@@ -899,6 +916,8 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
     }
     heartbeat=setInterval(()=>{if(!closed)writeFrame(`: heartbeat ${Date.now()}\n\n`)},25_000);
     heartbeat.unref?.();
+    recheck=setInterval(()=>{if(!closed&&Date.now()-lastLiveCheck>=SESSION_RECHECK_MS)stillLive().catch(()=>{if(!closed){res.end();close();}})},Math.min(SESSION_RECHECK_MS,5_000));
+    recheck.unref?.();
   }catch(error){
     if(listener){try{listener.release()}catch{}listener=null;}
     if(!res.headersSent)return next(error);
