@@ -83,4 +83,17 @@ describe("37.4.0 webhook test delivery endpoint", { skip }, () => {
     assert.equal((await t1("POST", `/api/webhooks/${id}/test`, {})).status, 403);
     assert.equal(received.filter(r => r.path === "/hooks/perm").length, 0);
   });
+  it("the subscription's secret can be fetched again by a webhook manager, and that's audited", async () => {
+    const created = await supt("POST", "/api/webhooks", { url: `${receiverUrl}/hooks/secret`, eventTypes: ["assignment.created"] });
+    assert.equal(created.status, 201);
+    const { id } = created.body.data;
+    const again = await supt("POST", `/api/webhooks/${id}/secret`, {});
+    assert.equal(again.status, 200);
+    assert.deepEqual(again.body, { secret: created.body.secret, rotationInProgress: false });
+    assert.equal((await t1("POST", `/api/webhooks/${id}/secret`, {})).status, 403, "a teacher can't");
+    const audit = await admin.query("SELECT count(*)::int AS n FROM audit_events WHERE action='reveal_secret' AND resource_id=$1", [id]);
+    assert.equal(audit.rows[0].n, 1);
+    assert.ok(!JSON.stringify((await admin.query("SELECT detail FROM audit_events WHERE action='reveal_secret' AND resource_id=$1", [id])).rows).includes(created.body.secret), "the secret isn't in the audit log");
+    assert.equal((await supt("POST", "/api/webhooks/00000000-0000-4000-8000-000000000000/secret", {})).status, 404);
+  });
 });

@@ -19,7 +19,8 @@ import { normalizeAgentEvent } from "./agent-events.js";
 import { classifyOperationalEvent } from "./operational-event-taxonomy.js";
 import { FLOW_EVENT_TYPES, isFlowEventType, normalizeFlowEvent, serverFlowEvent, webhookPayload } from "./flow-events.js";
 import { deliverWebhook, deriveWebhookSecret, resolveWebhookTarget, validateWebhookUrl } from "./webhooks.js";
-import { processWebhookOutbox as processOutbox } from "./webhook-outbox.js";
+import { processWebhookOutbox as processOutbox, createLimiter } from "./webhook-outbox.js";
+import { dispatchWebhooks } from "./webhook-dispatch.js";
 import { registerAdminRoutes } from "./admin-routes.js";
 import { registerMeshRoutes } from "./mesh-routes.js";
 import { registerHomeRoutes } from "./home-routes.js";
@@ -1625,16 +1626,11 @@ app.post("/api/students/:studentId/records-delete",requireSession,requireCsrf,as
 const flowLimiter=rateLimit({windowMs:60_000,limit:config.flowEventRateLimit,standardHeaders:true,legacyHeaders:false});
 const webhookAdminLimiter=rateLimit({windowMs:15*60_000,limit:config.webhookAdminRateLimit,standardHeaders:true,legacyHeaders:false});
 // 32.2.0: no fixed number of subscriptions (was 10). A district may set its own
-// cap in district_settings.max_active_webhooks (NULL = unlimited). Deliveries
-// to every matching subscription are queued behind a concurrency bound instead
-// of being dropped when the dispatcher was busy.
-const webhookSlots=[];
-async function acquireWebhookSlot(){
-  if(webhooksInFlight<config.webhookMaxInFlight){webhooksInFlight++;return;}
-  await new Promise(resolve=>webhookSlots.push(resolve));
-}
-function releaseWebhookSlot(){const next=webhookSlots.shift();if(next)next();else webhooksInFlight--;}
-let webhooksInFlight=0;
+// cap in district_settings.max_active_webhooks (NULL = unlimited). Every
+// delivery from this process (outbox workers, the scheduled sweep, "Send
+// test") goes through one limiter of WEBHOOK_MAX_IN_FLIGHT. (A limiter was
+// defined here before but never used; 2026-11-16 audit.)
+const webhookLimiter=createLimiter(config.webhookMaxInFlight);
 const webhookOptions=()=>({allowInsecureLoopback:config.webhookAllowInsecureLoopback,allowedHosts:config.webhookAllowedHosts});
 const tenantActor=actor=>({districtId:actor.districtId,userId:actor.userId,role:actor.role,schoolId:actor.schoolId||null});
 const webhooksEnabled=(_req,res,next)=>config.webhookSigningKey?next():res.status(503).json({error:"webhooks_not_configured"});
@@ -1675,8 +1671,8 @@ async function recordFlowEvent(actor,event,schoolId,subjectStudentId=null){
 // never changes the failure count or status, so it can't disable or re-arm it.
 async function deliverToSubscription(actor,subscription,event,_eventId=null,maxAttempts=1){
   const deliveryId=crypto.randomUUID();
-  const attempts=await deliverWebhook({subscription,secret:deriveWebhookSecret(config.webhookSigningKey,subscription.id),
-    eventType:event.type,deliveryId,body:JSON.stringify(webhookPayload(event)),options:{...webhookOptions(),maxAttempts}});
+  const attempts=await webhookLimiter.run(()=>deliverWebhook({subscription,secrets:webhookSecrets(subscription.id),
+    eventType:event.type,deliveryId,body:JSON.stringify(webhookPayload(event)),options:{...webhookOptions(),maxAttempts}}));
   await withTenantTransaction(actor,async client=>{
     for(const a of attempts) await client.query(
       `INSERT INTO webhook_deliveries(district_id,subscription_id,delivery_id,event_id,event_type,attempt,outcome,status_code,duration_ms)
@@ -1690,7 +1686,13 @@ async function deliverToSubscription(actor,subscription,event,_eventId=null,maxA
 
 // Durable outbox worker: src/webhook-outbox.js (extracted for lifecycle tests).
 async function processWebhookOutbox(actorInput,{limit=10}={}){
-  return processOutbox(actorInput,{limit},{withTenantTransaction,signingKey:config.webhookSigningKey,deliveryOptions:webhookOptions()});
+  return processOutbox(actorInput,{limit},{withTenantTransaction,signingKey:config.webhookSigningKey,
+    previousSigningKey:config.webhookPreviousSigningKey||null,deliveryOptions:webhookOptions(),limiter:webhookLimiter});
+}
+/** The secrets a subscription's deliveries are signed with: current, then previous during a key rotation. */
+function webhookSecrets(subscriptionId){
+  return [deriveWebhookSecret(config.webhookSigningKey,subscriptionId),
+    ...(config.webhookPreviousSigningKey?[deriveWebhookSecret(config.webhookPreviousSigningKey,subscriptionId)]:[])];
 }
 
 function dispatchFlowWebhooks(actorInput,_event){
@@ -1800,7 +1802,7 @@ app.post("/api/webhooks",webhookAdminLimiter,requireSession,requireCsrf,requireP
     res.status(201).json({
       data:{id:row.id,url:row.url,eventTypes:row.event_types,status:row.status,createdAt:row.created_at},
       secret:deriveWebhookSecret(config.webhookSigningKey,row.id),
-      signature:{header:"X-EduOS-Signature",format:"t=<unix seconds>,v1=<hex hmac-sha256(secret, t + \".\" + raw body)>",toleranceSeconds:300}
+      signature:{header:"X-EduOS-Signature",format:"t=<unix seconds>,v1=<hex hmac-sha256(secret, t + \".\" + raw body)>[,v1=<…>] (accept any v1; a second one appears during a signing-key rotation)",toleranceSeconds:300}
     });
   }catch(e){next(e)}
 });
@@ -1824,6 +1826,27 @@ app.delete("/api/webhooks/:webhookId",webhookAdminLimiter,requireSession,require
     });
     if(!disabled)return res.status(404).json({error:"webhook_not_found"});
     res.json({disabled:true});
+  }catch(e){next(e)}
+});
+
+// The subscription's signing secret under the current key, again. Created
+// subscriptions show it once; after a signing-key rotation (or a lost secret)
+// an administrator fetches it here and updates the receiver. Audited.
+app.post("/api/webhooks/:webhookId/secret",webhookAdminLimiter,requireSession,requireCsrf,requirePermission("webhooks","manage"),webhooksEnabled,async(req,res,next)=>{
+  if(!validId(req.params.webhookId))return res.status(400).json({error:"invalid_webhook_id"});
+  try{
+    const found=await withTenantTransaction(req.actor,async client=>{
+      const row=await client.query(`SELECT id FROM webhook_subscriptions WHERE id=$1 AND status='active'`,[req.params.webhookId]);
+      if(!row.rowCount)return false;
+      await client.query(
+        `INSERT INTO audit_events(district_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
+         VALUES($1,$2,$3,'reveal_secret','webhook_subscription',$4,'success',$5,$6)`,
+        [req.actor.districtId,req.actor.userId,req.actor.role,req.params.webhookId,config.webhookPreviousSigningKey?"rotation_in_progress":null,req.requestId]);
+      return true;
+    });
+    if(!found)return res.status(404).json({error:"webhook_not_found"});
+    res.setHeader("Cache-Control","no-store");
+    res.json({secret:deriveWebhookSecret(config.webhookSigningKey,req.params.webhookId),rotationInProgress:Boolean(config.webhookPreviousSigningKey)});
   }catch(e){next(e)}
 });
 
@@ -1909,6 +1932,24 @@ app.use((err,req,res,_next)=>{
   res.status(500).json({error:"internal_server_error",requestId:req.requestId});
 });
 
+// Scheduled webhook delivery without cron (2026-11-16 audit): every
+// WEBHOOK_DISPATCH_INTERVAL_SECONDS the API drains due webhook jobs for every
+// district, through the same leases and limiter as request-triggered delivery,
+// so several API instances (and src/webhook-dispatch.js) can run it at once.
+// A sweep that's still running when the next is due is skipped.
+let webhookSweepRunning=false;
+function startWebhookSweep(){
+  if(!config.webhookSigningKey||!config.webhookDispatchIntervalSeconds)return;
+  const timer=setInterval(()=>{
+    if(webhookSweepRunning)return;
+    webhookSweepRunning=true;
+    dispatchWebhooks({db:pool,limiter:webhookLimiter,maxPerDistrict:100})
+      .catch(error=>console.error("Webhook sweep failed",{message:error.message}))
+      .finally(()=>{webhookSweepRunning=false;});
+  },config.webhookDispatchIntervalSeconds*1000);
+  timer.unref?.();
+}
+
 export { app };
 
 // Start only when run directly (tests import the app without listening).
@@ -1917,6 +1958,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
   catch(error){console.error(error.message);process.exit(1);}
   app.listen(config.port,()=>{
     console.log(`EduOS API listening on ${config.port}${config.nodeTier?` (EDEN ${config.nodeTier} tier)`:""}`);
+    startWebhookSweep();
     if(config.nodeTier==="school"&&process.env.EDEN_AGENT!=="off")startAgent();
   });
 }

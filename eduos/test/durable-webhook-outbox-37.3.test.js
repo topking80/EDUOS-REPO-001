@@ -34,7 +34,14 @@ test('37.3 records flow events and outbox rows in the same tenant transaction', 
 test('37.3 outbox leases exceed bounded network operations to reduce premature reclaim', async () => {
   // The worker moved to src/webhook-outbox.js in the 37.4.0 audit; server.js delegates to it.
   const server = await readFile(new URL('../src/server.js', import.meta.url), 'utf8');
-  assert.match(server, /import \{ processWebhookOutbox as processOutbox \} from "\.\/webhook-outbox\.js"/);
+  assert.match(server, /import \{ processWebhookOutbox as processOutbox, createLimiter \} from "\.\/webhook-outbox\.js"/);
+  // 2026-11-16 audit: each job's lease is renewed just before its delivery, and
+  // a delivery is cut off well inside it (lifecycle tests in
+  // test/integration/webhook-outbox.test.js).
+  const { JOB_LEASE_SECONDS, JOB_DEADLINE_MS } = await import('../src/webhook-outbox.js');
+  const { WEBHOOK_TIMEOUT_MS } = await import('../src/webhooks.js');
+  assert.equal(JOB_LEASE_SECONDS, 120);
+  assert.ok(JOB_DEADLINE_MS >= 15000 + WEBHOOK_TIMEOUT_MS && JOB_DEADLINE_MS < JOB_LEASE_SECONDS * 1000);
   const worker = await readFile(new URL('../src/webhook-outbox.js', import.meta.url), 'utf8');
-  assert.match(worker, /lease_until=now\(\)\+interval '2 minutes'/);
+  assert.match(worker, /WHERE id=\$1 AND lease_token=\$2 AND status='processing' AND lease_until>now\(\)/);
 });
