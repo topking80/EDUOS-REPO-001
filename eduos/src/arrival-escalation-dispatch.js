@@ -59,7 +59,7 @@ export async function dispatchArrivalEscalations({db=pool,now=new Date(),log=()=
         const title=severity==="high"?"Urgent arrival exception":"Arrival exception needs attention";
         const description=kind==="handoff_awaiting_receipt"?"Arrival is awaiting independent staff receipt":"First attendance has not been recorded after receipt";
         const prepared=outboxRows({districtId:district.id,schoolId:source.school_id,recipients,kind:"transport",
-          title,body:`\${description}: \${source.display_name} at \${source.school_name}. Please review the Arrival Exceptions queue.`,
+          title,body:`${description}: ${source.display_name} at ${source.school_name}. Please review the Arrival Exceptions queue.`,
           refType:"arrival_exception",refId:source.id},config);
         for(const n of prepared){
           await client.query(`INSERT INTO notification_outbox
@@ -73,11 +73,11 @@ export async function dispatchArrivalEscalations({db=pool,now=new Date(),log=()=
     }catch(e){await client.query("ROLLBACK").catch(()=>{});throw e;}
     finally{client.release();}
   }
-  log(`arrival escalation dispatch: \${created} alerts, \${notified} notification rows`);
+  log(`arrival escalation dispatch: ${created} alerts, ${notified} notification rows`);
   return {alertsCreated:created,notificationRows:notified};
 }
 
 if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1])){
   dispatchArrivalEscalations().then(async r=>{console.log(JSON.stringify(r));await pool.end();})
-    .catch(async e=>{console.error(`arrival escalation failed: \${e.message}`);await pool.end();process.exit(1);});
+    .catch(async e=>{console.error(`arrival escalation failed: ${e.message}`);await pool.end();process.exit(1);});
 }
