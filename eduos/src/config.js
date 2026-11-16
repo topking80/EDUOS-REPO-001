@@ -275,7 +275,7 @@ if (config.metricsToken && config.metricsToken.length < 16) {
 if (!["local", "openai_compatible"].includes(config.aiProvider)) throw new Error("AI_PROVIDER must be local or openai_compatible");
 if (config.aiProvider !== "local") {
   if (!config.aiAllowExternal) throw new Error("AI_PROVIDER=openai_compatible also requires AI_ALLOW_EXTERNAL_PROVIDER=true");
-  const checked = validateAiProviderUrl(config.aiProviderUrl, config.aiProviderAllowedHosts);
+  const checked = validateAiProviderUrl(config.aiProviderUrl, config.aiProviderAllowedHosts, { allowInsecureLoopback: config.aiAllowInsecureLoopback });
   if (!checked.ok) throw new Error(`AI_PROVIDER_URL rejected: ${checked.reason}`);
   if (!config.aiProviderModel) throw new Error("AI_PROVIDER_MODEL is required for an external AI provider");
 }
