@@ -87,7 +87,7 @@ export function externalRequestBody({ model, usecase, input, identifiers = {} })
   return { model, temperature: 0.3, max_tokens: OUTPUT_MAX_TOKENS, messages: [{ role: "system", content: SYSTEM_PROMPTS[usecase] }, { role: "user", content }] };
 }
 
-export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, allowedHosts = [], fetchImpl, log = console.warn }) {
+export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, allowedHosts = [], allowInsecureLoopback = false, fetchImpl, log = console.warn }) {
   const endpoint = url.replace(/\/+$/, "") + "/chat/completions";
   return Object.freeze({
     name: "openai_compatible",
@@ -102,7 +102,7 @@ export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, allowe
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           data = await res.json();
         } else {
-          data = await postAiProviderJson({ url, allowedHosts, headers, body, timeoutMs });
+          data = await postAiProviderJson({ url, allowedHosts, headers, body, timeoutMs, allowInsecureLoopback });
         }
         const text = String(data?.choices?.[0]?.message?.content || "").trim().slice(0, 6000);
         if (!text) throw new Error("empty reply");
@@ -117,6 +117,6 @@ export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, allowe
 
 export function createProvider(cfg) {
   if (cfg.aiProvider === "openai_compatible" && cfg.aiAllowExternal)
-    return openAiCompatibleProvider({ url: cfg.aiProviderUrl, model: cfg.aiProviderModel, apiKey: cfg.aiProviderApiKey, timeoutMs: cfg.aiProviderTimeoutMs, allowedHosts: cfg.aiProviderAllowedHosts });
+    return openAiCompatibleProvider({ url: cfg.aiProviderUrl, model: cfg.aiProviderModel, apiKey: cfg.aiProviderApiKey, timeoutMs: cfg.aiProviderTimeoutMs, allowedHosts: cfg.aiProviderAllowedHosts, allowInsecureLoopback: cfg.aiAllowInsecureLoopback });
   return { name: "local", generate: async (u, i) => ({ text: capLocalOutput(await localProvider.generate(u, i)) }) };
 }
