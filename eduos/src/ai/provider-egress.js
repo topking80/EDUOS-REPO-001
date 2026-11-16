@@ -12,8 +12,8 @@ export function validateAiProviderUrl(raw, allowedHosts = []) {
   const checked = validateWebhookUrl(raw, { allowedHosts });
   if (!checked.ok || checked.url.protocol !== "https:")
     return checked.ok ? { ok: false, reason: "https_required" } : checked;
-  if (checked.url.pathname !== "/" || checked.url.search)
-    return { ok: false, reason: "provider_url_must_be_origin" };
+  if (checked.url.search)
+    return { ok: false, reason: "provider_url_query_not_allowed" };
   return checked;
 }
 
@@ -33,7 +33,7 @@ export async function postAiProviderJson({ url, allowedHosts, headers, body, tim
     };
     const request = https.request({
       protocol: "https:", hostname: host, port: checked.url.port || 443,
-      path: "/chat/completions", method: "POST", agent: false,
+      path: `${checked.url.pathname.replace(/\\/+$/, "")}/chat/completions`, method: "POST", agent: false,
       lookup: pinnedLookup, servername: net.isIP(host) ? undefined : host,
       headers: { ...headers, "content-length": Buffer.byteLength(body) },
     }, response => {
