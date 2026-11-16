@@ -16,6 +16,7 @@ import { config } from "./config.js";
 import { enqueueNotifications } from "./notify.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError, roleIn } from "./role-app-util.js";
 import { queuedAt, idempotencyKey, claimReplay } from "./offline-replay.js";
+import { groupTransportEvents } from "./transport-rider-events.js";
 
 const EVENTS = ["boarded", "alighted", "not_riding"];
 const EVENT_TEXT = { boarded: "boarded", alighted: "got off", not_riding: "is not riding today" };
@@ -24,28 +25,68 @@ const EVENT_TEXT = { boarded: "boarded", alighted: "got off", not_riding: "is no
 const LATEST = `SELECT DISTINCT ON (c.student_id) c.student_id, c.event, c.recorded_at, c.stop_id
                   FROM transport_checkins c WHERE c.run_id=$1 ORDER BY c.student_id, coalesce(c.observed_at, c.recorded_at) DESC, c.id DESC`;
 
-async function routeDetail(client, route, { withRiders }) {
-  const stops = await rows(client, `SELECT id,seq,name,to_char(scheduled_time,'HH24:MI') AS time,is_school FROM transport_stops WHERE route_id=$1 ORDER BY seq`, [route.id]);
-  const run = await one(client, `SELECT id,status,started_at,completed_at FROM transport_runs WHERE route_id=$1 AND service_date=eduos_school_today($2)`, [route.id, route.school_id]);
-  const out = { ...route, stops, run };
-  if (withRiders) {
-    const riders = await rows(client, `SELECT a.student_id,a.stop_id,s.display_name,s.grade_level FROM transport_rider_assignments a
-        JOIN students s ON s.id=a.student_id WHERE a.route_id=$1 AND a.revoked_at IS NULL ORDER BY s.display_name`, [route.id]);
-    const latest = run ? await rows(client, LATEST, [run.id]) : [];
-    const by = new Map(latest.map(l => [l.student_id, l]));
-    for (const st of stops) st.riders = riders.filter(r => r.stop_id === st.id).map(r => ({
-      studentId: r.student_id, name: r.display_name, grade: r.grade_level, status: by.get(r.student_id)?.event || "expected",
-      at: by.get(r.student_id)?.recorded_at || null }));
-    out.counts = {
-      riders: riders.length,
-      boarded: latest.filter(l => l.event === "boarded").length,
-      alighted: latest.filter(l => l.event === "alighted").length,
-      notRiding: latest.filter(l => l.event === "not_riding").length
-    };
-    out.counts.onBoard = out.counts.boarded;
-    out.counts.expected = riders.length - latest.length;
+// Hydrate a whole authorized route set with a fixed number of queries.
+// The route list is selected inside the caller's tenant transaction; all child
+// queries are constrained to those route/run IDs and remain under the same RLS.
+export async function routeDetails(client, routes, { withRiders }) {
+  if (!routes.length) return [];
+  const routeIds = routes.map(r => r.id);
+  const stops = await rows(client, `SELECT id,route_id,seq,name,to_char(scheduled_time,'HH24:MI') AS time,is_school
+    FROM transport_stops WHERE route_id=ANY($1::uuid[]) ORDER BY route_id,seq`, [routeIds]);
+  const runs = await rows(client, `SELECT x.id,x.route_id,x.status,x.started_at,x.completed_at
+    FROM transport_runs x JOIN transport_routes r ON r.id=x.route_id
+    WHERE x.route_id=ANY($1::uuid[]) AND x.service_date=eduos_school_today(r.school_id)`, [routeIds]);
+  const stopsByRoute = new Map();
+  for (const { route_id: routeId, ...stop } of stops) {
+    // Same stop shape as before batching (no route_id on each stop).
+    if (!stopsByRoute.has(routeId)) stopsByRoute.set(routeId, []);
+    stopsByRoute.get(routeId).push(stop);
   }
-  return out;
+  const runByRoute = new Map(runs.map(run => [run.route_id, run]));
+  if (!withRiders) return routes.map(route => ({
+    ...route, stops: stopsByRoute.get(route.id) || [], run: runByRoute.get(route.id) || null
+  }));
+
+  const riders = await rows(client, `SELECT a.route_id,a.student_id,a.stop_id,s.display_name,s.grade_level
+    FROM transport_rider_assignments a JOIN students s ON s.id=a.student_id
+    WHERE a.route_id=ANY($1::uuid[]) AND a.revoked_at IS NULL
+    ORDER BY a.route_id,s.display_name`, [routeIds]);
+  const ridersByRoute = new Map();
+  for (const rider of riders) {
+    if (!ridersByRoute.has(rider.route_id)) ridersByRoute.set(rider.route_id, []);
+    ridersByRoute.get(rider.route_id).push(rider);
+  }
+  const runIds = runs.map(run => run.id);
+  const latest = runIds.length ? await rows(client, `SELECT DISTINCT ON (c.run_id,c.student_id)
+      c.run_id,c.student_id,c.event,c.recorded_at,c.stop_id
+    FROM transport_checkins c WHERE c.run_id=ANY($1::uuid[])
+    ORDER BY c.run_id,c.student_id,coalesce(c.observed_at,c.recorded_at) DESC,c.id DESC`, [runIds]) : [];
+  const latestByRun = new Map();
+  for (const event of latest) {
+    if (!latestByRun.has(event.run_id)) latestByRun.set(event.run_id, new Map());
+    latestByRun.get(event.run_id).set(event.student_id, event);
+  }
+  return routes.map(route => {
+    const routeStops = stopsByRoute.get(route.id) || [];
+    const routeRiders = ridersByRoute.get(route.id) || [];
+    const run = runByRoute.get(route.id) || null;
+    const latestForRun = run ? latestByRun.get(run.id) || new Map() : new Map();
+    for (const stop of routeStops) stop.riders = routeRiders.filter(r => r.stop_id === stop.id).map(r => {
+      const event = latestForRun.get(r.student_id);
+      return { studentId: r.student_id, name: r.display_name, grade: r.grade_level,
+        status: event?.event || "expected", at: event?.recorded_at || null };
+    });
+    const latestEvents = [...latestForRun.values()];
+    const counts = {
+      riders: routeRiders.length,
+      boarded: latestEvents.filter(e => e.event === "boarded").length,
+      alighted: latestEvents.filter(e => e.event === "alighted").length,
+      notRiding: latestEvents.filter(e => e.event === "not_riding").length
+    };
+    counts.onBoard = counts.boarded;
+    counts.expected = routeRiders.length - latestEvents.length;
+    return { ...route, stops: routeStops, run, counts };
+  });
 }
 
 export function registerTransportRoutes(app) {
@@ -59,8 +100,7 @@ export function registerTransportRoutes(app) {
         if (a.role === "driver") {
           const routes = await rows(client, `SELECT r.id,r.name,r.bus_label,r.direction,r.school_id,sc.name AS school_name FROM transport_routes r
               JOIN schools sc ON sc.id=r.school_id WHERE r.driver_user_id=$1 AND r.status='active' AND r.school_id=$2 ORDER BY r.direction,r.name`, [a.userId, a.schoolId]);
-          const out = [];
-          for (const r of routes) out.push(await routeDetail(client, r, { withRiders: true }));
+          const out = await routeDetails(client, routes, { withRiders: true });
           await audit(client, req, "read", "transport_manifest", null, `routes=${out.length}`);
           return { role: a.role, routes: out };
         }
@@ -70,8 +110,8 @@ export function registerTransportRoutes(app) {
           const routes = await rows(client, `SELECT r.id,r.name,r.bus_label,r.direction,r.school_id,sc.name AS school_name,u.display_name AS driver_name
               FROM transport_routes r JOIN schools sc ON sc.id=r.school_id LEFT JOIN users u ON u.id=r.driver_user_id
              WHERE r.status='active' AND ($1::uuid IS NULL OR r.school_id=$1) ORDER BY sc.name,r.direction,r.name`, [schoolId]);
-          const out = [];
-          for (const r of routes) { const d = await routeDetail(client, r, { withRiders: true }); for (const s of d.stops) delete s.riders; out.push(d); }
+          const out = await routeDetails(client, routes, { withRiders: true });
+          for (const d of out) for (const s of d.stops) delete s.riders;
           await audit(client, req, "read", "transport_status", schoolId, `routes=${out.length}`);
           return { role: a.role, routes: out };
         }
@@ -91,9 +131,22 @@ export function registerTransportRoutes(app) {
             JOIN transport_stops st ON st.id=ra.stop_id
             LEFT JOIN transport_runs x ON x.route_id=r.id AND x.service_date=eduos_school_today(r.school_id)
            WHERE ${scope} ORDER BY s.display_name,r.direction`, [a.userId, scopeArg]);
+        // Fetch every visible rider's events in one round trip instead of
+        // issuing one sequential query per child. The target pairs come only
+        // from the already-authorized, tenant-scoped rider query above.
+        const activeRiders = kids.filter(k => k.run_id);
+        const eventsByRider = new Map();
+        if (activeRiders.length) {
+          const eventRows = await rows(client, `SELECT c.run_id,c.student_id,c.event,c.recorded_at,st.name AS stop_name,st.is_school
+              FROM unnest($1::uuid[],$2::uuid[]) AS target(run_id,student_id)
+              JOIN transport_checkins c ON c.run_id=target.run_id AND c.student_id=target.student_id
+              JOIN transport_stops st ON st.id=c.stop_id
+             ORDER BY c.run_id,c.student_id,c.recorded_at,c.id`,
+            [activeRiders.map(k => k.run_id), activeRiders.map(k => k.id)]);
+          for (const [key, events] of groupTransportEvents(eventRows)) eventsByRider.set(key, events);
+        }
         for (const k of kids) {
-          k.events = k.run_id ? await rows(client, `SELECT c.event,c.recorded_at,st.name AS stop_name,st.is_school FROM transport_checkins c
-              JOIN transport_stops st ON st.id=c.stop_id WHERE c.run_id=$1 AND c.student_id=$2 ORDER BY c.recorded_at,c.id`, [k.run_id, k.id]) : [];
+          k.events = k.run_id ? (eventsByRider.get(`${k.run_id}:${k.id}`) || []) : [];
           k.status = k.events.length ? k.events[k.events.length - 1].event : (k.run_id ? "expected" : "not_started");
         }
         await audit(client, req, "read", "transport_rider_status", null, `learners=${new Set(kids.map(k => k.id)).size}`);
@@ -191,8 +244,7 @@ export function registerTransportRoutes(app) {
         const list = await rows(client, `SELECT r.id,r.name,r.bus_label,r.direction,r.school_id,r.driver_user_id,u.display_name AS driver_name,r.status
             FROM transport_routes r LEFT JOIN users u ON u.id=r.driver_user_id
            WHERE ($1='superintendent' OR r.school_id=$2) ORDER BY r.name`, [req.actor.role, req.actor.schoolId]);
-        const out = [];
-        for (const r of list) out.push(await routeDetail(client, r, { withRiders: true }));
+        const out = await routeDetails(client, list, { withRiders: true });
         await audit(client, req, "read", "transport_routes", null, `routes=${out.length}`);
         return out;
       });
