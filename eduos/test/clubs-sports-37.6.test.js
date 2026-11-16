@@ -17,14 +17,14 @@ test("clubs and sports permissions are role-bounded", () => {
  assert.equal(canPerform(actor("principal"), "streaming", "schedule"), true);
 });
 test("migration establishes forced district RLS and protected ticket codes", async () => {
- const sql = await readFile(new URL("../db/051_clubs_sports_multimedia.sql", root), "utf8");
+ const sql = await readFile(new URL("db/051_clubs_sports_multimedia.sql", root), "utf8");
  for (const name of ["school_activities","activity_staff","activity_memberships","school_events","event_ticket_types","event_ticket_orders","event_tickets","event_streams","activity_media_assets"]) assert.ok(sql.includes(name), "missing "+name);
  assert.match(sql, /FORCE ROW LEVEL SECURITY/);
  assert.match(sql, /app\.district_id/);
  assert.match(sql, /ticket_code_hash/);
 });
 test("paid checkout and livestream playback remain fail-closed", async () => {
- const routes = await readFile(new URL("../src/clubs-sports-routes.js", root), "utf8");
+ const routes = await readFile(new URL("src/clubs-sports-routes.js", root), "utf8");
  assert.match(routes, /paid_ticketing_not_configured/);
  assert.match(routes, /playbackEnabled:false/);
  assert.match(routes, /recording_allowed,created_by\)[\s\S]*false/);
