@@ -244,7 +244,20 @@ class AttendanceTodayScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = AppScope.read(context);
     return Loader<Json>(
-      load: () async => obj((await app.api.get('/api/attendance/day?date=${isoDate(DateTime.now())}'))['data']),
+      load: () async {
+        // The counts cover the day; the students who weren't present come a
+        // page at a time (a snow day can be thousands).
+        final base = '/api/attendance/day?date=${isoDate(DateTime.now())}';
+        final day = obj((await app.api.get(base))['data']);
+        final all = [...objs(day['exceptions'])];
+        var next = obj(day['page'])['nextOffset'];
+        for (var pages = 1; next is int && pages < 20; pages++) {
+          final more = obj((await app.api.get('$base&offset=$next'))['data']);
+          all.addAll(objs(more['exceptions']));
+          next = obj(more['page'])['nextOffset'];
+        }
+        return {...day, 'exceptions': all};
+      },
       builder: (context, day, _) {
         final counts = obj(day['counts']), exceptions = objs(day['exceptions']);
         final absent = exceptions.where((e) => e['status'] == 'absent').toList();

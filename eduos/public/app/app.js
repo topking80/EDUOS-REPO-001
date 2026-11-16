@@ -1769,8 +1769,15 @@ const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,
 // Today at a glance from the server (counts plus who wasn't present), instead
 // of the latest 500 marks of every day filtered here.
 VIEWS.attendance = async () => {
-  const r = await api.get(`/api/attendance/day?date=${isoDay(new Date())}`);
-  const counts = r.data?.counts || {}, exceptions = r.data?.exceptions || [];
+  const base = `/api/attendance/day?date=${isoDay(new Date())}`;
+  const r = await api.get(base);
+  const counts = r.data?.counts || {}, exceptions = [...(r.data?.exceptions || [])];
+  // The students who weren't present come a page at a time.
+  for (let next = r.data?.page?.nextOffset, pages = 1; Number.isInteger(next) && pages < 20; pages++) {
+    const more = await api.get(`${base}&offset=${next}`);
+    exceptions.push(...(more.data?.exceptions || []));
+    next = more.data?.page?.nextOffset;
+  }
   const absent = exceptions.filter(e => e.status === "absent"), tardy = exceptions.filter(e => e.status === "tardy");
   const row = (e) => h("li", { class: "row" }, h("span", { class: "grow" }, e.display_name), chip(e.status), e.family_acknowledged_at ? h("span", { class: "small muted" }, "Family acknowledged") : null);
   return [h("h2", {}, "Attendance today"),
