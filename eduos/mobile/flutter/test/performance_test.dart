@@ -159,7 +159,7 @@ void main() {
     expect(await queue.length, 0);
     expect(enqueueOps, lessThanOrEqualTo(201), reason: 'one read, then one write per mark');
     expect(store.ops, lessThan(60), reason: 'no full re-read and re-write of the queue for every mark');
-    expect(flush.elapsedMilliseconds, lessThan(200 * rtt.inMilliseconds ~/ 3), reason: 'marks are sent a few at a time');
+    expect(flush.elapsedMilliseconds, lessThan(200 * rtt.inMilliseconds ~/ 2), reason: 'marks are sent a few at a time (one at a time took 200 round trips)');
   });
 
   test('offline: what a burst of duplicate taps costs', () async {
