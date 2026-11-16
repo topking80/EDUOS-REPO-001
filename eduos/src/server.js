@@ -14,6 +14,7 @@ import { writeAudit } from "./audit.js";
 import { cspDirectives } from "./csp.js";
 import { applySisBatch, districtCap } from "./sis-import.js";
 import { HttpError } from "./role-app-util.js";
+import { lockStudentDay } from "./attendance-day.js";
 import { normalizeAgentEvent } from "./agent-events.js";
 import { classifyOperationalEvent } from "./operational-event-taxonomy.js";
 import { FLOW_EVENT_TYPES, isFlowEventType, normalizeFlowEvent, serverFlowEvent, webhookPayload } from "./flow-events.js";
@@ -1234,6 +1235,28 @@ app.post("/api/attendance",requireSession,requireCsrf,requirePermission("attenda
         [studentId,req.actor.role,req.actor.schoolId,req.actor.userId]
       );
       if(!student.rowCount)return null;
+      // Attendance is an append-only log of observations; the latest observed
+      // one is the day's status (offline replays and corrections append). The
+      // release gate adds, under one lock per student and day shared with the
+      // arrival route:
+      //  - a repeat of the status already in force adds nothing (a double tap
+      //    or a retry without an idempotency key isn't a second record);
+      //  - on a day that began with an arrival handoff, the first attendance
+      //    comes only through the handoff, from the staff member who received
+      //    the student (or a principal's override with a reason).
+      await lockStudentDay(client,studentId,eventDate);
+      const latest=(await client.query(
+        `SELECT id,status FROM attendance_events WHERE student_id=$1 AND event_date=$2::date
+          ORDER BY observed_at DESC NULLS LAST,id DESC LIMIT 1`,[studentId,eventDate])).rows[0];
+      if(!latest){
+        const handoff=await client.query(
+          `SELECT h.id FROM arrival_handoffs h JOIN schools sc ON sc.id=h.school_id
+            WHERE h.student_id=$1 AND h.status<>'cancelled' AND (h.initiated_at AT TIME ZONE sc.timezone)::date=$2::date LIMIT 1`,
+          [studentId,eventDate]);
+        if(handoff.rowCount)throw new HttpError(409,"attendance_via_arrival_handoff",{handoffId:handoff.rows[0].id});
+      }else if(latest.status===status){
+        return {duplicate:true,id:latest.id,status:latest.status};
+      }
       const saved=await client.query(
         `INSERT INTO attendance_events(district_id,student_id,event_date,status,observed_at)
          VALUES($1,$2,$3,$4,coalesce($5::timestamptz,now())) RETURNING id,event_date,status,student_id`,
@@ -1247,7 +1270,7 @@ app.post("/api/attendance",requireSession,requireCsrf,requirePermission("attenda
       return {...saved.rows[0],school_id:student.rows[0].school_id};
     });
     if(!result)return res.status(404).json({error:"student_not_found"});
-    if(result.duplicate)return res.status(200).json({data:{duplicate:true}});
+    if(result.duplicate)return res.status(200).json({data:{duplicate:true,...(result.id?{id:result.id,status:result.status}:{})}});
     const {school_id:attendanceSchoolId,...attendanceRow}=result;
     res.status(201).json({data:attendanceRow});
     // Scoped to the learner's school and subject so only linked families see it.

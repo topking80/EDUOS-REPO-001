@@ -6,6 +6,7 @@ import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
 import { arrivalInitiationDenial, arrivalReceiptDenial, firstAttendanceDenial, isFirstAttendanceOverride } from "./arrival-workflow.js";
 import { reconcileTransportArrival } from "./arrival-reconciliation.js";
+import { lockStudentDay } from "./attendance-day.js";
 
 const staff = (req,res,next) => ["principal","teacher"].includes(req.actor?.role) ? next() : res.status(403).json({error:"school_staff_only"});
 
@@ -158,9 +159,9 @@ export function registerArrivalRoutes(app) {
         const denial=firstAttendanceDenial({role:a.role,actorUserId:a.userId,actorSchoolId:a.schoolId,handoffSchoolId:h.school_id,status:h.status,assignedTeacherUserId:h.assigned_teacher_user_id,isRostered,receivedByUserId:h.received_by,overrideReason});
         if(denial) throw new HttpError(denial==="attendance_requires_received_handoff"?409:denial==="override_reason_required"?400:403,denial);
         const override=isFirstAttendanceOverride({actorUserId:a.userId,receivedByUserId:h.received_by});
-        const day=await one(client,`SELECT eduos_school_today($1) AS day`,[h.school_id]);
-        await client.query(`SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))`,[h.student_id,String(day.day)]);
-        const existing=await one(client,`SELECT id,status FROM attendance_events WHERE district_id=$1 AND student_id=$2 AND event_date=$3 ORDER BY id LIMIT 1`,[a.districtId,h.student_id,day.day]);
+        const day=await one(client,`SELECT eduos_school_today($1)::text AS day`,[h.school_id]);
+        await lockStudentDay(client,h.student_id,day.day);
+        const existing=await one(client,`SELECT id,status FROM attendance_events WHERE district_id=$1 AND student_id=$2 AND event_date=$3::date ORDER BY id LIMIT 1`,[a.districtId,h.student_id,day.day]);
         if(existing) return {attendance:existing,created:false};
         const attendance=await one(client,`INSERT INTO attendance_events(district_id,student_id,event_date,status) VALUES($1,$2,$3,$4) RETURNING id,status,event_date`,
           [a.districtId,h.student_id,day.day,status]);
