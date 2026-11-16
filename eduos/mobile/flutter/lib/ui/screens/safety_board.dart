@@ -152,6 +152,21 @@ class _SafetyBoardCardsState extends State<SafetyBoardCards> {
               ),
             ]),
           ]),
+          if (b.delivery case final d?)
+            SectionCard(title: 'Alert delivery', children: [
+              Wrap(runSpacing: 12, children: [
+                SizedBox(width: 104, child: StatTile(d.inApp, 'in the EduOS app')),
+                SizedBox(width: 104, child: StatTile(d.opened, 'opened')),
+                if (d.externalTotal > 0) SizedBox(width: 104, child: StatTile(d.externalConfirmed, 'email/SMS/push confirmed')),
+                if (d.externalTotal > 0) SizedBox(width: 104, child: StatTile(d.externalWaiting, 'email/SMS/push waiting', warnWhenPositive: true)),
+                if (d.externalFailed > 0) SizedBox(width: 104, child: StatTile(d.externalFailed, 'email/SMS/push failed', warnWhenPositive: true)),
+              ]),
+              const SizedBox(height: 8),
+              Text(d.externalTotal > 0
+                  ? 'Email, SMS and push count as delivered only when the channel confirms it.'
+                  : 'Email, SMS and push are not set up, so alerts go to the EduOS app only.'),
+              const Text('EduOS does not contact 911 or other emergency services. Call them directly.'),
+            ]),
           SectionCard(title: 'Incident log', children: [
             for (final e in b.events)
               ListTile(

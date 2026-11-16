@@ -6,7 +6,7 @@ DC = EDUOS_ENV_FILE=$(DEV_ENV) docker compose --env-file $(DEV_ENV) -f docker-co
 
 
 .PHONY: eden-sim eden-sim-down
-.PHONY: up down down-volumes logs ps seed smoke smoke-browser smoke-mobile smoke-safety smoke-learning edal-verify retention notify metrics trust-ca test test-integration check
+.PHONY: up down down-volumes logs ps seed smoke smoke-browser smoke-mobile smoke-safety smoke-learning smoke-csp edal-verify retention notify metrics trust-ca test test-integration check
 up:            ## build, start, migrate, seed; prints URL and demo logins
 	./scripts/dev-up.sh
 down:          ## stop the stack, keep data
@@ -31,6 +31,8 @@ smoke-mobile:  ## 32.4.0: HTTP smoke + phone-size role-app browser pass with axe
 	./scripts/smoke.sh --mobile
 smoke-safety:  ## 32.5.0: HTTP smoke + SafetyOS lockdown drill and car pick-up phone pass (axe, screenshots)
 	./scripts/smoke.sh --safety
+smoke-csp:     ## live Content Security Policy check through the edge: headers, then every page and role screen in Chrome
+	./scripts/smoke.sh --csp
 smoke-learning: ## 32.6.0: HTTP smoke + courses, quizzes, gradebook, family progress and EDAL phone pass (axe, screenshots)
 	./scripts/smoke.sh --learning
 edal-verify:   ## 32.6.0: verify the EDAL records ledger hash chain (owner role, read-only). ARGS="--checkpoint file.json"

@@ -7,7 +7,9 @@
 //    enabled (NOTIFY_EMAIL_ADAPTER / NOTIFY_SMS_ADAPTER / NOTIFY_PUSH_ADAPTER).
 //    External rows never carry the in-app title/body: they hold a generic
 //    "You have a new EduOS notification" line, so no student-identifying text
-//    can leave EduOS through email, SMS or push.
+//    can leave EduOS through email, SMS or push. They keep the reference ids
+//    (ref_type/ref_id) so a delivery report can count them per incident; the
+//    adapter is handed only the row id, channel and recipient.
 // src/notify-dispatch.js (owner role, like the retention job) hands pending
 // rows to the adapter. The only adapters shipped are "off" and "log" (a dry
 // run that records that a send WOULD happen and sends nothing).
@@ -35,7 +37,7 @@ export function outboxRows({ districtId, schoolId = null, recipients, kind, titl
     rows.push({ districtId, schoolId, recipient, channel: "in_app", kind, title: clip(title, 160) || "Notification", body: clip(body, 500),
       refType, refId, status: "delivered" });
     for (const channel of enabledExternalChannels(cfg))
-      rows.push({ districtId, schoolId, recipient, channel, kind, title: EXTERNAL_TEXT.slice(0, 160), body: null, refType: null, refId: null, status: "pending" });
+      rows.push({ districtId, schoolId, recipient, channel, kind, title: EXTERNAL_TEXT.slice(0, 160), body: null, refType, refId, status: "pending" });
   }
   return rows;
 }
@@ -56,6 +58,12 @@ export async function enqueueNotifications(client, input, cfg = config) {
 }
 
 // ---- adapters (used by src/notify-dispatch.js) ----
+// An adapter's send() returns { status, note }:
+//   delivered  the channel confirmed delivery (the only status that sets delivered_at)
+//   skipped    nothing was sent on purpose (channel off, dry run)
+//   pending    a temporary failure: try again later (with back-off)
+//   failed     a permanent failure: stop
+// Anything else is treated as failed, so an adapter bug can't look like a delivery.
 export const ADAPTERS = Object.freeze({
   off: Object.freeze({ name: "off", async send() { return { status: "skipped", note: "adapter off" }; } }),
   log: Object.freeze({ name: "log", async send(row, log = console.log) {
@@ -68,4 +76,19 @@ export const ADAPTERS = Object.freeze({
 export function adapterFor(channel, cfg = config) {
   const name = channel === "email" ? cfg.notifyEmailAdapter : channel === "sms" ? cfg.notifySmsAdapter : channel === "push" ? cfg.notifyPushAdapter : "off";
   return ADAPTERS[name] || ADAPTERS.off;
+}
+
+export const SEND_STATUSES = Object.freeze(["delivered", "skipped", "pending", "failed"]);
+export const MAX_ATTEMPTS = 5;
+/** Seconds to wait before attempt n+1 after n failed attempts: 30 s, 1, 2, 4 min ... at most an hour. */
+export const retryDelaySeconds = attempts => Math.min(3600, 30 * 2 ** Math.max(0, attempts - 1));
+
+/** What to record after one adapter attempt (pure, for unit tests). */
+export function attemptOutcome(result, attemptsBefore) {
+  const attempts = attemptsBefore + 1;
+  let status = SEND_STATUSES.includes(result?.status) ? result.status : "failed";
+  let note = typeof result?.note === "string" ? result.note.slice(0, 300) : null;
+  if (!SEND_STATUSES.includes(result?.status)) note = `adapter returned an unknown status: ${String(result?.status).slice(0, 40)}`;
+  if (status === "pending" && attempts >= MAX_ATTEMPTS) { status = "failed"; note = `gave up after ${attempts} attempts${note ? `: ${note}` : ""}`.slice(0, 300); }
+  return { status, note, attempts, retryInSeconds: status === "pending" ? retryDelaySeconds(attempts) : null };
 }

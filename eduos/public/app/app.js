@@ -874,6 +874,18 @@ async function rollCallCard(i) {
   draw();
   return card;
 }
+// What the alert reached. In-app notices are in each person's app; email,
+// SMS and push are only queued until a channel confirms them, and nothing
+// here means emergency services were contacted.
+function notificationCard(n) {
+  const x = n.external, queued = x.pending + x.delivered + x.skipped + x.failed;
+  return h("section", { class: "card", "aria-label": "Alert delivery" }, h("h2", {}, "Alert delivery"),
+    h("div", { class: "stats" }, stat(n.inApp.available, "in the EduOS app"), stat(n.inApp.read, "opened"),
+      queued ? stat(x.delivered, "email/SMS/push confirmed") : null, queued ? stat(x.pending, "email/SMS/push waiting", true) : null,
+      x.failed ? stat(x.failed, "email/SMS/push failed", true) : null),
+    h("p", { class: "small muted" }, queued ? "Email, SMS and push count as delivered only when the channel confirms it." : "Email, SMS and push are not set up, so alerts go to the EduOS app only."),
+    h("p", { class: "small" }, "EduOS does not contact 911 or other emergency services. Call them directly."));
+}
 async function boardCards(i) {
   const b = (await api.get(`/api/safety/incidents/${i.id}/board`)).data, t = b.totals;
   const names = (list, empty_) => list.length ? h("ul", { class: "list" }, list.map(x => h("li", {}, h("strong", {}, x.name), h("span", { class: "small muted" }, `${x.grade ? ` · gr ${x.grade}` : ""}${x.by ? ` · ${x.by}` : ""}${x.note ? ` · ${x.note}` : ""}`)))) : empty(empty_);
@@ -897,6 +909,7 @@ async function boardCards(i) {
         if (!(await ask({ title: `All clear: end the ${i.isDrill ? "drill" : KIND_TEXT[i.kind].toLowerCase()}?`, text: "Everyone at the school, its drivers and families are told that normal operations resume.", confirm: "Yes, all clear", danger: true }))) return;
         try { await api.post(`/api/safety/incidents/${i.id}/all-clear`, { kind: i.kind }); toast("All clear sent"); await checkSafety(); } catch { toast("Couldn't send the all clear."); }
       } }, "All clear"))),
+    b.notifications ? notificationCard(b.notifications) : null,
     h("section", { class: "card", "aria-label": "Incident log" }, h("h2", {}, "Incident log"), h("ol", { class: "timeline" }, b.events.map(e => h("li", {}, h("time", { datetime: e.at }, fmtTime(e.at)), h("span", {}, `${EVENT_TEXT[e.event] || e.event}${e.detail ? `: ${e.detail}` : ""} · ${e.actor_name}`))))),
     h("p", { class: "notice" }, "Counts come from teachers' roll calls. EduOS does not use cameras, location, facial recognition or threat scores.")
   ];

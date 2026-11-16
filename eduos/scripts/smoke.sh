@@ -8,6 +8,8 @@
 #   ./scripts/smoke.sh --mobile   HTTP flows + only the phone-size passes (role apps, SafetyOS)
 #   ./scripts/smoke.sh --safety   HTTP flows + only the SafetyOS + pick-up phone pass
 #   ./scripts/smoke.sh --learning HTTP flows + only the learning core + EDAL phone pass
+#   ./scripts/smoke.sh --csp      only the live Content Security Policy check (dev/csp-smoke.mjs):
+#                                 headers through the edge, then every page and role screen in Chrome
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ENV_FILE=${EDUOS_DEV_ENV_FILE:-.env.dev}
@@ -28,6 +30,7 @@ if ! $DC exec -T app node -e 'fetch("http://127.0.0.1:9999/deliveries").then(r=>
   echo "webhook sink not reachable from the app; running a full 'up -d' to reattach it" >&2
   $DC up -d >/dev/null
 fi
+if [ "${1:-}" = "--csp" ]; then exec node dev/csp-smoke.mjs; fi
 node dev/smoke.mjs
 if [ "${1:-}" = "--browser" ]; then node dev/browser-smoke.mjs; node dev/mobile-smoke.mjs; node dev/safety-smoke.mjs; node dev/learning-smoke.mjs; fi
 if [ "${1:-}" = "--mobile" ]; then node dev/mobile-smoke.mjs; node dev/safety-smoke.mjs; node dev/learning-smoke.mjs; fi

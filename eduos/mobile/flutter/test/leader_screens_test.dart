@@ -214,6 +214,21 @@ void main() {
       expect(find.byType(NavigationBar), findsOneWidget);
     });
 
+    testWidgets('leaders see what the alert reached, with queued and failed channels kept apart from confirmed ones', (tester) async {
+      final fake = FakeServer({
+        'GET /api/safety/incidents/$incident/board': (_) => {'data': {
+          'totals': {'enrolled': 1, 'accounted': 1, 'present': 1}, 'missing': [], 'injured': [], 'teachers': [], 'unaccounted': [], 'events': [],
+          'notifications': {'inApp': {'available': 40, 'read': 12}, 'external': {'pending': 30, 'delivered': 5, 'skipped': 0, 'failed': 5},
+            'byChannel': {}, 'emergencyServicesContacted': false}}},
+      }, incidents: [live()]);
+      await launch(tester, fake);
+      await tester.scrollUntilVisible(find.text('Alert delivery'), 300, scrollable: find.byType(Scrollable).first);
+      for (final label in ['in the EduOS app', 'opened', 'email/SMS/push confirmed', 'email/SMS/push waiting', 'email/SMS/push failed']) {
+        expect(find.text(label), findsOneWidget, reason: label);
+      }
+      expect(find.text('EduOS does not contact 911 or other emergency services. Call them directly.'), findsOneWidget);
+    });
+
     testWidgets('starting an alert is two steps; declining the second step cancels it', (tester) async {
       final fake = FakeServer({
         'POST /api/safety/incidents': (_) => {'data': {'id': incident, 'schoolName': 'Maple Elementary'}},

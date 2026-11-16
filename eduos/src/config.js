@@ -57,6 +57,9 @@ export const config = {
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS || 8),
   // Sessions unused for this many minutes are rejected (idle timeout).
   sessionIdleMinutes: Number(process.env.SESSION_IDLE_MINUTES || 30),
+  // How often a long-lived connection (the operations event stream) re-checks
+  // its session while idle; it is also checked before every event it sends.
+  streamSessionRecheckMs: Number(process.env.STREAM_SESSION_RECHECK_MS || 15_000),
   // Concurrent active sessions per user; the oldest are revoked beyond this.
   sessionMaxPerUser: Number(process.env.SESSION_MAX_PER_USER || 5),
   // Optional in-process session-validation cache. 0 (default) = disabled:
@@ -199,6 +202,9 @@ if (config.nodeEnv === "production" && !config.databaseSsl &&
 }
 if (config.cookieName.startsWith("__Host-") && !config.secureCookies) {
   throw new Error("__Host- session cookies require an https:// PUBLIC_ORIGIN");
+}
+if (!Number.isInteger(config.streamSessionRecheckMs) || config.streamSessionRecheckMs < 1000 || config.streamSessionRecheckMs > 300_000) {
+  throw new Error("STREAM_SESSION_RECHECK_MS must be an integer between 1000 and 300000");
 }
 if (!Number.isInteger(config.sessionIdleMinutes) || config.sessionIdleMinutes < 5 || config.sessionIdleMinutes > 1440) {
   throw new Error("SESSION_IDLE_MINUTES must be between 5 and 1440");

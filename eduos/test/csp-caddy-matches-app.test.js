@@ -32,3 +32,19 @@ test("neither allows inline script", () => {
     assert.equal(policy["script-src-attr"], "'none'");
   }
 });
+
+// The CSP allows styles, scripts and fonts from this origin only, so a page
+// that pulls them from elsewhere breaks in the browser (the live check in
+// dev/csp-smoke.mjs found eduos-vision.css importing Google Fonts).
+test("public pages load no styles, scripts or fonts from another origin", async () => {
+  const { readdirSync, statSync } = await import("node:fs");
+  const root = new URL("../public/", import.meta.url);
+  const walk = dir => readdirSync(dir).flatMap(n => { const u = new URL(n, dir); return statSync(u).isDirectory() ? walk(new URL(`${n}/`, dir)) : [u]; });
+  const offenders = [];
+  for (const u of walk(root).filter(u => /\.(css|html)$/.test(u.pathname))) {
+    const text = readFileSync(u, "utf8");
+    if (/@import\s+(url\()?\s*['"]?(https?:)?\/\//i.test(text) || /url\(\s*['"]?(https?:)?\/\/[^)]*\.(woff2?|ttf|otf|css)/i.test(text)
+      || /<(script|link)\b[^>]*\b(src|href)=["'](https?:)?\/\//i.test(text)) offenders.push(u.pathname.replace(root.pathname, ""));
+  }
+  assert.deepEqual(offenders, []);
+});

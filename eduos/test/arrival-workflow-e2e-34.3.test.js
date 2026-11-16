@@ -42,13 +42,15 @@ test('first attendance: only the receiving staff member, or a principal override
   assert.equal(firstAttendanceDenial({...rec,role:'driver'}), 'school_staff_only');
 });
 
-test('API route handlers invoke the shared lifecycle policy and keep tenant-scoped persistence', () => {
+test('API route handlers invoke the shared lifecycle policy and keep tenant-scoped persistence', async () => {
   assert.match(routes,/arrivalInitiationDenial\(/);
   assert.match(routes,/arrivalReceiptDenial\(/);
   assert.match(routes,/firstAttendanceDenial\(/);
   assert.match(routes,/withTenantTransaction\(req\.actor/);
   assert.match(routes,/h\.district_id=\$1/);
-  assert.match(routes,/pg_advisory_xact_lock/);
+  // One attendance event per student per day: the shared lock (src/attendance-day.js).
+  assert.match(routes,/lockStudentDay\(client,h\.student_id,day\.day\)/);
+  assert.match(await readFile(new URL('../src/attendance-day.js', import.meta.url),'utf8'),/pg_advisory_xact_lock/);
 });
 
 test('database preserves append-only event history and one pending arrival per student', () => {

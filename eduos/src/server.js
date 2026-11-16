@@ -8,12 +8,13 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { config } from "./config.js";
 import { pool, withTenantTransaction, assertSafeRuntimeRole, assertSchemaReady } from "./db.js";
-import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership } from "./auth.js";
+import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership, sessionIsLive } from "./auth.js";
 import { requirePermission, requireSchoolScope, canPerform, isGrantable, isDistrictRole } from "./policy.js";
 import { writeAudit } from "./audit.js";
 import { cspDirectives } from "./csp.js";
 import { applySisBatch, districtCap } from "./sis-import.js";
 import { HttpError } from "./role-app-util.js";
+import { lockStudentDay } from "./attendance-day.js";
 import { normalizeAgentEvent } from "./agent-events.js";
 import { classifyOperationalEvent } from "./operational-event-taxonomy.js";
 import { FLOW_EVENT_TYPES, isFlowEventType, normalizeFlowEvent, serverFlowEvent, webhookPayload } from "./flow-events.js";
@@ -767,9 +768,11 @@ app.get("/api/audit",requireSession,requirePermission("audit","read"),async(req,
 // LISTEN/NOTIFY. The notification contains only a tenant ID and event UUID;
 // every event is re-read under the subscriber's tenant/RLS context before it
 // is emitted. Resource IDs, details, prompts and student data are not streamed.
+const SESSION_RECHECK_MS=config.streamSessionRecheckMs;
 app.get("/api/operations/stream",requireSession,requirePermission("audit","read"),async(req,res,next)=>{
   let listener;
   let heartbeat;
+  let recheck;
   let onNotification;
   let onListenerError;
   let closed=false;
@@ -810,6 +813,17 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
     writeFrame(`id: ${row.id}\nevent: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
   const visibleSql=`($1 IN ('superintendent','it_admin') OR school_id=$2::uuid)`;
+  // The session is checked when the stream opens, again before every event
+  // and every SESSION_RECHECK_MS while idle: signing out, an expired or idle
+  // session, or a revoked account or membership ends the stream (release
+  // gate: a revoked session can't keep receiving events).
+  let lastLiveCheck=Date.now();
+  const stillLive=async()=>{
+    if(closed)return false;
+    if(await sessionIsLive(req.actor.sessionId)){lastLiveCheck=Date.now();return true;}
+    if(!closed){writeFrame("event: session_ended\ndata: {}\n\n");res.end();close();}
+    return false;
+  };
   const readEvent=async eventId=>withTenantTransaction(req.actor,async client=>{
     const result=await client.query(
       `SELECT id,occurred_at,actor_role,action,resource_type,outcome
@@ -822,6 +836,7 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
     if(closed)return;
     closed=true;
     clearInterval(heartbeat);
+    clearInterval(recheck);
     pendingFrames.length=0;
     notificationBacklog.length=0;
     res.off("drain",onDrain);
@@ -852,7 +867,10 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
       let notice;
       try{notice=JSON.parse(message.payload||"{}")}catch{return}
       if(notice.districtId!==req.actor.districtId||typeof notice.eventId!=="string")return;
-      try{send(await readEvent(notice.eventId))}catch(error){
+      try{
+        const row=await readEvent(notice.eventId);
+        if(row&&await stillLive())send(row);
+      }catch(error){
         console.error("Operational stream event lookup failed",{requestId:req.requestId,message:error.message});
       }
     };
@@ -898,6 +916,8 @@ app.get("/api/operations/stream",requireSession,requirePermission("audit","read"
     }
     heartbeat=setInterval(()=>{if(!closed)writeFrame(`: heartbeat ${Date.now()}\n\n`)},25_000);
     heartbeat.unref?.();
+    recheck=setInterval(()=>{if(!closed&&Date.now()-lastLiveCheck>=SESSION_RECHECK_MS)stillLive().catch(()=>{if(!closed){res.end();close();}})},Math.min(SESSION_RECHECK_MS,5_000));
+    recheck.unref?.();
   }catch(error){
     if(listener){try{listener.release()}catch{}listener=null;}
     if(!res.headersSent)return next(error);
@@ -1234,6 +1254,28 @@ app.post("/api/attendance",requireSession,requireCsrf,requirePermission("attenda
         [studentId,req.actor.role,req.actor.schoolId,req.actor.userId]
       );
       if(!student.rowCount)return null;
+      // Attendance is an append-only log of observations; the latest observed
+      // one is the day's status (offline replays and corrections append). The
+      // release gate adds, under one lock per student and day shared with the
+      // arrival route:
+      //  - a repeat of the status already in force adds nothing (a double tap
+      //    or a retry without an idempotency key isn't a second record);
+      //  - on a day that began with an arrival handoff, the first attendance
+      //    comes only through the handoff, from the staff member who received
+      //    the student (or a principal's override with a reason).
+      await lockStudentDay(client,studentId,eventDate);
+      const latest=(await client.query(
+        `SELECT id,status FROM attendance_events WHERE student_id=$1 AND event_date=$2::date
+          ORDER BY observed_at DESC NULLS LAST,id DESC LIMIT 1`,[studentId,eventDate])).rows[0];
+      if(!latest){
+        const handoff=await client.query(
+          `SELECT h.id FROM arrival_handoffs h JOIN schools sc ON sc.id=h.school_id
+            WHERE h.student_id=$1 AND h.status<>'cancelled' AND (h.initiated_at AT TIME ZONE sc.timezone)::date=$2::date LIMIT 1`,
+          [studentId,eventDate]);
+        if(handoff.rowCount)throw new HttpError(409,"attendance_via_arrival_handoff",{handoffId:handoff.rows[0].id});
+      }else if(latest.status===status){
+        return {duplicate:true,id:latest.id,status:latest.status};
+      }
       const saved=await client.query(
         `INSERT INTO attendance_events(district_id,student_id,event_date,status,observed_at)
          VALUES($1,$2,$3,$4,coalesce($5::timestamptz,now())) RETURNING id,event_date,status,student_id`,
@@ -1247,7 +1289,7 @@ app.post("/api/attendance",requireSession,requireCsrf,requirePermission("attenda
       return {...saved.rows[0],school_id:student.rows[0].school_id};
     });
     if(!result)return res.status(404).json({error:"student_not_found"});
-    if(result.duplicate)return res.status(200).json({data:{duplicate:true}});
+    if(result.duplicate)return res.status(200).json({data:{duplicate:true,...(result.id?{id:result.id,status:result.status}:{})}});
     const {school_id:attendanceSchoolId,...attendanceRow}=result;
     res.status(201).json({data:attendanceRow});
     // Scoped to the learner's school and subject so only linked families see it.
