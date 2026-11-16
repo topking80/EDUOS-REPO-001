@@ -18,8 +18,8 @@
 
 All writes require session authentication and CSRF. Responses are no-store.
 
-## Apply
-From `eduos/`: `npm run db:migrate`, then `npm test`. Run the PostgreSQL integration suite with the configured test database.
+## Sports roster and results (37.7.0)\n- Coaches and advisors assigned to a sport activity can add roster entries only for students with active activity membership and within the team grade range. Jersey numbers are unique among active roster entries for a team.\n- Only assigned staff and school/district leads can view a roster; roster names and grades are not exposed through the public activity results endpoint.\n- Assigned staff can record results only after the event end time. Results remain drafts until a principal or superintendent explicitly publishes them.\n- API: `GET/POST /api/activities/:id/roster`, `GET /api/activities/:id/results`, `POST /api/events/:id/result`.\n\n## Apply
+From `eduos/`: `npm run db:migrate` (migrations 051 and 052), then `npm test`. Run the PostgreSQL integration suite with the configured test database.
 
 ## Production blockers
 Before paid sales: configure district-approved hosted checkout, signature-verified webhooks, idempotent payment transitions, refunds/chargebacks and settlement reconciliation. Before live video: configure approved provider, short-lived audience-bound playback authorization, captions, recording consent and replay retention. Before uploads: private object storage, MIME sniffing/re-encoding, malware scanning, EXIF stripping, consent, moderation and retention. Add QR check-in and guardian/student participant consent workflows.
