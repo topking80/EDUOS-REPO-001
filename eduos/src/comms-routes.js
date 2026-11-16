@@ -322,9 +322,13 @@ export function registerCommsRoutes(app) {
   // ---------------- in-app notifications ----------------
   app.get("/api/notifications", requireSession, async (req, res, next) => {
     try {
+      // ?summary=1: the unread count only. The role apps poll it every 30
+      // seconds, and the latest 50 notifications (up to ~30 KB) aren't needed
+      // for a badge.
+      const summary = req.query.summary === "1";
       const data = await withTenantTransaction(req.actor, async client => ({
-        items: await rows(client, `SELECT id,kind,title,body,ref_type,ref_id,created_at,read_at FROM notification_outbox
-            WHERE recipient_user_id=$1 AND channel='in_app' ORDER BY created_at DESC LIMIT 50`, [req.actor.userId]),
+        ...(summary ? {} : { items: await rows(client, `SELECT id,kind,title,body,ref_type,ref_id,created_at,read_at FROM notification_outbox
+            WHERE recipient_user_id=$1 AND channel='in_app' ORDER BY created_at DESC LIMIT 50`, [req.actor.userId]) }),
         unread: (await one(client, `SELECT count(*)::int AS n FROM notification_outbox WHERE recipient_user_id=$1 AND channel='in_app' AND read_at IS NULL`, [req.actor.userId])).n
       }));
       res.setHeader("Cache-Control", "no-store");

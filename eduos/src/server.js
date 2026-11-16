@@ -1221,6 +1221,34 @@ app.post("/api/assignments/:assignmentId/submissions/:submissionId/grade",requir
   }catch(e){next(e)}
 });
 
+// One school day at a glance: each student's status that day (their latest
+// observation, as everywhere else) counted by status, plus the students who
+// weren't present. For the role apps' "Attendance today", which used to fetch
+// the latest 500 events of every day and filter on the phone: a school with
+// more than 500 marks a day lost some, and a corrected mark counted twice.
+// Same visibility as GET /api/attendance.
+app.get("/api/attendance/day",requireSession,requirePermission("attendance","read"),async(req,res,next)=>{
+  const date=String(req.query.date||"");
+  if(!isCalendarDate(date))return res.status(400).json({error:"invalid_date"});
+  try{
+    const data=await withTenantTransaction(req.actor,async client=>{
+      const latest=`WITH day AS (
+          SELECT DISTINCT ON (e.student_id) e.student_id,e.status,e.family_acknowledged_at,s.display_name
+            FROM attendance_events e JOIN students s ON s.id=e.student_id AND s.district_id=e.district_id
+           WHERE e.event_date=$4::date AND ($1='superintendent' OR ($1 IN ('principal','vice_principal') AND s.school_id=$2)
+              OR ($1='teacher' AND s.school_id=$2 AND ${rosterSql("s.id","$3")}))
+           ORDER BY e.student_id,e.observed_at DESC NULLS LAST,e.id DESC)`;
+      const args=[req.actor.role,req.actor.schoolId,req.actor.userId,date];
+      const counts=(await client.query(`${latest} SELECT status,count(*)::int AS n FROM day GROUP BY status`,args)).rows;
+      const exceptions=(await client.query(`${latest} SELECT student_id,display_name,status,family_acknowledged_at FROM day
+          WHERE status<>'present' ORDER BY status,display_name LIMIT 1000`,args)).rows;
+      return {date,counts:Object.fromEntries(["present","absent","tardy","excused"].map(k=>[k,counts.find(c=>c.status===k)?.n||0])),exceptions};
+    });
+    res.setHeader("Cache-Control","no-store");
+    res.json({data});
+  }catch(e){next(e)}
+});
+
 app.get("/api/attendance",requireSession,requirePermission("attendance","read"),async(req,res,next)=>{
   const pgn=pageOf(req);
   try{

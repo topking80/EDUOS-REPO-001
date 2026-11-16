@@ -216,7 +216,8 @@ async function checkSafety({ rerender = true } = {}) {
   }
 }
 async function refreshUnread() {
-  const n = await safe(api.get("/api/notifications"));
+  // The count only: the badge doesn't need the latest 50 notifications.
+  const n = await safe(api.get("/api/notifications?summary=1"));
   const u = n?.data?.unread || 0;
   if (u !== state.unread) { state.unread = u; renderTop(); }
 }
@@ -1765,15 +1766,15 @@ VIEWS.integrations = async () => {
   return out;
 };
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Today at a glance from the server (counts plus who wasn't present), instead
+// of the latest 500 marks of every day filtered here.
 VIEWS.attendance = async () => {
-  const today = isoDay(new Date());
-  const r = await api.get("/api/attendance?limit=500");
-  const marks = (r.data || []).filter(e => String(e.event_date).slice(0, 10) === today);
-  const by = (s) => marks.filter(e => e.status === s);
-  const absent = by("absent"), tardy = by("tardy");
+  const r = await api.get(`/api/attendance/day?date=${isoDay(new Date())}`);
+  const counts = r.data?.counts || {}, exceptions = r.data?.exceptions || [];
+  const absent = exceptions.filter(e => e.status === "absent"), tardy = exceptions.filter(e => e.status === "tardy");
   const row = (e) => h("li", { class: "row" }, h("span", { class: "grow" }, e.display_name), chip(e.status), e.family_acknowledged_at ? h("span", { class: "small muted" }, "Family acknowledged") : null);
   return [h("h2", {}, "Attendance today"),
-    h("div", { class: "stats" }, stat(by("present").length, "present"), stat(absent.length, "absent", true), stat(tardy.length, "tardy", true)),
+    h("div", { class: "stats" }, stat(counts.present || 0, "present"), stat(counts.absent || 0, "absent", true), stat(counts.tardy || 0, "tardy", true)),
     h("section", { class: "card", "aria-label": "Absent today" }, h("h2", {}, "Absent"), absent.length ? h("ul", { class: "list" }, absent.map(row)) : empty("No absences marked today.")),
     h("section", { class: "card", "aria-label": "Tardy today" }, h("h2", {}, "Tardy"), tardy.length ? h("ul", { class: "list" }, tardy.map(row)) : empty("No tardies marked today.")),
     h("p", { class: "notice" }, "Marks come from teachers' class registers. Follow-ups go in the Operations queue.")];

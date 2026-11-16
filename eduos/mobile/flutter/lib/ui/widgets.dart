@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
@@ -17,6 +19,19 @@ class Loader<T> extends StatefulWidget {
 
 class _LoaderState<T> extends State<Loader<T>> {
   late Future<T> _future = widget.load();
+  int? _visits;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Coming back to a tab that stayed built: show what it had and refresh
+    // it in the background.
+    final visit = TabVisit.maybeOf(context);
+    if (visit == null) return;
+    final before = _visits;
+    _visits = visit.visits;
+    if (before != null && visit.active && visit.visits > before) unawaited(_reload());
+  }
 
   Future<void> _reload() async {
     final next = widget.load();
@@ -311,4 +326,19 @@ class _InlineLoaderState<T> extends State<InlineLoader<T>> {
       },
     );
   }
+}
+
+/// Whether the tab this widget is in is showing, and how many times it has
+/// been come back to. The shell keeps recently used tabs built but hidden;
+/// [Loader] refreshes its data when its tab is shown again.
+class TabVisit extends InheritedWidget {
+  const TabVisit({super.key, required this.active, required this.visits, required super.child});
+
+  final bool active;
+  final int visits;
+
+  static TabVisit? maybeOf(BuildContext context) => context.dependOnInheritedWidgetOfExactType<TabVisit>();
+
+  @override
+  bool updateShouldNotify(TabVisit oldWidget) => oldWidget.active != active || oldWidget.visits != visits;
 }
