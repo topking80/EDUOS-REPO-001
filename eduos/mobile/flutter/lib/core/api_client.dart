@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show SocketException;
+import 'dart:isolate';
 import 'dart:math';
 
 import 'package:http/http.dart' as http;
@@ -81,9 +82,31 @@ class ApiClient {
     };
   }
 
-  Future<Map<String, Object?>> get(String path) async {
-    final res = await _send(() => _http.get(_uri(path), headers: _headers()));
-    return _decode(res);
+  /// GETs on the wire right now, by path. Two screens (or a screen and the
+  /// status poll) asking for the same thing at once share one request.
+  final Map<String, Future<Map<String, Object?>>> _inflight = {};
+
+  Future<Map<String, Object?>> get(String path) {
+    final pending = _inflight[path];
+    if (pending != null) return pending;
+    final request = () async {
+      final res = await _send(() => _http.get(_uri(path), headers: _headers()));
+      return _decodeAsync(res);
+    }();
+    _inflight[path] = request;
+    request.whenComplete(() => _inflight.remove(path)).ignore();
+    return request;
+  }
+
+  /// Responses at least this big are parsed off the UI thread, so a large
+  /// roster or gradebook doesn't drop frames while it's decoded.
+  static const backgroundDecodeBytes = 48 * 1024;
+
+  Future<Map<String, Object?>> _decodeAsync(http.Response res) async {
+    if (res.statusCode < 200 || res.statusCode >= 300 || res.bodyBytes.length < backgroundDecodeBytes) return _decode(res);
+    final bytes = res.bodyBytes;
+    final json = await Isolate.run(() => jsonDecode(utf8.decode(bytes)));
+    return json is Map<String, Object?> ? json : {'data': json};
   }
 
   /// POST. Allowlisted writes are queued instead of failing when offline.

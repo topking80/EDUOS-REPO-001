@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -63,9 +64,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _countQueue() async {
-    final all = await queue.length;
-    queued = await queue.lengthFor(queueOwner);
-    heldForOthers = all - queued;
+    final (all, mine) = await queue.counts(queueOwner);
+    queued = mine;
+    heldForOthers = all - mine;
   }
   List<Incident> get liveIncidents => incidents.where((i) => i.live).toList();
 
@@ -153,25 +154,45 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// What the last refresh showed; screens are only rebuilt when it changes.
+  String _statusSignature = '';
+
   /// Safety status + unread count. Called on a timer and when the app resumes.
+  /// The two requests go out together, the unread count asks for the count
+  /// only (not the latest 50 notifications), and listeners are notified only
+  /// when something they show has changed.
   Future<void> refreshStatus() async {
     if (_api == null) return;
-    try {
-      final status = obj((await api.get('/api/safety/status'))['data']);
+    final client = api;
+    final (statusJson, unreadJson) = await (
+      _attempt(() => client.get('/api/safety/status')),
+      _attempt(() => client.get('/api/notifications?summary=1')),
+    ).wait;
+    final statusError = statusJson.$2;
+    if (statusError != null && statusError.isUnauthorized) return;
+    if (statusJson.$1 != null) {
+      final status = obj(statusJson.$1!['data']);
       incidents = objs(status['incidents']).map(Incident.fromJson).toList();
       canInitiateSafety = boolean(status['canInitiate']);
       canLeadSafety = boolean(status['canLead']);
-    } on ApiException catch (e) {
-      if (e.isUnauthorized) return;
-      if (e.status == 403) incidents = const [];
+    } else if (statusError?.status == 403) {
+      incidents = const [];
     }
-    try {
-      unread = integer(obj((await api.get('/api/notifications'))['data'])['unread']);
-    } on ApiException {
-      // Keep the last count.
-    }
+    // On an error keep the last unread count.
+    if (unreadJson.$1 != null) unread = integer(obj(unreadJson.$1!['data'])['unread']);
     await _countQueue();
+    final signature = jsonEncode([statusJson.$1?['data'], statusError?.status == 403, unread, queued, heldForOthers]);
+    if (signature == _statusSignature) return;
+    _statusSignature = signature;
     notifyListeners();
+  }
+
+  static Future<(Map<String, Object?>?, ApiException?)> _attempt(Future<Map<String, Object?>> Function() call) async {
+    try {
+      return (await call(), null);
+    } on ApiException catch (e) {
+      return (null, e);
+    }
   }
 
   Future<FlushResult?> flushQueue() async {
@@ -196,15 +217,23 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The profile, branding, safety status and unread count, requested
+  /// together (one round trip in sequence instead of four).
   Future<void> _loadProfile() async {
-    me = Me.fromJson(await api.get('/api/me'));
-    try {
-      brand = Brand.fromJson(obj((await api.get('/api/branding/current'))['data']));
-    } on ApiException catch (e) {
-      if (e.isUnauthorized) rethrow;
-      brand = null;
-    }
-    await refreshStatus();
+    final client = api;
+    final (profile, branding, _) = await (
+      client.get('/api/me'),
+      _attempt(() => client.get('/api/branding/current')),
+      refreshStatus(),
+    ).wait.onError<ParallelWaitError<(Map<String, Object?>, (Map<String, Object?>?, ApiException?), void), (AsyncError?, AsyncError?, AsyncError?)>>(
+        (e, _) => throw e.errors.$1?.error ?? e.errors.$3?.error ?? e);
+    me = Me.fromJson(profile);
+    final brandError = branding.$2;
+    if (brandError != null && brandError.isUnauthorized) throw brandError;
+    brand = branding.$1 == null ? null : Brand.fromJson(obj(branding.$1!['data']));
+    // The queue counts depend on who signed in (now known).
+    await _countQueue();
+    _statusSignature = '';
   }
 
   void _useSession(Session session) {
@@ -236,6 +265,7 @@ class AppController extends ChangeNotifier {
     unread = 0;
     queued = 0;
     heldForOthers = 0;
+    _statusSignature = '';
     if (notice != null) this.notice = notice;
     await _sessions.clear();
     _setStage(server == null ? AppStage.needsServer : AppStage.signedOut);
