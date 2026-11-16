@@ -11,7 +11,7 @@ student data out.
    each connector's client secret. If you change it, re-enter every secret.
 2. Optionally set `INTEGRATIONS_ALLOWED_HOSTS` (comma-separated) to limit which
    hosts connectors may reach.
-3. Run migration `040_external_integrations.sql` (`npm run migrate`).
+3. Run migration `040_external_integrations.sql` (`npm run db:migrate`).
 
 Connectors reach public HTTPS servers only (checked after DNS, pinned for the
 connection, no redirects), the same rules as outbound webhooks.

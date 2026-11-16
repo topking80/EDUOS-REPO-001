@@ -65,29 +65,68 @@ export const localProvider = Object.freeze({
   },
 });
 
+/** Most output tokens any request may produce: sent as max_tokens to an
+ *  external model, and enforced on local answers by cutting them to fit. */
+export const OUTPUT_MAX_TOKENS = 900;
+const utf8Bytes = (s) => Buffer.byteLength(String(s ?? ""), "utf8");
+/**
+ * Local answers aren't tokenized or billed by anyone, so EduOS meters them in
+ * its own unit: one unit per 4 UTF-8 bytes, in and out, in every language.
+ * Output is cut to OUTPUT_MAX_TOKENS units (3,600 bytes; 1,200 CJK
+ * characters), so a local answer can never be metered above the output cap,
+ * and never above its reservation (which counts whole bytes).
+ */
+export const LOCAL_OUTPUT_MAX_BYTES = OUTPUT_MAX_TOKENS * 4;
+export const localUnits = (text) => Math.max(1, Math.ceil(utf8Bytes(text) / 4));
+export function capLocalOutput(text) {
+  if (utf8Bytes(text) <= LOCAL_OUTPUT_MAX_BYTES) return text;
+  let out = "", bytes = 3; // room for the ellipsis
+  for (const ch of text) { const b = utf8Bytes(ch); if (bytes + b > LOCAL_OUTPUT_MAX_BYTES) break; out += ch; bytes += b; }
+  return out + "…";
+}
+
+/** A provider's usage report, if it is one: two non-negative integers. */
+export function validUsage(u) {
+  const ok = (n) => Number.isInteger(n) && n >= 0 && n <= 100_000_000;
+  return u && ok(u.prompt_tokens) && ok(u.completion_tokens) ? { prompt_tokens: u.prompt_tokens, completion_tokens: u.completion_tokens } : null;
+}
+/**
+ * A hard upper bound on the tokens a request can use, whatever the model's
+ * tokenizer: every token is at least one byte of UTF-8, so a message can't be
+ * more tokens than bytes. Bytes of the system prompt and the user content as
+ * sent, plus per-message framing (64), plus the output cap. High-density
+ * scripts (CJK: 3 bytes a character) are reserved for in full.
+ */
+export function maxTokensFor(body) {
+  return body.messages.reduce((n, m) => n + utf8Bytes(m.content) + 32, 0) + body.max_tokens;
+}
+
 /** Exact request body sent to an external provider (exported for tests). */
-export function externalRequestBody({ model, usecase, input, names = [] }) {
-  const content = usecase === "ops_brief" ? JSON.stringify(input.context) : redact(input.text, { names }).slice(0, 8000);
-  return { model, temperature: 0.3, max_tokens: 900, messages: [{ role: "system", content: SYSTEM_PROMPTS[usecase] }, { role: "user", content }] };
+export function externalRequestBody({ model, usecase, input, identifiers = {} }) {
+  // Redact the whole text, then cut: the tutor's redact() stops at 500 characters by default.
+  const content = usecase === "ops_brief" ? JSON.stringify(input.context)
+    : redact(input.text, { names: identifiers.names || [], numbers: identifiers.numbers || [], max: 12000 }).slice(0, 8000);
+  return { model, temperature: 0.3, max_tokens: OUTPUT_MAX_TOKENS, messages: [{ role: "system", content: SYSTEM_PROMPTS[usecase] }, { role: "user", content }] };
 }
 
 export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, fetchImpl = fetch, log = console.warn }) {
   const endpoint = url.replace(/\/+$/, "") + "/chat/completions";
   return Object.freeze({
     name: "openai_compatible",
-    async generate(usecase, input, { names } = {}) {
+    async generate(usecase, input, { identifiers } = {}) {
       try {
         const res = await fetchImpl(endpoint, { method: "POST", signal: AbortSignal.timeout(timeoutMs),
           headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
-          body: JSON.stringify(externalRequestBody({ model, usecase, input, names })) });
+          body: JSON.stringify(externalRequestBody({ model, usecase, input, identifiers })) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const text = String(data?.choices?.[0]?.message?.content || "").trim().slice(0, 6000);
         if (!text) throw new Error("empty reply");
-        return { text, usage: data.usage };
+        // usage is null when the provider didn't report it (or reported nonsense).
+        return { text, usage: validUsage(data.usage) };
       } catch (e) {
         log(`ai provider unavailable (${e.message}); using the local answer`);
-        return { text: await localProvider.generate(usecase, input), fallback: true };
+        return { text: capLocalOutput(await localProvider.generate(usecase, input)), fallback: true };
       }
     },
   });
@@ -96,5 +135,5 @@ export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, fetchI
 export function createProvider(cfg) {
   if (cfg.aiProvider === "openai_compatible" && cfg.aiAllowExternal)
     return openAiCompatibleProvider({ url: cfg.aiProviderUrl, model: cfg.aiProviderModel, apiKey: cfg.aiProviderApiKey, timeoutMs: cfg.aiProviderTimeoutMs });
-  return { name: "local", generate: async (u, i) => ({ text: await localProvider.generate(u, i) }) };
+  return { name: "local", generate: async (u, i) => ({ text: capLocalOutput(await localProvider.generate(u, i)) }) };
 }

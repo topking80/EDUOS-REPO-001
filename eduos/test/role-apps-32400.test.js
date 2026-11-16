@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { isCorrect, classifyQuestion, itemScore, nextMastery, bestPassage, leaksAnswer, MASTERED_AT } from "../src/christie/tutor.js";
-import { redact, externalRequestBody, localProvider, openAiCompatibleProvider, createProvider } from "../src/christie/providers.js";
+import { redact, externalRequestBody, localProvider, openAiCompatibleProvider, createProvider, outboundHelpFields } from "../src/christie/providers.js";
 import { ROLE_PERMISSIONS, canPerform as canActor } from "../src/policy.js";
 const canPerform = (role, res, act) => canActor({ role, districtId: "d", userId: "u" }, res, act);
 
@@ -65,7 +65,11 @@ test("external provider is off by default, gated by env, and falls back locally 
   const sent = [];
   const leaky = openAiCompatibleProvider({ url: "https://llm.example/v1", model: "m", timeoutMs: 1000, log: () => {},
     fetchImpl: async (url, init) => { sent.push({ url, body: JSON.parse(init.body) }); return { ok: true, json: async () => ({ choices: [{ message: { content: "The answer is 2" } }] }) }; } });
-  const r = await leaky.help({ question: "help", explanation: "Multiply.", unlockedHints: [], firstHint: "Look at 2 and 4.", prompt: "1/2=?/4", skillTitle: "F", answer: "2" });
+  const ask = { question: "help", explanation: "Multiply.", unlockedHints: [], firstHint: "Look at 2 and 4.", prompt: "1/2=?/4", skillTitle: "F", answer: "2" };
+  // Without a sanitized copy of the request, nothing is sent at all.
+  assert.equal((await leaky.help(ask)).fallback, true);
+  assert.equal(sent.length, 0);
+  const r = await leaky.help({ ...ask, outbound: outboundHelpFields(ask) });
   assert.equal(r.fallback, true); assert.ok(!/answer is 2/.test(r.text));
   assert.equal(sent[0].url, "https://llm.example/v1/chat/completions");
   assert.ok(!JSON.stringify(sent[0].body).includes("\"answer\""));

@@ -23,7 +23,7 @@ test("local answers need no network", async () => {
 });
 
 test("what goes to an external model: redacted text, or counts only", () => {
-  const body = externalRequestBody({ model: "m", usecase: "writing_feedback", names: ["Alice Anders", "S1-0042"],
+  const body = externalRequestBody({ model: "m", usecase: "writing_feedback", identifiers: { names: ["Alice Anders"], numbers: ["S1-0042"] },
     input: { text: "Alice wrote this. Email alice@x.org or call 555-123-4567, student S1-0042." } });
   const sent = body.messages[1].content;
   for (const leak of ["Alice", "alice@x.org", "555-123-4567", "S1-0042"]) assert.ok(!sent.includes(leak), leak);

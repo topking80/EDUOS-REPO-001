@@ -22,7 +22,6 @@ export const USECASES = Object.freeze({
 export const POLICY_EDITORS = ["superintendent"];
 export const POLICY_READERS = ["superintendent", "it_admin", "principal"];
 
-export const estimateTokens = (text) => Math.max(1, Math.ceil(String(text || "").length / 4));
 
 /** Why this caller can't run this use case, or null. Pure, for tests. */
 export function denial({ usecase, role, enabled }) {
@@ -38,11 +37,43 @@ export async function policyOf(c, districtId) {
   return r || { enabled_usecases: [], daily_token_cap: 200000, user_daily_token_cap: 20000, updated_at: null };
 }
 
+// Today's tokens. A reservation ('pending') counts in full until it is
+// settled or given back, for the rest of the day if need be: it never lapses
+// on a timer. A request whose bookkeeping failed after the provider was
+// called, or a server that stopped mid-request, therefore leaves the budget
+// over-counted (safe), never under-counted.
+const USED = `tokens_in + tokens_out`;
 export async function usedToday(c, districtId, userId) {
-  const r = (await c.query(`SELECT coalesce(sum(tokens_in + tokens_out), 0)::int AS district,
-      coalesce(sum(tokens_in + tokens_out) FILTER (WHERE user_id = $2), 0)::int AS mine
+  const r = (await c.query(`SELECT coalesce(sum(${USED}), 0)::int AS district,
+      coalesce(sum(${USED}) FILTER (WHERE user_id = $2), 0)::int AS mine
     FROM ai_usage WHERE district_id = $1 AND created_at >= date_trunc('day', now())`, [districtId, userId])).rows[0];
   return { district: r.district, user: r.mine };
+}
+
+/**
+ * Atomically checks both daily budgets and reserves room for this request
+ * (a 'pending' usage row) before anything is sent to a model. Requests in one
+ * district take turns here (a transaction-scoped advisory lock), so
+ * simultaneous requests can't all pass the same check. Returns the
+ * reservation id, or throws with a status (403 tool off, 429 budget).
+ */
+export const lockDistrictAi = (c, districtId) => c.query("SELECT pg_advisory_xact_lock(hashtext('eduos-ai-budget'), hashtext($1::text))", [districtId]);
+
+export async function reserveBudget(c, actor, usecase, reserve) {
+  await lockDistrictAi(c, actor.districtId);
+  // Read the policy only now, under the lock that policy changes also take:
+  // a request can't reserve against a budget or a tool the superintendent
+  // has just lowered or turned off.
+  const policy = await policyOf(c, actor.districtId);
+  const why = denial({ usecase, role: actor.role, enabled: policy.enabled_usecases });
+  if (why) throw Object.assign(new Error(why), { status: 403 });
+  // A request that could never fit is refused as such, not as "used up".
+  if (reserve > policy.daily_token_cap || reserve > policy.user_daily_token_cap) throw Object.assign(new Error("ai_request_exceeds_budget"), { status: 429 });
+  const used = await usedToday(c, actor.districtId, actor.userId);
+  if (used.district + reserve > policy.daily_token_cap) throw Object.assign(new Error("ai_district_budget_reached"), { status: 429 });
+  if (used.user + reserve > policy.user_daily_token_cap) throw Object.assign(new Error("ai_your_budget_reached"), { status: 429 });
+  return (await c.query(`INSERT INTO ai_usage(district_id, school_id, user_id, role, usecase, provider, outcome, tokens_in, tokens_out)
+      VALUES ($1,$2,$3,$4,$5,'local','pending',$6,0) RETURNING id`, [actor.districtId, actor.schoolId || null, actor.userId, actor.role, usecase, reserve])).rows[0].id;
 }
 
 /**
@@ -62,7 +93,9 @@ export async function opsContext(c, actor) {
   const by = Object.fromEntries(att.map(r => [r.status, r.n]));
   return {
     scope: school ? "school" : "district",
-    day: new Date().toISOString().slice(0, 10),
+    // The school's own date (the one its attendance is counted for), not UTC's.
+    day: (await c.query(`SELECT string_agg(DISTINCT eduos_school_today(id)::text, ' / ') AS d FROM schools
+        WHERE district_id = $1 AND status = 'active' AND ($2::uuid IS NULL OR id = $2)`, args)).rows[0].d || new Date().toISOString().slice(0, 10),
     schools: (await one("SELECT count(*)::int AS n FROM schools WHERE district_id = $1 AND status = 'active' AND ($2::uuid IS NULL OR id = $2)")).n,
     attendance: { marked: att.reduce((n, r) => n + r.n, 0), present: by.present || 0, tardy: by.tardy || 0, absent: by.absent || 0, excused: by.excused || 0 },
     activeSafetyIncidents: (await one("SELECT count(*)::int AS n FROM safety_incidents WHERE district_id = $1 AND ($2::uuid IS NULL OR school_id = $2) AND status IN ('pending','active','reunification')")).n,
@@ -71,13 +104,3 @@ export async function opsContext(c, actor) {
   };
 }
 
-/** Names and student numbers of the students the caller could see, removed
- *  from text before it leaves the server (on top of the generic redaction of
- *  emails, phone numbers, URLs and id-like strings). */
-export async function namesToRedact(c, actor) {
-  const r = actor.role === "teacher"
-    ? await c.query(`SELECT s.display_name, s.local_student_number FROM teacher_student_rosters r JOIN students s ON s.id = r.student_id AND s.district_id = r.district_id
-        WHERE r.district_id = $1 AND r.teacher_user_id = $2 LIMIT 2000`, [actor.districtId, actor.userId])
-    : await c.query("SELECT display_name, local_student_number FROM students WHERE district_id = $1 AND school_id = $2 LIMIT 5000", [actor.districtId, actor.schoolId]);
-  return r.rows.flatMap(x => [x.display_name, x.local_student_number]);
-}
