@@ -8,7 +8,8 @@ import { requireSession, requireCsrf } from "./auth.js";
 import { requirePermission } from "./policy.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
-import { createProvider, redact } from "./christie/providers.js";
+import { createProvider, outboundHelpFields, helpFieldsText } from "./christie/providers.js";
+import { findStudentIdentifiers } from "./student-identifiers.js";
 import { MESSAGES, MASTERED_AT, pick, isCorrect, classifyQuestion, itemScore, nextMastery } from "./christie/tutor.js";
 import { enqueueNotifications } from "./notify.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError, roleIn } from "./role-app-util.js";
@@ -197,15 +198,20 @@ export function registerChristieRoutes(app) {
           } else {
             const learner = await one(client, `SELECT display_name FROM students WHERE id=$1`, [session.student_id]);
             const me = await one(client, `SELECT display_name,email FROM users WHERE id=$1`, [req.actor.userId]);
-            const question = redact(text, { names: [learner?.display_name, me?.display_name] });
             const p = provider();
             // 32.6.0: the linked lesson's text joins the approved material, but only
             // once a school leader has approved it and it is published.
             const lesson = await one(client, `SELECT l.content FROM christie_skills k JOIN lessons l ON l.id=k.lesson_id
                 WHERE k.id=$1 AND l.status='published' AND l.approved_at IS NOT NULL`, [item.skill_id]);
             const explanation = lesson ? `${item.explanation}\n${lesson.content}` : item.explanation;
-            const reply = await p.help({ question, skillTitle: item.skill_title, explanation, prompt: item.prompt,
-              unlockedHints: item.hints.slice(0, session.hint_level), firstHint: item.hints[0], answer: item.answer });
+            const fields = { question: text, skillTitle: item.skill_title, explanation, prompt: item.prompt, unlockedHints: item.hints.slice(0, session.hint_level) };
+            // Before anything can go to an external provider, every field loses
+            // the names and numbers of any student in the district it mentions
+            // (another learner in the question, a name in a lesson or hint).
+            // If that lookup fails, the request fails: nothing is sent.
+            const outbound = p.name === "local" ? null
+              : outboundHelpFields(fields, await findStudentIdentifiers(client, session.district_id, helpFieldsText(fields)), [learner?.display_name, me?.display_name]);
+            const reply = await p.help({ ...fields, firstHint: item.hints[0], answer: item.answer, outbound });
             await say("hint", reply.text, { provider: reply.fallback ? "local" : p.name });
           }
         }

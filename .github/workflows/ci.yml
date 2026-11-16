@@ -88,9 +88,13 @@ jobs:
           path: eduos/artifacts/dependency-audit/npm-audit.json
           if-no-files-found: warn
           retention-days: 30
+      # Always runs (after the evidence above is saved), so the log shows the
+      # gate was checked: it used to be skipped whenever the audit was clean.
       - name: Enforce high-severity dependency gate
-        if: steps.dependency-audit.outcome == 'failure'
-        run: exit 1
+        if: always()
+        run: |
+          echo "dependency audit outcome: ${{ steps.dependency-audit.outcome }}"
+          test "${{ steps.dependency-audit.outcome }}" = "success"
 
   unit:
     runs-on: ubuntu-24.04

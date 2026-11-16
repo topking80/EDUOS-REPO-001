@@ -5,7 +5,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
-import { PG_URL, ID, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
+import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 
@@ -23,6 +23,13 @@ describe("staff AI gateway against real PostgreSQL", { skip }, () => {
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
     // Today's attendance: two marks at S1 (Alice present, Bob absent), one at S2 (Carol tardy).
+    // "Today" in each school's time zone, as the app computes it: that needs the
+    // district context (without it eduos_school_today() falls back to UTC, and
+    // in a US evening that's already tomorrow).
+    await admin.query("SELECT set_config('app.district_id', $1, false)", [ID.d1]);
+    // Put S1 where its date is never UTC's date right now (12 hours behind in
+    // the UTC morning, 14 ahead otherwise), to tell the two apart.
+    await admin.query("UPDATE schools SET timezone = $1 WHERE id = $2", [new Date().getUTCHours() < 12 ? "Etc/GMT+12" : "Etc/GMT-14", ID.s1]);
     await admin.query(`INSERT INTO attendance_events(district_id, student_id, event_date, status) VALUES
       ($1,$2,eduos_school_today($5),'present'),($1,$3,eduos_school_today($5),'absent'),($1,$4,eduos_school_today($6),'tardy')`,
       [ID.d1, ID.alice, ID.bob, ID.carol, ID.s1, ID.s2]);
@@ -62,8 +69,14 @@ describe("staff AI gateway against real PostgreSQL", { skip }, () => {
     assert.equal(p.status, 200, JSON.stringify(p.body));
     assert.equal(p.body.data.basis.scope, "school");
     assert.deepEqual(p.body.data.basis.attendance, { marked: 2, present: 1, tardy: 0, absent: 1, excused: 0 }, "S1 only");
+    // The brief is dated with the school's own date (the day its attendance is for), not UTC's.
+    const schoolDay = (await admin.query("SELECT eduos_school_today($1)::text AS d", [ID.s1])).rows[0].d;
+    assert.notEqual(schoolDay, new Date().toISOString().slice(0, 10), "the fixture's school date differs from UTC's");
+    assert.equal(p.body.data.basis.day, schoolDay);
+    assert.match(p.body.data.text, new RegExp(schoolDay));
     const d = await runAi("supt1", "ops_brief");
     assert.equal(d.body.data.basis.scope, "district");
+    assert.ok(d.body.data.basis.day.split(" / ").includes(schoolDay), d.body.data.basis.day);
     assert.equal(d.body.data.basis.attendance.marked, 3, "the whole district");
     assert.ok(!JSON.stringify(d.body.data.basis).match(/Alice|Bob|Carol|S1-A/), "no names or student numbers");
   });
@@ -75,10 +88,19 @@ describe("staff AI gateway against real PostgreSQL", { skip }, () => {
     assert.deepEqual(rows.map(r => r.usecase), ["lesson_draft", "ops_brief", "ops_brief"]);
     const audited = (await admin.query("SELECT count(*)::int AS n FROM audit_events WHERE action LIKE 'ai\\_%'")).rows[0].n;
     assert.equal(audited, 3);
-    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "writing_feedback", "ops_brief"], dailyTokenCap: 100000, userDailyTokenCap: 700 });
-    let r; for (let i = 0; i < 5 && (!r || r.status === 200); i++) r = await runAi("t1", "lesson_draft", "Volcanoes and plate tectonics");
+    // A lesson draft reserves about 1,200 tokens (the bytes of what would be
+    // sent plus the 900-token output cap) and uses a few hundred.
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "writing_feedback", "ops_brief"], dailyTokenCap: 100000, userDailyTokenCap: 1000 });
+    assert.equal((await runAi("t1", "lesson_draft", "Volcanoes and plate tectonics")).body.error, "ai_request_exceeds_budget", "could never fit");
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "writing_feedback", "ops_brief"], dailyTokenCap: 100000, userDailyTokenCap: 1700 });
+    let r; for (let i = 0; i < 8 && (!r || r.status === 200); i++) r = await runAi("t1", "lesson_draft", "Volcanoes and plate tectonics");
     assert.equal(r.status, 429); assert.equal(r.body.error, "ai_your_budget_reached");
-    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 10, userDailyTokenCap: 20000 });
+    // The district has used plenty today (5,000 more tokens recorded); leave
+    // less room than one more request reserves.
+    await admin.query(`INSERT INTO ai_usage(district_id, user_id, role, usecase, provider, outcome, tokens_in, tokens_out)
+      VALUES ($1, $2, 'superintendent', 'ops_brief', 'local', 'ok', 5000, 0)`, [ID.d1, USERS.supt1[0]]);
+    const spent = (await admin.query("SELECT sum(tokens_in + tokens_out)::int AS n FROM ai_usage WHERE outcome IN ('ok','fallback')")).rows[0].n;
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: spent + 300, userDailyTokenCap: 20000 });
     assert.equal((await runAi("p1", "lesson_draft", "Volcanoes")).body.error, "ai_district_budget_reached");
   });
 

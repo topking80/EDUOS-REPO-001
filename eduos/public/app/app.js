@@ -2010,7 +2010,8 @@ async function aiAssistantCard() {
     label.textContent = hint?.[0] || ""; text.placeholder = hint?.[1] || ""; label.hidden = text.hidden = !u.input; text.required = !!u.input; };
   pick.addEventListener("change", sync); sync();
   const errors = { ai_usecase_not_enabled: "Your district hasn't turned this on.", ai_your_budget_reached: "You've used today's assistant budget.",
-    ai_district_budget_reached: "The district's assistant budget for today is used up.", ai_input_length: "That's too short or too long." };
+    ai_district_budget_reached: "The district's assistant budget for today is used up.", ai_input_length: "That's too short or too long.",
+    ai_request_exceeds_budget: "That's more text than a day's assistant budget allows. Try a shorter piece." };
   return h("section", { class: "card", "aria-label": "Assistant" }, ...body,
     h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
       out.replaceChildren(h("p", { class: "muted" }, "Working…"));

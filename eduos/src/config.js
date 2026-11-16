@@ -94,6 +94,9 @@ export const config = {
   aiProviderModel: (process.env.AI_PROVIDER_MODEL || "").trim(),
   aiProviderApiKey: process.env.AI_PROVIDER_API_KEY || "",
   aiProviderTimeoutMs: Number(process.env.AI_PROVIDER_TIMEOUT_MS || 20000),
+  // Development and tests only: allows an http:// provider on loopback (to
+  // capture exactly what would be sent). Ignored in production.
+  aiAllowInsecureLoopback: process.env.AI_ALLOW_INSECURE_LOOPBACK === "true" && (process.env.NODE_ENV || "development") !== "production",
   // External integrations (OneRoster, Ed-Fi) are off unless INTEGRATIONS_KEY
   // (32+ chars) is set: it encrypts connector client secrets at rest.
   integrationsKey: process.env.INTEGRATIONS_KEY || "",
@@ -251,7 +254,8 @@ if (config.metricsToken && config.metricsToken.length < 16) {
 if (!["local", "openai_compatible"].includes(config.aiProvider)) throw new Error("AI_PROVIDER must be local or openai_compatible");
 if (config.aiProvider !== "local") {
   if (!config.aiAllowExternal) throw new Error("AI_PROVIDER=openai_compatible also requires AI_ALLOW_EXTERNAL_PROVIDER=true");
-  if (!/^https:\/\//.test(config.aiProviderUrl)) throw new Error("AI_PROVIDER_URL must be an https:// URL");
+  if (!/^https:\/\//.test(config.aiProviderUrl) && !(config.aiAllowInsecureLoopback && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(config.aiProviderUrl)))
+    throw new Error("AI_PROVIDER_URL must be an https:// URL");
   if (!config.aiProviderModel) throw new Error("AI_PROVIDER_MODEL is required for an external AI provider");
 }
 intIn("AI_PROVIDER_TIMEOUT_MS", config.aiProviderTimeoutMs, 1000, 120000);
