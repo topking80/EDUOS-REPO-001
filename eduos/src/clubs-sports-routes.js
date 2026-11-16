@@ -253,8 +253,8 @@ export function registerClubsSportsRoutes(app) {
    const asset=await one(c,"SELECT * FROM activity_media_assets WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
    if(!asset)throw new HttpError(404,"media_asset_not_found");
    if(!asset.activity_id)throw new HttpError(409,"media_activity_required");
-   await requireActivityManager(c,a,asset.activity_id);
-   if(asset.school_id!==(a.schoolId||asset.school_id))throw new HttpError(403,"media_school_scope_denied");
+   const activity=await requireActivityManager(c,a,asset.activity_id);
+   if(asset.school_id!==activity.school_id)throw new HttpError(403,"media_school_scope_denied");
    if(asset.moderation_status!=="pending")throw new HttpError(409,"media_moderation_already_decided");
    const students=await rows(c,"SELECT id FROM students WHERE district_id=$1 AND school_id=$2 AND id=ANY($3::uuid[])",[a.districtId,asset.school_id,b.studentIds]);
    if(students.length!==b.studentIds.length)throw new HttpError(400,"participant_outside_media_school");
@@ -280,9 +280,10 @@ export function registerClubsSportsRoutes(app) {
     VALUES($1,$2,$3,$4,$5,$6,now()) ON CONFLICT(district_id,media_asset_id,student_id,guardian_user_id)
     DO UPDATE SET status=EXCLUDED.status,decided_at=now()`,
     [a.districtId,asset.school_id,asset.id,b.studentId,a.userId,b.granted?"approved":"denied"]);
-   const guardianDecision=await one(c,`SELECT count(*)::int AS approvals FROM activity_media_consents
-     WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3 AND status='approved'`,[a.districtId,asset.id,b.studentId]);
-   const participantStatus=Number(guardianDecision.approvals)>0?"approved":"denied";
+   const guardianDecision=await one(c,`SELECT count(*) FILTER(WHERE status='approved')::int AS approvals,
+     count(*) FILTER(WHERE status IN ('denied','withdrawn'))::int AS denials FROM activity_media_consents
+     WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3`,[a.districtId,asset.id,b.studentId]);
+   const participantStatus=Number(guardianDecision.denials)>0?"denied":Number(guardianDecision.approvals)>0?"approved":"pending";
    await c.query("UPDATE activity_media_participants SET consent_status=$3 WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$4",[a.districtId,asset.id,participantStatus,b.studentId]);
    const aggregate=await one(c,`SELECT count(*)::int AS total,count(*) FILTER(WHERE consent_status='approved')::int AS approved,
       count(*) FILTER(WHERE consent_status='denied')::int AS denied FROM activity_media_participants WHERE district_id=$1 AND media_asset_id=$2`,[a.districtId,asset.id]);
