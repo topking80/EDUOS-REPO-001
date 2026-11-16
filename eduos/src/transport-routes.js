@@ -89,9 +89,29 @@ export function registerTransportRoutes(app) {
             JOIN transport_stops st ON st.id=ra.stop_id
             LEFT JOIN transport_runs x ON x.route_id=r.id AND x.service_date=eduos_school_today(r.school_id)
            WHERE ${scope} ORDER BY s.display_name,r.direction`, [a.userId, scopeArg]);
+        // Fetch every visible rider's events in one round trip instead of
+        // issuing one sequential query per child. The target pairs come only
+        // from the already-authorized, tenant-scoped rider query above.
+        const activeRiders = kids.filter(k => k.run_id);
+        const eventsByRider = new Map();
+        if (activeRiders.length) {
+          const eventRows = await rows(client, `SELECT c.run_id,c.student_id,c.event,c.recorded_at,st.name AS stop_name,st.is_school
+              FROM unnest($1::uuid[],$2::uuid[]) AS target(run_id,student_id)
+              JOIN transport_checkins c ON c.run_id=target.run_id AND c.student_id=target.student_id
+              JOIN transport_stops st ON st.id=c.stop_id
+             ORDER BY c.run_id,c.student_id,c.recorded_at,c.id`,
+            [activeRiders.map(k => k.run_id), activeRiders.map(k => k.id)]);
+          for (const event of eventRows) {
+            const key = `${event.run_id}:${event.student_id}`;
+            if (!eventsByRider.has(key)) eventsByRider.set(key, []);
+            eventsByRider.get(key).push({
+              event: event.event, recorded_at: event.recorded_at,
+              stop_name: event.stop_name, is_school: event.is_school
+            });
+          }
+        }
         for (const k of kids) {
-          k.events = k.run_id ? await rows(client, `SELECT c.event,c.recorded_at,st.name AS stop_name,st.is_school FROM transport_checkins c
-              JOIN transport_stops st ON st.id=c.stop_id WHERE c.run_id=$1 AND c.student_id=$2 ORDER BY c.recorded_at,c.id`, [k.run_id, k.id]) : [];
+          k.events = k.run_id ? (eventsByRider.get(`${k.run_id}:${k.id}`) || []) : [];
           k.status = k.events.length ? k.events[k.events.length - 1].event : (k.run_id ? "expected" : "not_started");
         }
         await audit(client, req, "read", "transport_rider_status", null, `learners=${new Set(kids.map(k => k.id)).size}`);
