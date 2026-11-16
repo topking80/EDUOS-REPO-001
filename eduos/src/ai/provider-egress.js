@@ -33,7 +33,7 @@ export async function postAiProviderJson({ url, allowedHosts, headers, body, tim
     };
     const request = https.request({
       protocol: "https:", hostname: host, port: checked.url.port || 443,
-      path: \${checked.url.pathname.replace(/\/+$/, "")}/chat/completions\`, method: "POST", agent: false,
+      path: `${checked.url.pathname.replace(/\/+$/, "")}/chat/completions`, method: "POST", agent: false,
       lookup: pinnedLookup, servername: net.isIP(host) ? undefined : host,
       headers: { ...headers, "content-length": Buffer.byteLength(body) },
     }, response => {
