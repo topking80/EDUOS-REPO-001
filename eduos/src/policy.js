@@ -28,7 +28,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     apps: ["read", "manage", "report", "decide", "launch"], district: ["read", "manage"],
     branding: ["read", "manage"],
     edal: ["verify", "checkpoint"],
-    eden: ["read", "manage", "node"]
+    eden: ["read", "manage", "node"], activities: ["read"]
   },
   principal: {
     access_requests: ["read", "create"],
