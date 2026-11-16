@@ -243,6 +243,39 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     for (const j of jobs) assert.equal((await outbox(j.id)).status, "delivered");
   });
 
+  it("a worker queued for delivery capacity cannot send after its lease is reclaimed", async () => {
+    await clearQueue();
+    const s = await subscription();
+    const j = await job(s);
+    const { createLimiter } = await import("../../src/webhook-outbox.js");
+    const limiter = createLimiter(1);
+    let release;
+    const occupied = limiter.run(() => new Promise(resolve => { release = resolve; }));
+    const waitForQueue = async expected => {
+      for (let i = 0; i < 100; i++) {
+        if (limiter.waiting >= expected) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.fail(`expected ${expected} queued deliveries, saw ${limiter.waiting}`);
+    };
+    const sends = [];
+    const send = async req => { sends.push(req.headers["X-EduOS-Delivery"]); return delivered(); };
+
+    // A claims the event but cannot start delivery because the only slot is busy.
+    const a = work(supt1, { send, limit: 1, limiter, leaseSeconds: 1, jobDeadlineMs: 800 });
+    await waitForQueue(1);
+    // Its lease expires while waiting. B legitimately reclaims the same row.
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    const b = work(supt1, { send, limit: 1, limiter, leaseSeconds: 1, jobDeadlineMs: 800 });
+    await waitForQueue(2);
+    release();
+    await Promise.all([occupied, a, b]);
+
+    assert.deepEqual(sends, [j.delivery_id], "only the current lease holder may send");
+    assert.equal((await outbox(j.id)).status, "delivered");
+    assert.equal((await ledger(j.delivery_id)).length, 1, "only one attempt is recorded");
+  });
+
   it("a delivery that hangs is cut off inside its lease and retried later", async () => {
     await clearQueue();
     const s = await subscription();
@@ -275,9 +308,16 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     for (const sid of subs) for (let i = 0; i < 3; i++) await job(sid);
     let now = 0, peak = 0;
     const send = async () => { now++; peak = Math.max(peak, now); await new Promise(r => setTimeout(r, 30)); now--; return delivered(); };
-    const claimed = await Promise.all([1, 2, 3, 4].map(() => work(supt1, { send, limit: 3, limiter })));
-    assert.equal(claimed.reduce((a, b) => a + b, 0), 9);
+    // Workers claim only what the limiter can start (one each when it's full),
+    // so keep running rounds of four until the queue is empty.
+    let total = 0;
+    for (let round = 0; round < 10 && total < 9; round++) {
+      total += (await Promise.all([1, 2, 3, 4].map(() => work(supt1, { send, limit: 3, limiter })))).reduce((a, b) => a + b, 0);
+    }
+    assert.equal(total, 9, "every job delivered");
     assert.equal(peak, 2, `at most two deliveries at once (saw ${peak})`);
+    const left = await admin.query("SELECT count(*)::int AS n FROM webhook_outbox WHERE subscription_id = ANY($1) AND status<>'delivered'", [subs]);
+    assert.equal(left.rows[0].n, 0);
   });
 
   it("during a signing-key rotation each delivery carries both signatures; the receiver's old secret still verifies", async () => {
@@ -303,6 +343,46 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     const r = await dispatchWebhooks({ db: pool, signingKey: SIGNING_KEY, log: { error: () => {}, warn: () => {} },
       deliveryOptions: { lookup: async () => PUBLIC_IP, send: delivered, sleep: async () => {} } });
     assert.equal(r.claimed, 1);
+    assert.equal((await outbox(j.id)).status, "delivered");
+  });
+
+  it("a stale worker cannot win the delivery ledger before the current lease holder", async () => {
+    await clearQueue();
+    const sid = await subscription();
+    const j = await job(sid);
+    let signalBStarted;
+    const bStarted = new Promise(resolve => { signalBStarted = resolve; });
+    let releaseB;
+    const holdB = new Promise(resolve => { releaseB = resolve; });
+    let workerB;
+
+    const workerASend = async () => {
+      // Expire A's lease while its delivery callback is still running.
+      await admin.query("UPDATE webhook_outbox SET lease_until=now()-interval '1 second' WHERE id=$1", [j.id]);
+      workerB = work(supt1, {
+        send: async () => {
+          signalBStarted();
+          await holdB;
+          return delivered();
+        }
+      });
+      await bStarted;
+      // A returns first, but no longer owns the lease.
+      return { outcome: "http_error", statusCode: 500, durationMs: 1 };
+    };
+
+    const warnings = [];
+    const workerA = work(supt1, { send: workerASend, log: { error: () => {}, warn: (msg, detail) => warnings.push([msg, detail]) } });
+    await workerA;
+    assert.equal(warnings.length, 1, "the stale worker's request is logged, not lost");
+    assert.match(warnings[0][0], /lost its lease was not recorded/);
+    assert.deepEqual([warnings[0][1].deliveryId, warnings[0][1].outcome, warnings[0][1].statusCode], [j.delivery_id, "http_error", 500]);
+    assert.equal((await ledger(j.delivery_id)).length, 0,
+      "the stale worker must not reserve the unique attempt row");
+    releaseB();
+    await workerB;
+    assert.deepEqual(await ledger(j.delivery_id).then(rows => rows.map(x => [x.outcome, x.status_code])),
+      [["delivered", 204]]);
     assert.equal((await outbox(j.id)).status, "delivered");
   });
 
