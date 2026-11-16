@@ -23,3 +23,11 @@ From `eduos/`: `npm run db:migrate` (migrations 051 and 052), then `npm test`. R
 
 ## Production blockers
 Before paid sales: configure district-approved hosted checkout, signature-verified webhooks, idempotent payment transitions, refunds/chargebacks and settlement reconciliation. Before live video: configure approved provider, short-lived audience-bound playback authorization, captions, recording consent and replay retention. Before uploads: private object storage, MIME sniffing/re-encoding, malware scanning, EXIF stripping, consent, moderation and retention. Add QR check-in and guardian/student participant consent workflows.
+
+
+## Media consent and moderation (37.8.0)
+- Assigned club/team staff register students appearing in an existing media asset; each participant begins with pending consent.
+- A parent/guardian may grant or deny consent only for a student connected to their active guardian account and already registered in that asset. Consent is stored per student, asset and guardian, with district RLS.
+- A principal/superintendent may approve moderation only after every registered participant has approved guardian consent.
+- APIs: `GET /api/activities/:id/media`, `POST /api/media/:id/participants`, `POST /api/media/:id/consent`, `PATCH /api/media/:id/moderation`.
+- Responses omit storage keys. No upload endpoint, public URL, signed URL, playback, or publication is enabled. A district-approved private object-storage adapter, content scanning/re-encoding, EXIF stripping, retention policy and authenticated delivery are required before media can be uploaded or viewed.
