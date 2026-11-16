@@ -95,7 +95,7 @@ export function registerClubsSportsRoutes(app) {
  });
  app.post("/api/events/:id/ticket-types",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,b=req.body||{};if(!LEAD(a.role))return res.status(403).json({error:"school_lead_required"});
-  if(!validId(req.params.id)||!cleanText(b.name,80,2)||!Number.isInteger(b.capacity)||b.capacity<1||b.capacity>1000000||!Number.isInteger(b.priceCents??0)||(b.priceCents??0)<0||(b.priceCents??0)>1000000||!(b.currency||"USD").match(/^[A-Z]{3}$/))return res.status(400).json({error:"invalid_ticket_type"});
+  if(!validId(req.params.id)||!cleanText(b.name,80,2)||!Number.isInteger(b.capacity)||b.capacity<1||b.capacity>1000000||!Number.isInteger(b.priceCents??0)||(b.priceCents??0)<0||(b.priceCents??0)>1000000||typeof (b.currency||"USD")!=="string"||!(b.currency||"USD").match(/^[A-Z]{3}$/))return res.status(400).json({error:"invalid_ticket_type"});
   try{const data=await withTenantTransaction(a,async c=>{
    const event=await one(c,"SELECT * FROM school_events WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3) FOR UPDATE",[req.params.id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);if(!event)throw new HttpError(404,"event_not_found");
    const r=await one(c,`INSERT INTO event_ticket_types(district_id,school_id,event_id,name,price_cents,currency,capacity,sales_open)
@@ -129,6 +129,31 @@ export function registerClubsSportsRoutes(app) {
     const ticket=await one(c,"INSERT INTO event_tickets(district_id,school_id,order_id,event_id,ticket_code_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,status",[a.districtId,event.school_id,order.id,event.id,hash]);tickets.push({id:ticket.id,code});}
    await audit(c,req,"create","event_ticket_order",order.id,`event=${event.id};quantity=${quantity};complimentary=true`);return {order,tickets,replayed:false};
   });res.status(201).json({data});}catch(e){sendError(res,next,e)}
+ });
+ app.get("/api/my/tickets",requireSession,wrap(async(c,req)=>{
+  const a=req.actor;if(!["pupil","parent"].includes(a.role))throw new HttpError(403,"ticket_buyer_role_required");
+  return rows(c,`SELECT t.id,t.event_id,t.status,t.created_at,e.title AS event_title,e.starts_at,e.ends_at,e.venue,o.quantity,o.total_cents,o.currency,o.status AS order_status
+   FROM event_tickets t JOIN event_ticket_orders o ON o.id=t.order_id AND o.district_id=t.district_id
+   JOIN school_events e ON e.id=t.event_id AND e.district_id=t.district_id
+   WHERE t.district_id=$1 AND o.buyer_user_id=$2 ORDER BY e.starts_at DESC LIMIT 200`,[a.districtId,a.userId]);
+ }));
+ app.post("/api/events/:id/check-in",requireSession,requireCsrf,async(req,res,next)=>{
+  const a=req.actor,code=req.body?.ticketCode;
+  if(!LEAD(a.role)&&a.role!=="teacher")return res.status(403).json({error:"event_checkin_staff_required"});
+  if(!validId(req.params.id)||typeof code!=="string"||code.length<20||code.length>128)return res.status(400).json({error:"invalid_ticket_checkin"});
+  try{const data=await withTenantTransaction(a,async c=>{
+   const event=await one(c,"SELECT id,school_id,activity_id FROM school_events WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3)",[req.params.id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);
+   if(!event)throw new HttpError(404,"event_not_found");
+   if(a.role==="teacher"&&(!event.activity_id||!await one(c,"SELECT id FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id=$4",[a.districtId,event.school_id,event.activity_id,a.userId])))throw new HttpError(403,"event_assignment_required");
+   const hash=createHash("sha256").update(code).digest("hex");
+   const ticket=await one(c,"SELECT id,status,order_id FROM event_tickets WHERE district_id=$1 AND event_id=$2 AND ticket_code_hash=$3 FOR UPDATE",[a.districtId,event.id,hash]);
+   if(!ticket)throw new HttpError(404,"ticket_not_found");
+   if(ticket.status!=="issued")throw new HttpError(409,"ticket_not_checkin_eligible",{status:ticket.status});
+   const order=await one(c,"SELECT status FROM event_ticket_orders WHERE id=$1 AND district_id=$2",[ticket.order_id,a.districtId]);
+   if(!order||!["complimentary","paid"].includes(order.status))throw new HttpError(409,"ticket_order_not_paid_or_complimentary");
+   const updated=await one(c,"UPDATE event_tickets SET status='checked_in',checked_in_at=now(),checked_in_by=$2 WHERE id=$1 RETURNING id,status,checked_in_at",[ticket.id,a.userId]);
+   await audit(c,req,"check_in","event_ticket",ticket.id,`event=${event.id}`);return updated;
+  });res.json({data});}catch(e){sendError(res,next,e)}
  });
  app.post("/api/events/:id/stream",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,b=req.body||{};if(!LEAD(a.role))return res.status(403).json({error:"school_lead_required"});
