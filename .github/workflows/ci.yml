@@ -179,6 +179,8 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/pw" --no-save --ignore-scripts playwright-core@1.65.1
           EDUOS_PLAYWRIGHT_DIR="$RUNNER_TEMP/pw" EDUOS_SCREENSHOT_DIR=artifacts/screens CHROME_PATH=$(command -v google-chrome) node dev/browser-smoke.mjs
+      - name: Live CSP through the edge (headers, every page and role screen in Chrome)
+        run: EDUOS_PLAYWRIGHT_DIR="$RUNNER_TEMP/pw" CHROME_PATH=$(command -v google-chrome) ./scripts/smoke.sh --csp
       - name: Logs on failure
         if: failure()
         run: EDUOS_ENV_FILE=.env.dev docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile edge logs --tail 200

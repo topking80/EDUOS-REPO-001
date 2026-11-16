@@ -31,6 +31,8 @@ smoke-mobile:  ## 32.4.0: HTTP smoke + phone-size role-app browser pass with axe
 	./scripts/smoke.sh --mobile
 smoke-safety:  ## 32.5.0: HTTP smoke + SafetyOS lockdown drill and car pick-up phone pass (axe, screenshots)
 	./scripts/smoke.sh --safety
+smoke-csp:     ## live Content Security Policy check through the edge: headers, then every page and role screen in Chrome
+	./scripts/smoke.sh --csp
 smoke-learning: ## 32.6.0: HTTP smoke + courses, quizzes, gradebook, family progress and EDAL phone pass (axe, screenshots)
 	./scripts/smoke.sh --learning
 edal-verify:   ## 32.6.0: verify the EDAL records ledger hash chain (owner role, read-only). ARGS="--checkpoint file.json"
