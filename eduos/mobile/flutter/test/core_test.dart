@@ -64,7 +64,7 @@ void main() {
       now = now.add(const Duration(hours: 24, seconds: 1));
       expect(await q.length, 0);
       for (var i = 0; i < OfflineQueue.maxEntries; i++) {
-        await q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'k$i', queuedAt: now, owner: owner));
+        await q.enqueue(QueuedWrite(path: '/api/attendance', body: {'studentId': 's$i'}, idempotencyKey: 'k$i', queuedAt: now, owner: owner));
       }
       await expectLater(q.enqueue(QueuedWrite(path: '/api/attendance', body: const {}, idempotencyKey: 'x', queuedAt: now, owner: owner)), throwsA(isA<OfflineQueueFullException>()));
       expect(() => q.enqueue(QueuedWrite(path: '/api/pickup/tags', body: const {}, idempotencyKey: 'y', queuedAt: now, owner: owner)), throwsArgumentError);
@@ -85,6 +85,74 @@ void main() {
       expect(seen, ['a', 'b', 'c']);
       expect([r.sent, r.rejected, r.remaining], [1, 1, 3]);
       expect((await q.entries()).map((e) => e.idempotencyKey), ['c', 'd', 'late']);
+    });
+  });
+
+  group('Offline queue speed', () {
+    QueuedWrite mark(String key, String student, String status) => QueuedWrite(path: '/api/attendance',
+        body: {'studentId': student, 'eventDate': '2026-11-16', 'status': status}, idempotencyKey: key, queuedAt: DateTime.now(), owner: owner);
+
+    test('a repeated tap is kept once; a change and a change back are both kept', () async {
+      final q = OfflineQueue(MemoryKeyValueStore());
+      await q.enqueue(mark('1', 'ada', 'present'));
+      await q.enqueue(mark('2', 'ada', 'present'));
+      expect((await q.entries()).map((e) => e.idempotencyKey), ['1'], reason: 'the same mark twice in a row');
+      await q.enqueue(mark('3', 'ada', 'absent'));
+      await q.enqueue(mark('4', 'ada', 'present'));
+      await q.enqueue(mark('5', 'ben', 'present'));
+      expect((await q.entries()).map((e) => e.idempotencyKey), ['1', '3', '4', '5'], reason: 'present, absent, present must all reach the server');
+    });
+
+    test('different students go side by side; one student\'s marks stay in order', () async {
+      final q = OfflineQueue(MemoryKeyValueStore(), concurrency: 3);
+      for (final (k, s, st) in [('a1', 'ada', 'present'), ('a2', 'ada', 'absent'), ('b1', 'ben', 'present'), ('c1', 'cy', 'tardy'), ('d1', 'dee', 'present')]) {
+        await q.enqueue(mark(k, s, st));
+      }
+      final rounds = <List<String>>[];
+      var current = <String>[];
+      var inFlight = 0, maxInFlight = 0;
+      await q.flush(owner, (w) async {
+        current.add(w.idempotencyKey);
+        inFlight++;
+        maxInFlight = inFlight > maxInFlight ? inFlight : maxInFlight;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        inFlight--;
+        if (inFlight == 0) {
+          rounds.add(current);
+          current = [];
+        }
+        return ReplayOutcome.done;
+      });
+      expect(maxInFlight, 3);
+      expect(rounds.first, ['a1', 'b1', 'c1'], reason: "ada's second mark waits for her first");
+      expect(rounds.expand((r) => r).toList().indexOf('a2'), greaterThan(rounds.expand((r) => r).toList().indexOf('a1')));
+      expect(await q.length, 0);
+    });
+
+    test('a write that must wait holds back that student\'s later marks, not other students\'', () async {
+      final q = OfflineQueue(MemoryKeyValueStore());
+      for (final (k, s, st) in [('a1', 'ada', 'present'), ('a2', 'ada', 'absent'), ('b1', 'ben', 'present')]) {
+        await q.enqueue(mark(k, s, st));
+      }
+      final seen = <String>[];
+      final r = await q.flush(owner, (w) async {
+        seen.add(w.idempotencyKey);
+        return w.idempotencyKey == 'a1' ? ReplayOutcome.retryLater : ReplayOutcome.done;
+      });
+      expect(seen, ['a1', 'b1']);
+      expect(r.sent, 1);
+      expect((await q.entries()).map((e) => e.idempotencyKey), ['a1', 'a2']);
+    });
+
+    test('the keystore is read once', () async {
+      var reads = 0;
+      final kv = _CountingReads(() => reads++);
+      final q = OfflineQueue(kv);
+      for (var i = 0; i < 20; i++) {
+        await q.enqueue(mark('k$i', 's$i', 'present'));
+      }
+      await q.flush(owner, (_) async => ReplayOutcome.done);
+      expect(reads, 1);
     });
   });
 
@@ -278,7 +346,7 @@ void main() {
     test('replays refused by the server are dropped; busy or signed-out replays wait', () async {
       final q = OfflineQueue(MemoryKeyValueStore());
       for (final k in ['a', 'b']) {
-        await q.enqueue(QueuedWrite(path: runPath, body: const {}, idempotencyKey: k, queuedAt: DateTime.now(), owner: owner));
+        await q.enqueue(QueuedWrite(path: runPath, body: {'k': k}, idempotencyKey: k, queuedAt: DateTime.now(), owner: owner));
       }
       var status = 409;
       final api = ApiClient(session: session, owner: () => owner, queue: q, httpClient: MockClient((r) async => http.Response('{"error":"queued_write_too_old"}', status)));
@@ -352,4 +420,14 @@ void main() {
       expect(() => AppController.parseServerUrl('ftp://x.org'), throwsFormatException);
     });
   });
+}
+
+class _CountingReads extends MemoryKeyValueStore {
+  _CountingReads(this.onRead);
+  final void Function() onRead;
+  @override
+  Future<String?> read(String key) {
+    onRead();
+    return super.read(key);
+  }
 }
