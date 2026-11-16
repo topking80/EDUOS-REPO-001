@@ -25,6 +25,7 @@ import 'screens/staffing_screen.dart';
 import 'screens/teacher_screens.dart';
 import 'screens/safety_screen.dart';
 import 'screens/web_fallback_screen.dart';
+import 'widgets.dart' show TabVisit;
 
 /// Signed-in app: the role's tabs, the SafetyOS takeover while an incident is
 /// live, an offline-queue banner, and resume handling (refresh + resend).
@@ -37,6 +38,15 @@ class Shell extends StatefulWidget {
 
 class _ShellState extends State<Shell> with WidgetsBindingObserver {
   String? _tab;
+
+  /// Recently opened tabs stay built (hidden), most recent last, so going back
+  /// to one shows it at once instead of a spinner. Coming back also refreshes
+  /// it in the background (see [TabVisit]). At most [maxAliveTabs].
+  static const maxAliveTabs = 4;
+  final Map<String, Widget> _alive = {};
+  final Map<String, int> _visits = {};
+  String? _aliveRole;
+  String? _shown;
 
   @override
   void initState() {
@@ -94,6 +104,37 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       'alerts' => const AlertsScreen(),
       _ => WebFallbackScreen(tab: tab),
     };
+  }
+
+  Widget _tabs(RoleTab current, String role) {
+    if (_aliveRole != role) {
+      _alive.clear();
+      _visits.clear();
+      _aliveRole = role;
+      _shown = null;
+    }
+    final key = '$role/${current.id}';
+    final screen = _alive.remove(key) ?? _screen(current, role);
+    if (_shown != null && _shown != key && _visits.containsKey(key)) _visits[key] = _visits[key]! + 1;
+    _visits.putIfAbsent(key, () => 0);
+    _shown = key;
+    _alive[key] = screen;
+    while (_alive.length > maxAliveTabs) {
+      final oldest = _alive.keys.first;
+      _alive.remove(oldest);
+      _visits.remove(oldest);
+    }
+    return Stack(fit: StackFit.expand, children: [
+      for (final e in _alive.entries)
+        Offstage(
+          key: ValueKey(e.key),
+          offstage: e.key != key,
+          child: TickerMode(
+            enabled: e.key == key,
+            child: TabVisit(active: e.key == key, visits: _visits[e.key] ?? 0, child: e.value),
+          ),
+        ),
+    ]);
   }
 
   @override
@@ -164,7 +205,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
         Expanded(
           child: safetyLock
               ? SafetyScreen(onOpenPickup: reunification && (role == 'parent' || tabs.any((t) => t.id == 'pickup')) ? () => _go('pickup') : null)
-              : KeyedSubtree(key: ValueKey('$role/${current.id}'), child: _screen(current, role)),
+              : _tabs(current, role),
         ),
       ]),
       bottomNavigationBar: safetyLock

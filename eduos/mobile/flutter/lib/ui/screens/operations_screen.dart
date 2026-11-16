@@ -232,46 +232,55 @@ class _OperationsScreenState extends State<OperationsScreen> {
 }
 
 /// The vice principal's Attendance tab: today's marks at their school.
+///
+/// One small request (GET /api/attendance/day): each student's status today
+/// counted on the server, plus the students who weren't present. It used to
+/// download the latest 500 marks of every day and filter on the phone, which
+/// missed marks at a big school and counted a corrected mark twice.
 class AttendanceTodayScreen extends StatelessWidget {
   const AttendanceTodayScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final app = AppScope.read(context);
-    return Loader<List<Json>>(
-      load: () async {
-        final today = isoDate(DateTime.now());
-        return objs((await app.api.get('/api/attendance?limit=500'))['data']).where((e) => str(e['event_date']).startsWith(today)).toList();
-      },
-      builder: (context, marks, _) {
-        List<Json> by(String s) => marks.where((e) => e['status'] == s).toList();
-        Widget list(List<Json> l, String none) => SectionCard(title: none.contains('absen') ? 'Absent' : 'Tardy', children: [
-              if (l.isEmpty) EmptyState(none),
-              for (final e in l)
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(str(e['display_name'])),
-                  subtitle: e['family_acknowledged_at'] != null ? const Text('Family acknowledged') : null,
-                  trailing: StatusChip(str(e['status'])),
-                ),
-            ]);
-        return ListView(padding: const EdgeInsets.all(16), children: [
-          Semantics(header: true, child: Text('Attendance today', style: Theme.of(context).textTheme.titleLarge)),
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(child: StatTile(by('present').length, 'present')),
-            Expanded(child: StatTile(by('absent').length, 'absent', warnWhenPositive: true)),
-            Expanded(child: StatTile(by('tardy').length, 'tardy', warnWhenPositive: true)),
-          ]),
-          const SizedBox(height: 8),
-          list(by('absent'), 'No absences marked today.'),
-          list(by('tardy'), 'No tardies marked today.'),
-          const Notice('Marks come from teachers\' class registers. Follow-ups go in the Operations queue.'),
-        ]);
+    return Loader<Json>(
+      load: () async => obj((await app.api.get('/api/attendance/day?date=${isoDate(DateTime.now())}'))['data']),
+      builder: (context, day, _) {
+        final counts = obj(day['counts']), exceptions = objs(day['exceptions']);
+        final absent = exceptions.where((e) => e['status'] == 'absent').toList();
+        final tardy = exceptions.where((e) => e['status'] == 'tardy').toList();
+        // Rows are built as they scroll into view: a school's absences can run
+        // to hundreds on a snow day.
+        final rows = <Widget Function(BuildContext)>[
+          (c) => Semantics(header: true, child: Text('Attendance today', style: Theme.of(c).textTheme.titleLarge)),
+          (_) => const SizedBox(height: 8),
+          (_) => Row(children: [
+                Expanded(child: StatTile(integer(counts['present']), 'present')),
+                Expanded(child: StatTile(integer(counts['absent']), 'absent', warnWhenPositive: true)),
+                Expanded(child: StatTile(integer(counts['tardy']), 'tardy', warnWhenPositive: true)),
+              ]),
+          (_) => const SizedBox(height: 8),
+          ..._section('Absent', absent, 'No absences marked today.'),
+          ..._section('Tardy', tardy, 'No tardies marked today.'),
+          (_) => const Notice('Marks come from teachers\' class registers. Follow-ups go in the Operations queue.'),
+        ];
+        return ListView.builder(padding: const EdgeInsets.all(16), itemCount: rows.length, itemBuilder: (c, i) => rows[i](c));
       },
     );
   }
+
+  static List<Widget Function(BuildContext)> _section(String title, List<Json> list, String none) => [
+        (c) => Padding(padding: const EdgeInsets.only(top: 12, bottom: 4), child: Text(title, style: Theme.of(c).textTheme.titleMedium)),
+        if (list.isEmpty) (_) => EmptyState(none),
+        for (final e in list)
+          (_) => ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text(str(e['display_name'])),
+                subtitle: e['family_acknowledged_at'] != null ? const Text('Family acknowledged') : null,
+                trailing: StatusChip(str(e['status'])),
+              ),
+      ];
 }
 
 /// Transport for school leaders: every bus run today with live counts.

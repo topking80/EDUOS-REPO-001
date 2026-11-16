@@ -105,11 +105,11 @@ void main() {
     final fake = FakeServer({
       'POST /api/school-operations/facilities/w9/escalate': (_) => {'data': {'ok': true}},
       'POST /api/school-operations/meal_service': (_) => {'data': {'id': 'w3'}},
-      'GET /api/attendance': (_) => {'data': [
-        {'id': 'e1', 'event_date': today(), 'status': 'absent', 'display_name': 'Bob B'},
-        {'id': 'e2', 'event_date': today(), 'status': 'present', 'display_name': 'Ana C'},
-        {'id': 'e3', 'event_date': '2020-01-01', 'status': 'tardy', 'display_name': 'Old Mark'},
-      ]},
+      'GET /api/attendance/day': (r) {
+        expect(r.url.queryParameters['date'], today(), reason: "only today's marks are asked for");
+        return {'data': {'date': today(), 'counts': {'present': 411, 'absent': 1, 'tardy': 0, 'excused': 0},
+          'exceptions': [{'student_id': 's1', 'status': 'absent', 'display_name': 'Bob B'}]}};
+      },
     }, role: 'vice_principal');
     await launch(tester, fake);
     expect(find.text('Vice Principal Operations'), findsOneWidget);
@@ -131,8 +131,30 @@ void main() {
 
     await openTab(tester, 'Attendance');
     expect(find.text('Bob B'), findsOneWidget);
-    expect(find.text('Old Mark'), findsNothing, reason: 'only today\'s marks');
+    expect(find.text('411'), findsOneWidget, reason: 'counts come from the server, not from a downloaded list');
     expect(find.text('No tardies marked today.'), findsOneWidget);
+    expect(fake.sent('GET', '/api/attendance'), isEmpty, reason: 'no full attendance download');
+  });
+
+  testWidgets('going back to a tab shows it at once and refreshes it in the background', (tester) async {
+    var loads = 0;
+    final fake = FakeServer({
+      'GET /api/attendance/day': (_) {
+        loads++;
+        return {'data': {'date': today(), 'counts': {'present': loads, 'absent': 1}, 'exceptions': [{'student_id': 's1', 'status': 'absent', 'display_name': 'Bob B'}]}};
+      },
+    }, role: 'vice_principal');
+    await launch(tester, fake);
+    await openTab(tester, 'Attendance');
+    expect(loads, 1);
+    await openTab(tester, 'Operations');
+    await tester.tap(find.text('Attendance').last);
+    await tester.pump();
+    expect(find.text('Bob B'), findsOneWidget, reason: 'shown straight away, no spinner');
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.pumpAndSettle();
+    expect(loads, 2, reason: 'and refreshed in the background');
+    expect(find.text('2'), findsOneWidget, reason: 'with the fresh numbers');
   });
 
   testWidgets('librarian: scanner check-in returns the active loan; checkout looks up the borrower card', (tester) async {
