@@ -43,7 +43,7 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     idp = await startIdp();
     provider = await fakeProvider();
     const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app, AI_PROVIDER: "openai_compatible", AI_ALLOW_EXTERNAL_PROVIDER: "true",
-      AI_PROVIDER_URL: provider.url, AI_PROVIDER_MODEL: "fake-model", AI_ALLOW_INSECURE_LOOPBACK: "true", AI_PROVIDER_TIMEOUT_MS: "1000",
+      AI_PROVIDER_URL: provider.url, AI_PROVIDER_MODEL: "fake-model", AI_PROVIDER_ALLOWED_HOSTS: "127.0.0.1", AI_ALLOW_INSECURE_LOOPBACK: "true", AI_PROVIDER_TIMEOUT_MS: "1000",
       CHRISTIE_PROVIDER: "openai_compatible", CHRISTIE_ALLOW_EXTERNAL_PROVIDER: "true", CHRISTIE_PROVIDER_URL: provider.url, CHRISTIE_PROVIDER_MODEL: "fake-tutor" });
     const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
     assert.equal(migrated.code, 0, migrated.out);
