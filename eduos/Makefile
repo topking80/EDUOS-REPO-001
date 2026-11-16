@@ -6,7 +6,7 @@ DC = EDUOS_ENV_FILE=$(DEV_ENV) docker compose --env-file $(DEV_ENV) -f docker-co
 
 
 .PHONY: eden-sim eden-sim-down
-.PHONY: up down down-volumes logs ps seed smoke smoke-browser smoke-mobile smoke-safety smoke-learning edal-verify retention notify metrics trust-ca test test-integration check
+.PHONY: up down down-volumes logs ps seed smoke smoke-browser smoke-mobile smoke-safety smoke-learning smoke-csp edal-verify retention notify metrics trust-ca test test-integration check
 up:            ## build, start, migrate, seed; prints URL and demo logins
 	./scripts/dev-up.sh
 down:          ## stop the stack, keep data
