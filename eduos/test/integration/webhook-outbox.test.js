@@ -308,9 +308,16 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     for (const sid of subs) for (let i = 0; i < 3; i++) await job(sid);
     let now = 0, peak = 0;
     const send = async () => { now++; peak = Math.max(peak, now); await new Promise(r => setTimeout(r, 30)); now--; return delivered(); };
-    const claimed = await Promise.all([1, 2, 3, 4].map(() => work(supt1, { send, limit: 3, limiter })));
-    assert.equal(claimed.reduce((a, b) => a + b, 0), 9);
+    // Workers claim only what the limiter can start (one each when it's full),
+    // so keep running rounds of four until the queue is empty.
+    let total = 0;
+    for (let round = 0; round < 10 && total < 9; round++) {
+      total += (await Promise.all([1, 2, 3, 4].map(() => work(supt1, { send, limit: 3, limiter })))).reduce((a, b) => a + b, 0);
+    }
+    assert.equal(total, 9, "every job delivered");
     assert.equal(peak, 2, `at most two deliveries at once (saw ${peak})`);
+    const left = await admin.query("SELECT count(*)::int AS n FROM webhook_outbox WHERE subscription_id = ANY($1) AND status<>'delivered'", [subs]);
+    assert.equal(left.rows[0].n, 0);
   });
 
   it("during a signing-key rotation each delivery carries both signatures; the receiver's old secret still verifies", async () => {
@@ -364,8 +371,12 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
       return { outcome: "http_error", statusCode: 500, durationMs: 1 };
     };
 
-    const workerA = work(supt1, { send: workerASend });
+    const warnings = [];
+    const workerA = work(supt1, { send: workerASend, log: { error: () => {}, warn: (msg, detail) => warnings.push([msg, detail]) } });
     await workerA;
+    assert.equal(warnings.length, 1, "the stale worker's request is logged, not lost");
+    assert.match(warnings[0][0], /lost its lease was not recorded/);
+    assert.deepEqual([warnings[0][1].deliveryId, warnings[0][1].outcome, warnings[0][1].statusCode], [j.delivery_id, "http_error", 500]);
     assert.equal((await ledger(j.delivery_id)).length, 0,
       "the stale worker must not reserve the unique attempt row");
     releaseB();

@@ -63,5 +63,30 @@ test("webhook lease is renewed only after a concurrency slot is acquired", async
   assert.deepEqual(order, ["claim"]);
   releaseSlot();
   await Promise.all([occupied, processing]);
-  assert.deepEqual(order, ["claim", "subscription", "renew", "deliver", "ledger", "settle"]);
+  // Settle first: only the lease holder writes the attempt to the ledger.
+  assert.deepEqual(order, ["claim", "subscription", "renew", "deliver", "settle", "ledger"]);
+});
+
+test("a worker claims no more jobs than there are free delivery slots", async () => {
+  const limiter = createLimiter(3);
+  let releaseSlot;
+  const occupied = limiter.run(() => new Promise(resolve => { releaseSlot = resolve; }));
+  let claimLimit;
+  const withTenantTransaction = async (_actor, callback) => callback({
+    query: async (sql, params) => {
+      if (sql.includes("WITH candidates AS")) { claimLimit = params[0]; return { rows: [], rowCount: 0 }; }
+      throw new Error("Unexpected SQL in test: " + sql.slice(0, 100));
+    }
+  });
+  const run = () => processWebhookOutbox({ districtId: "d", userId: "scheduler", role: "scheduler" }, { limit: 25 },
+    { withTenantTransaction, signingKey: "k".repeat(40), limiter, log: { warn() {}, error() {} } });
+  await run();
+  assert.equal(claimLimit, 2, "three slots, one busy");
+  const busy = [limiter.run(() => new Promise(() => {})), limiter.run(() => new Promise(() => {}))];
+  await run();
+  assert.equal(claimLimit, 1, "no free slot: claim one, never zero");
+  releaseSlot(); await occupied; void busy;
+  await processWebhookOutbox({ districtId: "d", userId: "s", role: "s" }, { limit: 25 },
+    { withTenantTransaction, signingKey: "k".repeat(40), log: { warn() {}, error() {} } });
+  assert.equal(claimLimit, 25, "without a limiter the requested batch size stands");
 });

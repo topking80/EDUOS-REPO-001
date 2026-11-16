@@ -26,6 +26,7 @@ export function createLimiter(max) {
   const waiting = [];
   const limit = Math.max(1, Number(max) || 1);
   return {
+    get capacity() { return limit; },
     get active() { return active; },
     get waiting() { return waiting.length; },
     async run(fn) {
@@ -51,7 +52,12 @@ export async function processWebhookOutbox(actorInput, { limit = 10 } = {}, deps
     leaseSeconds = JOB_LEASE_SECONDS, jobDeadlineMs = JOB_DEADLINE_MS } = deps;
   if (!(jobDeadlineMs > 0 && jobDeadlineMs < leaseSeconds * 1000)) throw new Error("jobDeadlineMs must be above 0 and below the lease");
   if (!signingKey) return 0;
-  const actor = tenantActor(actorInput); const safeLimit = Math.max(1, Math.min(25, Number(limit) || 10));
+  const actor = tenantActor(actorInput);
+  // Claim no more jobs than this process can start delivering now: a job
+  // claimed while every slot is busy would wait in the limiter queue, its
+  // claim could run out, and it would only be skipped and claimed again.
+  const free = Number.isFinite(limiter.capacity) ? Math.max(1, limiter.capacity - limiter.active - limiter.waiting) : Infinity;
+  const safeLimit = Math.max(1, Math.min(25, Number(limit) || 10, free));
   const claimed = await withTenantTransaction(actor, async client => {
     const rows = await client.query(
       `WITH candidates AS (
@@ -125,7 +131,13 @@ export async function processWebhookOutbox(actorInput, { limit = 10 } = {}, deps
         // A stale worker must not write an attempt outcome either. Otherwise
         // its late failure can win the unique (delivery_id, attempt) slot before
         // the current lease holder records a successful delivery.
-        if (settled.rowCount === 0) return;
+        if (settled.rowCount === 0) {
+          // The request did go out; keep a trace of it without touching the
+          // ledger (no payload, no URL).
+          log.warn?.('Webhook attempt by a worker that lost its lease was not recorded', {
+            jobId: job.id, deliveryId: job.delivery_id, attempt: attemptNo, outcome: result.outcome, statusCode: result.statusCode ?? null });
+          return;
+        }
         await client.query(
           `INSERT INTO webhook_deliveries(district_id,subscription_id,delivery_id,event_id,event_type,attempt,outcome,status_code,duration_ms)
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
