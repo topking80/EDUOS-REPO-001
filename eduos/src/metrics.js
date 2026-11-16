@@ -36,7 +36,7 @@ export function metricsMiddleware(req, res, next) {
 }
 
 const label = v => String(v).replace(/["\\\n]/g, "_");
-export function renderMetrics({ version, poolStats = null } = {}) {
+export function renderMetrics({ version, poolStats = null, backlog = undefined } = {}) {
   const lines = [
     "# HELP eduos_build_info EduOS build information.", "# TYPE eduos_build_info gauge",
     `eduos_build_info{version="${label(version)}"} 1`,
@@ -69,17 +69,42 @@ export function renderMetrics({ version, poolStats = null } = {}) {
       `eduos_db_pool_connections{state="total"} ${poolStats.total}`, `eduos_db_pool_connections{state="idle"} ${poolStats.idle}`,
       `eduos_db_pool_connections{state="waiting"} ${poolStats.waiting}`);
   }
+  // Queue backlog: totals and ages only (no district, recipient or content).
+  // `backlog` is null when the query failed, so alerting can tell "no data"
+  // from "empty queue".
+  if (backlog !== undefined) {
+    lines.push("# HELP eduos_queue_backlog_up Whether the queue backlog could be read (1) or not (0).", "# TYPE eduos_queue_backlog_up gauge",
+      `eduos_queue_backlog_up ${backlog ? 1 : 0}`);
+    if (backlog) {
+      lines.push("# HELP eduos_queue_jobs Delivery jobs by queue and state (ready = due now, leased = being sent, delayed = waiting to retry).", "# TYPE eduos_queue_jobs gauge");
+      for (const r of backlog) lines.push(`eduos_queue_jobs{queue="${label(r.queue)}",state="${label(r.state)}"} ${Number(r.jobs)}`);
+      lines.push("# HELP eduos_queue_oldest_ready_seconds Age of the oldest job that is due and not yet sent.", "# TYPE eduos_queue_oldest_ready_seconds gauge");
+      for (const r of backlog.filter(r => r.state === "ready")) lines.push(`eduos_queue_oldest_ready_seconds{queue="${label(r.queue)}"} ${Math.max(0, Number(r.oldest_seconds)).toFixed(0)}`);
+    }
+  }
   return lines.join("\n") + "\n";
 }
 
-export function metricsHandler({ token, version, poolStats }) {
+/** Read the queue backlog at most once per `ttlMs`; concurrent scrapes share one query. */
+export function cachedBacklog(read, { ttlMs = 15000, now = Date.now, log = console } = {}) {
+  let value, at = -Infinity, inflight = null;
+  return async () => {
+    if (now() - at < ttlMs) return value;
+    inflight ??= read().then(rows => rows, error => { log.warn?.(`queue backlog unavailable: ${error.message}`); return null; })
+      .then(rows => { value = rows; at = now(); inflight = null; return rows; });
+    return inflight;
+  };
+}
+
+export function metricsHandler({ token, version, poolStats, backlog }) {
   const expected = token ? crypto.createHash("sha256").update(token).digest() : null;
-  return (req, res) => {
+  return async (req, res) => {
     if (!expected) return res.status(404).json({ error: "not_found" });
     const supplied = /^Bearer (\S{1,256})$/.exec(req.get("authorization") || "")?.[1] || "";
     const digest = crypto.createHash("sha256").update(supplied).digest();
     if (!supplied || !crypto.timingSafeEqual(digest, expected)) return res.status(401).json({ error: "metrics_token_required" });
     res.setHeader("Cache-Control", "no-store");
-    res.type("text/plain; version=0.0.4").send(renderMetrics({ version, poolStats: poolStats?.() }));
+    const queues = backlog ? await backlog() : undefined;
+    res.type("text/plain; version=0.0.4").send(renderMetrics({ version, poolStats: poolStats?.(), backlog: queues }));
   };
 }

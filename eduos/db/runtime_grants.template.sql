@@ -313,3 +313,6 @@ GRANT UPDATE (outcome, provider, tokens_in, tokens_out) ON ai_usage TO eduos_app
 -- 043: the app tokenizes text with the same functions the student index uses.
 GRANT EXECUTE ON FUNCTION eduos_redact_tokens(text), eduos_redact_compact(text), eduos_redact_is_nospace(text) TO eduos_app;
 GRANT SELECT ON student_redact_tokens TO eduos_app;
+
+-- 048: aggregate queue backlog for /metrics (totals and ages only).
+GRANT EXECUTE ON FUNCTION eduos_queue_backlog() TO eduos_app;

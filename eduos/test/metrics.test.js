@@ -43,3 +43,38 @@ test("each metric family's samples are contiguous, and buckets are cumulative", 
   for (let i = 1; i < buckets.length; i++) assert.ok(buckets[i] >= buckets[i - 1], "cumulative");
   assert.equal(buckets.at(-1), 1);
 });
+
+test("queue backlog renders totals and oldest age only, and says when it is unavailable", () => {
+  const rows = [
+    { queue: "webhook", state: "ready", jobs: "3", oldest_seconds: 42.7 },
+    { queue: "webhook", state: "dead_letter", jobs: "1", oldest_seconds: 0 },
+    { queue: "notification", state: "ready", jobs: "0", oldest_seconds: 0 },
+    { queue: "notification", state: "failed", jobs: "2", oldest_seconds: 0 }
+  ];
+  const out = renderMetrics({ version: "test", backlog: rows });
+  assert.match(out, /^eduos_queue_backlog_up 1$/m);
+  assert.match(out, /^eduos_queue_jobs\{queue="webhook",state="ready"\} 3$/m);
+  assert.match(out, /^eduos_queue_jobs\{queue="notification",state="failed"\} 2$/m);
+  assert.match(out, /^eduos_queue_oldest_ready_seconds\{queue="webhook"\} 43$/m);
+  assert.match(out, /^eduos_queue_oldest_ready_seconds\{queue="notification"\} 0$/m);
+  assert.doesNotMatch(out, /oldest_ready_seconds\{queue="webhook",state/);
+  const down = renderMetrics({ version: "test", backlog: null });
+  assert.match(down, /^eduos_queue_backlog_up 0$/m);
+  assert.doesNotMatch(down, /eduos_queue_jobs/);
+  assert.doesNotMatch(renderMetrics({ version: "test" }), /eduos_queue_/, "no backlog section unless a provider is configured");
+});
+
+test("queue backlog is read at most once per interval, shared by concurrent scrapes, and failures read as unavailable", async () => {
+  const { cachedBacklog } = await import("../src/metrics.js");
+  let t = 0, calls = 0, fail = false;
+  const read = async () => { calls++; if (fail) throw new Error("db down"); return [{ queue: "webhook", state: "ready", jobs: 1, oldest_seconds: 0 }]; };
+  const warned = [];
+  const get = cachedBacklog(read, { ttlMs: 1000, now: () => t, log: { warn: m => warned.push(m) } });
+  const [a, b] = await Promise.all([get(), get()]);
+  assert.equal(calls, 1); assert.deepEqual(a, b);
+  t = 500; await get(); assert.equal(calls, 1, "cached within the interval");
+  t = 1500; fail = true; assert.equal(await get(), null); assert.equal(calls, 2);
+  assert.match(warned[0], /db down/);
+  t = 1600; assert.equal(await get(), null, "a failure is cached too, so a down database isn't hammered");
+  t = 2600; fail = false; assert.equal((await get()).length, 1);
+});

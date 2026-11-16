@@ -30,6 +30,8 @@ stack behind Caddy (the CI `e2e` job).
 | A revoked, expired or de-scoped session can't keep receiving realtime events | `release-gate.test.js` → operations event stream (sign-out, expiry, membership revoked) |
 | Webhook retries and administration don't cross tenants | `webhook-outbox.test.js`, `release-gate.test.js` → webhook subscriptions |
 | A migration failure prevents production startup | `postgres.test.js` (the API refuses to start when a migration is missing; migrate refuses unsafe roles) |
+| Upgrading a populated database from an older release works with the production roles: the migrator runs as the non-superuser owner and applies only the newer migrations; data backfills reach existing rows in every district; the runtime role still owns nothing, every district table except the four sign-in tables has forced RLS, no SECURITY DEFINER function is executable by PUBLIC; a second run changes nothing; the API starts and serves only the caller's district | `test/integration/upgrade-path.test.js` (older release = through migration 040) |
+| Webhook and notification backlog is visible to monitoring without exposing any district, recipient or message: jobs due, being sent, waiting to retry and dead-lettered/failed, and the age of the oldest due job | `test/metrics.test.js`, `upgrade-path.test.js` (`/metrics` against the upgraded database) |
 | The CSP works for every deployed frontend route | `test/csp-caddy-matches-app.test.js` (the Caddyfile matches `src/csp.js`), `dev/csp-smoke.mjs` in CI e2e (headers through the edge on every static page and script, then every role's screens in Chrome with nothing blocked) |
 
 ## What the notification outcomes mean
@@ -59,6 +61,30 @@ signed-out, expired or idle session, or a disabled account or membership, ends
 the stream with an `event: session_ended` frame. The stream doesn't count as
 activity, so a dashboard left open with no other requests ends at the session
 idle timeout (`SESSION_IDLE_MINUTES`) like any other idle session.
+
+## Queue backlog metrics
+
+`GET /metrics` (when `METRICS_TOKEN` is set) includes, read at most every 15
+seconds from `eduos_queue_backlog()` (totals across all districts):
+
+- `eduos_queue_jobs{queue="webhook"|"notification",state=...}`: `ready` (due
+  and not being sent), `leased` (being sent), `delayed` (waiting to retry),
+  and `dead_letter` (webhooks) or `failed` (email/SMS/push given up).
+- `eduos_queue_oldest_ready_seconds{queue=...}`: how long the oldest due job
+  has waited. Suggested alerts: above 300 for webhooks or 120 for
+  notifications for 10 minutes (the dispatcher is down or too slow), or any
+  increase in `dead_letter` / `failed`.
+- `eduos_queue_backlog_up`: 0 when the backlog could not be read; alert on it
+  rather than reading a missing series as an empty queue.
+
+## Writing migrations that change existing rows
+
+Migrations run as the table owner with no district set, and most tenant
+policies have no owner exception, so an `UPDATE`, `DELETE` or
+`INSERT ... SELECT` over a tenant table silently matches nothing. Do such
+work in a `DO` block that sets `app.district_id` for each district in turn
+(see `db/049_rls_backfill_repair.sql`), and extend `upgrade-path.test.js` to
+seed a row it must change.
 
 ## Not covered by this gate
 
