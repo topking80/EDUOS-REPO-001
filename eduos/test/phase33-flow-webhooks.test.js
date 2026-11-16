@@ -84,8 +84,8 @@ test("Retry-After accepts bounded delta-seconds and HTTP dates, rejects malforme
   assert.equal(parseRetryAfter("120", now), 120);
   assert.equal(parseRetryAfter("0", now), 0);
   assert.equal(parseRetryAfter("7200", now), 3600, "receiver delay is capped at one hour");
-  assert.equal(parseRetryAfter("Sun, 16 Nov 2026 14:02:30 GMT", now), 150);
-  assert.equal(parseRetryAfter("Sun, 16 Nov 2026 13:59:00 GMT", now), 0);
+  assert.equal(parseRetryAfter("Mon, 16 Nov 2026 14:02:30 GMT", now), 150);
+  assert.equal(parseRetryAfter("Mon, 16 Nov 2026 13:59:00 GMT", now), 0);
   for (const bad of [undefined, null, "", "soon", "-1", "1.5", "999999999999", "Mon, not-a-date"])
     assert.equal(parseRetryAfter(bad, now), null, String(bad));
 });
