@@ -38,6 +38,7 @@ function mockApi(role, pathname) {
     case "/api/safety/status": return { data: { incidents: [], canInitiate: false, canLead: false } };
     case "/api/home": return { data: { school_name: "Maple", students: 4, absent_today: 1, open_cases: 0, overdue_follow_ups: 0, pending_invitations: 0, schools: 1, urgent_cases: 0, absences_7d: 1 } };
     case "/api/attendance": return { data: [{ id: "e1", event_date: today(), status: "absent", display_name: "Bob B" }] };
+    case "/api/attendance/day": return { data: { date: today(), counts: { present: 3, absent: 1, tardy: 0, excused: 0 }, exceptions: [{ student_id: "s1", status: "absent", display_name: "Bob B" }] } };
     case "/api/school-operations/command-center": return { data: { summary: [], work: [{ id: "w1", domain: "facilities", kind: "repair", status: "open", priority: "high", summary: "Gym door", escalation_level: 0, created_at: now }] } };
     case "/api/staff-management": return { data: { absences: [], shifts: [], coverage: [], staffing: [] } };
     case "/api/transport/today": return { data: { routes: [], riders: [] } };
