@@ -66,29 +66,45 @@ export async function processWebhookOutbox(actorInput, { limit = 10 } = {}, deps
   });
   for (const job of claimed) {
     try {
-      // The batch was claimed together but is delivered one job at a time, so
-      // a later job's claim could run out while earlier ones are being sent and
-      // another worker could take it (2026-11-16 audit). Renew this job's lease
-      // just before its delivery; if another worker has it, leave it alone.
-      const renewed = await withTenantTransaction(actor, client => client.query(
-        `UPDATE webhook_outbox SET lease_until=now()+make_interval(secs => $3::float8),updated_at=now()
-          WHERE id=$1 AND lease_token=$2 AND status='processing' AND lease_until>now()`, [job.id, job.lease_token, leaseSeconds]));
-      if (!renewed.rowCount) { log.warn?.('Webhook outbox lease lost before delivery', { jobId: job.id }); continue; }
-      const subscription = await withTenantTransaction(actor, client => client.query(
-        `SELECT id,url FROM webhook_subscriptions WHERE id=$1 AND status='active'`, [job.subscription_id]));
-      if (!subscription.rowCount) {
-        await withTenantTransaction(actor, client => client.query(
-          `UPDATE webhook_outbox SET status='cancelled',lease_until=NULL,lease_token=NULL,completed_at=now(),updated_at=now() WHERE id=$1 AND lease_token=$2`, [job.id, job.lease_token]));
-        continue;
-      }
       const attemptNo = Number(job.attempts) + 1;
       const secrets = [deriveWebhookSecret(signingKey, job.subscription_id), ...(previousSigningKey ? [deriveWebhookSecret(previousSigningKey, job.subscription_id)] : [])];
-      let timer;
-      const attempts = await limiter.run(() => Promise.race([
-        deliver({ subscription: subscription.rows[0], secret: secrets[0], secrets,
-          eventType: job.event_type, deliveryId: job.delivery_id, body: JSON.stringify(job.payload), options: { ...deliveryOptions, maxAttempts: 1 } }),
-        new Promise(resolve => { timer = setTimeout(() => resolve([{ attempt: 1, outcome: "timeout", statusCode: null, durationMs: jobDeadlineMs, reason: "job_deadline" }]), jobDeadlineMs); timer.unref?.(); })
-      ]).finally(() => clearTimeout(timer)));
+
+      // Acquire a concurrency slot BEFORE renewing the lease. Otherwise a job
+      // can renew, sit in the limiter queue, and expire before its HTTP request
+      // starts; a second worker may then reclaim and deliver the same event.
+      // Read the subscription first, then renew as the final DB operation before
+      // starting the bounded delivery window.
+      const delivery = await limiter.run(async () => {
+        const subscription = await withTenantTransaction(actor, client => client.query(
+          `SELECT id,url FROM webhook_subscriptions WHERE id=$1 AND status='active'`, [job.subscription_id]));
+        if (!subscription.rowCount) {
+          await withTenantTransaction(actor, client => client.query(
+            `UPDATE webhook_outbox SET status='cancelled',lease_until=NULL,lease_token=NULL,completed_at=now(),updated_at=now() WHERE id=$1 AND lease_token=$2`, [job.id, job.lease_token]));
+          return { cancelled: true };
+        }
+
+        const renewed = await withTenantTransaction(actor, client => client.query(
+          `UPDATE webhook_outbox SET lease_until=now()+make_interval(secs => $3::float8),updated_at=now()
+            WHERE id=$1 AND lease_token=$2 AND status='processing' AND lease_until>now()`, [job.id, job.lease_token, leaseSeconds]));
+        if (!renewed.rowCount) {
+          log.warn?.('Webhook outbox lease lost before delivery', { jobId: job.id });
+          return { leaseLost: true };
+        }
+
+        let timer;
+        const attempts = await Promise.race([
+          Promise.resolve().then(() => deliver({ subscription: subscription.rows[0], secret: secrets[0], secrets,
+            eventType: job.event_type, deliveryId: job.delivery_id, body: JSON.stringify(job.payload), options: { ...deliveryOptions, maxAttempts: 1 } })),
+          new Promise(resolve => {
+            timer = setTimeout(() => resolve([{ attempt: 1, outcome: "timeout", statusCode: null, durationMs: jobDeadlineMs, reason: "job_deadline" }]), jobDeadlineMs);
+            timer.unref?.();
+          })
+        ]).finally(() => clearTimeout(timer));
+        return { attempts };
+      });
+
+      if (delivery.cancelled || delivery.leaseLost) continue;
+      const attempts = delivery.attempts;
       const result = attempts[attempts.length - 1];
       await withTenantTransaction(actor, async client => {
         await client.query(
