@@ -247,16 +247,26 @@ class AttendanceTodayScreen extends StatelessWidget {
       load: () async {
         // The counts cover the day; the students who weren't present come a
         // page at a time (a snow day can be thousands).
+        // Every page is fetched (no ceiling); if a later page fails, what
+        // arrived is shown with a notice instead of silently stopping short.
         final base = '/api/attendance/day?date=${isoDate(DateTime.now())}';
         final day = obj((await app.api.get(base))['data']);
         final all = [...objs(day['exceptions'])];
         var next = obj(day['page'])['nextOffset'];
-        for (var pages = 1; next is int && pages < 20; pages++) {
-          final more = obj((await app.api.get('$base&offset=$next'))['data']);
-          all.addAll(objs(more['exceptions']));
-          next = obj(more['page'])['nextOffset'];
+        var incomplete = false;
+        while (next is int && next >= all.length && next > 0) {
+          try {
+            final more = obj((await app.api.get('$base&offset=$next'))['data']);
+            final page = objs(more['exceptions']);
+            all.addAll(page);
+            final after = obj(more['page'])['nextOffset'];
+            next = page.isEmpty ? null : after;
+          } on ApiException {
+            incomplete = true;
+            break;
+          }
         }
-        return {...day, 'exceptions': all};
+        return {...day, 'exceptions': all, 'incomplete': incomplete};
       },
       builder: (context, day, _) {
         final counts = obj(day['counts']), exceptions = objs(day['exceptions']);
@@ -273,6 +283,9 @@ class AttendanceTodayScreen extends StatelessWidget {
                 Expanded(child: StatTile(integer(counts['tardy']), 'tardy', warnWhenPositive: true)),
               ]),
           (_) => const SizedBox(height: 8),
+          if (day['incomplete'] == true)
+            (_) => Notice('Showing ${exceptions.length} of ${integer(counts['absent']) + integer(counts['tardy']) + integer(counts['excused'])} students who weren\'t present; '
+                'the rest didn\'t load. Pull down to try again.'),
           ..._section('Absent', absent, 'No absences marked today.'),
           ..._section('Tardy', tardy, 'No tardies marked today.'),
           (_) => const Notice('Marks come from teachers\' class registers. Follow-ups go in the Operations queue.'),

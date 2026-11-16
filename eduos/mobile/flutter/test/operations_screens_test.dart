@@ -136,6 +136,36 @@ void main() {
     expect(fake.sent('GET', '/api/attendance'), isEmpty, reason: 'no full attendance download');
   });
 
+  Map<String, Object?> dayPage(int offset, {required int pages}) => {'data': {
+        'date': today(), 'counts': {'present': 10, 'absent': pages, 'tardy': 0, 'excused': 0},
+        'exceptions': [{'student_id': 's$offset', 'status': 'absent', 'display_name': 'Student ${offset.toString().padLeft(2, '0')}'}],
+        'page': {'limit': 1, 'offset': offset, 'nextOffset': offset + 1 < pages ? offset + 1 : null}}};
+
+  testWidgets('attendance today fetches every page, with no ceiling', (tester) async {
+    final fake = FakeServer({
+      'GET /api/attendance/day': (r) => dayPage(int.tryParse(r.url.queryParameters['offset'] ?? '0') ?? 0, pages: 30),
+    }, role: 'vice_principal');
+    await launch(tester, fake);
+    await openTab(tester, 'Attendance');
+    expect(fake.sent('GET', '/api/attendance/day'), hasLength(30), reason: 'all 30 pages, past the old 20-page stop');
+    expect(find.textContaining("the rest didn't load"), findsNothing);
+  });
+
+  testWidgets('attendance today says so when a later page fails, instead of stopping short silently', (tester) async {
+    final fake = FakeServer({
+      'GET /api/attendance/day': (r) {
+        final offset = int.tryParse(r.url.queryParameters['offset'] ?? '0') ?? 0;
+        if (offset == 2) return http.Response('{"error":"unavailable"}', 503);
+        return dayPage(offset, pages: 5);
+      },
+    }, role: 'vice_principal');
+    await launch(tester, fake);
+    await openTab(tester, 'Attendance');
+    expect(find.text('Student 00'), findsOneWidget);
+    expect(find.text('Student 01'), findsOneWidget);
+    expect(find.textContaining("Showing 2 of 5 students who weren't present; the rest didn't load."), findsOneWidget);
+  });
+
   testWidgets('going back to a tab shows it at once and refreshes it in the background', (tester) async {
     var loads = 0;
     final fake = FakeServer({
