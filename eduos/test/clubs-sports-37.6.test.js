@@ -36,6 +36,8 @@ test("paid checkout and livestream playback remain fail-closed", async () => {
  assert.match(routes, /event_checkin_staff_required/);
  assert.match(routes, /student_activity_membership_required/);
  assert.match(routes, /event_not_completed/);
+ assert.match(routes, /published_result_requires_school_lead/);
+ assert.match(routes, /jersey_number_already_in_use/);
  assert.match(routes, /recording_allowed,created_by\)[\s\S]*false/);
  assert.doesNotMatch(routes, /cardNumber|cvv|payment_secret/i);
 });
