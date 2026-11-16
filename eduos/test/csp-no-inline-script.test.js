@@ -76,8 +76,8 @@ test("Caddy CSP matches the application CSP for script restrictions", () => {
 
   assert.match(caddyPolicy, /script-src\s+'self'/, "Caddy CSP must set script-src 'self'");
   assert.match(caddyPolicy, /script-src-attr\s+'none'/, "Caddy CSP must set script-src-attr 'none'");
-  assert.doesNotMatch(caddyPolicy, /script-src\s+.*unsafe-inline/i);
-  assert.doesNotMatch(caddyPolicy, /script-src-attr\s+.*unsafe-inline/i);
+  assert.doesNotMatch(caddyPolicy, /(?:^|;)\s*script-src\s+[^;]*unsafe-inline/i);
+  assert.doesNotMatch(caddyPolicy, /(?:^|;)\s*script-src-attr\s+[^;]*unsafe-inline/i);
 
   const caddyDirectives = parseCsp(caddyPolicy);
   const appDirectives = parseCsp(applicationCspHeader());
