@@ -243,6 +243,39 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     for (const j of jobs) assert.equal((await outbox(j.id)).status, "delivered");
   });
 
+  it("a worker queued for delivery capacity cannot send after its lease is reclaimed", async () => {
+    await clearQueue();
+    const s = await subscription();
+    const j = await job(s);
+    const { createLimiter } = await import("../../src/webhook-outbox.js");
+    const limiter = createLimiter(1);
+    let release;
+    const occupied = limiter.run(() => new Promise(resolve => { release = resolve; }));
+    const waitForQueue = async expected => {
+      for (let i = 0; i < 100; i++) {
+        if (limiter.waiting >= expected) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.fail(`expected ${expected} queued deliveries, saw ${limiter.waiting}`);
+    };
+    const sends = [];
+    const send = async req => { sends.push(req.headers["X-EduOS-Delivery"]); return delivered(); };
+
+    // A claims the event but cannot start delivery because the only slot is busy.
+    const a = work(supt1, { send, limit: 1, limiter, leaseSeconds: 1, jobDeadlineMs: 800 });
+    await waitForQueue(1);
+    // Its lease expires while waiting. B legitimately reclaims the same row.
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    const b = work(supt1, { send, limit: 1, limiter, leaseSeconds: 1, jobDeadlineMs: 800 });
+    await waitForQueue(2);
+    release();
+    await Promise.all([occupied, a, b]);
+
+    assert.deepEqual(sends, [j.delivery_id], "only the current lease holder may send");
+    assert.equal((await outbox(j.id)).status, "delivered");
+    assert.equal((await ledger(j.delivery_id)).length, 1, "only one attempt is recorded");
+  });
+
   it("a delivery that hangs is cut off inside its lease and retried later", async () => {
     await clearQueue();
     const s = await subscription();
