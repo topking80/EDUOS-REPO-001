@@ -52,11 +52,11 @@ test("public pages load no styles, scripts or fonts from another origin", async 
 
 test("the application registers the shared CSP middleware before routes and static files", () => {
   const server = readFileSync(new URL("../src/server.js", import.meta.url), "utf8");
-  const cspImport = /import\\s+\\{\\s*cspDirectives\\s*\\}\\s+from\\s+["']\\.\\/csp\\.js["']/.test(server);
-  const helmetRegistration = /app\\.use\\(helmet\\(\\{\\s*contentSecurityPolicy:\\s*\\{\\s*directives:\\s*cspDirectives\\s*\\}\\s*\\}\\)\\)/.exec(server);
+  const cspImport = /import\s+\{\s*cspDirectives\s*\}\s+from\s+["']\.\/csp\.js["']/.test(server);
+  const helmetRegistration = /app\.use\(helmet\(\{\s*contentSecurityPolicy:\s*\{\s*directives:\s*cspDirectives\s*\}\s*\}\)\)/.exec(server);
   assert.ok(cspImport, "server must import the canonical CSP directives");
   assert.ok(helmetRegistration, "server must register Helmet with the canonical CSP directives");
-  const firstRoute = server.search(/app\\.(?:get|post|put|patch|delete)\\(/);
+  const firstRoute = server.search(/app\.(?:get|post|put|patch|delete)\(/);
   const staticMiddleware = server.indexOf("app.use(express.static");
   assert.ok(firstRoute > helmetRegistration.index, "CSP middleware must be registered before API routes");
   assert.ok(staticMiddleware > helmetRegistration.index, "CSP middleware must be registered before static files");
@@ -64,7 +64,7 @@ test("the application registers the shared CSP middleware before routes and stat
 
 test("the Caddyfile defines one authoritative CSP header and no later override", () => {
   const caddy = readFileSync(new URL("../Caddyfile", import.meta.url), "utf8");
-  const declarations = caddy.match(/^\\s*\\??Content-Security-Policy\\b/gmi) || [];
+  const declarations = caddy.match(/^\s*\??Content-Security-Policy\b/gmi) || [];
   assert.equal(declarations.length, 1, "Caddy must have exactly one CSP header declaration");
-  assert.match(caddy, /^\\s*\\?Content-Security-Policy\\s+"/mi, "Caddy should only supply its CSP when the upstream has not supplied one");
+  assert.match(caddy, /^\s*\?Content-Security-Policy\s+"/mi, "Caddy should only supply its CSP when the upstream has not supplied one");
 });
