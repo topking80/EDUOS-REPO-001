@@ -235,4 +235,78 @@ export function registerClubsSportsRoutes(app) {
    [req.params.id,a.districtId,a.schoolId,DISTRICT(a.role)]);
   return r?{...r,playbackEnabled:false,reason:"stream_provider_not_connected"}:null;
  }));
+ // 37.8.0 media governance. Storage is deliberately not exposed by these APIs.
+ app.get("/api/activities/:id/media",requireSession,wrap(async(c,req)=>{
+  const a=req.actor;if(!validId(req.params.id))throw new HttpError(400,"invalid_activity_id");
+  const activity=await scopedActivity(c,a,req.params.id);if(!activity)throw new HttpError(404,"activity_not_found");
+  if(!LEAD(a.role)&&!await canManage(c,a,activity.id))throw new HttpError(403,"media_staff_access_required");
+  return rows(c,`SELECT m.id,m.activity_id,m.event_id,m.media_kind,m.mime_type,m.byte_size,m.consent_status,m.moderation_status,m.created_at,
+    (SELECT count(*)::int FROM activity_media_participants p WHERE p.media_asset_id=m.id) AS participant_count,
+    (SELECT count(*)::int FROM activity_media_participants p WHERE p.media_asset_id=m.id AND p.consent_status='approved') AS consented_count
+   FROM activity_media_assets m WHERE m.district_id=$1 AND m.school_id=$2 AND m.activity_id=$3 ORDER BY m.created_at DESC LIMIT 200`,
+   [a.districtId,activity.school_id,activity.id]);
+ }));
+ app.post("/api/media/:id/participants",requireSession,requireCsrf,async(req,res,next)=>{
+  const a=req.actor,b=req.body||{};
+  if(!validId(req.params.id)||!Array.isArray(b.studentIds)||b.studentIds.length<1||b.studentIds.length>100||!b.studentIds.every(validId)||new Set(b.studentIds).size!==b.studentIds.length)return res.status(400).json({error:"invalid_media_participants"});
+  try{const data=await withTenantTransaction(a,async c=>{
+   const asset=await one(c,"SELECT * FROM activity_media_assets WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
+   if(!asset)throw new HttpError(404,"media_asset_not_found");
+   if(!asset.activity_id)throw new HttpError(409,"media_activity_required");
+   await requireActivityManager(c,a,asset.activity_id);
+   if(asset.school_id!==(a.schoolId||asset.school_id))throw new HttpError(403,"media_school_scope_denied");
+   if(asset.moderation_status!=="pending")throw new HttpError(409,"media_moderation_already_decided");
+   const students=await rows(c,"SELECT id FROM students WHERE district_id=$1 AND school_id=$2 AND id=ANY($3::uuid[])",[a.districtId,asset.school_id,b.studentIds]);
+   if(students.length!==b.studentIds.length)throw new HttpError(400,"participant_outside_media_school");
+   for(const studentId of b.studentIds)await c.query(`INSERT INTO activity_media_participants(district_id,school_id,media_asset_id,student_id,added_by)
+    VALUES($1,$2,$3,$4,$5) ON CONFLICT(district_id,media_asset_id,student_id) DO NOTHING`,[a.districtId,asset.school_id,asset.id,studentId,a.userId]);
+   await audit(c,req,"register_participants","activity_media_asset",asset.id,`participants=${b.studentIds.length}`);
+   return {mediaAssetId:asset.id,participantCount:(await one(c,"SELECT count(*)::int AS n FROM activity_media_participants WHERE media_asset_id=$1",[asset.id])).n,consentStatus:"pending"};
+  });res.status(201).json({data});}catch(e){sendError(res,next,e)}
+ });
+ app.post("/api/media/:id/consent",requireSession,requireCsrf,async(req,res,next)=>{
+  const a=req.actor,b=req.body||{};
+  if(a.role!=="parent"||!validId(req.params.id)||!validId(b.studentId)||typeof b.granted!=="boolean")return res.status(400).json({error:"invalid_guardian_media_consent"});
+  try{const data=await withTenantTransaction(a,async c=>{
+   const asset=await one(c,"SELECT id,district_id,school_id,activity_id,moderation_status FROM activity_media_assets WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
+   if(!asset)throw new HttpError(404,"media_asset_not_found");
+   const linked=await one(c,`SELECT 1 FROM student_user_links l JOIN students s ON s.id=l.student_id AND s.district_id=l.district_id
+    WHERE l.district_id=$1 AND l.student_id=$2 AND l.user_id=$3 AND l.relationship IN ('parent','guardian') AND l.status='active' AND s.school_id=$4`,
+    [a.districtId,b.studentId,a.userId,asset.school_id]);
+   if(!linked)throw new HttpError(403,"active_guardian_link_required");
+   const participant=await one(c,"SELECT id FROM activity_media_participants WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3 FOR UPDATE",[a.districtId,asset.id,b.studentId]);
+   if(!participant)throw new HttpError(404,"media_participant_not_registered");
+   await c.query(`INSERT INTO activity_media_consents(district_id,school_id,media_asset_id,student_id,guardian_user_id,status,decided_at)
+    VALUES($1,$2,$3,$4,$5,$6,now()) ON CONFLICT(district_id,media_asset_id,student_id,guardian_user_id)
+    DO UPDATE SET status=EXCLUDED.status,decided_at=now()`,
+    [a.districtId,asset.school_id,asset.id,b.studentId,a.userId,b.granted?"approved":"denied"]);
+   const guardianDecision=await one(c,`SELECT count(*)::int AS approvals FROM activity_media_consents
+     WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3 AND status='approved'`,[a.districtId,asset.id,b.studentId]);
+   const participantStatus=Number(guardianDecision.approvals)>0?"approved":"denied";
+   await c.query("UPDATE activity_media_participants SET consent_status=$3 WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$4",[a.districtId,asset.id,participantStatus,b.studentId]);
+   const aggregate=await one(c,`SELECT count(*)::int AS total,count(*) FILTER(WHERE consent_status='approved')::int AS approved,
+      count(*) FILTER(WHERE consent_status='denied')::int AS denied FROM activity_media_participants WHERE district_id=$1 AND media_asset_id=$2`,[a.districtId,asset.id]);
+   const overall=Number(aggregate.denied)>0?"denied":Number(aggregate.total)>0&&Number(aggregate.total)===Number(aggregate.approved)?"approved":"pending";
+   await c.query("UPDATE activity_media_assets SET consent_status=$3 WHERE district_id=$1 AND id=$2",[a.districtId,asset.id,overall]);
+   await audit(c,req,b.granted?"grant_media_consent":"deny_media_consent","activity_media_asset",asset.id,`student=${b.studentId}`);
+   return {mediaAssetId:asset.id,studentId:b.studentId,consentStatus:overall};
+  });res.json({data});}catch(e){sendError(res,next,e)}
+ });
+ app.patch("/api/media/:id/moderation",requireSession,requireCsrf,async(req,res,next)=>{
+  const a=req.actor,b=req.body||{};
+  if(!LEAD(a.role))return res.status(403).json({error:"school_lead_required"});
+  if(!validId(req.params.id)||!["approved","rejected"].includes(b.status))return res.status(400).json({error:"invalid_media_moderation"});
+  try{const data=await withTenantTransaction(a,async c=>{
+   const asset=await one(c,"SELECT * FROM activity_media_assets WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3) FOR UPDATE",[req.params.id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);
+   if(!asset)throw new HttpError(404,"media_asset_not_found");
+   const participants=await one(c,`SELECT count(*)::int AS total,count(*) FILTER(WHERE consent_status='approved')::int AS approved
+     FROM activity_media_participants WHERE district_id=$1 AND media_asset_id=$2`,[a.districtId,asset.id]);
+   if(b.status==="approved"&&(Number(participants.total)===0||Number(participants.total)!==Number(participants.approved)||asset.consent_status!=="approved"))
+    throw new HttpError(409,"all_guardian_consents_required");
+   const updated=await one(c,"UPDATE activity_media_assets SET moderation_status=$2,approved_by=$3 WHERE id=$1 RETURNING id,moderation_status,consent_status,approved_by",[asset.id,b.status,a.userId]);
+   await audit(c,req,b.status==="approved"?"approve_media":"reject_media","activity_media_asset",asset.id,`consent=${asset.consent_status}`);
+   return {...updated,publicationEnabled:false,reason:"private_storage_and_publication_adapter_not_configured"};
+  });res.json({data});}catch(e){sendError(res,next,e)}
+ });
+
 }
