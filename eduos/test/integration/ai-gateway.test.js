@@ -23,6 +23,10 @@ describe("staff AI gateway against real PostgreSQL", { skip }, () => {
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
     // Today's attendance: two marks at S1 (Alice present, Bob absent), one at S2 (Carol tardy).
+    // "Today" in each school's time zone, as the app computes it: that needs the
+    // district context (without it eduos_school_today() falls back to UTC, and
+    // in a US evening that's already tomorrow).
+    await admin.query("SELECT set_config('app.district_id', $1, false)", [ID.d1]);
     await admin.query(`INSERT INTO attendance_events(district_id, student_id, event_date, status) VALUES
       ($1,$2,eduos_school_today($5),'present'),($1,$3,eduos_school_today($5),'absent'),($1,$4,eduos_school_today($6),'tardy')`,
       [ID.d1, ID.alice, ID.bob, ID.carol, ID.s1, ID.s2]);
