@@ -339,6 +339,42 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     assert.equal((await outbox(j.id)).status, "delivered");
   });
 
+  it("a stale worker cannot win the delivery ledger before the current lease holder", async () => {
+    await clearQueue();
+    const sid = await subscription();
+    const j = await job(sid);
+    let signalBStarted;
+    const bStarted = new Promise(resolve => { signalBStarted = resolve; });
+    let releaseB;
+    const holdB = new Promise(resolve => { releaseB = resolve; });
+    let workerB;
+
+    const workerASend = async () => {
+      // Expire A's lease while its delivery callback is still running.
+      await admin.query("UPDATE webhook_outbox SET lease_until=now()-interval '1 second' WHERE id=$1", [j.id]);
+      workerB = work(supt1, {
+        send: async () => {
+          signalBStarted();
+          await holdB;
+          return delivered();
+        }
+      });
+      await bStarted;
+      // A returns first, but no longer owns the lease.
+      return { outcome: "http_error", statusCode: 500, durationMs: 1 };
+    };
+
+    const workerA = work(supt1, { send: workerASend });
+    await workerA;
+    assert.equal((await ledger(j.delivery_id)).length, 0,
+      "the stale worker must not reserve the unique attempt row");
+    releaseB();
+    await workerB;
+    assert.deepEqual(await ledger(j.delivery_id).then(rows => rows.map(x => [x.outcome, x.status_code])),
+      [["delivered", 204]]);
+    assert.equal((await outbox(j.id)).status, "delivered");
+  });
+
   it("a worker only sees its own district's queue", async () => {
     await clearQueue();
     const s = await subscription(), j = await job(s);
