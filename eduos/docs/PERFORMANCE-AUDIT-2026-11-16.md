@@ -32,7 +32,7 @@ In `src/transport-routes.js`, `GET /api/transport/today` has two query-amplifica
 1. Driver and principal/superintendent branches iterate routes and call `routeDetail()`. That helper independently queries stops and today's run, then (when riders are requested) riders and latest check-ins. Query count therefore grows with the number of routes.
 2. Teacher and family branches iterate each returned rider and issue another check-in query. Those queries are sequential, so response latency grows with roster size and round-trip latency.
 
-**Implemented on this branch:** the teacher/family rider view now fetches all visible check-in events with one paired-array query and groups them by (run_id, student_id). The tenant transaction and original teacher-roster / guardian-child scope remain unchanged, and the event response shape/order is preserved. A pure grouping helper and unit tests were added. The driver/principal route-detail loops and route hydration still need batching; no claim is made that all transport N+1 paths are fixed.
+**Implemented on this branch:** the teacher/family rider view now fetches all visible check-in events with one paired-array query and groups them by (run_id, student_id). The tenant transaction and original teacher-roster / guardian-child scope remain unchanged, and the event response shape/order is preserved. A pure grouping helper and unit tests were added. **Also implemented on this branch:** driver, principal/superintendent, and route-management views now hydrate stops, today's runs, riders, and latest check-ins in a fixed set of batched queries instead of querying each route separately. Existing route order, rider ordering, counts, role-scoped route selection, tenant transaction, and response fields are retained. Full PostgreSQL integration and query-count tests remain outstanding.
 
 ### P1 — Arrival reconciliation has correlated per-rider subqueries
 
@@ -102,7 +102,8 @@ Use warm-up plus repeated runs, report medians and confidence intervals, and com
 - [x] Source-level audit started on dedicated branch.
 - [ ] Production-like baseline load test.
 - [x] Teacher/family transport check-in N+1 reduced to one batched query; grouping unit tests added and passed in an isolated Node test run.
-- [ ] Driver/principal route hydration batching and full repository regression tests.
+- [x] Driver/principal/superintendent route hydration moved to batched child queries.
+- [ ] Full repository regression tests and PostgreSQL query-count verification.
 - [ ] Query-plan/index validation.
 - [ ] Notification worker lease refactor.
 - [ ] Metrics histograms and DB latency instrumentation.
