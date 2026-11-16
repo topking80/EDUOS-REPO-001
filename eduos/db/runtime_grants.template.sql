@@ -326,3 +326,8 @@ GRANT SELECT, INSERT ON event_ticket_orders, event_tickets, activity_media_asset
 REVOKE UPDATE, DELETE, TRUNCATE ON event_ticket_orders, event_tickets, activity_media_assets FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON school_activities, activity_staff, activity_memberships,
   school_events, event_ticket_types, event_streams FROM eduos_app;
+
+
+-- 37.7.0 Sports roster and result records.
+GRANT SELECT, INSERT, UPDATE ON activity_roster_entries, activity_event_results TO eduos_app;
+REVOKE DELETE, TRUNCATE ON activity_roster_entries, activity_event_results FROM eduos_app;
