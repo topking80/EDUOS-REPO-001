@@ -6,6 +6,9 @@ import { resolveWebhookTarget } from "../src/webhooks.js";
 test("AI provider URLs require an explicit approved host and clean HTTPS origin", () => {
   assert.equal(validateAiProviderUrl("https://api.vendor.example", []).reason, "ai_provider_allowlist_required");
   assert.equal(validateAiProviderUrl("https://api.vendor.example", ["vendor.example"]).ok, true);
+  assert.equal(validateAiProviderUrl("http://127.0.0.1:8080/v1", ["127.0.0.1"]).ok, false);
+  assert.equal(validateAiProviderUrl("http://127.0.0.1:8080/v1", ["127.0.0.1"], { allowInsecureLoopback: true }).ok, true);
+  assert.equal(validateAiProviderUrl("http://10.0.0.8:8080/v1", ["10.0.0.8"], { allowInsecureLoopback: true }).ok, false);
   for (const url of [
     "http://api.vendor.example", "https://user:secret@api.vendor.example",
     "https://127.0.0.1", "https://localhost", "https://api.vendor.example?token=secret", "https://not-approved.example"
