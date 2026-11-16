@@ -2,7 +2,7 @@
 
 **Release type:** Monitoring and operational-readiness increment  
 **Base:** 37.4.0  
-**Status:** Pull request / CI validation; not yet merged or deployed
+**Status:** Merged to `main` in commit `b91e4b16ceabf437f95fdcd0892b4915801a8e1e`; not deployed
 
 ## Added
 
@@ -27,10 +27,11 @@
 
 See `docs/OPERATIONS-QUEUE-ALERTS.md`.
 
-## Validation gates
+## Validation status
 
-- GitHub Actions unit, PostgreSQL integration, security, edge, mobile and end-to-end checks.
-- Prometheus rule syntax validation with `promtool`.
-- Operator verification of authenticated scrape and alert routing.
+- GitHub Actions CI run #257 passed unit, PostgreSQL integration, security, edge, mobile and end-to-end checks on the merged pull-request head.
+- Dependency-update-validation run #15 passed lockfile, reproducible install, dependency audit, SBOM/license and regression checks.
+- Prometheus rule syntax validation with `promtool` remains outstanding.
+- Operator verification of authenticated scrape and alert routing remains outstanding and must occur in the target deployment environment.
 
 No production deployment or live district validation is claimed by this release note.
