@@ -302,3 +302,7 @@ REVOKE DELETE, TRUNCATE ON ai_district_policy, ai_usage FROM eduos_app;
 
 -- 042: a usage row is reserved, then settled (only these columns change).
 GRANT UPDATE (outcome, provider, tokens_in, tokens_out) ON ai_usage TO eduos_app;
+
+-- 043: the app tokenizes text with the same functions the student index uses.
+GRANT EXECUTE ON FUNCTION eduos_redact_tokens(text), eduos_redact_compact(text), eduos_redact_is_nospace(text) TO eduos_app;
+GRANT SELECT ON student_redact_tokens TO eduos_app;

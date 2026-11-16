@@ -4,8 +4,9 @@ import { config } from "../config.js";
 import { requireSession, requireCsrf } from "../auth.js";
 import { withTenantTransaction } from "../db.js";
 import { HttpError, audit, sendError } from "../role-app-util.js";
-import { USECASES, POLICY_EDITORS, POLICY_READERS, denial, policyOf, usedToday, reserveBudget, opsContext, namesToRedact, estimateTokens } from "./gateway.js";
-import { createProvider, externalRequestBody, maxTokensFor, localProvider, capLocalOutput } from "./providers.js";
+import { USECASES, POLICY_EDITORS, POLICY_READERS, denial, policyOf, usedToday, reserveBudget, lockDistrictAi, opsContext } from "./gateway.js";
+import { createProvider, externalRequestBody, maxTokensFor, localProvider, capLocalOutput, localUnits, OUTPUT_MAX_TOKENS } from "./providers.js";
+import { findStudentIdentifiers } from "../student-identifiers.js";
 
 /** Runs the model, but never longer than the deadline: then the local answer. */
 function withDeadline(work, ms, fallback) {
@@ -49,29 +50,37 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
         const input = usecase === "ops_brief" ? { context: await opsContext(c, a) } : { text };
         // Any pasted text may name a student: find every student in the
         // district it names (failing here sends nothing anywhere).
-        const names = external && usecase !== "ops_brief" ? await namesToRedact(c, a, text) : [];
+        const identifiers = external && usecase !== "ops_brief" ? await findStudentIdentifiers(c, a.districtId, text) : { names: [], numbers: [] };
         // Reserve a hard upper bound for exactly what would be sent (system
         // prompt, redacted text, output cap), whatever the tokenizer.
-        const reserve = maxTokensFor(externalRequestBody({ model: "", usecase, input, names }));
-        const id = await reserveBudget(c, a, p, usecase, reserve).catch(e => { if (e.status === 429) throw new HttpError(429, e.message); throw e; });
-        return { input, names, id, reserve };
+        const reserve = maxTokensFor(externalRequestBody({ model: "", usecase, input, identifiers }));
+        const id = await reserveBudget(c, a, usecase, reserve).catch(e => { if (e.status === 429 || e.status === 403) throw new HttpError(e.status, e.message); throw e; });
+        return { input, identifiers, id, reserve };
       });
       reservation = prep.id;
       // 2. The model (outside any transaction).
-      const out = await withDeadline(provider.generate(usecase, prep.input, { names: prep.names }), config.aiProviderTimeoutMs + 5000,
+      const out = await withDeadline(provider.generate(usecase, prep.input, { identifiers: prep.identifiers }), config.aiProviderTimeoutMs + 5000,
         async () => ({ text: capLocalOutput(await localProvider.generate(usecase, prep.input)), fallback: true }));
-      const tokensIn = out.usage?.prompt_tokens ?? estimateTokens(prep.input.text ?? JSON.stringify(prep.input.context));
-      const tokensOut = out.usage?.completion_tokens ?? estimateTokens(out.text);
-      // 3. Settle the reservation to what was used (no prompt, no answer) and audit.
-      //    The reservation is a proven upper bound, so usage above it means the
-      //    provider reported more than it could have used: record what it
-      //    reported (that is what it will bill) and flag it.
+      // 3. Settle the reservation (no prompt, no answer) and audit. Never
+      //    settle below what may really have been used:
+      //    - reported: the provider's own usage numbers;
+      //    - reserved: an external provider was called but gave no usable
+      //      usage report, failed or timed out (it may still have processed
+      //      and billed the request): the full reservation stands;
+      //    - local: no external provider; EduOS's own meter (4 bytes a unit).
+      let tokensIn, tokensOut, basis;
+      if (!external) { basis = "local"; tokensIn = localUnits(prep.input.text ?? JSON.stringify(prep.input.context)); tokensOut = localUnits(out.text); }
+      else if (!out.fallback && out.usage) { basis = "reported"; tokensIn = out.usage.prompt_tokens; tokensOut = out.usage.completion_tokens; }
+      else { basis = "reserved"; tokensIn = prep.reserve - OUTPUT_MAX_TOKENS; tokensOut = OUTPUT_MAX_TOKENS; }
+      // The reservation is a proven upper bound, so usage above it means the
+      // provider reported more than it could have used: record what it
+      // reported (that is what it will bill) and flag it.
       const over = tokensIn + tokensOut > prep.reserve;
       if (over) console.error(`ai usage ${tokensIn + tokensOut} exceeded its reservation ${prep.reserve} (district ${a.districtId})`);
       await withTenantTransaction(a, async (c) => {
         await c.query(`UPDATE ai_usage SET provider=$2, outcome=$3, tokens_in=$4, tokens_out=$5 WHERE id=$1 AND outcome='pending'`,
           [reservation, out.fallback || !external ? "local" : "openai_compatible", out.fallback ? "fallback" : "ok", tokensIn, tokensOut]);
-        await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${tokensIn}+${tokensOut}; reserved=${prep.reserve}; provider=${external && !out.fallback ? "external" : "local"}${over ? "; over_reservation" : ""}`);
+        await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${tokensIn}+${tokensOut}; usage=${basis}; reserved=${prep.reserve}; provider=${external && !out.fallback ? "external" : "local"}${over ? "; over_reservation" : ""}`);
       });
       reservation = null;
       res.setHeader("Cache-Control", "no-store");
@@ -109,6 +118,8 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
     if (!ok) return res.status(400).json({ error: "invalid_ai_policy" });
     try {
       const data = await withTenantTransaction(a, async (c) => {
+        // Same lock as budget reservations: a change and a request never overlap.
+        await lockDistrictAi(c, a.districtId);
         const r = (await c.query(`INSERT INTO ai_district_policy(district_id, enabled_usecases, daily_token_cap, user_daily_token_cap, updated_by, updated_at)
             VALUES ($1,$2,$3,$4,$5,now()) ON CONFLICT (district_id) DO UPDATE SET enabled_usecases=EXCLUDED.enabled_usecases,
               daily_token_cap=EXCLUDED.daily_token_cap, user_daily_token_cap=EXCLUDED.user_daily_token_cap, updated_by=EXCLUDED.updated_by, updated_at=now()

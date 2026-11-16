@@ -9,13 +9,19 @@
 //                        network calls.
 //   openai_compatible    optional; only when CHRISTIE_PROVIDER=openai_compatible
 //                        AND CHRISTIE_ALLOW_EXTERNAL_PROVIDER=true (config.js
-//                        refuses anything else). The request carries no student
-//                        identifiers: no ids, names, school, grade or email; the
-//                        learner's question is redacted first. A reply that
-//                        reveals the answer, fails or times out is replaced by
-//                        the local reply.
+//                        refuses anything else). The request carries no ids,
+//                        school, grade or email, and EVERY field in it is
+//                        sanitized first (outboundHelpFields): the learner's
+//                        question, and also the lesson title, approved lesson,
+//                        problem and hints, lose the names and numbers of any
+//                        student in the district. Approved for teaching doesn't
+//                        mean free of personal information. Only the sanitized
+//                        copy is ever serialized; without one, nothing is sent.
+//                        The local tutor keeps the original content. A reply
+//                        that reveals the answer, fails or times out is
+//                        replaced by the local reply.
 import { bestPassage, leaksAnswer, MESSAGES } from "./tutor.js";
-import { removeNames } from "../redact-names.js";
+import { removeIdentifiers } from "../redact-names.js";
 
 const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/g;
 const URL_RE = /\bhttps?:\/\/\S+/gi;
@@ -24,13 +30,40 @@ const STUDENT_NO = /\b[A-Z]{2,5}-\d{2,}\b/g;
 const LONG_DIGITS = /\b\d{6,}\b/g;
 
 /** Remove identifiers from learner text before it could leave the server. */
-export function redact(text, { names = [], max = 500 } = {}) {
-  let out = String(text || "").slice(0, max);
-  out = out.replace(EMAIL, "[removed]").replace(URL_RE, "[removed]").replace(STUDENT_NO, "[removed]")
+export function redact(text, { names = [], numbers = [], max = 500 } = {}) {
+  // Known students first (names in any script; student numbers as whole
+  // phrases, src/redact-names.js), so the generic patterns below can't cut a
+  // stored number in half before it is recognized. Then anything id-like.
+  const out = removeIdentifiers(String(text || "").slice(0, max), { names: names.filter(Boolean), numbers });
+  return out.replace(EMAIL, "[removed]").replace(URL_RE, "[removed]").replace(STUDENT_NO, "[removed]")
     .replace(PHONE, m => (m.replace(/\D/g, "").length >= 9 ? "[removed]" : m)).replace(LONG_DIGITS, "[removed]");
-  // Names in any script, initials and hyphenated names (src/redact-names.js).
-  return removeNames(out, names.filter(Boolean));
 }
+
+/**
+ * Approved teaching content on its way out: student names and numbers and
+ * email addresses are removed. Unlike redact(), digits are left alone (a
+ * maths problem is full of them) and nothing is cut.
+ */
+export function redactContent(text, identifiers = {}) {
+  return removeIdentifiers(String(text ?? "").replace(EMAIL, "[removed]"), { names: identifiers.names || [], numbers: identifiers.numbers || [] });
+}
+
+/**
+ * The sanitized copy of a help request: the only thing an external provider
+ * is ever sent. `identifiers` are the district students named anywhere in
+ * these fields (src/student-identifiers.js); `ownNames` the learner's and
+ * signed-in user's names.
+ */
+export function outboundHelpFields({ question, skillTitle, explanation, prompt, unlockedHints = [] }, identifiers = {}, ownNames = []) {
+  const ids = { names: [...(identifiers.names || []), ...ownNames.filter(Boolean)], numbers: identifiers.numbers || [] };
+  return Object.freeze({ sanitized: true,
+    question: redact(question, ids), skillTitle: redactContent(skillTitle, ids), explanation: redactContent(explanation, ids),
+    prompt: redactContent(prompt, ids), unlockedHints: unlockedHints.map(h => redactContent(h, ids)) });
+}
+
+/** Every text field of a help request, for finding whom it names. */
+export const helpFieldsText = ({ question, skillTitle, explanation, prompt, unlockedHints = [] }) =>
+  [question, skillTitle, explanation, prompt, ...unlockedHints].filter(Boolean).join("\n");
 
 export const localProvider = Object.freeze({
   name: "local",
@@ -62,11 +95,13 @@ export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, fetchI
     name: "openai_compatible",
     async help(input) {
       const fallback = () => localProvider.help(input);
+      // Only a sanitized copy may leave. No copy: nothing is sent.
+      if (input.outbound?.sanitized !== true) { log("christie: no sanitized request; using local reply"); return { ...(await fallback()), fallback: true }; }
       try {
         const res = await fetchImpl(endpoint, {
           method: "POST",
           headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
-          body: JSON.stringify(externalRequestBody({ model, ...input })),
+          body: JSON.stringify(externalRequestBody({ model, ...input.outbound })),
           signal: AbortSignal.timeout(timeoutMs)
         });
         if (!res.ok) { log(`christie provider HTTP ${res.status}; using local reply`); return { ...(await fallback()), fallback: true }; }

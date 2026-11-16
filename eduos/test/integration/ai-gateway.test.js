@@ -27,6 +27,9 @@ describe("staff AI gateway against real PostgreSQL", { skip }, () => {
     // district context (without it eduos_school_today() falls back to UTC, and
     // in a US evening that's already tomorrow).
     await admin.query("SELECT set_config('app.district_id', $1, false)", [ID.d1]);
+    // Put S1 where its date is never UTC's date right now (12 hours behind in
+    // the UTC morning, 14 ahead otherwise), to tell the two apart.
+    await admin.query("UPDATE schools SET timezone = $1 WHERE id = $2", [new Date().getUTCHours() < 12 ? "Etc/GMT+12" : "Etc/GMT-14", ID.s1]);
     await admin.query(`INSERT INTO attendance_events(district_id, student_id, event_date, status) VALUES
       ($1,$2,eduos_school_today($5),'present'),($1,$3,eduos_school_today($5),'absent'),($1,$4,eduos_school_today($6),'tardy')`,
       [ID.d1, ID.alice, ID.bob, ID.carol, ID.s1, ID.s2]);
@@ -66,8 +69,14 @@ describe("staff AI gateway against real PostgreSQL", { skip }, () => {
     assert.equal(p.status, 200, JSON.stringify(p.body));
     assert.equal(p.body.data.basis.scope, "school");
     assert.deepEqual(p.body.data.basis.attendance, { marked: 2, present: 1, tardy: 0, absent: 1, excused: 0 }, "S1 only");
+    // The brief is dated with the school's own date (the day its attendance is for), not UTC's.
+    const schoolDay = (await admin.query("SELECT eduos_school_today($1)::text AS d", [ID.s1])).rows[0].d;
+    assert.notEqual(schoolDay, new Date().toISOString().slice(0, 10), "the fixture's school date differs from UTC's");
+    assert.equal(p.body.data.basis.day, schoolDay);
+    assert.match(p.body.data.text, new RegExp(schoolDay));
     const d = await runAi("supt1", "ops_brief");
     assert.equal(d.body.data.basis.scope, "district");
+    assert.ok(d.body.data.basis.day.split(" / ").includes(schoolDay), d.body.data.basis.day);
     assert.equal(d.body.data.basis.attendance.marked, 3, "the whole district");
     assert.ok(!JSON.stringify(d.body.data.basis).match(/Alice|Bob|Carol|S1-A/), "no names or student numbers");
   });

@@ -3,10 +3,10 @@
 // bounds of the staff assistant (src/ai/).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { removeNames } from "../src/redact-names.js";
-import { redact } from "../src/christie/providers.js";
-import { candidateTokens, RESERVATION_TTL_MINUTES, MAX_REQUEST_MS } from "../src/ai/gateway.js";
-import { externalRequestBody, maxTokensFor, localProvider, capLocalOutput, OUTPUT_MAX_TOKENS, LOCAL_OUTPUT_MAX_CHARS } from "../src/ai/providers.js";
+import { removeNames, removeIdentifiers } from "../src/redact-names.js";
+import { redact, redactContent, outboundHelpFields, externalRequestBody as christieBody } from "../src/christie/providers.js";
+import { RESERVATION_TTL_MINUTES, MAX_REQUEST_MS } from "../src/ai/gateway.js";
+import { externalRequestBody, maxTokensFor, localProvider, capLocalOutput, localUnits, validUsage, OUTPUT_MAX_TOKENS, LOCAL_OUTPUT_MAX_BYTES } from "../src/ai/providers.js";
 
 const CASES = [
   ["Cyrillic", "Мария Иванова", "Отчёт: Мария Иванова отсутствовала. Мария пришла позже, Иванова тоже.", ["Мария", "Иванова"]],
@@ -39,8 +39,32 @@ test("ordinary words that merely contain a name part are left alone", () => {
   assert.equal(removeNames("A is a letter; Alice A left.", ["Alice A"]), "A is a letter; [name] left.");
 });
 
-test("words of any script are candidates, one character or more", () => {
-  assert.deepEqual(candidateTokens("Мария, 李小龍 and A B (2026-55417)"), ["Мария", "李小龍", "and", "A", "B", "2026-55417"]);
+test("names stored with punctuation: each part is removed on its own", () => {
+  assert.equal(removeNames("Doe was late; Jane too. Jane Doe.", ["Doe, Jane"]), "[name] was late; [name] too. [name] [name].");
+  assert.equal(removeNames("Okonkwo-Reyes needs follow-up.", ["Marisol Okonkwo-Reyes"]), "[name] needs follow-up.");
+  assert.equal(removeNames("Brien and O'Brien.", ["Siobhán O\u2019Brien"]), "[name] and [name].");
+});
+
+test("one-character parts go only with the whole name (documented policy)", () => {
+  assert.equal(removeNames("Q left; Q Z and Q. Z. stayed.", ["Q Z"]), "Q left; [name] and [name]. stayed.");
+  assert.equal(removeNames("李明今天缺席，明天见。", ["李 明"]), "[name]今天缺席，明天见。");
+});
+
+test("student numbers are removed as phrases, however they are punctuated", () => {
+  const ids = { numbers: ["SIS 2026 55417", "A/2026/001", "S1-0042", "77"] };
+  const out = removeIdentifiers("IDs: SIS 2026 55417, SIS-2026-55417, SIS202655417; A/2026/001 and A 2026 001; S1-0042; room 77. Year 2026 stays, 770 stays.", ids);
+  assert.equal(out, "IDs: [removed], [removed], [removed]; [removed] and [removed]; [removed]; room [removed]. Year 2026 stays, 770 stays.");
+});
+
+test("Christie: every outbound field is sanitized; maths digits survive", () => {
+  const ids = { names: ["Marisol Okonkwo-Reyes", "Doe, Jane"], numbers: ["SIS 2026 55417"] };
+  const out = outboundHelpFields({ question: "Did Jane get this? my id is SIS 2026 55417", skillTitle: "Fractions with Marisol",
+    explanation: "Okonkwo-Reyes shared 123456 + 654321 apples. Write to teacher@school.example.", prompt: "Doe has 1/2 of 1000000.", unlockedHints: ["Ask Marisol.", "Halve it."] }, ids, ["Ava Morgan"]);
+  const sent = JSON.stringify(christieBody({ model: "m", ...out }));
+  for (const leak of ["Jane", "Doe", "Marisol", "Okonkwo", "Reyes", "55417", "school.example"]) assert.ok(!sent.includes(leak), `${leak} in ${sent}`);
+  assert.match(sent, /123456 \+ 654321/, "lesson arithmetic is untouched");
+  assert.match(sent, /1\/2 of 1000000/);
+  assert.equal(redactContent("No names here: 3 + 4 = 7.", ids), "No names here: 3 + 4 = 7.");
 });
 
 test("the reservation is a hard bound for any tokenizer: at least one byte per token", () => {
@@ -55,10 +79,28 @@ test("the reservation is a hard bound for any tokenizer: at least one byte per t
 test("local answers are cut to the output cap", async () => {
   const long = Array.from({ length: 40 }, (_, i) => `Sentence ${i} ${"word ".repeat(400)}.`).join(" ");
   const raw = await localProvider.generate("resource_summary", { text: long });
-  assert.ok(raw.length > LOCAL_OUTPUT_MAX_CHARS, "this input does produce a long answer");
+  assert.ok(Buffer.byteLength(raw) > LOCAL_OUTPUT_MAX_BYTES, "this input does produce a long answer");
   const capped = capLocalOutput(raw);
-  assert.ok(capped.length <= LOCAL_OUTPUT_MAX_CHARS);
-  assert.ok(Math.ceil(capped.length / 4) <= OUTPUT_MAX_TOKENS);
+  assert.ok(Buffer.byteLength(capped) <= LOCAL_OUTPUT_MAX_BYTES);
+  assert.ok(localUnits(capped) <= OUTPUT_MAX_TOKENS);
+});
+
+test("CJK-heavy local output is cut by bytes, on a character boundary, within the cap", async () => {
+  const cjk = Array.from({ length: 30 }, (_, i) => `第${i}句：${"教育資源內容".repeat(60)}。`).join("");
+  const raw = await localProvider.generate("resource_summary", { text: cjk });
+  const capped = capLocalOutput(raw);
+  assert.ok(raw.length > 1200 && Buffer.byteLength(capped) <= LOCAL_OUTPUT_MAX_BYTES, `${raw.length} chars`);
+  assert.ok(localUnits(capped) <= OUTPUT_MAX_TOKENS);
+  assert.ok(!capped.includes("\uFFFD"), "no broken character");
+  // And what it's metered at never exceeds what was reserved for it.
+  const reserve = maxTokensFor(externalRequestBody({ model: "", usecase: "resource_summary", input: { text: cjk } }));
+  assert.ok(localUnits(cjk.slice(0, 8000)) + localUnits(capped) <= reserve);
+});
+
+test("a usage report counts only if it is two non-negative integers", () => {
+  assert.deepEqual(validUsage({ prompt_tokens: 5, completion_tokens: 0, total_tokens: 5 }), { prompt_tokens: 5, completion_tokens: 0 });
+  for (const bad of [undefined, null, {}, { prompt_tokens: -1, completion_tokens: 1 }, { prompt_tokens: "5", completion_tokens: 1 }, { prompt_tokens: 1.5, completion_tokens: 1 }, { prompt_tokens: 1 }])
+    assert.equal(validUsage(bad), null);
 });
 
 test("a reservation outlives any request", () => {

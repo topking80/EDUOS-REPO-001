@@ -13,8 +13,6 @@
 // - Usage is recorded (use case, tokens, provider), never the prompt or the
 //   answer. Every call is audited.
 
-import { normalizeName } from "../redact-names.js";
-
 export const USECASES = Object.freeze({
   lesson_draft: { label: "Lesson draft", roles: ["teacher", "principal", "vice_principal", "superintendent"], input: { min: 3, max: 500 } },
   resource_summary: { label: "Summarize a resource", roles: ["teacher", "principal", "vice_principal", "superintendent", "counselor", "librarian"], input: { min: 20, max: 12000 } },
@@ -24,7 +22,6 @@ export const USECASES = Object.freeze({
 export const POLICY_EDITORS = ["superintendent"];
 export const POLICY_READERS = ["superintendent", "it_admin", "principal"];
 
-export const estimateTokens = (text) => Math.max(1, Math.ceil(String(text || "").length / 4));
 
 /** Why this caller can't run this use case, or null. Pure, for tests. */
 export function denial({ usecase, role, enabled }) {
@@ -64,10 +61,18 @@ export async function usedToday(c, districtId, userId) {
  * (a 'pending' usage row) before anything is sent to a model. Requests in one
  * district take turns here (a transaction-scoped advisory lock), so
  * simultaneous requests can't all pass the same check. Returns the
- * reservation id, or throws a 429 code.
+ * reservation id, or throws with a status (403 tool off, 429 budget).
  */
-export async function reserveBudget(c, actor, policy, usecase, reserve) {
-  await c.query("SELECT pg_advisory_xact_lock(hashtext('eduos-ai-budget'), hashtext($1::text))", [actor.districtId]);
+export const lockDistrictAi = (c, districtId) => c.query("SELECT pg_advisory_xact_lock(hashtext('eduos-ai-budget'), hashtext($1::text))", [districtId]);
+
+export async function reserveBudget(c, actor, usecase, reserve) {
+  await lockDistrictAi(c, actor.districtId);
+  // Read the policy only now, under the lock that policy changes also take:
+  // a request can't reserve against a budget or a tool the superintendent
+  // has just lowered or turned off.
+  const policy = await policyOf(c, actor.districtId);
+  const why = denial({ usecase, role: actor.role, enabled: policy.enabled_usecases });
+  if (why) throw Object.assign(new Error(why), { status: 403 });
   // A request that could never fit is refused as such, not as "used up".
   if (reserve > policy.daily_token_cap || reserve > policy.user_daily_token_cap) throw Object.assign(new Error("ai_request_exceeds_budget"), { status: 429 });
   const used = await usedToday(c, actor.districtId, actor.userId);
@@ -94,7 +99,9 @@ export async function opsContext(c, actor) {
   const by = Object.fromEntries(att.map(r => [r.status, r.n]));
   return {
     scope: school ? "school" : "district",
-    day: new Date().toISOString().slice(0, 10),
+    // The school's own date (the one its attendance is counted for), not UTC's.
+    day: (await c.query(`SELECT string_agg(DISTINCT eduos_school_today(id)::text, ' / ') AS d FROM schools
+        WHERE district_id = $1 AND status = 'active' AND ($2::uuid IS NULL OR id = $2)`, args)).rows[0].d || new Date().toISOString().slice(0, 10),
     schools: (await one("SELECT count(*)::int AS n FROM schools WHERE district_id = $1 AND status = 'active' AND ($2::uuid IS NULL OR id = $2)")).n,
     attendance: { marked: att.reduce((n, r) => n + r.n, 0), present: by.present || 0, tardy: by.tardy || 0, absent: by.absent || 0, excused: by.excused || 0 },
     activeSafetyIncidents: (await one("SELECT count(*)::int AS n FROM safety_incidents WHERE district_id = $1 AND ($2::uuid IS NULL OR school_id = $2) AND status IN ('pending','active','reunification')")).n,
@@ -103,38 +110,3 @@ export async function opsContext(c, actor) {
   };
 }
 
-/** The words of a text (any script, one character or more), for matching
- *  against student names and numbers. */
-export function candidateTokens(text) {
-  return [...new Set(normalizeName(text).split(/[^\p{L}\p{M}\p{N}'\-]+/u).filter(Boolean))].slice(0, 6000);
-}
-
-// Scripts written without spaces (and Korean, where particles attach to names).
-const NO_SPACE_TEXT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
-
-/**
- * Names and student numbers of any student in the district that appear in the
- * text, removed before it leaves the server (src/redact-names.js does the
- * removing; this finds whom to remove).
- *
- * District-wide for every role, with no row limit: the database finds the
- * students whose number, or any part of whose name (split on spaces and
- * hyphens, NFC, any script, even one letter), is a word of the text; and,
- * when the text contains Chinese, Japanese, Korean, Thai or similar script,
- * students whose name part in that script appears anywhere in it. Both sides
- * are lowercased by the same function, so it works whatever the database's
- * locale. Only the matches come back.
- */
-export async function namesToRedact(c, actor, text) {
-  const tokens = candidateTokens(text);
-  if (!tokens.length) return [];
-  const all = [...new Set([...tokens, ...tokens.map(t => t.toLowerCase())])];
-  const noSpace = NO_SPACE_TEXT.test(text) ? normalizeName(text) : null;
-  const r = await c.query(`SELECT display_name, local_student_number FROM students s
-     WHERE s.district_id = $1 AND (s.local_student_number = ANY($2::text[])
-       OR EXISTS (SELECT 1 FROM regexp_split_to_table(translate(normalize(s.display_name, NFC), chr(8217) || chr(8216), chr(39) || chr(39)), '[[:space:]-]+') AS w
-                   WHERE w <> '' AND (lower(w) IN (SELECT lower(x) FROM unnest($2::text[]) x)
-                     OR ($3::text IS NOT NULL AND w ~ '[\\u3040-\\u30ff\\u3400-\\u9fff\\uac00-\\ud7af\\u0e00-\\u0eff\\u1780-\\u17ff\\u1000-\\u109f]' AND strpos($3, w) > 0))))`,
-    [actor.districtId, all, noSpace]);
-  return r.rows.flatMap(x => [x.display_name, x.local_student_number]);
-}

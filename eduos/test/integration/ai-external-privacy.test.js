@@ -23,7 +23,8 @@ function fakeProvider() {
       const json = JSON.parse(body); received.push(json);
       const said = json.messages[1].content;
       if (said.includes("HANG-FOREVER")) return; // never answers
-      const usage = said.includes("INFLATE-USAGE") ? { prompt_tokens: 999999, completion_tokens: 1 } : { prompt_tokens: 50, completion_tokens: 900 };
+      const usage = said.includes("INFLATE-USAGE") ? { prompt_tokens: 999999, completion_tokens: 1 }
+        : said.includes("NO-USAGE") ? undefined : said.includes("BAD-USAGE") ? { prompt_tokens: -5, completion_tokens: "lots" } : { prompt_tokens: 50, completion_tokens: 900 };
       setTimeout(() => { res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ choices: [{ message: { content: "OK from the model" } }], usage })); }, 150);
     });
@@ -42,7 +43,8 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     idp = await startIdp();
     provider = await fakeProvider();
     const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app, AI_PROVIDER: "openai_compatible", AI_ALLOW_EXTERNAL_PROVIDER: "true",
-      AI_PROVIDER_URL: provider.url, AI_PROVIDER_MODEL: "fake-model", AI_ALLOW_INSECURE_LOOPBACK: "true", AI_PROVIDER_TIMEOUT_MS: "1000" });
+      AI_PROVIDER_URL: provider.url, AI_PROVIDER_MODEL: "fake-model", AI_ALLOW_INSECURE_LOOPBACK: "true", AI_PROVIDER_TIMEOUT_MS: "1000",
+      CHRISTIE_PROVIDER: "openai_compatible", CHRISTIE_ALLOW_EXTERNAL_PROVIDER: "true", CHRISTIE_PROVIDER_URL: provider.url, CHRISTIE_PROVIDER_MODEL: "fake-tutor" });
     const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
@@ -51,11 +53,14 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     await admin.query(`INSERT INTO students(district_id, school_id, local_student_number, display_name, grade_level)
       SELECT $1, $2, 'BULK-' || g, 'Pupil' || g || ' Sample', '4' FROM generate_series(1, 6000) g`, [ID.d1, ID.s2]);
     await admin.query(`INSERT INTO students(district_id, school_id, local_student_number, display_name, grade_level) VALUES ($1,$2,'2026-55417','Marisol Okonkwo-Reyes','5')`, [ID.d1, ID.s2]);
+    // Names and numbers stored with punctuation and separators.
+    await admin.query(`INSERT INTO students(district_id, school_id, local_student_number, display_name, grade_level) VALUES
+      ($1,$2,'A/2026/001','Doe, Jane','5'), ($1,$2,'SIS 2026 55417','Ravi Kumar','5'), ($1,$2,'77.431.K','Tomás de la Cruz','5')`, [ID.d1, ID.s2]);
     // Names in many scripts, one stored decomposed (NFD), and one of single letters.
     for (const [n, name] of Object.entries(INTERNATIONAL))
       await admin.query("INSERT INTO students(district_id, school_id, local_student_number, display_name, grade_level) VALUES ($1,$2,$3,$4,'4')", [ID.d1, ID.s2, `INTL-${n}`, name]);
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
-    for (const name of ["supt1", "p1", "t1", "vp1"]) s[name] = await login(server.base, idp, name, { email_verified: true });
+    for (const name of ["supt1", "p1", "t1", "vp1", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     const p = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000 });
     assert.equal(p.status, 200, JSON.stringify(p.body));
   });
@@ -91,6 +96,96 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     assert.match(sent, /END$/);
   });
 
+  it("surnames alone, names stored with commas, and student numbers with separators never reach the provider", async () => {
+    const cases = [
+      ["Okonkwo-Reyes needs follow-up on the reading plan this week.", ["Okonkwo", "Reyes"]],
+      ["Doe was late twice this week and needs a check-in call.", ["Doe"]],
+      ["MARISOL and jane were paired for the science project today.", ["MARISOL", "jane"]],
+      ["Plans needed for SIS 2026 55417, SIS-2026-55417, SIS202655417 and A/2026/001.", ["55417", "A/2026/001", "2026/001", "SIS"]],
+      ["Record 77.431.K and 77 431 K belong to Cruz, who moved schools.", ["431", "Cruz"]],
+    ];
+    for (const [text, leaks] of cases) {
+      const r = await runAi("supt1", "resource_summary", text);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const sent = sentText();
+      for (const leak of leaks) assert.ok(!sent.includes(leak), `"${leak}" reached the provider from "${text}": ${sent}`);
+    }
+    // Documented policy: a lone initial is not a name; the whole name is.
+    await runAi("supt1", "resource_summary", "Group Q met today; Q Z was absent from it.");
+    assert.equal(sentText(), "Group Q met today; [name] was absent from it.");
+  });
+
+  it("Christie: every field sent to an external tutor model is sanitized, not just the question", async () => {
+    const made = await as("t1")("POST", "/api/christie/skills", { subject: "Math", gradeLevel: "3", code: "G3.HALF", title: "Halves with Marisol",
+      explanation: "Okonkwo-Reyes (SIS 2026 55417) shared a pizza with 李小龍. In all there were 123456 + 654321 crumbs.",
+      items: [{ prompt: "Doe has 1/2 of 10 apples. How many apples?", answer: "5", hints: ["Ask Jane Doe how she halves.", "Split 10 into two equal groups."] }] });
+    assert.equal(made.status, 201, JSON.stringify(made.body));
+    assert.equal((await as("p1")("POST", `/api/christie/skills/${made.body.data.id}/approve`)).status, 200);
+    const sid = (await as("pu")("POST", "/api/christie/sessions", { skillId: made.body.data.id })).body.data.session.id;
+    const turn = (body) => as("pu")("POST", `/api/christie/sessions/${sid}/turns`, body);
+    const wrong = await turn({ kind: "attempt", text: "7" }); // unlocks the first hint
+    assert.match(wrong.body.data.replies[0].text, /Ask Jane Doe/, "the learner's own (local) hint is untouched");
+    const before = provider.received.length;
+    const asked = await turn({ kind: "question", text: "Why do Bob B and Carol split it differently than Мария Иванова?" });
+    assert.equal(asked.status, 200, JSON.stringify(asked.body));
+    assert.equal(provider.received.length, before + 1, "the external tutor was asked");
+    const body = provider.received.at(-1);
+    assert.equal(body.model, "fake-tutor");
+    const whole = JSON.stringify(body).normalize("NFC");
+    for (const leak of ["Marisol", "Okonkwo", "Reyes", "55417", "李小龍", "Doe", "Jane", "Bob", "Carol", "Мария", "Иванова", "Alice", "Pupil A"])
+      assert.ok(!whole.includes(leak), `"${leak}" reached the tutor provider: ${whole}`);
+    const sent = JSON.parse(body.messages[1].content);
+    assert.match(sent.approved_lesson, /123456 \+ 654321 crumbs/, "lesson arithmetic is left alone");
+    assert.match(sent.problem, /has 1\/2 of 10 apples/);
+    assert.deepEqual(sent.hints_already_shown, ["Ask [name] [name] how she halves."]);
+    assert.equal(asked.body.data.replies.at(-1).text, "OK from the model");
+  });
+
+  it("no usage report, or a nonsense one: the full reservation stands", async () => {
+    for (const marker of ["NO-USAGE", "BAD-USAGE"]) {
+      const r = await runAi("supt1", "resource_summary", `${"教育資源".repeat(500)} ${marker} end of resource.`);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(r.body.data.source, "external");
+      const row = (await admin.query("SELECT tokens_in + tokens_out AS n, outcome FROM ai_usage ORDER BY id DESC LIMIT 1")).rows[0];
+      const detail = (await admin.query("SELECT detail FROM audit_events WHERE action='ai_resource_summary' ORDER BY occurred_at DESC LIMIT 1")).rows[0].detail;
+      const reserved = Number(/usage=reserved; reserved=(\d+)/.exec(detail)?.[1]);
+      assert.ok(reserved > 6000, `${marker}: ${detail}`); // 2,000 CJK characters are 6,000 bytes
+      assert.equal(row.n, reserved, `${marker}: settled at the reservation, not at characters/4`);
+    }
+    const reported = (await admin.query("SELECT detail FROM audit_events WHERE action='ai_resource_summary' AND detail LIKE '%usage=reported%' LIMIT 1")).rows;
+    assert.equal(reported.length, 1, "reported usage is labelled as such");
+  });
+
+  it("a budget lowered while a request waits is the budget that request gets", async () => {
+    const lock = new pg.Client(db.adminUrl); await lock.connect();
+    try {
+      await lock.query("BEGIN");
+      await lock.query("SELECT pg_advisory_xact_lock(hashtext('eduos-ai-budget'), hashtext($1::text))", [ID.d1]);
+      const sentBefore = provider.received.length;
+      let done = false;
+      const pending = runAi("p1", "resource_summary", "A short resource about clouds and rain for year four.").then(r => { done = true; return r; });
+      await new Promise(r => setTimeout(r, 500));
+      assert.equal(done, false, "the request waits for the district lock");
+      // The request has already read the old, generous policy. Lower the cap, then let it go.
+      await lock.query("UPDATE ai_district_policy SET daily_token_cap = 5 WHERE district_id = $1", [ID.d1]);
+      await lock.query("COMMIT");
+      const r = await pending;
+      if (r.status === 200) assert.fail("the request reserved against the stale policy");
+      assert.equal(r.status, 429, JSON.stringify(r.body));
+      assert.equal(provider.received.length, sentBefore, "nothing was sent");
+      // A policy change takes the same lock, so it and a reservation never overlap.
+      await lock.query("BEGIN");
+      await lock.query("SELECT pg_advisory_xact_lock(hashtext('eduos-ai-budget'), hashtext($1::text))", [ID.d1]);
+      let saved = false;
+      const put = as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000 }).then(x => { saved = true; return x; });
+      await new Promise(x => setTimeout(x, 400));
+      assert.equal(saved, false, "the policy change waits for the district lock");
+      await lock.query("COMMIT");
+      assert.equal((await put).status, 200);
+    } finally { await lock.query("ROLLBACK").catch(() => {}); await lock.end(); }
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000 });
+  });
+
   it("a request bigger than a budget is refused before anything is sent", async () => {
     await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 20000 });
     const before = provider.received.length;
@@ -116,8 +211,12 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.data.source, "local");
     assert.ok(Date.now() - t0 < 10000, "cut off at the provider timeout");
-    const row = (await admin.query("SELECT outcome FROM ai_usage ORDER BY id DESC LIMIT 1")).rows[0];
+    const row = (await admin.query("SELECT outcome, tokens_in + tokens_out AS n FROM ai_usage ORDER BY id DESC LIMIT 1")).rows[0];
     assert.equal(row.outcome, "fallback");
+    // The provider was sent the request and may still process and bill it:
+    // the reservation is kept in full, not released.
+    const detail = (await admin.query("SELECT detail FROM audit_events WHERE action='ai_resource_summary' ORDER BY occurred_at DESC LIMIT 1")).rows[0].detail;
+    assert.equal(row.n, Number(/usage=reserved; reserved=(\d+)/.exec(detail)?.[1]), detail);
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM ai_usage WHERE outcome='pending'")).rows[0].n, 0);
   });
 
@@ -143,10 +242,10 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     const cap = used + 3700;
     await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: cap, userDailyTokenCap: 1000000 });
     const sentBefore = provider.received.length;
-    const results = await Promise.all(Array.from({ length: 20 }, (_, i) => runAi(i % 2 ? "p1" : "supt1", "lesson_draft", "Volcanoes")));
+    const results = await Promise.all(Array.from({ length: 20 }, (_, i) => runAi(i % 2 ? "p1" : "t1", "lesson_draft", "Volcanoes")));
     const ok = results.filter(r => r.status === 200).length;
     assert.ok(ok >= 1 && ok <= 3, `${ok} requests got through (each uses 950 of the 3,700 left)`);
-    assert.ok(results.every(r => r.status === 200 || r.body.error === "ai_district_budget_reached"), JSON.stringify(results.map(r => r.status)));
+    assert.ok(results.every(r => r.status === 200 || r.body.error === "ai_district_budget_reached"), JSON.stringify(results.map(r => r.body?.error || r.status)));
     assert.equal(provider.received.length - sentBefore, ok, "only requests within budget reached the provider");
     const after = (await admin.query("SELECT coalesce(sum(tokens_in + tokens_out), 0)::int AS n, count(*) FILTER (WHERE outcome = 'pending')::int AS pending FROM ai_usage WHERE district_id = $1", [ID.d1])).rows[0];
     assert.ok(after.n <= cap, `used ${after.n} of ${cap}`);
