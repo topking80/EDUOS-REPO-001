@@ -5,14 +5,15 @@
 // minute from a scheduler, as the migration OWNER role like the other jobs:
 //   DATABASE_URL=<owner url> node src/webhook-dispatch.js
 //   docker compose --profile ops run --rm webhooks
-// It uses the same worker as the API (src/webhook-outbox.js): leases, SKIP
+// The API also runs it every WEBHOOK_DISPATCH_INTERVAL_SECONDS (default 60), so
+// cron is optional. It uses the same worker as the API (src/webhook-outbox.js): leases, SKIP
 // LOCKED claims, backoff, dead-lettering and auto-disable are shared, so it is
 // safe to run alongside API-triggered processing and alongside itself.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool } from "./db.js";
 import { config } from "./config.js";
-import { processWebhookOutbox } from "./webhook-outbox.js";
+import { processWebhookOutbox, createLimiter } from "./webhook-outbox.js";
 
 /** A tenant transaction for scheduled jobs: district-scoped RLS, no user identity. */
 export function districtTransaction(db) {
@@ -32,13 +33,13 @@ export function districtTransaction(db) {
 }
 
 export async function dispatchWebhooks({
-  db = pool, signingKey = config.webhookSigningKey,
+  db = pool, signingKey = config.webhookSigningKey, previousSigningKey = config.webhookPreviousSigningKey || null,
   deliveryOptions = { allowInsecureLoopback: config.webhookAllowInsecureLoopback, allowedHosts: config.webhookAllowedHosts },
-  deliver, maxPerDistrict = 200, log = console
+  deliver, maxPerDistrict = 200, log = console, limiter = createLimiter(config.webhookMaxInFlight)
 } = {}) {
   if (!signingKey) return { skipped: "webhooks_not_configured", claimed: 0 };
   const districts = (await db.query("SELECT id FROM districts WHERE status='active' ORDER BY id")).rows;
-  const deps = { withTenantTransaction: districtTransaction(db), signingKey, deliveryOptions, log, ...(deliver ? { deliver } : {}) };
+  const deps = { withTenantTransaction: districtTransaction(db), signingKey, previousSigningKey, deliveryOptions, log, limiter, ...(deliver ? { deliver } : {}) };
   let claimed = 0;
   for (const { id } of districts) {
     const actor = { districtId: id, userId: "scheduler", role: "scheduler" };

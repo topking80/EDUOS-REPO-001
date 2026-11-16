@@ -28,7 +28,10 @@ const blocked = new net.BlockList();
 for (const [prefix, bits] of [
   ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16],
   ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24], ["192.88.99.0", 24], ["192.168.0.0", 16],
-  ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4]
+  ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4],
+  // IANA special-purpose (RFC 6890 registry) not covered above: AS112 and
+  // AMT relays, which no webhook receiver lives on.
+  ["192.31.196.0", 24], ["192.52.193.0", 24], ["192.175.48.0", 24]
 ]) blocked.addSubnet(prefix, bits, "ipv4");
 for (const [prefix, bits] of [
   ["::", 128], ["::1", 128], ["64:ff9b::", 96], ["100::", 64], ["2001:db8::", 32],
@@ -40,7 +43,15 @@ for (const [prefix, bits] of [
   ["::ffff:0:0:0", 96],  // SIIT IPv4-translated ::ffff:0:a.b.c.d
   ["64:ff9b:1::", 48],   // local-use NAT64 (RFC 8215)
   ["2002::", 16],        // 6to4
-  ["fec0::", 10]         // site-local (deprecated)
+  ["fec0::", 10],        // site-local (deprecated)
+  // IANA IPv6 special-purpose registry (2026-11-16 audit): the IETF protocol
+  // assignments block, which holds Teredo (2001::/32, embeds an IPv4 address),
+  // benchmarking (2001:2::/48), ORCHID (2001:10::/28, 2001:20::/28) and AMT,
+  // plus SRv6 SIDs, the AS112 delegation and the new documentation prefix.
+  ["2001::", 23],
+  ["5f00::", 16],        // segment routing (SRv6) SIDs, RFC 9602
+  ["2620:4f:8000::", 48],// AS112 direct delegation, RFC 7534
+  ["3fff::", 20]         // documentation, RFC 9637
 ]) blocked.addSubnet(prefix, bits, "ipv6");
 
 const loopback = new net.BlockList();
@@ -162,21 +173,51 @@ export function signPayload(secret, timestamp, body) {
   return crypto.createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
 }
 
-export function signatureHeader(secret, timestamp, body) {
-  return `t=${timestamp},v1=${signPayload(secret, timestamp, body)}`;
+/**
+ * X-EduOS-Signature: t=<unix>,v1=<hmac>[,v1=<hmac>]. With several secrets
+ * (a signing-key rotation in progress: the current secret first, then the
+ * previous one) the header carries one v1 per secret, so a receiver still
+ * holding the old secret keeps verifying until it switches.
+ */
+export function signatureHeader(secrets, timestamp, body) {
+  const list = (Array.isArray(secrets) ? secrets : [secrets]).filter(Boolean);
+  return `t=${timestamp},` + list.map(secret => `v1=${signPayload(secret, timestamp, body)}`).join(",");
 }
 
-/** Receiver-side check (also used by the tests): constant-time, with replay window. */
+/** Receiver-side check (also used by the tests): constant-time, with replay window; any v1 may match. */
 export function verifySignature(secret, header, body, options = {}) {
-  if (typeof header !== "string" || header.length > 200) return false;
-  const match = /^t=(\d{1,12}),v1=([0-9a-f]{64})$/.exec(header);
+  if (typeof header !== "string" || header.length > 400) return false;
+  const match = /^t=(\d{1,12})((?:,v1=[0-9a-f]{64}){1,4})$/.exec(header);
   if (!match) return false;
   const timestamp = Number(match[1]);
   const now = Math.floor((options.now ?? Date.now()) / 1000);
   if (Math.abs(now - timestamp) > (options.toleranceSec ?? 300)) return false;
   const expected = Buffer.from(signPayload(secret, timestamp, body), "hex");
-  const supplied = Buffer.from(match[2], "hex");
-  return expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+  let ok = false;
+  for (const sig of match[2].slice(1).split(",")) {
+    const supplied = Buffer.from(sig.slice(3), "hex");
+    // Compare every candidate (no early exit) so timing doesn't reveal which matched.
+    if (expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied)) ok = true;
+  }
+  return ok;
+}
+
+/**
+ * Seconds a receiver asked us to wait (Retry-After: delta-seconds or an
+ * HTTP date), or null. Capped at an hour; a date in the past means now.
+ */
+export function parseRetryAfter(value, now = Date.now()) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const v = value.trim();
+  let seconds;
+  if (/^\d{1,10}$/.test(v)) seconds = Number(v);
+  else {
+    if (!/^[A-Za-z]{3}, /.test(v)) return null; // an HTTP-date starts with the weekday
+    const at = Date.parse(v);
+    if (Number.isNaN(at)) return null;
+    seconds = Math.ceil((at - now) / 1000);
+  }
+  return Math.max(0, Math.min(3600, seconds));
 }
 
 /** One POST to the vetted address. Never follows redirects; body is discarded. */
@@ -206,7 +247,13 @@ export function deliverOnce({ url, address, family, headers, body, timeoutMs = W
         }
       });
       response.on("end", () => {
-        finish(response.complete ? classify(response.statusCode) : { outcome: "network_error", statusCode: null });
+        if (!response.complete) return finish({ outcome: "network_error", statusCode: null });
+        const result = classify(response.statusCode);
+        if (response.statusCode === 429 || response.statusCode === 503) {
+          const retryAfter = parseRetryAfter(response.headers["retry-after"]);
+          if (retryAfter !== null) result.retryAfterSeconds = retryAfter;
+        }
+        finish(result);
       });
       response.on("aborted", () => finish({ outcome: "network_error", statusCode: null }));
       response.on("close", () => {
@@ -232,7 +279,11 @@ const retryable = result => result.outcome === "timeout" || result.outcome === "
  * Sign and deliver one event to one subscription, retrying transient
  * failures. Returns every attempt so the caller can log them.
  */
-export async function deliverWebhook({ subscription, secret, eventType, deliveryId, body, options = {} }) {
+export async function deliverWebhook({ subscription, secret, secrets, eventType, deliveryId, body, options = {} }) {
+  const signingSecrets = (secrets && secrets.length ? secrets : [secret]).filter(Boolean);
+  // A receiver's Retry-After longer than this ends in-call retries (the
+  // outbox waits for it instead, see src/webhook-outbox.js).
+  const maxInlineWaitMs = options.maxInlineWaitMs ?? 5000;
   const attempts = [];
   const send = options.send || deliverOnce;
   const sleep = options.sleep || (ms => new Promise(r => setTimeout(r, ms)));
@@ -275,12 +326,15 @@ export async function deliverWebhook({ subscription, secret, eventType, delivery
         "X-EduOS-Event": eventType,
         "X-EduOS-Delivery": deliveryId,
         "X-EduOS-Timestamp": String(timestamp),
-        "X-EduOS-Signature": signatureHeader(secret, timestamp, body)
+        "X-EduOS-Signature": signatureHeader(signingSecrets, timestamp, body)
       }
     });
-    attempts.push({ attempt, outcome: result.outcome, statusCode: result.statusCode ?? null, durationMs: result.durationMs ?? 0 });
+    attempts.push({ attempt, outcome: result.outcome, statusCode: result.statusCode ?? null, durationMs: result.durationMs ?? 0,
+      ...(Number.isFinite(result.retryAfterSeconds) ? { retryAfterSeconds: result.retryAfterSeconds } : {}) });
     if (!retryable(result) || attempt === maxAttempts) break;
-    await sleep(backoff[Math.min(attempt - 1, backoff.length - 1)]);
+    const wait = Math.max(backoff[Math.min(attempt - 1, backoff.length - 1)], (result.retryAfterSeconds ?? 0) * 1000);
+    if (wait > maxInlineWaitMs) break;
+    await sleep(wait);
   }
   return attempts;
 }
