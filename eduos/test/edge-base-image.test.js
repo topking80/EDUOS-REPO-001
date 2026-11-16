@@ -13,7 +13,7 @@ const meta = Object.fromEntries(fs.readFileSync(new URL("BASE_IMAGE", dir), "utf
 test("every edge Containerfile uses the recorded base image", () => {
   assert.match(meta.IMAGE, /^docker\.io\/library\/fedora:\d+$/);
   const files = fs.readdirSync(dir).filter(f => f.startsWith("Containerfile."));
-  assert.ok(files.length >= 3, "bootstrap, enrollment and health");
+  assert.ok(files.length >= 2, "enrollment and health (bootstrap runs on the host)");
   const digests = new Set();
   for (const f of files) {
     const froms = [...fs.readFileSync(new URL(f, dir), "utf8").matchAll(/^FROM\s+(\S+)/gim)].map(m => m[1]);

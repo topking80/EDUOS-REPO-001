@@ -134,6 +134,24 @@ describe("upgrade from an older release on a populated database", { skip }, () =
          AND EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
                      WHERE a.grantee=0 AND a.privilege_type='EXECUTE')`);
     assert.deepEqual(publicDefiner.rows, [], "no SECURITY DEFINER function is executable by PUBLIC");
+    // EDUOS-DB-01: every helper function a row-level security policy calls is
+    // executable by the runtime role (otherwise its queries would fail), and
+    // the role has EXECUTE only where the grants template gives it: no
+    // EduOS function is left executable by PUBLIC.
+    const policyHelpers = await admin.query(`
+      SELECT DISTINCT p.proname, has_function_privilege($1, p.oid, 'EXECUTE') AS runtime
+        FROM pg_depend d JOIN pg_policy pol ON d.classid='pg_policy'::regclass AND d.objid=pol.oid
+        JOIN pg_proc p ON d.refclassid='pg_proc'::regclass AND d.refobjid=p.oid
+        JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' ORDER BY 1`, [app]);
+    assert.ok(policyHelpers.rowCount >= 5, `found the policy helpers (${policyHelpers.rowCount})`);
+    assert.deepEqual(policyHelpers.rows.filter(r => !r.runtime).map(r => r.proname), [], "every policy helper is executable by the runtime role");
+    const publicAny = await admin.query(`
+      SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+       WHERE n.nspname='public' AND EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                                           WHERE a.grantee=0 AND a.privilege_type='EXECUTE')
+         -- Extension functions (pgcrypto) belong to the superuser and run as the caller.
+         AND NOT EXISTS(SELECT 1 FROM pg_depend e WHERE e.classid='pg_proc'::regclass AND e.objid=p.oid AND e.deptype='e')`);
+    assert.deepEqual(publicAny.rows, [], "no EduOS function is executable by PUBLIC");
 
     const c = new pg.Client(db.appUrl); await c.connect();
     try {

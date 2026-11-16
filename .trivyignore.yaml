@@ -1,24 +1,9 @@
 # Trivy accepted-risk exceptions (used by .github/workflows/ci.yml, source scan only).
 # Each entry is limited to named files. The same check still fails CI for every
 # other Dockerfile/Containerfile, including the production app image.
-# Accepted on 2026-11-14 (audit 37.4.0, addendum 4). Review when the edge agents
-# are next changed.
-misconfigurations:
-  # DS-0002: no non-root USER. Only the bootstrap container is excepted: it
-  # genuinely needs root (it writes /etc/eduos, chowns host folders and starts
-  # systemd units on the node). Edge Phase 2 moved the health agent to uid 10003
-  # and the update agent to a host service, so they are no longer excepted.
-  # Listed under the current ID and the older aliases, so the exception keeps
-  # matching across Trivy versions.
-  - id: DS-0002
-    paths:
-      - "edge-platform/eduos/containers/Containerfile.bootstrap"
-    statement: "The edge bootstrap container runs as root by design (it provisions the node)."
-  - id: AVD-DS-0002
-    paths:
-      - "edge-platform/eduos/containers/Containerfile.bootstrap"
-    statement: "Same exception, older Trivy ID."
-  - id: DS002
-    paths:
-      - "edge-platform/eduos/containers/Containerfile.bootstrap"
-    statement: "Same exception, older Trivy ID."
+#
+# None at present. The last one (DS-0002, the root edge bootstrap container,
+# accepted 2026-11-14) was removed on 2026-11-16: bootstrap runs as a host
+# unit, and the container was never started (the host unit of the same name
+# overrode it). test/edge-no-root-containers.test.js keeps it that way.
+misconfigurations: []

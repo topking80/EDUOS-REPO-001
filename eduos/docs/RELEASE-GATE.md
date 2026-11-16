@@ -31,6 +31,10 @@ stack behind Caddy (the CI `e2e` job).
 | Webhook retries and administration don't cross tenants | `webhook-outbox.test.js`, `release-gate.test.js` → webhook subscriptions |
 | A migration failure prevents production startup | `postgres.test.js` (the API refuses to start when a migration is missing; migrate refuses unsafe roles) |
 | Upgrading a populated database from an older release works with the production roles: the migrator runs as the non-superuser owner and applies only the newer migrations; data backfills reach existing rows in every district; the runtime role still owns nothing, every district table except the four sign-in tables has forced RLS, no SECURITY DEFINER function is executable by PUBLIC; a second run changes nothing; the API starts and serves only the caller's district | `test/integration/upgrade-path.test.js` (older release = through migration 040) |
+| A backup of a populated database restores into a new database (nothing fails), and the API runs on the copy as the runtime role with districts isolated; backups need a superuser or BYPASSRLS role | `test/integration/backup-restore.test.js`, procedure in `docs/MIGRATIONS.md` |
+| Every helper function a row-level security policy calls is executable by the runtime role; no EduOS function is executable by PUBLIC | `upgrade-path.test.js` |
+| Text sent to an external AI provider (Christie questions, staff assistant input, lesson fields) loses student names and numbers, the learner's linked family and rostered teachers, names after a title, street addresses, labelled birth dates, phone numbers, email and web addresses | `test/redact-names.test.js`, `test/integration/ai-external-privacy.test.js` |
+| No edge container runs as root; bootstrap runs as a host unit with systemd limits | `test/edge-no-root-containers.test.js` |
 | Webhook and notification backlog is visible to monitoring without exposing any district, recipient or message: jobs due, being sent, waiting to retry and dead-lettered/failed, and the age of the oldest due job | `test/metrics.test.js`, `upgrade-path.test.js` (`/metrics` against the upgraded database) |
 | The CSP works for every deployed frontend route | `test/csp-caddy-matches-app.test.js` (the Caddyfile matches `src/csp.js`), `dev/csp-smoke.mjs` in CI e2e (headers through the edge on every static page and script, then every role's screens in Chrome with nothing blocked) |
 
@@ -77,17 +81,13 @@ seconds from `eduos_queue_backlog()` (totals across all districts):
 - `eduos_queue_backlog_up`: 0 when the backlog could not be read; alert on it
   rather than reading a missing series as an empty queue.
 
-## Writing migrations that change existing rows
+## Writing migrations
 
-Migrations run as the table owner with no district set, and most tenant
-policies have no owner exception, so an `UPDATE`, `DELETE` or
-`INSERT ... SELECT` over a tenant table silently matches nothing. Do such
-work in a `DO` block that sets `app.district_id` for each district in turn
-(see `db/049_rls_backfill_repair.sql`), and extend `upgrade-path.test.js` to
-seed a row it must change.
+See `docs/MIGRATIONS.md` (changing existing rows under forced RLS, functions
+behind generated columns, grants), along with backup, rollback and recovery.
 
 ## Not covered by this gate
 
-Restore drills, webhook behaviour across a full restart, edge hardware,
+Restore drills on production-sized data, webhook behaviour across a full restart, edge hardware,
 mobile release signing and production infrastructure need their own
 procedures; the gate covers the application.

@@ -113,3 +113,16 @@ test("...while maths and history are left exactly as written", () => {
     "Add 4 three times: 4 + 4 + 4.", "A rectangle is 12 cm by 5 cm.", "Lincoln was born in 1809.", "Drive 3 laps of the 400 m track."])
     assert.equal(redactContent(keep), keep);
 });
+
+test("free text (a learner's question, staff assistant input) loses the same personal details as approved content (EDUOS-PRIV-01)", () => {
+  const text = "Mrs Hargreaves and Dr. Amara Singh said Auntie Grace lives at 42 Maple Street Apt 3; my birthday is March 4, 2015 (dob: 03/04/2015), see www.example.org/me";
+  for (const out of [redact(text, { max: 12000 }), redactContent(text)]) {
+    for (const leak of ["Hargreaves", "Amara", "Singh", "Grace", "42 Maple", "March 4, 2015", "03/04/2015", "example.org"])
+      assert.ok(!out.includes(leak), `${leak} survived: ${out}`);
+    assert.match(out, /Mrs \[name\] and Dr\. \[name\]/, "the title stays, so the sentence still reads");
+  }
+  // Ordinary words and maths are left alone.
+  const plain = "I miss the bus. My coach said 1/2 of 10 is 5, and the war ended in 1945.";
+  assert.equal(redact(plain, { max: 12000 }), plain);
+  assert.equal(redactContent(plain), plain);
+});
