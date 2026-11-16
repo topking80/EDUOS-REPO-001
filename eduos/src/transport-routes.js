@@ -16,6 +16,7 @@ import { config } from "./config.js";
 import { enqueueNotifications } from "./notify.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError, roleIn } from "./role-app-util.js";
 import { queuedAt, idempotencyKey, claimReplay } from "./offline-replay.js";
+import { groupTransportEvents } from "./transport-rider-events.js";
 
 const EVENTS = ["boarded", "alighted", "not_riding"];
 const EVENT_TEXT = { boarded: "boarded", alighted: "got off", not_riding: "is not riding today" };
@@ -101,14 +102,7 @@ export function registerTransportRoutes(app) {
               JOIN transport_stops st ON st.id=c.stop_id
              ORDER BY c.run_id,c.student_id,c.recorded_at,c.id`,
             [activeRiders.map(k => k.run_id), activeRiders.map(k => k.id)]);
-          for (const event of eventRows) {
-            const key = `${event.run_id}:${event.student_id}`;
-            if (!eventsByRider.has(key)) eventsByRider.set(key, []);
-            eventsByRider.get(key).push({
-              event: event.event, recorded_at: event.recorded_at,
-              stop_name: event.stop_name, is_school: event.is_school
-            });
-          }
+          for (const [key, events] of groupTransportEvents(eventRows)) eventsByRider.set(key, events);
         }
         for (const k of kids) {
           k.events = k.run_id ? (eventsByRider.get(`${k.run_id}:${k.id}`) || []) : [];
