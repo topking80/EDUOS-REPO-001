@@ -47,7 +47,9 @@ describe("performance paths against real PostgreSQL", { skip }, () => {
     r = await day("t1");
     assert.deepEqual(r.body.data.counts, { present: 0, absent: 0, tardy: 1, excused: 0 }, "a teacher sees their roster only");
     r = await day("pa");
-    assert.ok(r.status === 403 || (r.status === 200 && r.body.data.exceptions.length === 0), "families get no school-wide list");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.data.counts, { present: 0, absent: 0, tardy: 1, excused: 0 }, "a parent gets their own child's day, nothing else");
+    assert.deepEqual(r.body.data.exceptions.map(e => e.display_name), ["Alice A"]);
     assert.equal((await day("p1", "2026-02-30")).status, 400);
     assert.equal((await as("p1")("GET", "/api/attendance/day")).status, 400);
   });
@@ -91,7 +93,14 @@ describe("performance paths against real PostgreSQL", { skip }, () => {
     assert.equal(r.status, 200);
     const c = r.body.data.counts;
     assert.equal(c.present + c.absent + c.tardy, 2002);
-    assert.equal(r.body.data.exceptions.length, c.absent + c.tardy, "only the students who weren't present are listed");
+    let listed = r.body.data.exceptions.length;
+    for (let next = r.body.data.page.nextOffset; next !== null;) {
+      const more = await as("p1")("GET", `/api/attendance/day?date=${today}&offset=${next}`);
+      listed += more.body.data.exceptions.length; next = more.body.data.page.nextOffset;
+    }
+    assert.equal(listed, c.absent + c.tardy, "only the students who weren't present are listed, every one of them across pages");
+    const small = await as("p1")("GET", `/api/attendance/day?date=${today}&limit=50`);
+    assert.equal(small.body.data.exceptions.length, 50); assert.equal(small.body.data.page.nextOffset, 50);
     const bytes = JSON.stringify(r.body).length;
     console.log(`[perf] unread badge ${badgeMs.toFixed(1)} ms/request; attendance day for 2,002 students ${dayMs.toFixed(0)} ms, ${bytes} bytes`);
     assert.ok(badgeMs < 50, `badge ${badgeMs} ms`);

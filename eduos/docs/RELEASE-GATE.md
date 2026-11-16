@@ -8,6 +8,12 @@ stack behind Caddy (the CI `e2e` job).
 
 | Gate | Enforced by |
 |---|---|
+| Every GET route, called as every role at one school (principal, vice principal, teacher, parent, pupil, counselor, nurse, librarian, SRO, driver, IT admin) and as another district's superintendent, shows no other school's learner, safety instructions or bus route, and nothing of another district | `test/integration/role-scope-matrix.test.js` (about 1,900 calls, routes read from the source so new ones are covered) |
+| Student-record reads use one fail-closed rule (`studentVisibleSql` in `src/server.js`): a role not named there sees no student | `role-scope-matrix.test.js` (vice principal directory and profiles, roles without student access) |
+| Parents see a safety incident only at a school where they have an active child link, without staff instructions | `role-scope-matrix.test.js` |
+| No database role other than the runtime role can call the SECURITY DEFINER functions | `role-scope-matrix.test.js` (a separate login role is refused; no definer function is executable by PUBLIC) |
+| A school morning end to end: bus check-in, the driver's handoff, receipt, first attendance, a correction, an offline replay delivered twice and a late offline mark | `test/integration/morning-sequence.test.js` |
+| The notification dispatcher holds no transaction or row lock while a channel adapter works; a crashed dispatcher's rows are sent by the next run, once | `release-gate.test.js` → notification dispatch leases |
 | District A cannot read or modify District B data | `test/integration/postgres.test.js` (H1: RLS isolates districts), `test/integration/release-gate.test.js` (attendance, webhooks, event stream), `test/integration/webhook-outbox.test.js` (a worker only sees its own district's queue) |
 | School staff cannot access another school's student records | `postgres.test.js` (M5, M7, H3), `school-operations-authz.test.js`, `release-gate.test.js` (another school's student: 404) |
 | A driver cannot confirm a school handoff; the initiator cannot confirm their own | `release-gate.test.js` → arrival handoff |

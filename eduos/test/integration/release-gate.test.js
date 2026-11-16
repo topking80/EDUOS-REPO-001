@@ -204,6 +204,69 @@ describe("release gate against real PostgreSQL", { skip }, () => {
     });
   });
 
+  describe("notification dispatch leases", () => {
+    let ownerPool, dispatchPending, incident;
+    const start = async () => {
+      const st = await as("p1")("POST", "/api/safety/incidents", { kind: "lockdown", isDrill: true });
+      const ok = await as("p1")("POST", `/api/safety/incidents/${st.body.data.id}/confirm`, { kind: "lockdown", isDrill: true });
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+      return ok.body.data;
+    };
+    before(async () => {
+      await admin.query("UPDATE notification_outbox SET status='skipped' WHERE status='pending'");
+      Object.assign(process.env, { ...env, DATABASE_URL: db.ownerUrl });
+      ({ dispatchPending } = await import("../../src/notify-dispatch.js"));
+      ownerPool = new pg.Pool({ connectionString: db.ownerUrl, max: 3 });
+      incident = (await start()).id;
+    });
+    after(async () => { await as("p1")("POST", `/api/safety/incidents/${incident}/all-clear`, { kind: "lockdown" }); await ownerPool?.end(); });
+
+    it("a slow sender holds no transaction or row lock while it waits", async () => {
+      const seen = [];
+      const slow = () => ({ send: async w => {
+        // While the adapter "waits on the network": nothing of the dispatcher's is
+        // idle in a transaction, and the row can be locked by someone else at once.
+        const idle = await admin.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND state LIKE 'idle in transaction%' AND pid<>pg_backend_pid()");
+        await admin.query("BEGIN");
+        await admin.query("SET LOCAL lock_timeout='200ms'");
+        const lock = await admin.query("SELECT id FROM notification_outbox WHERE id=$1 FOR UPDATE", [w.id]).catch(e => e);
+        await admin.query("ROLLBACK");
+        seen.push({ idle: idle.rows[0].n, locked: lock instanceof Error });
+        return { status: "delivered" };
+      } });
+      const t = await dispatchPending({ db: ownerPool, adapters: slow, limit: 3, log: () => {} });
+      assert.equal(t.delivered, 3);
+      assert.deepEqual(seen, [{ idle: 0, locked: false }, { idle: 0, locked: false }, { idle: 0, locked: false }]);
+    });
+
+    it("a dispatcher that dies mid-batch: its leases run out and the rows are sent by the next run, once", async () => {
+      // Claim like a dispatcher that then crashes before sending.
+      await admin.query(`UPDATE notification_outbox SET lease_token=gen_random_uuid(), lease_expires_at=now()+interval '5 minutes'
+        WHERE ref_id=$1 AND channel='email' AND status='pending'`, [incident]);
+      let t = await dispatchPending({ db: ownerPool, adapters: () => ({ send: async () => ({ status: "delivered" }) }), log: () => {} });
+      assert.equal(t.handled, 0, "rows under a live lease are left alone");
+      await admin.query("UPDATE notification_outbox SET lease_expires_at=now()-interval '1 second' WHERE ref_id=$1 AND lease_token IS NOT NULL", [incident]);
+      const sent = [];
+      t = await dispatchPending({ db: ownerPool, adapters: () => ({ send: async w => { sent.push(w.id); return { status: "delivered" }; } }), log: () => {} });
+      assert.ok(t.delivered > 0 && t.delivered === sent.length && new Set(sent).size === sent.length);
+      const left = await admin.query("SELECT count(*)::int AS n FROM notification_outbox WHERE ref_id=$1 AND channel='email' AND (status='pending' OR lease_token IS NOT NULL)", [incident]);
+      assert.equal(left.rows[0].n, 0);
+    });
+
+    it("a late result from a lost lease doesn't overwrite the row", async () => {
+      const row = (await admin.query("SELECT id FROM notification_outbox WHERE ref_id=$1 AND channel='email' LIMIT 1", [incident])).rows[0].id;
+      await admin.query("UPDATE notification_outbox SET status='pending',attempts=0,delivered_at=NULL,next_attempt_at=NULL,lease_token=NULL,lease_expires_at=NULL WHERE ref_id=$1 AND channel='email'", [incident]);
+      const t = await dispatchPending({ db: ownerPool, log: () => {}, adapters: () => ({ send: async w => {
+        // Another dispatcher took the row over (its lease) while this one was sending.
+        if (w.id === row) await admin.query("UPDATE notification_outbox SET lease_token=gen_random_uuid() WHERE id=$1", [row]);
+        return { status: "failed", note: "late" };
+      } }) });
+      assert.equal(t.lostLease, 1);
+      const r = (await admin.query("SELECT status,last_error FROM notification_outbox WHERE id=$1", [row])).rows[0];
+      assert.deepEqual(r, { status: "pending", last_error: null }, "the stale result was not recorded");
+    });
+  });
+
   // ---------------- operations event stream ----------------
   describe("operations event stream", () => {
     function open(name) {
