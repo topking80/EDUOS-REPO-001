@@ -1,11 +1,18 @@
 // Role and tenant scope matrix (release gate 2), against real PostgreSQL as
 // the runtime role.
 //
-// Every GET route the API registers is called as every role at school S1 (and
-// as District 2's superintendent), with path parameters pointing at School 2
-// or District 2 records. No response may contain a School 2 learner, School 2
-// safety instructions or a School 2 bus route, and District 2 may see nothing
-// of District 1. Then the specific findings of the 2026-11-16 audit:
+// Routes come from the running Express app itself (every method, every
+// registration style: literals, template strings, variables), not from the
+// source text. Every GET route is called as every role at school S1 (and as
+// District 2's superintendent), with path parameters pointing at School 2 or
+// District 2 records: no response may contain a School 2 learner, School 2
+// safety instructions or a School 2 bus route, District 2 may see nothing of
+// District 1, and no route may answer with a server error. Every write route
+// (POST/PUT/PATCH/DELETE) is then called the same way, with a body naming
+// School 2 records: none may change any School 2 row (or, for District 2, any
+// District 1 row), and none may answer with a server error. Expected
+// outcomes are asserted per role for the student-facing routes, and a user
+// with two memberships is checked after switching between them. Then the specific findings of the 2026-11-16 audit:
 // vice principals see their school only, parents see safety incidents only at
 // their children's schools, the day's attendance covers families, and no
 // other database role can call the SECURITY DEFINER functions.
@@ -24,24 +31,55 @@ const EXTRA = {
   "sro-x": "sro", "driver-x": "driver", "itadmin-x": "it_admin"
 };
 
-/** Every GET route registered under /api, from the source. */
-function getRoutes() {
+/**
+ * Every route the app registers, as [method, path], read from the Express
+ * router (the app is imported without listening). Regex-only paths (the SPA
+ * fallback) are left out; /auth/* is left out because it signs the caller in
+ * or out.
+ */
+async function appRoutes(env) {
+  Object.assign(process.env, env);
+  const { app } = await import("../../src/server.js");
+  const out = [];
+  for (const layer of app.router.stack) {
+    if (!layer.route) continue;
+    for (const p of [layer.route.path].flat()) {
+      if (typeof p !== "string" || p.startsWith("/auth/")) continue;
+      for (const m of Object.keys(layer.route.methods)) out.push([m.toUpperCase(), p]);
+    }
+  }
+  return out;
+}
+/** Routes the static regex used to find, for comparison: literal app.get("/api/…") only. */
+function literalGetRoutes() {
   const files = [];
   const walk = d => { for (const n of fs.readdirSync(d)) { const p = path.join(d, n); fs.statSync(p).isDirectory() ? walk(p) : p.endsWith(".js") && files.push(p); } };
   walk(SRC);
   const routes = new Set();
   for (const f of files) for (const m of fs.readFileSync(f, "utf8").matchAll(/app\.get\(\s*"(\/api\/[^"]+)"/g)) routes.add(m[1]);
-  return [...routes].sort();
+  return routes;
 }
 
 describe("role and tenant scope matrix against real PostgreSQL", { skip }, () => {
-  let db, idp, server, admin, s2Incident, s = {};
+  let db, idp, server, admin, env, routes, s2Incident, s2Case, s2Route, s2Handoff, s = {};
   const as = name => client(server.base, s[name]);
+  const S1_ROLES = ["p1", "vp1", "t1", "pa", "pu", "pb", "tp", ...Object.keys(EXTRA)];
+  /** A path with its parameters pointing at School 2 / District 2 records. */
+  const fill = (route, district) => route.replace(/:([a-zA-Z]+)/g, (_, name) => ({
+    studentId: ID.carol, learnerId: ID.carol, schoolId: ID.s2, districtId: district, caseId: s2Case, routeId: s2Route,
+    handoffId: s2Handoff, incidentId: s2Incident, runId: s2Route
+  })[name] ?? (route.includes("/cases") ? s2Case : route.includes("/transport") ? s2Route : route.includes("/arrival") ? s2Handoff : s2Incident));
+  const send = async (who, method, url, body) => {
+    const headers = { cookie: s[who].cookie, "x-csrf-token": s[who].csrf };
+    if (body) headers["content-type"] = "application/json";
+    const r = await fetch(server.base + url, { method, headers, body: body && JSON.stringify(body), signal: AbortSignal.timeout(8000) });
+    return { status: r.status, text: await r.text() };
+  };
 
   before(async () => {
     db = await createDatabase();
     idp = await startIdp();
-    const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app });
+    env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app });
     const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
@@ -53,49 +91,106 @@ describe("role and tenant scope matrix against real PostgreSQL", { skip }, () =>
     // School 2 records the S1 roles must never see.
     const day = (await admin.query("SELECT (now() AT TIME ZONE timezone)::date::text AS d FROM schools WHERE id=$1", [ID.s2])).rows[0].d;
     await admin.query("INSERT INTO attendance_events(district_id,student_id,event_date,status,observed_at) VALUES($1,$2,$3,'absent',now())", [ID.d1, ID.carol, day]);
-    await admin.query(`INSERT INTO student_intervention_cases(district_id,student_id,school_id,created_by,category,title,summary,family_visible)
-      VALUES($1,$2,$3,$4,'wellbeing','Carol check-in','Carol C needs a check-in',true)`, [ID.d1, ID.carol, ID.s2, USERS.p2[0]]);
+    s2Case = (await admin.query(`INSERT INTO student_intervention_cases(district_id,student_id,school_id,created_by,category,title,summary,family_visible)
+      VALUES($1,$2,$3,$4,'wellbeing','Carol check-in','Carol C needs a check-in',true) RETURNING id`, [ID.d1, ID.carol, ID.s2, USERS.p2[0]])).rows[0].id;
+    s2Handoff = (await admin.query(`INSERT INTO arrival_handoffs(district_id,school_id,student_id,method,initiated_by)
+      VALUES($1,$2,$3,'walk_in',$4) RETURNING id`, [ID.d1, ID.s2, ID.carol, USERS.p2[0]])).rows[0].id;
     s2Incident = (await admin.query(`INSERT INTO safety_incidents(district_id,school_id,kind,is_drill,status,initiated_by,confirmed_by,confirmed_at,instructions)
       VALUES($1,$2,'lockdown',true,'active',$3,$3,now(),$4) RETURNING id`, [ID.d1, ID.s2, USERS.p2[0], MARK])).rows[0].id;
-    await admin.query(`INSERT INTO transport_routes(district_id,school_id,name,bus_label,direction,created_by) VALUES($1,$2,$3,'Bus 9','am',$4)`, [ID.d1, ID.s2, ROUTE, USERS.p2[0]]);
+    s2Route = (await admin.query(`INSERT INTO transport_routes(district_id,school_id,name,bus_label,direction,created_by) VALUES($1,$2,$3,'Bus 9','am',$4) RETURNING id`, [ID.d1, ID.s2, ROUTE, USERS.p2[0]])).rows[0].id;
     await admin.query(`INSERT INTO transport_routes(district_id,school_id,name,bus_label,direction,created_by) VALUES($1,$2,'S1 Route','Bus 1','am',$3)`, [ID.d1, ID.s1, USERS.p1[0]]);
+    routes = await appRoutes({ ...env, DATABASE_URL: db.appUrl });
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
     for (const name of ["supt1", "supt2", "p1", "p2", "vp1", "t1", "pa", "pu", "pb", "tp", "p2s", ...Object.keys(EXTRA)]) {
       s[name] = await login(server.base, idp, name, { email_verified: true, ...(EXTRA[name] ? { email: `${name}@d1.test` } : {}) });
       assert.ok(s[name].cookie, `${name} signed in`);
     }
   });
-  after(async () => { await server?.stop(); await admin?.end(); await idp?.close(); await db?.drop?.(); });
+  after(async () => {
+    await server?.stop(); await admin?.end(); await idp?.close();
+    try { (await import("../../src/db.js")).pool.end(); } catch {}
+    await db?.drop?.();
+  });
 
-  it("no GET route shows a School 2 learner, instructions or route to a School 1 role, or District 1 to District 2", async () => {
+  it("finds every route the app registers, including ones the source regex missed", () => {
+    const gets = new Set(routes.filter(([m, p]) => m === "GET" && p.startsWith("/api/")).map(([, p]) => p));
+    const missed = [...gets].filter(p => !literalGetRoutes().has(p));
+    assert.ok(routes.length > 250, `${routes.length} routes`);
+    assert.ok(missed.includes("/api/integrations/connectors"), `registered through a variable: ${missed.join(", ")}`);
+    // (Some literal routes are mounted only on an EDEN node tier, so the
+    // reverse doesn't hold in this configuration.)
+  });
+
+  it("no GET route shows a School 2 learner, instructions or route to a School 1 role, or District 1 to District 2, and none fails", async () => {
     // The operations event stream stays open by design (tested on its own in
     // release-gate.test.js).
-    const routes = getRoutes().filter(r => r !== "/api/operations/stream");
-    assert.ok(routes.length > 100, `${routes.length} routes found`);
-    const fill = (route, district) => route
-      .replace(":studentId", ID.carol).replace(":schoolId", ID.s2).replace(":districtId", district)
-      .replace(/:[a-zA-Z]+/g, s2Incident);
-    const s1Roles = ["p1", "vp1", "t1", "pa", "pu", "pb", "tp", ...Object.keys(EXTRA)];
-    const leaks = [];
+    const gets = routes.filter(([m, p]) => m === "GET" && p !== "/api/operations/stream").map(([, p]) => p);
+    const leaks = [], errors = [];
     let calls = 0;
-    for (const who of [...s1Roles, "supt2"]) {
+    for (const who of [...S1_ROLES, "supt2"]) {
       const forbidden = who === "supt2"
         ? [ID.alice, ID.bob, ID.carol, "Alice A", "Bob B", "Carol C", MARK, ROUTE, s2Incident]
         : [ID.carol, "Carol C", MARK, ROUTE, ID.xavier, "Xavier X"];
-      for (const route of routes) {
+      for (const route of gets) {
         const url = fill(route, who === "supt2" ? ID.d1 : ID.d2);
         calls++;
-        let text;
-        try {
-          const r = await fetch(server.base + url, { headers: { cookie: s[who].cookie }, signal: AbortSignal.timeout(5000) });
-          text = await r.text();
-        } catch (e) { leaks.push(`${who} GET ${url} -> ${e.name}`); continue; }
+        let r;
+        try { r = await send(who, "GET", url); }
+        catch (e) { errors.push(`${who} GET ${url} -> ${e.name}`); continue; }
+        if (r.status >= 500 && r.status !== 503) errors.push(`${who} GET ${url} -> ${r.status} ${r.text.slice(0, 120)}`);
         // A record id that's in the URL itself may be echoed back ("not found").
-        const hit = forbidden.filter(f => !url.includes(f)).find(f => text.includes(f));
-        if (hit) leaks.push(`${who} GET ${url} contains ${hit === ID.carol ? "Carol's id" : hit}`);
+        const hit = forbidden.filter(f => !url.includes(f)).find(f => r.text.includes(f));
+        if (hit) leaks.push(`${who} GET ${url} -> ${r.status} contains ${hit === ID.carol ? "Carol's id" : hit}`);
       }
     }
     assert.deepEqual(leaks, [], `${leaks.length} of ${calls} calls leaked:\n${leaks.join("\n")}`);
+    assert.deepEqual(errors, [], `${errors.length} of ${calls} calls failed:\n${errors.join("\n")}`);
+  });
+
+  it("each role gets the expected answer from the student-facing routes", async () => {
+    const day = (await admin.query("SELECT (now() AT TIME ZONE timezone)::date::text AS d FROM schools WHERE id=$1", [ID.s1])).rows[0].d;
+    // [route, {role: expected status}] (403: refused by permission; 200: allowed, scoped).
+    const expected = [
+      ["/api/students", { p1: 200, vp1: 200, t1: 200, pa: 200, pu: 200, "counselor-x": 403, "nurse-x": 403, "librarian-x": 403, "sro-x": 403, "driver-x": 403, "itadmin-x": 403 }],
+      [`/api/students/${ID.alice}`, { p1: 200, vp1: 200, pa: 200, pu: 200, pb: 404, "counselor-x": 403, "driver-x": 403 }],
+      ["/api/cases", { p1: 200, t1: 200, pa: 200, vp1: 403, "counselor-x": 403, "nurse-x": 403 }],
+      ["/api/pickup/queue", { p1: 200, t1: 200, vp1: 403, pa: 403, "counselor-x": 403 }],
+      [`/api/attendance/day?date=${day}`, { p1: 200, vp1: 200, t1: 200, pa: 200, pu: 200, "counselor-x": 403, "driver-x": 403 }],
+      ["/api/transport/today", { p1: 200, vp1: 200, t1: 200, pa: 200, "driver-x": 200, "counselor-x": 403, "nurse-x": 403 }],
+      ["/api/safety/status", { p1: 200, vp1: 200, t1: 200, pa: 200, pu: 200, "sro-x": 200, "driver-x": 200, "counselor-x": 403 }]
+    ];
+    const wrong = [];
+    for (const [url, byRole] of expected) for (const [who, want] of Object.entries(byRole)) {
+      const got = (await send(who, "GET", url)).status;
+      if (got !== want) wrong.push(`${who} GET ${url}: ${got}, expected ${want}`);
+    }
+    assert.deepEqual(wrong, []);
+  });
+
+  it("a user with two memberships gets each one's scope after switching, and only that", async () => {
+    // tp is a teacher and a parent at S1.
+    const mine = (await as("tp")("GET", "/api/memberships")).body.data;
+    const parent = mine.find(m => m.role === "parent"), teacher = mine.find(m => m.role === "teacher");
+    const switchTo = async m => {
+      const r = await fetch(`${server.base}/api/session/membership`, { method: "POST", body: JSON.stringify({ membershipId: m.id }),
+        headers: { cookie: s.tp.cookie, "x-csrf-token": s.tp.csrf, "content-type": "application/json" } });
+      assert.equal(r.status, 200);
+      const cookie = r.headers.getSetCookie().find(c => c.startsWith(s.tp.cookie.split("=")[0] + "=")).split(";")[0];
+      const body = await r.json();
+      const old = s.tp.cookie;
+      s.tp = { cookie, csrf: body.csrfToken };
+      assert.equal((await fetch(`${server.base}/api/me`, { headers: { cookie: old } })).status, 401, "the previous session ends");
+    };
+    await switchTo(parent);
+    assert.equal((await as("tp")("GET", "/api/me")).body.role, "parent");
+    const kids = (await admin.query(`SELECT s.display_name FROM student_user_links l JOIN students s ON s.id=l.student_id
+        WHERE l.user_id=$1 AND l.status='active' AND l.relationship IN ('parent','guardian') ORDER BY 1`, [USERS.tp[0]])).rows.map(r => r.display_name);
+    assert.ok(kids.length > 0);
+    assert.deepEqual((await as("tp")("GET", "/api/students")).body.data.map(x => x.display_name), kids, "as a parent: their children only");
+    assert.equal((await as("tp")("GET", "/api/pickup/queue")).status, 403, "no staff desk as a parent");
+    await switchTo(teacher);
+    assert.equal((await as("tp")("GET", "/api/me")).body.role, "teacher");
+    assert.ok(!(await as("tp")("GET", "/api/students")).body.data.some(x => x.display_name === "Carol C"));
   });
 
   it("a vice principal's student directory and profiles are their school's only", async () => {
@@ -155,6 +250,50 @@ describe("role and tenant scope matrix against real PostgreSQL", { skip }, () =>
     const r = await as("vp1")("GET", "/api/transport/today");
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.data.routes.map(x => x.name), ["S1 Route"]);
+  });
+
+  it("no write route changes School 2 records for a School 1 role, or District 1 records for District 2, and none fails", async () => {
+    const tables = (await admin.query(`SELECT c.table_name, bool_or(c.column_name='school_id') AS by_school, bool_or(c.column_name='student_id') AS by_student
+        FROM information_schema.columns c JOIN information_schema.tables t ON t.table_name=c.table_name AND t.table_schema=c.table_schema AND t.table_type='BASE TABLE'
+       WHERE c.table_schema='public' AND c.column_name IN ('school_id','student_id','district_id')
+         AND c.table_name NOT IN ('audit_events','sessions','offline_replays','schema_migrations')
+       GROUP BY c.table_name ORDER BY 1`)).rows;
+    /** Fingerprint of every row in scope: School 2's rows, or all of District 1's. */
+    const snapshot = async scope => {
+      const out = {};
+      for (const t of tables) {
+        const where = scope === "s2"
+          ? (t.by_school ? `school_id='${ID.s2}'` : t.by_student ? `student_id='${ID.carol}'` : null)
+          : `district_id='${ID.d1}'`;
+        if (!where) continue;
+        const cols = (await admin.query("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name='district_id'", [t.table_name])).rowCount;
+        if (scope === "d1" && !cols) continue;
+        out[t.table_name] = (await admin.query(`SELECT count(*)::int AS n, md5(coalesce(string_agg(x::text,'|' ORDER BY x::text),'')) AS h FROM "${t.table_name}" x WHERE ${where}`)).rows[0];
+      }
+      return out;
+    };
+    const day = (await admin.query("SELECT (now() AT TIME ZONE timezone)::date::text AS d FROM schools WHERE id=$1", [ID.s2])).rows[0].d;
+    const body = { studentId: ID.carol, studentIds: [ID.carol], schoolId: ID.s2, incidentId: s2Incident, caseId: s2Case, routeId: s2Route, handoffId: s2Handoff,
+      status: "absent", eventDate: day, event: "boarded", kind: "lockdown", isDrill: true, method: "walk_in", reason: "matrix", overrideReason: "matrix",
+      note: "matrix", title: "matrix", summary: "matrix", body: "matrix", category: "wellbeing", entries: [{ studentId: ID.carol, status: "missing" }] };
+    const writes = routes.filter(([m, p]) => m !== "GET" && (p.startsWith("/api/") || p.startsWith("/lti/")));
+    const errors = [], changed = [];
+    let calls = 0;
+    for (const [who, scope] of [["supt2", "d1"], ["p1", "s2"], ["vp1", "s2"], ["t1", "s2"], ["pa", "s2"], ["pu", "s2"], ["driver-x", "s2"], ["counselor-x", "s2"], ["sro-x", "s2"]]) {
+      const before = await snapshot(scope);
+      for (const [method, route] of writes) {
+        const url = fill(route, who === "supt2" ? ID.d1 : ID.d2);
+        calls++;
+        try {
+          const r = await send(who, method, url, body);
+          if (r.status >= 500 && r.status !== 503) errors.push(`${who} ${method} ${url} -> ${r.status} ${r.text.slice(0, 120)}`);
+        } catch (e) { errors.push(`${who} ${method} ${url} -> ${e.name}`); }
+      }
+      const after = await snapshot(scope);
+      for (const t of Object.keys(before)) if (JSON.stringify(before[t]) !== JSON.stringify(after[t])) changed.push(`${who}: ${t} (${scope}) changed ${before[t].n} -> ${after[t].n} rows`);
+    }
+    assert.deepEqual(changed, [], `writes changed another school's or district's records:\n${changed.join("\n")}`);
+    assert.deepEqual(errors, [], `${errors.length} of ${calls} calls failed:\n${errors.join("\n")}`);
   });
 
   it("no other database role can call the SECURITY DEFINER functions", async () => {

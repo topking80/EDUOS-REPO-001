@@ -253,9 +253,39 @@ describe("release gate against real PostgreSQL", { skip }, () => {
       assert.equal(left.rows[0].n, 0);
     });
 
+    it("two dispatchers and a sender slower than the lease: every row is sent exactly once", async () => {
+      await admin.query("UPDATE notification_outbox SET status='pending',attempts=0,delivered_at=NULL,next_attempt_at=NULL,lease_token=NULL,lease_expires_at=NULL WHERE ref_id=$1 AND channel='email'", [incident]);
+      const rows = (await admin.query("SELECT count(*)::int AS n FROM notification_outbox WHERE ref_id=$1 AND channel='email'", [incident])).rows[0].n;
+      assert.ok(rows >= 4, `${rows} rows`);
+      const sent = [];
+      const slow = () => ({ send: async w => { sent.push(w.id); await sleep(400); return { status: "delivered" }; } });
+      // A claims every row with a 1 s lease, then needs 400 ms per row; B starts
+      // after A's original claims have run out.
+      const a = dispatchPending({ db: ownerPool, adapters: slow, leaseSeconds: 1, sendTimeoutSeconds: 0.8, batch: 50, log: () => {} });
+      await sleep(1100);
+      const b = dispatchPending({ db: ownerPool, adapters: slow, leaseSeconds: 1, sendTimeoutSeconds: 0.8, batch: 50, log: () => {} });
+      const [ta, tb] = await Promise.all([a, b]);
+      assert.equal(sent.length, new Set(sent).size, `a row was sent twice: ${sent.length} sends for ${new Set(sent).size} rows`);
+      assert.equal(new Set(sent).size, rows, "and every row was sent");
+      assert.ok(ta.lostLease > 0 && tb.delivered > 0, JSON.stringify({ ta, tb }));
+      const left = await admin.query("SELECT count(*)::int AS n FROM notification_outbox WHERE ref_id=$1 AND channel='email' AND status<>'delivered'", [incident]);
+      assert.equal(left.rows[0].n, 0);
+    });
+
+    it("a send with no answer is cut off inside the lease and retried later, not marked delivered", async () => {
+      const row = (await admin.query("SELECT id FROM notification_outbox WHERE ref_id=$1 AND channel='email' LIMIT 1", [incident])).rows[0].id;
+      await admin.query("UPDATE notification_outbox SET status='pending',attempts=0,delivered_at=NULL,next_attempt_at=NULL,lease_token=NULL,lease_expires_at=NULL WHERE id=$1", [row]);
+      const t = await dispatchPending({ db: ownerPool, leaseSeconds: 2, sendTimeoutSeconds: 0.3, log: () => {}, adapters: () => ({ send: () => new Promise(() => {}) }) });
+      assert.equal(t.retrying, 1);
+      const r = (await admin.query("SELECT status,delivered_at,last_error,lease_token FROM notification_outbox WHERE id=$1", [row])).rows[0];
+      assert.deepEqual([r.status, r.delivered_at, r.lease_token], ["pending", null, null]);
+      assert.match(r.last_error, /no answer within 0.3 s/);
+      await assert.rejects(dispatchPending({ db: ownerPool, leaseSeconds: 1, sendTimeoutSeconds: 1 }), /sendTimeoutSeconds/);
+    });
+
     it("a late result from a lost lease doesn't overwrite the row", async () => {
       const row = (await admin.query("SELECT id FROM notification_outbox WHERE ref_id=$1 AND channel='email' LIMIT 1", [incident])).rows[0].id;
-      await admin.query("UPDATE notification_outbox SET status='pending',attempts=0,delivered_at=NULL,next_attempt_at=NULL,lease_token=NULL,lease_expires_at=NULL WHERE ref_id=$1 AND channel='email'", [incident]);
+      await admin.query("UPDATE notification_outbox SET status='pending',attempts=0,delivered_at=NULL,next_attempt_at=NULL,last_error=NULL,lease_token=NULL,lease_expires_at=NULL WHERE ref_id=$1 AND channel='email'", [incident]);
       const t = await dispatchPending({ db: ownerPool, log: () => {}, adapters: () => ({ send: async w => {
         // Another dispatcher took the row over (its lease) while this one was sending.
         if (w.id === row) await admin.query("UPDATE notification_outbox SET lease_token=gen_random_uuid() WHERE id=$1", [row]);
