@@ -56,12 +56,14 @@ export function registerArrivalRoutes(app) {
     try {
       const data=await withTenantTransaction(req.actor,async client=>{
         const a=req.actor;
-        const scope=a.role==="superintendent" ? "true"
-          : a.role==="principal" ? "h.school_id=$2"
-          : a.role==="teacher" ? "h.school_id=$2 AND (h.assigned_teacher_user_id=$3 OR EXISTS(SELECT 1 FROM teacher_student_rosters tr WHERE tr.student_id=h.student_id AND tr.teacher_user_id=$3))"
-          : a.role==="driver" ? "h.initiated_by=$3"
-          : "false";
-        const args=[a.districtId,a.schoolId,a.userId];
+        // Each scope binds exactly the parameters it uses: PostgreSQL refuses
+        // a statement given more parameters than it references (this route
+        // used to answer 500 to every role but teachers).
+        const [scope,args]=a.role==="superintendent" ? ["true",[a.districtId]]
+          : ["principal","vice_principal"].includes(a.role) ? ["h.school_id=$2",[a.districtId,a.schoolId]]
+          : a.role==="teacher" ? ["h.school_id=$2 AND (h.assigned_teacher_user_id=$3 OR EXISTS(SELECT 1 FROM teacher_student_rosters tr WHERE tr.student_id=h.student_id AND tr.teacher_user_id=$3))",[a.districtId,a.schoolId,a.userId]]
+          : a.role==="driver" ? ["h.initiated_by=$2",[a.districtId,a.userId]]
+          : ["false",[a.districtId]];
         const result=await rows(client,`SELECT h.id,h.school_id,h.student_id,s.display_name,s.grade_level,h.method,h.status,
             h.assigned_teacher_user_id,h.initiated_by,h.received_by,h.initiated_at,h.received_at,h.note
           FROM arrival_handoffs h

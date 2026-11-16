@@ -125,6 +125,9 @@ export function registerSafetyRoutes(app) {
     if (!validId(schoolId)) return res.status(400).json({ error: "invalid_school_id" });
     try {
       const out = await withTenantTransaction(a, async client => {
+        // A superintendent names the school; it must be one of their district's
+        // (row security refuses the insert otherwise, which used to surface as a 500).
+        if (!(await one(client, `SELECT 1 AS ok FROM schools WHERE id=$1 AND district_id=$2`, [schoolId, a.districtId]))) throw new HttpError(404, "school_not_found");
         const live = await one(client, `SELECT id,kind,status FROM safety_incidents WHERE school_id=$1 AND status IN ('active','reunification')`, [schoolId]);
         if (live) throw new HttpError(409, "incident_already_live", { incidentId: live.id });
         // Unconfirmed starts that ran out of time are closed off and logged.
