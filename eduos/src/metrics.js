@@ -44,20 +44,23 @@ export function renderMetrics({ version, poolStats = null } = {}) {
     `eduos_uptime_seconds ${((Date.now() - started) / 1000).toFixed(0)}`,
     "# HELP eduos_http_requests_in_flight Requests currently being served.", "# TYPE eduos_http_requests_in_flight gauge",
     `eduos_http_requests_in_flight ${inFlight}`,
-    "# HELP eduos_http_requests_total HTTP requests by method, route template and status class.", "# TYPE eduos_http_requests_total counter",
-    "# HELP eduos_http_request_duration_seconds HTTP request latency distribution.", "# TYPE eduos_http_request_duration_seconds histogram"
+    "# HELP eduos_http_requests_total HTTP requests by method, route template and status class.", "# TYPE eduos_http_requests_total counter"
   ];
+  // Each metric family's samples stay together after its TYPE line (the text
+  // format requires it; OpenMetrics parsers reject interleaved families).
+  const histogram = ["# HELP eduos_http_request_duration_seconds HTTP request latency distribution.", "# TYPE eduos_http_request_duration_seconds histogram"];
   for (const [key, entry] of requests) {
     const [method, route, status] = key.split("\u0000");
     const l = `method="${label(method)}",route="${label(route)}",status="${status}"`;
     lines.push(`eduos_http_requests_total{${l}} ${entry.count}`);
     for (let i = 0; i < LATENCY_BUCKETS.length; i++) {
-      lines.push(`eduos_http_request_duration_seconds_bucket{${l},le="${LATENCY_BUCKETS[i]}"} ${entry.buckets[i]}`);
+      histogram.push(`eduos_http_request_duration_seconds_bucket{${l},le="${LATENCY_BUCKETS[i]}"} ${entry.buckets[i]}`);
     }
-    lines.push(`eduos_http_request_duration_seconds_bucket{${l},le="+Inf"} ${entry.count}`);
-    lines.push(`eduos_http_request_duration_seconds_sum{${l}} ${entry.seconds.toFixed(6)}`);
-    lines.push(`eduos_http_request_duration_seconds_count{${l}} ${entry.count}`);
+    histogram.push(`eduos_http_request_duration_seconds_bucket{${l},le="+Inf"} ${entry.count}`);
+    histogram.push(`eduos_http_request_duration_seconds_sum{${l}} ${entry.seconds.toFixed(6)}`);
+    histogram.push(`eduos_http_request_duration_seconds_count{${l}} ${entry.count}`);
   }
+  lines.push(...histogram);
   const mem = process.memoryUsage();
   lines.push("# HELP eduos_process_resident_memory_bytes Resident memory.", "# TYPE eduos_process_resident_memory_bytes gauge",
     `eduos_process_resident_memory_bytes ${mem.rss}`);
