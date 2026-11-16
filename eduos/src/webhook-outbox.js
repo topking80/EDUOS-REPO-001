@@ -107,10 +107,6 @@ export async function processWebhookOutbox(actorInput, { limit = 10 } = {}, deps
       const attempts = delivery.attempts;
       const result = attempts[attempts.length - 1];
       await withTenantTransaction(actor, async client => {
-        await client.query(
-          `INSERT INTO webhook_deliveries(district_id,subscription_id,delivery_id,event_id,event_type,attempt,outcome,status_code,duration_ms)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
-          [actor.districtId, job.subscription_id, job.delivery_id, job.event_id, job.event_type, attemptNo, result.outcome, result.statusCode, result.durationMs]);
         const done = result.outcome === 'delivered';
         // A domain that doesn't exist gets one retry (after the 15 s backoff, in
         // case the resolver blipped) and is then dead-lettered instead of using
@@ -126,10 +122,14 @@ export async function processWebhookOutbox(actorInput, { limit = 10 } = {}, deps
              completed_at=CASE WHEN $3 IN ('delivered','dead_letter') THEN now() ELSE NULL END,updated_at=now()
            WHERE id=$1 AND lease_token=$2`,
           [job.id, job.lease_token, done ? 'delivered' : exhausted ? 'dead_letter' : 'pending', attemptNo, delaySeconds, result.outcome, result.statusCode, result.reason || null]);
-        // Lease lost (this worker stalled past lease_until and another worker
-        // reclaimed the job): the attempt stays in the ledger above, but only the
-        // current lease holder may change the subscription's failure state.
+        // A stale worker must not write an attempt outcome either. Otherwise
+        // its late failure can win the unique (delivery_id, attempt) slot before
+        // the current lease holder records a successful delivery.
         if (settled.rowCount === 0) return;
+        await client.query(
+          `INSERT INTO webhook_deliveries(district_id,subscription_id,delivery_id,event_id,event_type,attempt,outcome,status_code,duration_ms)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
+          [actor.districtId, job.subscription_id, job.delivery_id, job.event_id, job.event_type, attemptNo, result.outcome, result.statusCode, result.durationMs]);
         if (done) await client.query(`UPDATE webhook_subscriptions SET failure_count=0,last_delivery_at=now(),last_outcome='delivered' WHERE id=$1`, [job.subscription_id]);
         else await client.query(`UPDATE webhook_subscriptions SET failure_count=failure_count+1,last_delivery_at=now(),last_outcome=$2,
           status=CASE WHEN failure_count+1 >= $3 THEN 'disabled' ELSE status END,
