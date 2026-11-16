@@ -77,6 +77,64 @@ export function registerClubsSportsRoutes(app) {
    await audit(c,req,"join","activity_membership",r.id,`activity=${activity.id}`);return r;
   });res.status(201).json({data});}catch(e){sendError(res,next,e)}
  });
+ app.get("/api/activities/:id/roster",requireSession,wrap(async(c,req)=>{
+  const a=req.actor;if(!validId(req.params.id))throw new HttpError(400,"invalid_activity_id");
+  const activity=await scopedActivity(c,a,req.params.id);if(!activity)throw new HttpError(404,"activity_not_found");
+  if(!await canManage(c,a,activity.id))throw new HttpError(403,"roster_staff_access_required");
+  if(activity.kind!=="sport")throw new HttpError(400,"roster_requires_sport_team");
+  return rows(c,`SELECT r.id,r.student_id,r.jersey_number,r.position,r.status,s.display_name,s.grade_level
+   FROM activity_roster_entries r JOIN students s ON s.id=r.student_id AND s.district_id=r.district_id
+   WHERE r.district_id=$1 AND r.school_id=$2 AND r.activity_id=$3 ORDER BY r.status,s.display_name LIMIT 500`,
+   [a.districtId,activity.school_id,activity.id]);
+ }));
+ app.post("/api/activities/:id/roster",requireSession,requireCsrf,async(req,res,next)=>{
+  const a=req.actor,b=req.body||{};
+  if(!validId(req.params.id)||!validId(b.studentId)||!(b.jerseyNumber===null||b.jerseyNumber===undefined||(Number.isInteger(b.jerseyNumber)&&b.jerseyNumber>=0&&b.jerseyNumber<=99))||!cleanText(b.position||"",80,0))
+   return res.status(400).json({error:"invalid_roster_entry"});
+  try{const data=await withTenantTransaction(a,async c=>{
+   const activity=await requireActivityManager(c,a,req.params.id);
+   if(activity.kind!=="sport")throw new HttpError(400,"roster_requires_sport_team");
+   const student=await one(c,"SELECT id,grade_level FROM students WHERE id=$1 AND district_id=$2 AND school_id=$3",[b.studentId,a.districtId,activity.school_id]);
+   if(!student)throw new HttpError(404,"student_not_found_in_school");
+   if(activity.grade_min!==null||activity.grade_max!==null){
+    const grade=Number(student.grade_level);if(!Number.isFinite(grade)||(activity.grade_min!==null&&grade<activity.grade_min)||(activity.grade_max!==null&&grade>activity.grade_max))throw new HttpError(403,"grade_eligibility_not_met");
+   }
+   const membership=await one(c,"SELECT id FROM activity_memberships WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id IN (SELECT user_id FROM student_user_links WHERE district_id=$1 AND student_id=$4 AND relationship='pupil' AND status='active') AND status='active' LIMIT 1",[a.districtId,activity.school_id,activity.id,b.studentId]);
+   if(!membership)throw new HttpError(409,"student_activity_membership_required");
+   const r=await one(c,`INSERT INTO activity_roster_entries(district_id,school_id,activity_id,student_id,jersey_number,position,status,added_by)
+    VALUES($1,$2,$3,$4,$5,$6,'active',$7)
+    ON CONFLICT(district_id,activity_id,student_id) DO UPDATE SET jersey_number=EXCLUDED.jersey_number,position=EXCLUDED.position,status='active',added_by=EXCLUDED.added_by,updated_at=now()
+    RETURNING id,student_id,jersey_number,position,status`,[a.districtId,activity.school_id,activity.id,b.studentId,b.jerseyNumber??null,(b.position||"").trim(),a.userId]);
+   await audit(c,req,"roster_add","activity_roster_entry",r.id,`activity=${activity.id};student=${b.studentId}`);return r;
+  });res.status(201).json({data});}catch(e){sendError(res,next,e)}
+ });
+ app.get("/api/activities/:id/results",requireSession,wrap(async(c,req)=>{
+  const a=req.actor;if(!validId(req.params.id))throw new HttpError(400,"invalid_activity_id");
+  const activity=await scopedActivity(c,a,req.params.id);if(!activity||activity.status!=="published")throw new HttpError(404,"activity_not_found");
+  return rows(c,`SELECT r.id,r.event_id,r.opponent,r.home_score,r.away_score,r.summary,r.created_at,e.title AS event_title,e.starts_at
+   FROM activity_event_results r JOIN school_events e ON e.id=r.event_id AND e.district_id=r.district_id
+   WHERE r.district_id=$1 AND r.school_id=$2 AND r.activity_id=$3 AND r.status='published' ORDER BY e.starts_at DESC LIMIT 100`,
+   [a.districtId,activity.school_id,activity.id]);
+ }));
+ app.post("/api/events/:id/result",requireSession,requireCsrf,async(req,res,next)=>{
+  const a=req.actor,b=req.body||{};
+  if(!validId(req.params.id)||!cleanText(b.opponent,120,1)||!Number.isInteger(b.homeScore)||b.homeScore<0||b.homeScore>999||!Number.isInteger(b.awayScore)||b.awayScore<0||b.awayScore>999||!cleanText(b.summary||"",1500,0))
+   return res.status(400).json({error:"invalid_event_result"});
+  try{const data=await withTenantTransaction(a,async c=>{
+   const event=await one(c,"SELECT * FROM school_events WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3) FOR UPDATE",[req.params.id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);
+   if(!event||!event.activity_id)throw new HttpError(404,"sport_event_not_found");
+   const activity=await requireActivityManager(c,a,event.activity_id);
+   if(activity.kind!=="sport")throw new HttpError(400,"result_requires_sport_event");
+   if(event.ends_at>new Date())throw new HttpError(409,"event_not_completed");
+   const publish=LEAD(a.role)&&b.publish===true;
+   const r=await one(c,`INSERT INTO activity_event_results(district_id,school_id,activity_id,event_id,opponent,home_score,away_score,summary,status,recorded_by,approved_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    ON CONFLICT(district_id,event_id) DO UPDATE SET opponent=EXCLUDED.opponent,home_score=EXCLUDED.home_score,away_score=EXCLUDED.away_score,summary=EXCLUDED.summary,status=EXCLUDED.status,recorded_by=EXCLUDED.recorded_by,approved_by=EXCLUDED.approved_by,updated_at=now()
+    RETURNING id,event_id,opponent,home_score,away_score,summary,status`,
+    [a.districtId,event.school_id,activity.id,event.id,b.opponent.trim(),b.homeScore,b.awayScore,(b.summary||"").trim(),publish?"published":"draft",a.userId,publish?a.userId:null]);
+   await audit(c,req,publish?"publish_result":"record_result","activity_event_result",r.id,`event=${event.id};status=${r.status}`);return r;
+  });res.status(201).json({data});}catch(e){sendError(res,next,e)}
+ });
  app.get("/api/events",requireSession,wrap(async(c,req)=>{
   const a=req.actor;if(!["superintendent","it_admin","principal","teacher","parent","pupil"].includes(a.role))throw new HttpError(403,"events_access_forbidden");
   return rows(c,`SELECT e.id,e.school_id,e.activity_id,e.title,e.description,e.starts_at,e.ends_at,e.venue,e.status,sc.name AS school_name
@@ -170,7 +228,7 @@ export function registerClubsSportsRoutes(app) {
   const r=await one(c,`SELECT s.id,s.event_id,s.status,s.audience,s.starts_at,s.ends_at,s.recording_allowed,s.provider FROM event_streams s
    JOIN school_events e ON e.id=s.event_id AND e.district_id=s.district_id WHERE s.event_id=$1 AND s.district_id=$2
    AND (s.school_id=$3 OR $4) AND e.status='published' ORDER BY s.created_at DESC LIMIT 1`,
-   [req.params.id,a.districtId,a.schoolId,DISTRICT(a.role)||["principal","teacher"].includes(a.role)]);
+   [req.params.id,a.districtId,a.schoolId,DISTRICT(a.role)]);
   return r?{...r,playbackEnabled:false,reason:"stream_provider_not_connected"}:null;
  }));
 }
