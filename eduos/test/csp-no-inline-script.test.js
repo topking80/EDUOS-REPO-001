@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import vm from "node:vm";
+import helmet from "helmet";
+import { cspDirectives } from "../src/csp.js";
 
 const pub = new URL("../public/", import.meta.url).pathname;
 const files = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap(d => d.isDirectory() ? files(join(dir, d.name)) : [join(dir, d.name)]);
@@ -48,15 +50,38 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const caddyFile = readFileSync(path.join(root, "Caddyfile"), "utf8");
 const appCspText = readFileSync(path.join(root, "src", "csp.js"), "utf8");
 
-test("Caddy CSP matches the application CSP for script restrictions", () => {
-  assert.match(appCspText, /scriptSrc:\s*\["'self'"\]/, "app CSP should set script-src 'self'");
-  assert.match(appCspText, /scriptSrcAttr:\s*\["'none'"\]/, "app CSP should set script-src-attr 'none'");
+const parseCsp = (header) => Object.fromEntries(
+  header.split(";").map(d => d.trim()).filter(Boolean).map(d => {
+    const [name, ...values] = d.split(/\\s+/);
+    return [name, values.sort().join(" ")];
+  })
+);
 
-  const caddyPolicy = caddyFile.match(/Content-Security-Policy\s+"([^"]+)"/)?.[1] || "";
+function applicationCspHeader() {
+  let value;
+  helmet({ contentSecurityPolicy: { directives: cspDirectives } })(
+    {},
+    { setHeader: (name, header) => { if (/^content-security-policy$/i.test(name)) value = header; }, removeHeader() {} },
+    () => {}
+  );
+  return value;
+}
+
+test("Caddy CSP matches the application CSP for script restrictions", () => {
+  assert.match(appCspText, /scriptSrc:\\s*\\["'self'"\\]/, "app CSP should set script-src 'self'");
+  assert.match(appCspText, /scriptSrcAttr:\\s*\\["'none'"\\]/, "app CSP should set script-src-attr 'none'");
+
+  const caddyPolicy = caddyFile.match(/Content-Security-Policy\\s+"([^"]+)"/)?.[1] || "";
   assert.ok(caddyPolicy, "Caddyfile should contain a CSP header");
 
-  assert.match(caddyPolicy, /script-src\s+'self'/, "Caddy CSP must set script-src 'self'");
-  assert.match(caddyPolicy, /script-src-attr\s+'none'/, "Caddy CSP must set script-src-attr 'none'");
-  assert.doesNotMatch(caddyPolicy, /script-src\s+.*unsafe-inline/i);
-  assert.doesNotMatch(caddyPolicy, /script-src-attr\s+.*unsafe-inline/i);
+  assert.match(caddyPolicy, /script-src\\s+'self'/, "Caddy CSP must set script-src 'self'");
+  assert.match(caddyPolicy, /script-src-attr\\s+'none'/, "Caddy CSP must set script-src-attr 'none'");
+  assert.doesNotMatch(caddyPolicy, /script-src\\s+.*unsafe-inline/i);
+  assert.doesNotMatch(caddyPolicy, /script-src-attr\\s+.*unsafe-inline/i);
+
+  const caddyDirectives = parseCsp(caddyPolicy);
+  const appDirectives = parseCsp(applicationCspHeader());
+  assert.equal(caddyDirectives["script-src"], appDirectives["script-src"], "Caddy and app script-src must match exactly");
+  assert.equal(caddyDirectives["script-src-attr"], appDirectives["script-src-attr"], "Caddy and app script-src-attr must match exactly");
+  assert.deepEqual(caddyDirectives, appDirectives, "the complete Caddy CSP must match the application CSP");
 });
