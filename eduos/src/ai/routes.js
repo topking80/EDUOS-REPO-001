@@ -4,8 +4,15 @@ import { config } from "../config.js";
 import { requireSession, requireCsrf } from "../auth.js";
 import { withTenantTransaction } from "../db.js";
 import { HttpError, audit, sendError } from "../role-app-util.js";
-import { USECASES, POLICY_EDITORS, POLICY_READERS, OUTPUT_ALLOWANCE, denial, policyOf, usedToday, reserveBudget, opsContext, namesToRedact, estimateTokens } from "./gateway.js";
-import { createProvider } from "./providers.js";
+import { USECASES, POLICY_EDITORS, POLICY_READERS, denial, policyOf, usedToday, reserveBudget, opsContext, namesToRedact, estimateTokens } from "./gateway.js";
+import { createProvider, externalRequestBody, maxTokensFor, localProvider, capLocalOutput } from "./providers.js";
+
+/** Runs the model, but never longer than the deadline: then the local answer. */
+function withDeadline(work, ms, fallback) {
+  let timer;
+  return Promise.race([work, new Promise(resolve => { timer = setTimeout(() => resolve(fallback()), ms); timer.unref?.(); })])
+    .finally(() => clearTimeout(timer));
+}
 
 export function registerAiRoutes(app, { provider = createProvider(config) } = {}) {
   const limiter = rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false, keyGenerator: (req) => `ai:${req.actor?.userId}` });
@@ -43,20 +50,28 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
         // Any pasted text may name a student: find every student in the
         // district it names (failing here sends nothing anywhere).
         const names = external && usecase !== "ops_brief" ? await namesToRedact(c, a, text) : [];
-        const reserve = estimateTokens(input.text ?? JSON.stringify(input.context)) + OUTPUT_ALLOWANCE;
+        // Reserve a hard upper bound for exactly what would be sent (system
+        // prompt, redacted text, output cap), whatever the tokenizer.
+        const reserve = maxTokensFor(externalRequestBody({ model: "", usecase, input, names }));
         const id = await reserveBudget(c, a, p, usecase, reserve).catch(e => { if (e.status === 429) throw new HttpError(429, e.message); throw e; });
-        return { input, names, id };
+        return { input, names, id, reserve };
       });
       reservation = prep.id;
       // 2. The model (outside any transaction).
-      const out = await provider.generate(usecase, prep.input, { names: prep.names });
+      const out = await withDeadline(provider.generate(usecase, prep.input, { names: prep.names }), config.aiProviderTimeoutMs + 5000,
+        async () => ({ text: capLocalOutput(await localProvider.generate(usecase, prep.input)), fallback: true }));
       const tokensIn = out.usage?.prompt_tokens ?? estimateTokens(prep.input.text ?? JSON.stringify(prep.input.context));
       const tokensOut = out.usage?.completion_tokens ?? estimateTokens(out.text);
       // 3. Settle the reservation to what was used (no prompt, no answer) and audit.
+      //    The reservation is a proven upper bound, so usage above it means the
+      //    provider reported more than it could have used: record what it
+      //    reported (that is what it will bill) and flag it.
+      const over = tokensIn + tokensOut > prep.reserve;
+      if (over) console.error(`ai usage ${tokensIn + tokensOut} exceeded its reservation ${prep.reserve} (district ${a.districtId})`);
       await withTenantTransaction(a, async (c) => {
         await c.query(`UPDATE ai_usage SET provider=$2, outcome=$3, tokens_in=$4, tokens_out=$5 WHERE id=$1 AND outcome='pending'`,
           [reservation, out.fallback || !external ? "local" : "openai_compatible", out.fallback ? "fallback" : "ok", tokensIn, tokensOut]);
-        await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${tokensIn}+${tokensOut}; provider=${external && !out.fallback ? "external" : "local"}`);
+        await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${tokensIn}+${tokensOut}; reserved=${prep.reserve}; provider=${external && !out.fallback ? "external" : "local"}${over ? "; over_reservation" : ""}`);
       });
       reservation = null;
       res.setHeader("Cache-Control", "no-store");

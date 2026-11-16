@@ -15,6 +15,7 @@
 //                        reveals the answer, fails or times out is replaced by
 //                        the local reply.
 import { bestPassage, leaksAnswer, MESSAGES } from "./tutor.js";
+import { removeNames } from "../redact-names.js";
 
 const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/g;
 const URL_RE = /\bhttps?:\/\/\S+/gi;
@@ -27,9 +28,8 @@ export function redact(text, { names = [], max = 500 } = {}) {
   let out = String(text || "").slice(0, max);
   out = out.replace(EMAIL, "[removed]").replace(URL_RE, "[removed]").replace(STUDENT_NO, "[removed]")
     .replace(PHONE, m => (m.replace(/\D/g, "").length >= 9 ? "[removed]" : m)).replace(LONG_DIGITS, "[removed]");
-  const tokens = [...new Set(names.flatMap(n => String(n || "").split(/\s+/)).filter(t => t.length >= 2))];
-  for (const t of tokens) out = out.replace(new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), "[name]");
-  return out;
+  // Names in any script, initials and hyphenated names (src/redact-names.js).
+  return removeNames(out, names.filter(Boolean));
 }
 
 export const localProvider = Object.freeze({

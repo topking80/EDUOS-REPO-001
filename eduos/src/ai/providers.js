@@ -65,11 +65,30 @@ export const localProvider = Object.freeze({
   },
 });
 
+/** Most output tokens any request may produce: sent as max_tokens to an
+ *  external model, and enforced on local answers by cutting them to fit. */
+export const OUTPUT_MAX_TOKENS = 900;
+/** Local answers are metered at 4 characters a token, so this keeps them under the cap. */
+export const LOCAL_OUTPUT_MAX_CHARS = OUTPUT_MAX_TOKENS * 4;
+export const capLocalOutput = (text) => (text.length <= LOCAL_OUTPUT_MAX_CHARS ? text : text.slice(0, LOCAL_OUTPUT_MAX_CHARS - 1) + "…");
+
+const utf8Bytes = (s) => Buffer.byteLength(String(s ?? ""), "utf8");
+/**
+ * A hard upper bound on the tokens a request can use, whatever the model's
+ * tokenizer: every token is at least one byte of UTF-8, so a message can't be
+ * more tokens than bytes. Bytes of the system prompt and the user content as
+ * sent, plus per-message framing (64), plus the output cap. High-density
+ * scripts (CJK: 3 bytes a character) are reserved for in full.
+ */
+export function maxTokensFor(body) {
+  return body.messages.reduce((n, m) => n + utf8Bytes(m.content) + 32, 0) + body.max_tokens;
+}
+
 /** Exact request body sent to an external provider (exported for tests). */
 export function externalRequestBody({ model, usecase, input, names = [] }) {
   // Redact the whole text, then cut: the tutor's redact() stops at 500 characters by default.
   const content = usecase === "ops_brief" ? JSON.stringify(input.context) : redact(input.text, { names, max: 12000 }).slice(0, 8000);
-  return { model, temperature: 0.3, max_tokens: 900, messages: [{ role: "system", content: SYSTEM_PROMPTS[usecase] }, { role: "user", content }] };
+  return { model, temperature: 0.3, max_tokens: OUTPUT_MAX_TOKENS, messages: [{ role: "system", content: SYSTEM_PROMPTS[usecase] }, { role: "user", content }] };
 }
 
 export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, fetchImpl = fetch, log = console.warn }) {
@@ -88,7 +107,7 @@ export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, fetchI
         return { text, usage: data.usage };
       } catch (e) {
         log(`ai provider unavailable (${e.message}); using the local answer`);
-        return { text: await localProvider.generate(usecase, input), fallback: true };
+        return { text: capLocalOutput(await localProvider.generate(usecase, input)), fallback: true };
       }
     },
   });
@@ -97,5 +116,5 @@ export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, fetchI
 export function createProvider(cfg) {
   if (cfg.aiProvider === "openai_compatible" && cfg.aiAllowExternal)
     return openAiCompatibleProvider({ url: cfg.aiProviderUrl, model: cfg.aiProviderModel, apiKey: cfg.aiProviderApiKey, timeoutMs: cfg.aiProviderTimeoutMs });
-  return { name: "local", generate: async (u, i) => ({ text: await localProvider.generate(u, i) }) };
+  return { name: "local", generate: async (u, i) => ({ text: capLocalOutput(await localProvider.generate(u, i)) }) };
 }

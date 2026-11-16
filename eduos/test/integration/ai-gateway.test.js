@@ -5,7 +5,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
-import { PG_URL, ID, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
+import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 
@@ -79,10 +79,19 @@ describe("staff AI gateway against real PostgreSQL", { skip }, () => {
     assert.deepEqual(rows.map(r => r.usecase), ["lesson_draft", "ops_brief", "ops_brief"]);
     const audited = (await admin.query("SELECT count(*)::int AS n FROM audit_events WHERE action LIKE 'ai\\_%'")).rows[0].n;
     assert.equal(audited, 3);
-    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "writing_feedback", "ops_brief"], dailyTokenCap: 100000, userDailyTokenCap: 700 });
-    let r; for (let i = 0; i < 5 && (!r || r.status === 200); i++) r = await runAi("t1", "lesson_draft", "Volcanoes and plate tectonics");
+    // A lesson draft reserves about 1,200 tokens (the bytes of what would be
+    // sent plus the 900-token output cap) and uses a few hundred.
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "writing_feedback", "ops_brief"], dailyTokenCap: 100000, userDailyTokenCap: 1000 });
+    assert.equal((await runAi("t1", "lesson_draft", "Volcanoes and plate tectonics")).body.error, "ai_request_exceeds_budget", "could never fit");
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "writing_feedback", "ops_brief"], dailyTokenCap: 100000, userDailyTokenCap: 1700 });
+    let r; for (let i = 0; i < 8 && (!r || r.status === 200); i++) r = await runAi("t1", "lesson_draft", "Volcanoes and plate tectonics");
     assert.equal(r.status, 429); assert.equal(r.body.error, "ai_your_budget_reached");
-    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 10, userDailyTokenCap: 20000 });
+    // The district has used plenty today (5,000 more tokens recorded); leave
+    // less room than one more request reserves.
+    await admin.query(`INSERT INTO ai_usage(district_id, user_id, role, usecase, provider, outcome, tokens_in, tokens_out)
+      VALUES ($1, $2, 'superintendent', 'ops_brief', 'local', 'ok', 5000, 0)`, [ID.d1, USERS.supt1[0]]);
+    const spent = (await admin.query("SELECT sum(tokens_in + tokens_out)::int AS n FROM ai_usage WHERE outcome IN ('ok','fallback')")).rows[0].n;
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: spent + 300, userDailyTokenCap: 20000 });
     assert.equal((await runAi("p1", "lesson_draft", "Volcanoes")).body.error, "ai_district_budget_reached");
   });
 
