@@ -27,6 +27,8 @@ test("paid checkout and livestream playback remain fail-closed", async () => {
  const routes = await readFile(new URL("src/clubs-sports-routes.js", root), "utf8");
  assert.match(routes, /paid_ticketing_not_configured/);
  assert.match(routes, /playbackEnabled:false/);
+ assert.match(routes, /ticket_code_hash|ticketCode/);
+ assert.match(routes, /event_checkin_staff_required/);
  assert.match(routes, /recording_allowed,created_by\)[\s\S]*false/);
  assert.doesNotMatch(routes, /cardNumber|cvv|payment_secret/i);
 });
