@@ -32,7 +32,7 @@ In `src/transport-routes.js`, `GET /api/transport/today` has two query-amplifica
 1. Driver and principal/superintendent branches iterate routes and call `routeDetail()`. That helper independently queries stops and today's run, then (when riders are requested) riders and latest check-ins. Query count therefore grows with the number of routes.
 2. Teacher and family branches iterate each returned rider and issue another check-in query. Those queries are sequential, so response latency grows with roster size and round-trip latency.
 
-**Recommended fix:** fetch check-in events for all relevant run/rider IDs in one bounded query, group them in memory by (run_id, student_id), and hydrate route details in batched queries. Preserve the existing tenant transaction, row-level security, school/roster/family predicates, and response shape. Add query-count regression tests and large-roster fixtures before merging.
+**Implemented on this branch:** the teacher/family rider view now fetches all visible check-in events with one paired-array query and groups them by (run_id, student_id). The tenant transaction and original teacher-roster / guardian-child scope remain unchanged, and the event response shape/order is preserved. A pure grouping helper and unit tests were added. The driver/principal route-detail loops and route hydration still need batching; no claim is made that all transport N+1 paths are fixed.
 
 ### P1 — Arrival reconciliation has correlated per-rider subqueries
 
@@ -90,19 +90,19 @@ Use warm-up plus repeated runs, report medians and confidence intervals, and com
 
 ## Implementation sequence
 
-1. Add tests that pin the existing transport response contract and enforce bounded query counts.
-2. Batch transport check-in reads and route hydration.
-3. Inspect PostgreSQL plans and migration indexes for transport/arrival paths; add only plan-validated indexes.
-4. Refactor notification dispatch to claim/send/settle leases before any real external adapter is enabled.
-5. Add histogram and DB/event-loop metrics with bounded labels.
-6. Add keyset pagination to the largest high-volume feeds while retaining offset compatibility.
-7. Run full unit, PostgreSQL integration, security regression, and load suites; publish before/after results.
+1. Complete driver/principal route hydration batching and add response/query-count regression tests.
+2. Inspect PostgreSQL plans and migration indexes for transport/arrival paths; add only plan-validated indexes.
+3. Refactor notification dispatch to claim/send/settle leases before any real external adapter is enabled.
+4. Add histogram and DB/event-loop metrics with bounded labels.
+5. Add keyset pagination to the largest high-volume feeds while retaining offset compatibility.
+6. Run full unit, PostgreSQL integration, security regression, and load suites; publish before/after results.
 
 ## Status
 
 - [x] Source-level audit started on dedicated branch.
 - [ ] Production-like baseline load test.
-- [ ] Transport query batching and regression tests.
+- [x] Teacher/family transport check-in N+1 reduced to one batched query; grouping unit tests added and passed in an isolated Node test run.
+- [ ] Driver/principal route hydration batching and full repository regression tests.
 - [ ] Query-plan/index validation.
 - [ ] Notification worker lease refactor.
 - [ ] Metrics histograms and DB latency instrumentation.
