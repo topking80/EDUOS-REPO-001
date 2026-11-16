@@ -16,6 +16,17 @@ defaults:
     working-directory: eduos
 
 jobs:
+  prometheus-rules:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Validate Prometheus alert rules with promtool
+        run: |
+          docker run --rm --entrypoint=promtool \\
+            --volume "$PWD/monitoring:/etc/prometheus:ro" \\
+            prom/prometheus:v3.5.0 \\
+            check rules /etc/prometheus/eduos-alerts.yml
+
   source-and-container-security:
     runs-on: ubuntu-24.04
     permissions:
