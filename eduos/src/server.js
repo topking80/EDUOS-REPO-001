@@ -23,6 +23,7 @@ import { processWebhookOutbox as processOutbox, createLimiter } from "./webhook-
 import { dispatchWebhooks } from "./webhook-dispatch.js";
 import { registerAdminRoutes } from "./admin-routes.js";
 import { registerMeshRoutes } from "./mesh-routes.js";
+import { registerMarketplaceRoutes } from "./marketplace-routes.js";
 import { registerHomeRoutes } from "./home-routes.js";
 import { registerBrandingRoutes } from "./branding-routes.js";
 import { registerTransportRoutes } from "./transport-routes.js";
@@ -1887,6 +1888,7 @@ app.get("/api/webhooks/:webhookId/deliveries",requireSession,requirePermission("
 // 32.1.0: schools, users and memberships (district administration).
 registerAdminRoutes(app);
 registerMeshRoutes(app,{emitServerFlow});
+registerMarketplaceRoutes(app);
 registerHomeRoutes(app);
 registerBrandingRoutes(app,{emitServerFlow});
 // 32.4.0: mobile role apps (transport, Christie tutor, Comms Hub).

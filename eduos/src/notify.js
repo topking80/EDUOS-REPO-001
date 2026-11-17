@@ -16,6 +16,8 @@
 import { config } from "./config.js";
 
 export const KINDS = ["announcement", "message", "transport", "christie", "moderation", "safety", "pickup"];
+/** 37.6.0: a feature module registers its own kind; its migration widens notification_outbox_kind_check. */
+export function registerNotificationKind(kind) { if (!KINDS.includes(kind)) KINDS.push(kind); }
 export const EXTERNAL_TEXT = "You have a new EduOS notification. Open the EduOS app to read it.";
 
 export function enabledExternalChannels(cfg = config) {

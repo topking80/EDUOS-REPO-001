@@ -90,6 +90,12 @@ GRANT SELECT ON app_seats TO eduos_app;
 GRANT SELECT, INSERT ON app_launches TO eduos_app;
 REVOKE DELETE, TRUNCATE ON district_settings, apps, app_licenses, app_assignments, app_requests, app_seats, app_launches FROM eduos_app;
 REVOKE INSERT, UPDATE ON app_seats FROM eduos_app;
+-- 37.6.0 marketplace: privacy reviews and fee events are append-only.
+GRANT SELECT, INSERT, UPDATE ON marketplace_vendors, marketplace_listings TO eduos_app;
+GRANT SELECT, INSERT ON marketplace_privacy_reviews, marketplace_fee_events TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON marketplace_privacy_reviews, marketplace_fee_events FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON marketplace_vendors, marketplace_listings FROM eduos_app;
+REVOKE ALL ON FUNCTION eduos_marketplace_request_guard() FROM eduos_app;
 REVOKE UPDATE ON app_launches FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_claim_seat(uuid), eduos_app_usage(uuid) TO eduos_app;
 -- 32.3.0 school branding. Assets and uploads are immutable once written;
