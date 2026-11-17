@@ -5,7 +5,7 @@ import fs from "node:fs";
 import * as M from "../src/enrollment-model.js";
 import { ROLE_PERMISSIONS } from "../src/policy.js";
 
-const sql = fs.readFileSync(new URL("../db/059_enrollment_funnel.sql", import.meta.url), "utf8");
+const sql = fs.readFileSync(new URL("../db/062_enrollment_funnel.sql", import.meta.url), "utf8");
 const grants = fs.readFileSync(new URL("../db/runtime_grants.template.sql", import.meta.url), "utf8");
 const migrate = fs.readFileSync(new URL("../src/migrate.js", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("../public/app/app.js", import.meta.url), "utf8");
@@ -43,8 +43,9 @@ test("seat state and document checks", () => {
   assert.ok(!M.safeFilename("../../x.html", "image/png").includes("/"));
   assert.ok(M.safeFilename("a\"b.pdf", "application/pdf").endsWith(".pdf"));
 });
-test("migration 059 is registered, RLS-forced, append-only history, purge-chained", () => {
-  assert.match(migrate, /"059_enrollment_funnel\.sql"/);
+test("migration 062 is registered, RLS-forced, append-only history, purge-chained", () => {
+  assert.match(migrate, /for \(const name of await shippedMigrations\(\)\) if \(!migrations\.includes\(name\)\) migrations\.push\(name\);/);
+  assert.ok(fs.existsSync(new URL("../db/062_enrollment_funnel.sql", import.meta.url)));
   for (const t of ["enrollment_capacity", "enrollment_applications", "enrollment_events", "enrollment_documents"]) assert.match(sql, new RegExp(`'${t}'`));
   assert.match(sql, /FORCE ROW LEVEL SECURITY/);
   assert.match(sql, /enrollment_events[\s\S]*reject_append_only_mutation/);
