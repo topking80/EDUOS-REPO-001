@@ -19,7 +19,7 @@ import { normalizeAgentEvent } from "./agent-events.js";
 import { classifyOperationalEvent } from "./operational-event-taxonomy.js";
 import { FLOW_EVENT_TYPES, isFlowEventType, normalizeFlowEvent, serverFlowEvent, webhookPayload } from "./flow-events.js";
 import { deliverWebhook, deriveWebhookSecret, resolveWebhookTarget, validateWebhookUrl } from "./webhooks.js";
-import { processWebhookOutbox as processOutbox, createLimiter } from "./webhook-outbox.js";
+import { processWebhookOutbox as processOutbox, createLimiter, createGlobalSlots, SLOT_LEASE_SECONDS } from "./webhook-outbox.js";
 import { dispatchWebhooks } from "./webhook-dispatch.js";
 import { registerAdminRoutes } from "./admin-routes.js";
 import { registerMeshRoutes } from "./mesh-routes.js";
@@ -1109,10 +1109,10 @@ app.post("/api/assignments",requireSession,requireCsrf,requirePermission("assign
          VALUES($1,$2,$3,'create','assignment',$4,'success',$5)`,
         [req.actor.districtId,req.actor.userId,req.actor.role,a.id,req.requestId]
       );
+      if(a.status==="published")await emitServerFlow(req,"assignment.created",a.id,a.school_id,null,client);
       return a;
     });
     res.status(201).json({data:row});
-    if(row.status==="published")emitServerFlow(req,"assignment.created",row.id,row.school_id);
   }catch(e){next(e)}
 });
 
@@ -1142,11 +1142,12 @@ app.patch("/api/assignments/:assignmentId",requireSession,requireCsrf,requirePer
         `INSERT INTO audit_events(district_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
          VALUES($1,$2,$3,'update','assignment',$4,'success',$5,$6)`,
         [req.actor.districtId,req.actor.userId,req.actor.role,req.params.assignmentId,JSON.stringify({from:found.rows[0].status,to:updated.rows[0].status}),req.requestId]);
-      return {status:200,data:updated.rows[0],published:found.rows[0].status!=="published"&&updated.rows[0].status==="published"};
+      const published=found.rows[0].status!=="published"&&updated.rows[0].status==="published";
+      if(published)await emitServerFlow(req,"assignment.created",updated.rows[0].id,updated.rows[0].school_id,null,client);
+      return {status:200,data:updated.rows[0]};
     });
     if(result.status!==200)return res.status(result.status).json({error:result.error});
     res.json({data:result.data});
-    if(result.published)emitServerFlow(req,"assignment.created",result.data.id,result.data.school_id);
   }catch(e){next(e)}
 });
 
@@ -1328,14 +1329,14 @@ app.post("/api/attendance",requireSession,requireCsrf,requirePermission("attenda
          VALUES($1,$2,$3,'record','attendance',$4,'success',$5)`,
         [req.actor.districtId,req.actor.userId,req.actor.role,saved.rows[0].id,req.requestId]
       );
+      // Scoped to the learner's school and subject so only linked families see it.
+      await emitServerFlow(req,"attendance.recorded",saved.rows[0].id,student.rows[0].school_id,saved.rows[0].student_id,client);
       return {...saved.rows[0],school_id:student.rows[0].school_id};
     });
     if(!result)return res.status(404).json({error:"student_not_found"});
     if(result.duplicate)return res.status(200).json({data:{duplicate:true,...(result.id?{id:result.id,status:result.status}:{})}});
-    const {school_id:attendanceSchoolId,...attendanceRow}=result;
+    const {school_id:_attendanceSchoolId,...attendanceRow}=result;
     res.status(201).json({data:attendanceRow});
-    // Scoped to the learner's school and subject so only linked families see it.
-    emitServerFlow(req,"attendance.recorded",result.id,attendanceSchoolId,result.student_id);
   }catch(e){next(e)}
 });
 
@@ -1641,6 +1642,9 @@ const webhookAdminLimiter=rateLimit({windowMs:15*60_000,limit:config.webhookAdmi
 // test") goes through one limiter of WEBHOOK_MAX_IN_FLIGHT. (A limiter was
 // defined here before but never used; 2026-11-16 audit.)
 const webhookLimiter=createLimiter(config.webhookMaxInFlight);
+// 37.7.0 audit: plus a deployment-wide ceiling in PostgreSQL (WEBHOOK_GLOBAL_MAX_IN_FLIGHT),
+// so N replicas can't open N × WEBHOOK_MAX_IN_FLIGHT connections.
+const webhookGlobalSlots=createGlobalSlots(pool,config.webhookGlobalMaxInFlight,{leaseSeconds:SLOT_LEASE_SECONDS});
 const webhookOptions=()=>({allowInsecureLoopback:config.webhookAllowInsecureLoopback,allowedHosts:config.webhookAllowedHosts});
 const tenantActor=actor=>({districtId:actor.districtId,userId:actor.userId,role:actor.role,schoolId:actor.schoolId||null});
 const webhooksEnabled=(_req,res,next)=>config.webhookSigningKey?next():res.status(503).json({error:"webhooks_not_configured"});
@@ -1650,7 +1654,12 @@ const validWebhookEventTypes=list=>Array.isArray(list)&&list.length>=1&&list.len
 // subjectStudentId limits family visibility to the learner's linked guardians
 // and the learner; it is stored only for feed filtering, never sent in webhooks.
 async function recordFlowEvent(actor,event,schoolId,subjectStudentId=null){
-  return withTenantTransaction(actor,async client=>{
+  return withTenantTransaction(actor,client=>insertFlowEvent(client,actor,event,schoolId,subjectStudentId));
+}
+// The event row and its outbox jobs, written with the caller's client so they
+// commit (or roll back) with the business change that caused them.
+async function insertFlowEvent(client,actor,event,schoolId,subjectStudentId=null){
+  {
     const inserted=await client.query(
       `INSERT INTO flow_events(district_id,school_id,actor_user_id,actor_role,event_type,audience,source,refs,counts,subject_student_id)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10) RETURNING id,occurred_at`,
@@ -1669,7 +1678,7 @@ async function recordFlowEvent(actor,event,schoolId,subjectStudentId=null){
         [actor.districtId,sub.id,saved.id,event.type,payload]);
     }
     return saved;
-  });
+  }
 }
 
 // "Send test" delivery for one subscription (POST /api/webhooks/:id/test).
@@ -1681,8 +1690,14 @@ async function recordFlowEvent(actor,event,schoolId,subjectStudentId=null){
 // never changes the failure count or status, so it can't disable or re-arm it.
 async function deliverToSubscription(actor,subscription,event,_eventId=null,maxAttempts=1){
   const deliveryId=crypto.randomUUID();
-  const attempts=await webhookLimiter.run(()=>deliverWebhook({subscription,secrets:webhookSecrets(subscription.id),
-    eventType:event.type,deliveryId,body:JSON.stringify(webhookPayload(event)),options:{...webhookOptions(),maxAttempts}}));
+  const attempts=await webhookLimiter.run(async()=>{
+    const slot=webhookGlobalSlots?await webhookGlobalSlots.acquire():null;
+    if(webhookGlobalSlots&&!slot)throw new HttpError(503,"webhook_capacity_busy",{reason:"Every delivery slot in the deployment is in use. Try again shortly."});
+    try{
+      return await deliverWebhook({subscription,secrets:webhookSecrets(subscription.id),
+        eventType:event.type,deliveryId,body:JSON.stringify(webhookPayload(event)),options:{...webhookOptions(),maxAttempts}});
+    }finally{if(slot)await webhookGlobalSlots.release(slot).catch(()=>{});}
+  });
   await withTenantTransaction(actor,async client=>{
     for(const a of attempts) await client.query(
       `INSERT INTO webhook_deliveries(district_id,subscription_id,delivery_id,event_id,event_type,attempt,outcome,status_code,duration_ms)
@@ -1697,7 +1712,7 @@ async function deliverToSubscription(actor,subscription,event,_eventId=null,maxA
 // Durable outbox worker: src/webhook-outbox.js (extracted for lifecycle tests).
 async function processWebhookOutbox(actorInput,{limit=10}={}){
   return processOutbox(actorInput,{limit},{withTenantTransaction,signingKey:config.webhookSigningKey,
-    previousSigningKey:config.webhookPreviousSigningKey||null,deliveryOptions:webhookOptions(),limiter:webhookLimiter});
+    previousSigningKey:config.webhookPreviousSigningKey||null,deliveryOptions:webhookOptions(),limiter:webhookLimiter,globalSlots:webhookGlobalSlots});
 }
 /** The secrets a subscription's deliveries are signed with: current, then previous during a key rotation. */
 function webhookSecrets(subscriptionId){
@@ -1710,15 +1725,22 @@ function dispatchFlowWebhooks(actorInput,_event){
   processWebhookOutbox(actorInput,{limit:10}).catch(error=>console.error('Webhook outbox dispatch failed',{message:error.message}));
 }
 
-// Event recording and outbox insertion commit together; request-side delivery
-// is merely a latency optimization. Pending jobs remain recoverable on later
-// authenticated activity in this district.
-function emitServerFlow(req,type,resourceId,schoolId,subjectStudentId=null){
-  const event=serverFlowEvent(type,req.actor.role,resourceId); if(!event)return;
+// A server-side flow event, written INSIDE the business transaction (pass its
+// client) so the change, the event and its outbox jobs commit together
+// (2026-11-17 audit, finding 4: the event used to be recorded after the
+// response, in a separate transaction, so a crash in between lost it with no
+// way to recover). Delivery is kicked once the response has gone out; the
+// scheduled sweep delivers anything that kick misses.
+async function emitServerFlow(req,type,resourceId,schoolId,subjectStudentId=null,client){
+  if(!client)throw new Error("emitServerFlow needs the business transaction's client");
+  const event=serverFlowEvent(type,req.actor.role,resourceId); if(!event)return null;
   const actor=tenantActor(req.actor);
-  recordFlowEvent(actor,event,schoolId,subjectStudentId)
-    .then(saved=>dispatchFlowWebhooks(actor,saved))
-    .catch(error=>console.error('Flow event not recorded',{requestId:req.requestId,message:error.message}));
+  const saved=await insertFlowEvent(client,actor,event,schoolId,subjectStudentId);
+  if(config.webhookSigningKey&&req.res&&!req.flowDispatchScheduled){
+    req.flowDispatchScheduled=true;
+    req.res.once("finish",()=>{ if(req.res.statusCode<400)dispatchFlowWebhooks(actor,saved); });
+  }
+  return saved;
 }
 
 app.get("/api/flow-events",requireSession,requirePermission("flow_events","read"),async(req,res,next)=>{
@@ -1747,8 +1769,9 @@ app.get("/api/flow-events",requireSession,requirePermission("flow_events","read"
     res.setHeader("Cache-Control","no-store");
     const pageOut=paged(rows.rows,pgn);
     res.json({...pageOut,data:pageOut.data.map(r=>({id:r.id,type:r.event_type,actorRole:r.actor_role,audience:r.audience,source:r.source,refs:r.refs,counts:r.counts,occurredAt:r.occurred_at}))});
-    // Authenticated feed activity also recovers pending jobs after a restart.
-    dispatchFlowWebhooks(req.actor,null);
+    // Reading the feed no longer starts outbound delivery (2026-11-17
+    // audit, finding 2). Recovery after a restart is the scheduled sweep's job
+    // (WEBHOOK_DISPATCH_INTERVAL_SECONDS, or src/webhook-dispatch.js).
   }catch(e){next(e)}
 });
 
@@ -1789,7 +1812,12 @@ app.post("/api/webhooks",webhookAdminLimiter,requireSession,requireCsrf,requireP
     if(!target.ok)return res.status(400).json({error:"webhook_url_not_allowed",reason:target.reason});
     const href=checked.url.href;
     const created=await withTenantTransaction(req.actor,async client=>{
-      const existing=await client.query(`SELECT url FROM webhook_subscriptions WHERE status='active' FOR UPDATE`);
+      // 2026-11-17 audit, finding 3: one registration per district at a time.
+      // FOR UPDATE on existing rows didn't stop a concurrent insert; this
+      // lock does, and PostgreSQL backs it up (unique active URL index and
+      // the max_active_webhooks trigger, db/067_webhook_hardening.sql).
+      await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('eduos:webhook_subscriptions:'||$1::text,0))`,[req.actor.districtId]);
+      const existing=await client.query(`SELECT url FROM webhook_subscriptions WHERE status='active'`);
       const cap=await districtCap(client,req.actor.districtId,"max_active_webhooks");
       if(cap!==null&&existing.rowCount>=cap)return {error:"webhook_limit_reached"};
       if(existing.rows.some(row=>row.url===href))return {error:"webhook_already_registered"};
@@ -1814,7 +1842,12 @@ app.post("/api/webhooks",webhookAdminLimiter,requireSession,requireCsrf,requireP
       secret:deriveWebhookSecret(config.webhookSigningKey,row.id),
       signature:{header:"X-EduOS-Signature",format:"t=<unix seconds>,v1=<hex hmac-sha256(secret, t + \".\" + raw body)>[,v1=<…>] (accept any v1; a second one appears during a signing-key rotation)",toleranceSeconds:300}
     });
-  }catch(e){next(e)}
+  }catch(e){
+    // The database's own guards, if a request ever gets past the lock above.
+    if(e?.code==="23505"&&e.constraint==="webhook_subscriptions_active_url")return res.status(409).json({error:"webhook_already_registered"});
+    if(e?.code==="23514"&&e.constraint==="webhook_subscriptions_district_cap")return res.status(409).json({error:"webhook_limit_reached"});
+    next(e);
+  }
 });
 
 app.delete("/api/webhooks/:webhookId",webhookAdminLimiter,requireSession,requireCsrf,requirePermission("webhooks","manage"),async(req,res,next)=>{
@@ -1962,7 +1995,7 @@ function startWebhookSweep(){
   const timer=setInterval(()=>{
     if(webhookSweepRunning)return;
     webhookSweepRunning=true;
-    dispatchWebhooks({db:pool,limiter:webhookLimiter,maxPerDistrict:100})
+    dispatchWebhooks({db:pool,limiter:webhookLimiter,globalSlots:webhookGlobalSlots,maxPerDistrict:100})
       .catch(error=>console.error("Webhook sweep failed",{message:error.message}))
       .finally(()=>{webhookSweepRunning=false;});
   },config.webhookDispatchIntervalSeconds*1000);
