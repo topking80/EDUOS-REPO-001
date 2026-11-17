@@ -4,6 +4,7 @@ import fs from "node:fs";
 
 const migration = fs.readFileSync(new URL("../db/051_notification_email_consent.sql", import.meta.url), "utf8");
 const smsMigration = fs.readFileSync(new URL("../db/052_notification_sms_verification.sql", import.meta.url), "utf8");
+const acceptanceMigration = fs.readFileSync(new URL("../db/053_notification_provider_acceptance.sql", import.meta.url), "utf8");
 const migrate = fs.readFileSync(new URL("../src/migrate.js", import.meta.url), "utf8");
 const routes = fs.readFileSync(new URL("../src/notify-routes.js", import.meta.url), "utf8");
 const dispatcher = fs.readFileSync(new URL("../src/notify-dispatch.js", import.meta.url), "utf8");
@@ -41,4 +42,9 @@ test("phone verification requires session and CSRF; consent requires verified ph
   assert.ok(routes.includes("verified_phone_required"));
   assert.match(dispatcher, /row.channel === "sms" && adapter.name === "twilio" && !renewed.smsOptedIn/);
   assert.match(dispatcher, /p.phone_verified_at/);
+});
+
+test("provider acceptance is terminal but is not counted as confirmed delivery", () => {
+  assert.match(acceptanceMigration, /'accepted'/);
+  assert.match(dispatcher, /delivered_at=CASE WHEN \$2='delivered' THEN now\(\) END/);
 });
