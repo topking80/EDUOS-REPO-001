@@ -33,8 +33,8 @@ export function denial({ usecase, role, enabled }) {
 }
 
 export async function policyOf(c, districtId) {
-  const r = (await c.query("SELECT enabled_usecases, daily_token_cap, user_daily_token_cap, updated_at FROM ai_district_policy WHERE district_id=$1", [districtId])).rows[0];
-  return r || { enabled_usecases: [], daily_token_cap: 200000, user_daily_token_cap: 20000, updated_at: null };
+  const r = (await c.query("SELECT enabled_usecases, daily_token_cap, user_daily_token_cap, external_provider_enabled, external_provider_acknowledged_at, updated_at FROM ai_district_policy WHERE district_id=$1", [districtId])).rows[0];
+  return r || { enabled_usecases: [], daily_token_cap: 200000, user_daily_token_cap: 20000, external_provider_enabled: false, external_provider_acknowledged_at: null, updated_at: null };
 }
 
 // Today's tokens. A reservation ('pending') counts in full until it is
@@ -59,12 +59,13 @@ export async function usedToday(c, districtId, userId) {
  */
 export const lockDistrictAi = (c, districtId) => c.query("SELECT pg_advisory_xact_lock(hashtext('eduos-ai-budget'), hashtext($1::text))", [districtId]);
 
-export async function reserveBudget(c, actor, usecase, reserve) {
+export async function reserveBudget(c, actor, usecase, reserve, { requireExternal = false } = {}) {
   await lockDistrictAi(c, actor.districtId);
   // Read the policy only now, under the lock that policy changes also take:
   // a request can't reserve against a budget or a tool the superintendent
   // has just lowered or turned off.
   const policy = await policyOf(c, actor.districtId);
+  if (requireExternal && !policy.external_provider_enabled) throw Object.assign(new Error("ai_external_provider_disabled"), { status: 403 });
   const why = denial({ usecase, role: actor.role, enabled: policy.enabled_usecases });
   if (why) throw Object.assign(new Error(why), { status: 403 });
   // A request that could never fit is refused as such, not as "used up".
