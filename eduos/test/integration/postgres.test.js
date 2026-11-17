@@ -79,8 +79,11 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
   it("H2: every tenant table used by the API is granted to the runtime role", async () => {
     const r = await sql(`SELECT t.tablename FROM pg_tables t WHERE t.schemaname='public'
       AND NOT has_table_privilege($1, format('%I.%I', t.schemaname, t.tablename), 'SELECT')`, [db.names.app]);
-    // 32.6.0: edal_heads (the ledger's chain head) is deliberately reachable only through definer functions.
-    assert.deepEqual(r.rows.map(x => x.tablename).filter(t => t !== "edal_heads"), []);
+    // 32.6.0: edal_heads (the ledger's chain head) is deliberately reachable only through definer functions;
+    // so is webhook_delivery_slots (2026-11-17 audit, the deployment-wide delivery ceiling; migration 067).
+    assert.deepEqual(r.rows.map(x => x.tablename).filter(t => t !== "edal_heads" && t !== "webhook_delivery_slots"), []);
+    for (const fn of ["eduos_webhook_slot_acquire(integer,integer)", "eduos_webhook_slot_release(uuid)", "eduos_webhook_slots_free(integer)"])
+      assert.ok((await sql("SELECT has_function_privilege($1,$2,'EXECUTE') AS ok", [db.names.app, fn])).rows[0].ok, fn);
     for (const [table, priv] of [["students", "INSERT"], ["students", "UPDATE"], ["student_user_links", "INSERT"], ["student_user_links", "UPDATE"],
       ["family_messages", "INSERT"], ["teacher_classroom_preferences", "UPDATE"], ["sis_sync_runs", "INSERT"], ["sis_attendance_imports", "INSERT"],
       // Missing through 37.4.0 (audit addendum 2): library policy upsert, overdue notices, ops schedules.

@@ -63,6 +63,9 @@ GRANT SELECT, INSERT ON webhook_deliveries TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON webhook_deliveries FROM eduos_app;
 GRANT SELECT, INSERT, UPDATE ON webhook_outbox TO eduos_app;
 REVOKE DELETE, TRUNCATE ON webhook_outbox FROM eduos_app;
+-- 37.7.0 audit: deployment-wide delivery slots, through these functions only (no table access).
+REVOKE ALL ON webhook_delivery_slots FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_webhook_slot_acquire(integer, integer), eduos_webhook_slot_release(uuid), eduos_webhook_slots_free(integer) TO eduos_app;
 
 -- 32.0.53 teacher rosters, durable OIDC login state, record deletion.
 GRANT SELECT, INSERT, DELETE ON teacher_student_rosters TO eduos_app;

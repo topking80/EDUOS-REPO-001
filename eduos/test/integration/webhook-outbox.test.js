@@ -25,9 +25,10 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     });
   const delivered = async () => ({ outcome: "delivered", statusCode: 204, durationMs: 1 });
 
+  // A distinct URL each time: one active subscription per URL per district (migration 067).
   async function subscription({ failureCount = 0, district = ID.d1, creator = USERS.supt1[0] } = {}) {
     return (await admin.query(`INSERT INTO webhook_subscriptions(district_id,created_by,url,event_types,failure_count)
-      VALUES($1,$2,'https://hooks.example.test/events',ARRAY['*'],$3) RETURNING id`, [district, creator, failureCount])).rows[0].id;
+      VALUES($1,$2,'https://hooks.example.test/events/'||gen_random_uuid(),ARRAY['*'],$3) RETURNING id`, [district, creator, failureCount])).rows[0].id;
   }
   async function job(sub, { maxAttempts = 5, district = ID.d1, actor = USERS.supt1[0] } = {}) {
     const ev = (await admin.query(`INSERT INTO flow_events(district_id,actor_user_id,actor_role,event_type,audience,source)
@@ -249,8 +250,7 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     const j = await job(s);
     const { createLimiter } = await import("../../src/webhook-outbox.js");
     const limiter = createLimiter(1);
-    let release;
-    const occupied = limiter.run(() => new Promise(resolve => { release = resolve; }));
+    let release, occupied;
     const waitForQueue = async expected => {
       for (let i = 0; i < 100; i++) {
         if (limiter.waiting >= expected) return;
@@ -261,15 +261,18 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     const sends = [];
     const send = async req => { sends.push(req.headers["X-EduOS-Delivery"]); return delivered(); };
 
-    // A claims the event but cannot start delivery because the only slot is busy.
+    // A claims the event while its slot is free (a worker with no free slot
+    // claims nothing, 2026-11-17 audit), then another delivery takes the slot
+    // before A's job starts, so A waits in the queue.
     const a = work(supt1, { send, limit: 1, limiter, leaseSeconds: 1, jobDeadlineMs: 800 });
+    occupied = limiter.run(() => new Promise(resolve => { release = resolve; }));
     await waitForQueue(1);
-    // Its lease expires while waiting. B legitimately reclaims the same row.
+    // Its lease expires while waiting. B (another worker) legitimately reclaims the same row and sends it.
     await new Promise(resolve => setTimeout(resolve, 1100));
-    const b = work(supt1, { send, limit: 1, limiter, leaseSeconds: 1, jobDeadlineMs: 800 });
-    await waitForQueue(2);
+    const b = work(supt1, { send, limit: 1, limiter: createLimiter(1), leaseSeconds: 1, jobDeadlineMs: 800 });
+    await b;
     release();
-    await Promise.all([occupied, a, b]);
+    await Promise.all([occupied, a]);
 
     assert.deepEqual(sends, [j.delivery_id], "only the current lease holder may send");
     assert.equal((await outbox(j.id)).status, "delivered");
