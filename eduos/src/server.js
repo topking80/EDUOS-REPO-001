@@ -43,6 +43,7 @@ import { registerLibraryIntelligenceRoutes } from "./library-intelligence-routes
 import { registerClubsSportsRoutes } from "./clubs-sports-routes.js";
 import { registerSportsEligibilityRoutes } from "./sports-eligibility-routes.js";
 import { registerSchoolOperationsRoutes } from "./school-operations-routes.js";
+import { registerWellbeingRoutes } from "./wellbeing-routes.js";
 import { registerUnifiedSchoolOperationsRoutes } from "./unified-school-operations-routes.js";
 import { registerSchoolOperationsAutomationRoutes } from "./school-operations-automation-routes.js";
 import { registerSchoolOperationsNotificationRoutes } from "./school-operations-notification-routes.js";
@@ -1913,6 +1914,7 @@ registerLibraryIntelligenceRoutes(app);
 registerClubsSportsRoutes(app);
 registerSportsEligibilityRoutes(app);
 registerSchoolOperationsRoutes(app);
+registerWellbeingRoutes(app);
 registerUnifiedSchoolOperationsRoutes(app);
 registerSchoolOperationsAutomationRoutes(app);
 registerSchoolOperationsNotificationRoutes(app);
