@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createTwilioClient, createTwilioSmsAdapter, isE164 } from "../src/notify-twilio.js";
+const ENV = {
+  DATABASE_URL: "postgres://eduos_test:eduos_test@127.0.0.1:5432/eduos_test",
+  PUBLIC_ORIGIN: "http://localhost:8080",
+  OIDC_ISSUER: "https://idp.example.test",
+  OIDC_CLIENT_ID: "eduos-test",
+  OIDC_CLIENT_SECRET: "test-secret",
+  OIDC_REDIRECT_URI: "http://localhost:8080/auth/callback"
+};
+for (const [key, value] of Object.entries(ENV)) process.env[key] ||= value;
+const { createTwilioClient, createTwilioSmsAdapter, isE164 } = await import("../src/notify-twilio.js");
 
 const config = {
   twilioAccountSid: "AC" + "a".repeat(32), twilioAuthToken: "test-secret",
