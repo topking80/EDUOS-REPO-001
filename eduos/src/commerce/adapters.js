@@ -20,7 +20,7 @@
 //   refundPayment(providerRef, amountCents, { captureRef })
 //                                               -> { status: "refunded", refundRef, manual? }
 //   verifyWebhook({ headers, rawBody })         -> boolean (async for PayPal)
-import { createHmac, createHash, timingSafeEqual, randomBytes } from "node:crypto";
+import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 import { pctOf, MAX_CENTS } from "./split.js";
 
 export class ProviderError extends Error {
@@ -191,6 +191,13 @@ export function btcpayAdapter({ mode, serverUrl, storeId, apiKey, webhookSecret 
     async testConnection() { const j = await bt("GET", store); if (!j.id) throw new ProviderError("provider_bad_response", "btcpay"); return { ok: true, detail: "store_ok" }; },
     async createPayment({ amountCents, currency, reference, returnUrl }) {
       checkPayment({ amountCents, currency });
+      // Greenfield has no idempotency key, so a retried create (the reconcile
+      // sweep, or a lost response) first looks for this payment's invoice by
+      // its orderId and reuses it while it can still be paid.
+      const found = await bt("GET", `${store}/invoices?orderId=${encodeURIComponent(String(reference))}`);
+      const prior = Array.isArray(found) ? found.find(i => i?.metadata?.orderId === String(reference) && i.id && i.checkoutLink
+        && !["Expired", "Invalid"].includes(i.status) && toCents(i.amount) === amountCents && i.currency === currency) : null;
+      if (prior) return { providerRef: prior.id, status: "requires_action", redirectUrl: prior.checkoutLink, reused: true };
       const inv = await bt("POST", `${store}/invoices`, { body: { amount: dollars(amountCents), currency,
         metadata: { orderId: String(reference) }, checkout: { redirectURL: returnUrl, redirectAutomatically: true } } });
       if (!inv.id || !inv.checkoutLink) throw new ProviderError("provider_bad_response", "btcpay: no checkout link");
@@ -208,7 +215,8 @@ export function btcpayAdapter({ mode, serverUrl, storeId, apiKey, webhookSecret 
     // records that it happened. No bitcoin is sent from here.
     async refundPayment(ref, amountCents) {
       if (!amountOk(amountCents)) throw new ProviderError("provider_refund_failed", "btcpay");
-      return { status: "refunded", refundRef: `manual_fiat_${randomBytes(12).toString("hex")}`, manual: true };
+      // One record per invoice, so a retried refund records the same reference.
+      return { status: "refunded", refundRef: `manual_fiat_${idem("btcpay-refund", ref).slice(0, 24)}`, manual: true };
     },
     // BTCPay-Sig: "sha256=" + hex(HMAC-SHA256(webhook secret, raw body)).
     verifyWebhook({ headers, rawBody }) { return verifyBtcpaySignature({ secret: webhookSecret, rawBody, signature: header(headers, "btcpay-sig") }); }

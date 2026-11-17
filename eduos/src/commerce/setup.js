@@ -20,6 +20,8 @@ import { ADAPTERS, ProviderError } from "./adapters.js";
 import { sandboxProvider } from "./payments.js";
 import { sealSecrets, openSecrets } from "./secrets.js";
 import { audit, one, HttpError } from "../role-app-util.js";
+import { withTenantTransaction } from "../db.js";
+import { afterCommit } from "./phases.js";
 
 let transportOverride = null;
 /** Unit tests only: replace the network with a mock. */
@@ -208,17 +210,26 @@ export async function saveAccount(c, req, processor, b = {}) {
   return accountOut(processor, r);
 }
 
+/**
+ * Test a processor connection. The adapter (credentials) is resolved inside
+ * the request's transaction; the processor is called after it commits, and
+ * the result is recorded in a new transaction (src/commerce/phases.js).
+ */
 export async function testAccount(c, req, processor, opts = {}) {
   if (!isProcessor(processor)) fail(404, "unknown_processor");
   const { adapter, mode } = await adapterFor(c, req.actor.districtId, processor, { forCheckout: false, transport: opts.transport });
-  let ok = false, detail;
-  try { const r = await adapter.testConnection(); ok = r.ok === true; detail = r.detail; }
-  catch (e) { detail = e instanceof ProviderError ? e.code : "provider_error"; }
-  detail = String(detail || "unknown").toLowerCase().replace(/[^a-z_]/g, "_").slice(0, 60);
-  await c.query("UPDATE commerce_provider_accounts SET last_test_at=now(), last_test_ok=$3, last_test_detail=$4, updated_by=$5 WHERE district_id=$1 AND processor=$2",
-    [req.actor.districtId, processor, ok, detail, req.actor.userId]);
-  await audit(c, req, "provider_tested", "commerce_provider", null, `processor=${processor};mode=${mode};ok=${ok};detail=${detail}`, ok ? "success" : "failure");
-  return { processor, mode, ok, detail };
+  return afterCommit(async () => {
+    let ok = false, detail;
+    try { const r = await adapter.testConnection(); ok = r.ok === true; detail = r.detail; }
+    catch (e) { detail = e instanceof ProviderError ? e.code : "provider_error"; }
+    detail = String(detail || "unknown").toLowerCase().replace(/[^a-z_]/g, "_").slice(0, 60);
+    await withTenantTransaction(req.actor, async c2 => {
+      await c2.query("UPDATE commerce_provider_accounts SET last_test_at=now(), last_test_ok=$3, last_test_detail=$4, updated_by=$5 WHERE district_id=$1 AND processor=$2",
+        [req.actor.districtId, processor, ok, detail, req.actor.userId]);
+      await audit(c2, req, "provider_tested", "commerce_provider", null, `processor=${processor};mode=${mode};ok=${ok};detail=${detail}`, ok ? "success" : "failure");
+    });
+    return { processor, mode, ok, detail };
+  });
 }
 
 export async function saveSetup(c, req, b = {}) {
