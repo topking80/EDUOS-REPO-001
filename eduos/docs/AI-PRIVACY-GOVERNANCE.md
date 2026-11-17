@@ -2,7 +2,7 @@
 
 ## Default-deny external processing
 
-Migration 051 adds a district-level `external_provider_enabled` gate to
+Migration 058 adds a district-level `external_provider_enabled` gate to
 `ai_district_policy`. It defaults to false, including for existing districts.
 When the server is configured for an external OpenAI-compatible provider, the
 staff AI run endpoint refuses requests until the superintendent explicitly
