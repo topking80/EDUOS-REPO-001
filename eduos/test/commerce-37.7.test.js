@@ -113,31 +113,33 @@ test("sandbox provider: fee 2.9% + 30c, test outcomes only, never live", async (
   assert.deepEqual([...SANDBOX_OUTCOMES], ["sandbox_success", "sandbox_decline"]);
 });
 
-test("only 'none' and 'sandbox' exist; any real processor name is refused", () => {
+test("built-in providers are 'none' and 'sandbox'; real processors are per district (37.7.1)", () => {
   assert.deepEqual([...PROVIDERS], ["none", "sandbox"]);
   assert.equal(createPaymentProvider("none"), null);
   assert.equal(createPaymentProvider(undefined), null);
   assert.equal(createPaymentProvider("sandbox").name, "sandbox");
-  for (const name of ["stripe", "square", "paypal", "braintree", "live"]) assert.throws(() => createPaymentProvider(name), /disabled/);
+  for (const name of ["stripe", "square", "paypal", "braintree", "live"]) assert.throws(() => createPaymentProvider(name), /set up per district/);
 });
 
-test("commerce code makes no network calls and holds no keys", async () => {
-  for (const f of ["src/commerce/payments.js", "src/commerce/split.js", "src/commerce/service.js", "src/commerce-routes.js"]) {
+test("commerce code holds no keys; only the adapters' injected transport reaches a network", async () => {
+  for (const f of ["src/commerce/payments.js", "src/commerce/split.js", "src/commerce/service.js", "src/commerce-routes.js", "src/commerce/adapters.js", "src/commerce/catalog.js"]) {
     const src = await read(f);
     assert.doesNotMatch(src, /from\s+["'](node:)?(https?|net|tls|dgram|http2)["']/, `${f} imports a network module`);
     assert.doesNotMatch(src, /\bfetch\s*\(|undici|axios|XMLHttpRequest/, `${f} calls the network`);
-    assert.doesNotMatch(src, /sk_(live|test)_|STRIPE|SQUARE_|PAYPAL|api[_-]?key/i, `${f} mentions processor keys`);
+    assert.doesNotMatch(src, /sk_(live|test)_|EAAA[A-Za-z0-9]{10}|access_token=\w|client_secret=\w/i, `${f} holds a key`);
   }
   const env = await read(".env.example");
-  assert.match(env, /^COMMERCE_PAYMENT_PROVIDER=none$/m);
+  assert.match(env, /^COMMERCE_LIVE_PAYMENTS_ENABLED=false$/m);
+  assert.doesNotMatch(env, /^COMMERCE_PAYMENT_PROVIDER=/m);
 });
 
 test("roles: guardians pay, pupils never; leaders report and refund; settings are the superintendent's", () => {
   assert.deepEqual(ROLE_PERMISSIONS.parent.commerce, ["pay"]);
   assert.equal(ROLE_PERMISSIONS.pupil.commerce, undefined);
   assert.deepEqual(ROLE_PERMISSIONS.principal.commerce, ["report", "refund"]);
-  assert.deepEqual(ROLE_PERMISSIONS.superintendent.commerce, ["settings", "report", "refund", "purchase"]);
-  for (const r of ["teacher", "it_admin", "driver", "sro"]) assert.equal(ROLE_PERMISSIONS[r]?.commerce, undefined, r);
+  assert.deepEqual(ROLE_PERMISSIONS.superintendent.commerce, ["settings", "report", "refund", "purchase", "providers"]);
+  assert.deepEqual(ROLE_PERMISSIONS.it_admin.commerce, ["providers"], "37.7.1: district IT connects processors, nothing else");
+  for (const r of ["teacher", "driver", "sro"]) assert.equal(ROLE_PERMISSIONS[r]?.commerce, undefined, r);
 });
 
 test("migration 065: append-only ledger, EDAL kinds, guarded transitions, RLS, no student data", async () => {
