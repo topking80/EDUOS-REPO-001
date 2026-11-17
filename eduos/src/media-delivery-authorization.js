@@ -1,11 +1,9 @@
 // 37.9.2: PostgreSQL-backed authorization gate for private media delivery.
 // The signed URL is minted while the asset, participant and guardian-consent rows
 // remain locked in the same tenant-scoped transaction.
-import { withTenantTransaction as defaultTenantTransaction } from "./db.js";
-
 const LEAD_ROLES = new Set(["principal", "superintendent"]);
 
-export function createPostgresMediaAuthorization({ withTenantTransaction = defaultTenantTransaction } = {}) {
+export function createPostgresMediaAuthorization({ withTenantTransaction } = {}) {
   if (typeof withTenantTransaction !== "function") throw new TypeError("withTenantTransaction is required");
   return Object.freeze({
     async withAuthorizedMediaDelivery({ actor, assetId, districtId, schoolId, issueReadUrl }) {
