@@ -38,7 +38,7 @@ test("migration establishes forced district RLS and protected ticket codes", asy
  assert.match(schoolRls, /app\.school_id/);
  assert.match(schoolRls, /superintendent/);
  assert.match(schoolRls, /private_media_objects/);
- for (const fk of ["activity_staff_activity_school_fk","event_ticket_orders_type_school_fk","event_tickets_order_school_fk","media_participants_asset_school_fk","media_consents_asset_school_fk","activity_roster_student_school_fk","media_participant_student_school_fk","media_consent_student_school_fk"]) assert.match(scoped,new RegExp(fk));
+ for (const fk of ["activity_staff_activity_school_fk","event_ticket_orders_type_school_fk","event_tickets_order_school_fk","media_participants_asset_school_fk","media_consents_asset_school_fk","activity_roster_student_school_fk","media_participant_student_school_fk","media_consent_student_school_fk","private_media_object_asset_school_fk","media_consent_registered_participant_fk"]) assert.match(scoped,new RegExp(fk));
 });
 test("paid checkout and livestream playback remain fail-closed", async () => {
  const routes = await readFile(new URL("src/clubs-sports-routes.js", root), "utf8");
