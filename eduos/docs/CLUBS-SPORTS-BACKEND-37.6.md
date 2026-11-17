@@ -73,3 +73,9 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - Stream schedule reads now allow only known school/district roles.
 - District-audience schedules are restricted to district-level roles. Ticket-holder schedules require an active issued/checked-in ticket belonging to the authenticated buyer. School-audience schedules remain limited to the event's school scope.
 - Playback remains disabled until an approved provider and short-lived audience-bound playback authorization are integrated.
+
+ 
+## Idempotent ticket-code recovery (37.12.0)
+- A retry by the authenticated original buyer replays the same order. For each still-issued ticket, the server generates a fresh random code, replaces the stored SHA-256 hash, and returns the new code once. Any previously issued but unredeemed code is invalidated.
+- Checked-in, cancelled or refunded tickets do not receive a new code. Reusing an idempotency key for a different event is rejected.
+- Parent retries revalidate the active guardian-to-school relationship before revealing replacement codes. Ticket codes are never stored in plaintext.
