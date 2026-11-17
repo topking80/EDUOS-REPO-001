@@ -68,22 +68,28 @@ test("private media pipeline validates types and fails closed without configured
  await assert.rejects(() => disabled.beginUpload({districtId:"d",schoolId:"s",input:{kind:"image",mimeType:"image/png",byteSize:100}}), e => e.code==="private_media_pipeline_not_configured");
 });
 
-test("private media pipeline uses server-generated object references and gates delivery", async () => {
+test("private media pipeline never exposes storage keys and gates tenant-scoped delivery", async () => {
  const calls=[];
  const storage={
   async createPrivateUpload(v){calls.push(v);return {uploadUrl:"https://upload.example.invalid/one-use",storageKey:"private/district/object",expiresAt:new Date(Date.now()+30000).toISOString()};},
-  async headPrivateObject(){return {byteSize:100,mimeType:"image/png",checksum:"sha256:abc"};},
-  async createPrivateReadUrl(v){assert.equal(v.expiresInSeconds,60);return {url:"https://read.example.invalid/short",expiresAt:new Date(Date.now()+30000).toISOString()};}
+  async headPrivateObject(v){assert.equal(v.storageKey,"private/district/object");return {byteSize:100,mimeType:"image/png",checksum:"sha256:abc"};},
+  async createPrivateReadUrl(v){assert.equal(v.expiresInSeconds,60);assert.equal(v.storageKey,"private/district/object-clean");return {url:"https://read.example.invalid/short",expiresAt:new Date(Date.now()+30000).toISOString()};}
  };
- const scanner={async scanPrivateObject(){return {verdict:"clean"};}};
+ const scanner={async scanPrivateObject(v){assert.equal(v.storageKey,"private/district/object");return {verdict:"clean"};}};
  const processor={async processImage(v){return {storageKey:v.storageKey+"-clean",mimeType:"image/png",byteSize:90,checksum:"sha256:def"};}};
  const pipeline=(await import("../src/media-pipeline.js")).createMediaPipeline({storage,scanner,processor});
  const intent=await pipeline.beginUpload({districtId:"district-id",schoolId:"school-id",input:{kind:"image",mimeType:"image/png",byteSize:100}});
  assert.ok(intent.assetId);
  assert.equal(calls[0].assetId,intent.assetId);
  assert.equal(Object.hasOwn(calls[0],"storageKey"),false);
- await assert.rejects(()=>pipeline.createReadUrl({storageKey:intent.storageKey,consentStatus:"pending",moderationStatus:"approved",scanStatus:"clean"}),e=>e.code==="media_not_approved");
- const url=await pipeline.createReadUrl({storageKey:intent.storageKey,consentStatus:"approved",moderationStatus:"approved",scanStatus:"clean"});
- assert.match(url.url,/read\.example/);
- await assert.rejects(()=>pipeline.verifyUploadedObject({storageKey:intent.storageKey,expected:{id:intent.assetId,kind:"video",mimeType:"video/mp4",byteSize:100}}),e=>e.code==="uploaded_object_mismatch");
+ assert.equal(Object.hasOwn(intent,"storageKey"),false);
+ await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"other-district",schoolId:"school-id",consentStatus:"approved",moderationStatus:"approved"}),e=>e.code==="media_reference_not_found");
+ await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id",consentStatus:"pending",moderationStatus:"approved"}),e=>e.code==="media_not_approved");
+ await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id",consentStatus:"approved",moderationStatus:"approved"}),e=>e.code==="media_not_security_processed");
+ const processed=await pipeline.verifyUploadedObject({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id"});
+ assert.equal(processed.processingStatus,"processed");
+ assert.equal(Object.hasOwn(processed,"storageKey"),false);
+ const url=await pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id",consentStatus:"approved",moderationStatus:"approved"});
+ assert.match(url.url,/read\\.example/);
+ assert.equal(Object.hasOwn(url,"storageKey"),false);
 });
