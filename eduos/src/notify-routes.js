@@ -89,7 +89,7 @@ export function registerNotificationRoutes(app) {
 
   app.post("/api/me/phone-verification/check", requireSession, requireCsrf, checkLimiter, async (req, res) => {
     const phone = req.body?.phoneE164, code = req.body?.code;
-    if (!isE164(phone) || typeof code !== "string" || !/^\\d{4,10}$/.test(code))
+    if (!isE164(phone) || typeof code !== "string" || !/^\d{4,10}$/.test(code))
       return res.status(400).json({ error: "invalid_verification_input" });
     if (!twilioReady()) return res.status(503).json({ error: "phone_verification_unavailable" });
     try {
