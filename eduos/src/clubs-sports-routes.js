@@ -171,8 +171,29 @@ export function registerClubsSportsRoutes(app) {
   if(!validId(req.params.id)||!validId(b.ticketTypeId)||!Number.isInteger(quantity)||quantity<1||quantity>10||typeof key!=="string"||key.length<16||key.length>120)return res.status(400).json({error:"invalid_ticket_order"});
   try{const data=await withTenantTransaction(a,async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",[a.districtId,a.userId+":"+key]);
-   const prior=await one(c,"SELECT id,status,total_cents,currency FROM event_ticket_orders WHERE district_id=$1 AND buyer_user_id=$2 AND idempotency_key=$3",[a.districtId,a.userId,key]);
-   if(prior)return {order:prior,replayed:true,tickets:await rows(c,"SELECT id,status FROM event_tickets WHERE order_id=$1",[prior.id])};
+   const prior=await one(c,`SELECT o.id,o.status,o.total_cents,o.currency,o.event_id,e.school_id
+     FROM event_ticket_orders o JOIN school_events e ON e.id=o.event_id AND e.district_id=o.district_id
+     WHERE o.district_id=$1 AND o.buyer_user_id=$2 AND o.idempotency_key=$3 AND o.event_id=$4`,
+     [a.districtId,a.userId,key,req.params.id]);
+   if(prior){
+    if(a.role==="parent"){
+     const linked=await one(c,`SELECT 1 FROM student_user_links l JOIN students s ON s.id=l.student_id AND s.district_id=l.district_id
+       WHERE l.district_id=$1 AND l.user_id=$2 AND l.status='active' AND l.relationship IN ('parent','guardian') AND s.school_id=$3 LIMIT 1`,
+       [a.districtId,a.userId,prior.school_id]);
+     if(!linked)throw new HttpError(403,"guardian_school_link_required");
+    }else if(a.schoolId!==prior.school_id)throw new HttpError(403,"event_school_scope_denied");
+    const tickets=await rows(c,"SELECT id,status FROM event_tickets WHERE order_id=$1 FOR UPDATE",[prior.id]);
+    const replayTickets=[];
+    for(const ticket of tickets){
+     if(ticket.status==="issued"&&["complimentary","paid"].includes(prior.status)){
+      const code=randomBytes(24).toString("base64url"),hash=createHash("sha256").update(code).digest("hex");
+      await c.query("UPDATE event_tickets SET ticket_code_hash=$2 WHERE id=$1",[ticket.id,hash]);
+      replayTickets.push({id:ticket.id,status:ticket.status,code});
+     }else replayTickets.push({id:ticket.id,status:ticket.status});
+    }
+    await audit(c,req,"rotate_codes","event_ticket_order",prior.id,"idempotent buyer recovery; previous unredeemed codes invalidated");
+    return {order:{id:prior.id,status:prior.status,total_cents:prior.total_cents,currency:prior.currency},replayed:true,tickets:replayTickets};
+   }
    const event=await one(c,"SELECT * FROM school_events WHERE id=$1 AND district_id=$2 AND status='published' AND starts_at>now()",[req.params.id,a.districtId]);
    if(!event)throw new HttpError(404,"event_not_available");
    if(a.role==="parent"){
