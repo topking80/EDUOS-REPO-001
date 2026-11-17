@@ -11,8 +11,8 @@
 //    (ref_type/ref_id) so a delivery report can count them per incident; the
 //    adapter is handed only the row id, channel and recipient.
 // src/notify-dispatch.js (owner role, like the retention job) hands pending
-// rows to the adapter. The only adapters shipped are "off" and "log" (a dry
-// run that records that a send WOULD happen and sends nothing).
+// rows to the adapter. Email may use implicit-TLS SMTP after recipient opt-in;
+// SMS and push remain off/log until their enrollment paths ship.
 import { config } from "./config.js";
 import { createSmtpAdapter } from "./notify-smtp.js";
 
