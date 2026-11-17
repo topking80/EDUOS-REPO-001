@@ -34,6 +34,10 @@ test("migration establishes forced district RLS and protected ticket codes", asy
  const grants = await readFile(new URL("db/runtime_grants.template.sql", root), "utf8");
  assert.match(grants, /SELECT, INSERT, UPDATE ON private_media_objects/);
  const scoped = await readFile(new URL("db/055_clubs_sports_composite_scope_constraints.sql", root), "utf8");
+ const schoolRls = await readFile(new URL("db/056_clubs_sports_school_scope_rls.sql", root), "utf8");
+ assert.match(schoolRls, /app\.school_id/);
+ assert.match(schoolRls, /superintendent/);
+ assert.match(schoolRls, /private_media_objects/);
  for (const fk of ["activity_staff_activity_school_fk","event_ticket_orders_type_school_fk","event_tickets_order_school_fk","media_participants_asset_school_fk","media_consents_asset_school_fk","activity_roster_student_school_fk","media_participant_student_school_fk","media_consent_student_school_fk"]) assert.match(scoped,new RegExp(fk));
 });
 test("paid checkout and livestream playback remain fail-closed", async () => {
