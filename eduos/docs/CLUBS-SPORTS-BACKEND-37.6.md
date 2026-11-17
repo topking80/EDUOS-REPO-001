@@ -67,3 +67,9 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - The guardian consent endpoint accepts explicit `action: "grant" | "deny" | "withdraw"` (the existing `granted: boolean` request remains supported for grant/deny).
 - Withdrawal is allowed only when that guardian has an existing approved decision. The prior consent row is changed to `withdrawn`, and an audit event records the withdrawal decision.
 - A withdrawn decision blocks media delivery just like a denial; the asset consent state becomes withdrawn and the participant cannot be treated as approved.
+
+ 
+## Stream schedule authorization (37.11.0)
+- Stream schedule reads now allow only known school/district roles.
+- District-audience schedules are restricted to district-level roles. Ticket-holder schedules require an active issued/checked-in ticket belonging to the authenticated buyer. School-audience schedules remain limited to the event's school scope.
+- Playback remains disabled until an approved provider and short-lived audience-bound playback authorization are integrated.
