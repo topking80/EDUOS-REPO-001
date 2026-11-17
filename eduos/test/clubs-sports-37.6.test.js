@@ -47,7 +47,12 @@ test("migration establishes forced district RLS and protected ticket codes", asy
 });
 test("paid checkout and livestream playback remain fail-closed", async () => {
  const routes = await readFile(new URL("src/clubs-sports-routes.js", root), "utf8");
- assert.match(routes, /paid_ticketing_not_configured/);
+ // 37.7.0: priced tickets go to sandbox commerce, which still answers 503
+ // paid_ticketing_not_configured unless a provider is configured AND enabled.
+ assert.match(routes, /price_cents>0\)return await startTicketCheckout/);
+ const commerce = await readFile(new URL("src/commerce/service.js", root), "utf8");
+ assert.match(commerce, /paid_ticketing_not_configured/);
+ assert.match(commerce, /guardian_payment_required/);
  assert.match(routes, /playbackEnabled:false/);
  assert.match(routes, /stream_schedule_access_forbidden/);
  assert.match(routes, /district_stream_audience_required/);
