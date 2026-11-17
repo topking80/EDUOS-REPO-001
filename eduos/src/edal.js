@@ -11,7 +11,8 @@ import { createHash } from "node:crypto";
 
 export const VERSION = "EDAL1";
 export const GENESIS = "0".repeat(64);
-export const KINDS = ["final_grade", "credential", "credential_revoked", "mastery_milestone"];
+// 37.7.0: commerce settlements and refunds (db/065). They never name a student.
+export const KINDS = ["final_grade", "credential", "credential_revoked", "mastery_milestone", "commerce_settlement", "commerce_refund"];
 export const sha256 = s => createHash("sha256").update(String(s), "utf8").digest("hex");
 
 /** Deterministic JSON: sorted keys, no whitespace, no undefined. */

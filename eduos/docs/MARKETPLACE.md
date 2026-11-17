@@ -50,6 +50,11 @@ row (`license_approved`, status `deferred`). It records no amounts, does no
 payment processing and sends nothing anywhere. Replace the module when fee
 accounting is designed.
 
+37.7.0: the fee event is now what a district pays against, in the **sandbox**
+commerce flow (`docs/COMMERCE-SANDBOX.md`): the superintendent prices the
+listing, pays for the approved license, and the 5% marketplace fee and vendor
+payable are recorded in the commerce ledger. The hook itself is unchanged.
+
 ## Screens
 
 The mobile web app (`/app/`) has a **Marketplace** card on the principal and

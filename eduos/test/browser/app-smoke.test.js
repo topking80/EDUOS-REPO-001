@@ -66,6 +66,23 @@ function mockApi(role, pathname) {
     case "/api/integrations/connectors": return { data: { enabled: true, schools: [{ id: "s1", name: "Maple" }], connectors: [
       { id: "c1", kind: "oneroster", name: "District SIS", baseUrl: "https://sis.example.org/ims/oneroster/rostering/v1p2", status: "active", updatedBy: "IT", approvedBy: "Supt", canApprove: false, lastSyncAt: now, lastSyncStatus: "completed", schoolMap: [] },
       { id: "c2", kind: "edfi", name: "State Ed-Fi", baseUrl: "https://edfi.example.org/api/data", status: "pending_approval", updatedBy: "IT", canApprove: true, schoolMap: [] }] } };
+    // 37.7.0 commerce (sandbox) screens.
+    case "/api/events": return { data: [{ id: "e1", activity_id: "a1", school_id: "s1", title: "Friday Night Football", starts_at: new Date(Date.now() + 864e5).toISOString(),
+      ends_at: new Date(Date.now() + 9e7).toISOString(), venue: "Main field", status: "published", school_name: "Maple" }] };
+    case "/api/commerce/status": return { data: { provider: "sandbox", enabled: true, live: false, sandbox: true, canPay: ["parent", "superintendent"].includes(role),
+      settings: { enabled: true, networkFeeBps: 300, salesTaxBps: 0, split: { schoolBps: 8500, districtBps: 1000, stateBps: 500 }, stateFundLabel: "State education fund",
+        marketplaceFeeBps: 500, holdMinutes: 10, updatedAt: now } } };
+    case "/api/commerce/shop": return { data: { events: [{ id: "e1", title: "Friday Night Football", startsAt: now, venue: "Main field", school: "Maple",
+      ticketTypes: [{ id: "t1", name: "Adult", priceCents: 1000, currency: "USD", available: 3 }, { id: "t2", name: "Student", priceCents: 0, currency: "USD", available: 0 }] }] } };
+    case "/api/commerce/my": return { data: { payments: [{ id: "p1", purpose: "event_tickets", status: "succeeded", amountCents: 2000, currency: "USD", title: "Friday Night Football",
+      quantity: 2, createdAt: now, receipts: [{ id: "r1", kind: "payment", number: "R-20261117-ABCDEF0123", amountCents: 2000, issuedAt: now }] }] } };
+    case "/api/commerce/report": return { data: { scope: role === "principal" ? "school" : "district",
+      totals: { gross: 2000, processing_fee: 88, network_fee: 60, school_share: 1574, district_share: 185, state_share: 93 },
+      bySchool: [{ id: "s1", name: "Maple", totals: { gross: 2000, school_share: 1574 } }, { id: "s2", name: "Oak", totals: { gross: 1000, school_share: 787 } }],
+      payments: [{ id: "p1", purpose: "event_tickets", status: "succeeded", amountCents: 2000, currency: "USD", payer: "Parent A", title: "Friday Night Football", quantity: 2, createdAt: now, refundable: true }] } };
+    case "/api/commerce/marketplace": return { data: { marketplaceFeeBps: 500, licenses: [
+      { feeEventId: "f1", approvedAt: now, listingId: "l1", name: "Math Garden", vendor: "MathCo", unitPriceCents: 1250, priceUnit: "seat", seatLimit: 30, purchase: null },
+      { feeEventId: "f2", approvedAt: now, listingId: "l2", name: "Read Along", vendor: "ReadCo", unitPriceCents: null, priceUnit: "flat", seatLimit: null, purchase: { id: "m1", status: "paid", total_cents: 5000, quantity: 1 } }] } };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
       return { data: [] };
@@ -107,8 +124,10 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
     assert.doesNotMatch(text, /^Loading/, "/app/ never got past Loading");
   }
   const failures = [];
-  for (const [role, tabs] of Object.entries(roleTabs)) {
-    for (const tab of tabs) {
+  // 37.7.0: commerce screens opened from Clubs & Sports (not tabs of their own).
+  const SUBVIEWS = { parent: ["tickets"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce"] };
+  for (const [role, roleTabList] of Object.entries(roleTabs)) {
+    for (const tab of [...roleTabList, ...(SUBVIEWS[role] || [])]) {
       state.role = role;
       const page = await Page.open(chrome.port);
       try {

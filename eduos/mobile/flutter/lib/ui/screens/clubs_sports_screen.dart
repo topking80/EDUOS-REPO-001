@@ -4,6 +4,7 @@ import '../../app/app_scope.dart';
 import '../../core/api_client.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
+import 'tickets_screen.dart';
 
 class _ClubsSportsData {
   const _ClubsSportsData({required this.activities, required this.events});
@@ -13,7 +14,8 @@ class _ClubsSportsData {
 
 /// Native learner view of published clubs, teams and their upcoming events.
 /// Joining is always confirmed by the district API; this screen does not
-/// assume eligibility or expose ticket/payment actions that are not enabled.
+/// assume eligibility. Tickets open the 37.7 sandbox ticket screen, where
+/// learners can get free tickets but never pay.
 class ClubsSportsScreen extends StatelessWidget {
   const ClubsSportsScreen({super.key});
 
@@ -121,7 +123,16 @@ class ClubsSportsScreen extends StatelessWidget {
                     ],
                   ),
               ],
-              const Notice('Ticket purchases and livestream playback are not enabled in this release. Your school will share event access details.'),
+              SectionCard(title: 'Event tickets', children: [
+                const Text('Get free tickets to school events. A parent or guardian buys paid ones.'),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => TicketsScreen.open(context),
+                  icon: const Icon(Icons.confirmation_number_outlined),
+                  label: const Text('Tickets'),
+                ),
+              ]),
+              const Notice('Livestream playback is not enabled in this release. Your school will share event access details.'),
             ],
           );
         },

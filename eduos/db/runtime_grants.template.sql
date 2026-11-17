@@ -365,6 +365,20 @@ GRANT SELECT, INSERT ON event_ticket_orders, event_tickets, activity_media_asset
 REVOKE UPDATE, DELETE, TRUNCATE ON event_ticket_orders, event_tickets, activity_media_assets FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON school_activities, activity_staff, activity_memberships,
   school_events, event_ticket_types, event_streams FROM eduos_app;
+-- 37.7.0 commerce (sandbox). Orders and tickets change only in these
+-- columns and only along the transitions the 065 triggers allow (this also
+-- lets staff check tickets in and buyers recover lost codes, which the
+-- table-level REVOKE above had blocked). The ledger and receipts are written
+-- only by eduos_commerce_record().
+GRANT UPDATE (status, provider_reference, paid_at, refunded_at) ON event_ticket_orders TO eduos_app;
+GRANT UPDATE (status, checked_in_at, checked_in_by, ticket_code_hash) ON event_tickets TO eduos_app;
+GRANT SELECT, INSERT, UPDATE ON commerce_settings, commerce_payments, marketplace_purchases TO eduos_app;
+REVOKE DELETE, TRUNCATE ON commerce_settings, commerce_payments, marketplace_purchases FROM eduos_app;
+GRANT SELECT ON commerce_ledger_entries, commerce_receipts TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON commerce_ledger_entries, commerce_receipts FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_commerce_record(uuid, text, uuid, jsonb, text), eduos_commerce_expire_holds() TO eduos_app;
+REVOKE ALL ON FUNCTION eduos_retention_feature_commerce(jsonb), eduos_ticket_order_guard(), eduos_ticket_guard(),
+  eduos_marketplace_purchase_guard(), eduos_commerce_payment_guard() FROM eduos_app;
 
 
 -- 37.7.0 Sports roster and result records.

@@ -16,7 +16,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     learning: ["read", "teach", "grade", "approve", "credential"], edal: ["verify", "checkpoint", "proof"],
     // 32.7.0: only a superintendent authorizes a DECN failover.
     eden: ["read", "manage", "authorize", "node"],
-    activities: ["read", "manage", "join"], ticketing: ["configure"], streaming: ["schedule"]
+    activities: ["read", "manage", "join"], ticketing: ["configure"], streaming: ["schedule"],
+    commerce: ["settings", "report", "refund", "purchase"] // 37.7.0 sandbox commerce: rates, revenue, refunds, marketplace buying
   },
   // 32.2.0: district IT administrator. Runs schools, accounts (not other
   // district roles), SIS imports, integrations, webhooks and the app catalog.
@@ -47,7 +48,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     safety: ["read", "initiate", "lead"], pickup: ["read", "verify", "manage"],
     learning: ["read", "teach", "grade", "approve", "credential"], edal: ["verify", "checkpoint", "proof"],
     eden: ["node"],
-    activities: ["read", "manage", "join"], ticketing: ["configure"], streaming: ["schedule"]
+    activities: ["read", "manage", "join"], ticketing: ["configure"], streaming: ["schedule"],
+    commerce: ["report", "refund"] // 37.7.0: own school's revenue and refunds
   },
   teacher: {
     access_requests: ["read", "create"],
@@ -72,7 +74,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     transport: ["read"], comms: ["read", "message"],
     wellbeing: ["consent"], // 37.6.0: read the notice, opt a child in or out
     safety: ["read"], pickup: ["read", "request"],
-    learning: ["read"], edal: ["proof"], activities: ["read"]
+    learning: ["read"], edal: ["proof"], activities: ["read"],
+    commerce: ["pay"] // 37.7.0: guardians pay for tickets; pupils never pay
   },
   pupil: {
     wellbeing: ["checkin"], // 37.6.0: opt-in check-ins (district switch + guardian opt-in)
