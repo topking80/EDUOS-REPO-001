@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Verify a credential · EduOS</title>
+<link rel="stylesheet" href="verify.css">
+</head>
+<body>
+<main id="main">
+  <header class="top">
+    <h1>Verify a credential</h1>
+    <p class="sub">Checks the school's digital signature and whether the credential is still valid.</p>
+  </header>
+  <section id="result" aria-live="polite" class="card" hidden></section>
+  <section class="card" aria-labelledby="pasteh">
+    <h2 id="pasteh">Check a credential file</h2>
+    <p>Paste the JSON of an Open Badges 3.0 credential you were given.</p>
+    <label for="vc">Credential JSON</label>
+    <textarea id="vc" rows="6" spellcheck="false"></textarea>
+    <button id="check" type="button">Check signature</button>
+  </section>
+  <section class="card small" aria-labelledby="abouth">
+    <h2 id="abouth">What this check shows</h2>
+    <p>Only the achievement, the school, the date, and the learner's name if the learner chose to show it. Nothing else about the learner is shared here.</p>
+    <p id="profile">Format: W3C Verifiable Credential 2.0 / Open Badges 3.0 with an eddsa-jcs-2022 proof. This is a partial profile: it is not 1EdTech-certified, has no status list, and the school checks revocation live.</p>
+  </section>
+</main>
+<script src="verify.js" type="module"></script>
+</body>
+</html>

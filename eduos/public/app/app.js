@@ -1361,6 +1361,49 @@ VIEWS.proof = async () => {
     h("p", { class: "notice" }, r.statement)];
 };
 
+// ----- 37.6.0 Credentials Wallet (learner and family) -----
+// The holder decides: export a signed credential file, or make a share link
+// with the name shown as initials, in full or not at all, for 1-90 days, and
+// turn any link off. Staff have no view of shares.
+SUBVIEWS.push("wallet");
+VIEWS.wallet = async () => {
+  const w = (await api.get("/api/wallet")).data;
+  const nameText = { initials: "Initials only", full: "Full name", none: "No name" };
+  const list = w.credentials.map(c => {
+    const pick = h("select", { id: `wn-${c.id}`, "aria-label": "How the name shows" }, Object.entries(nameText).map(([v, t]) => h("option", { value: v }, t)));
+    const days = h("input", { id: `wd-${c.id}`, type: "number", min: 1, max: 90, value: "30", "aria-label": "Days the link works" });
+    const out = h("div", { "aria-live": "polite" });
+    return h("li", {},
+      h("div", { class: "row" }, h("h3", { class: "grow" }, c.title), c.revoked ? chip("absent", "Revoked") : c.onLedger ? chip("present", "On the ledger") : null),
+      h("p", { class: "small muted" }, `${c.learner} · ${c.school} · ${fmtDay(c.issuedAt)}`),
+      c.revoked || !w.issuerReady ? null : h("div", { class: "stack" },
+        h("label", { for: pick.id }, "Name on the credential"), pick,
+        h("label", { for: days.id }, "Share link lasts (days)"), days,
+        h("div", { class: "row" },
+          h("a", { class: "btn", href: `/api/wallet/credentials/${c.id}/vc?name=${encodeURIComponent(pick.value)}`, download: "", onclick: (e) => { e.currentTarget.href = `/api/wallet/credentials/${c.id}/vc?name=${encodeURIComponent(pick.value)}`; } }, "Download"),
+          h("button", { class: "btn primary", type: "button", onclick: async () => {
+            try { const r = (await api.post(`/api/wallet/credentials/${c.id}/shares`, { nameDisplay: pick.value, days: Number(days.value) })).data;
+              out.replaceChildren(h("p", { class: "small" }, r.note), h("input", { class: "mono", readonly: true, value: r.url, "aria-label": "Share link" }));
+              toast("Share link made. Copy it now: it is shown once."); }
+            catch { toast("Couldn't make a link."); } } }, "Make share link")), out),
+      c.shares.length ? h("ul", { class: "list" }, c.shares.map(s => h("li", { class: "row" },
+        h("div", { class: "grow" }, h("p", {}, `${nameText[s.nameDisplay]} · until ${fmtDay(s.expiresAt)}`), h("p", { class: "small muted" }, `Viewed ${s.views} time${s.views === 1 ? "" : "s"}${s.lastViewedAt ? ` · last ${ago(s.lastViewedAt)}` : ""}`)),
+        s.state === "active" ? h("button", { class: "btn", type: "button", onclick: async () => {
+          if (!await ask({ title: "Turn off this link?", text: "Anyone using it will see that it was turned off.", confirm: "Turn off", danger: true })) return;
+          await api.post(`/api/wallet/shares/${s.id}/revoke`); toast("Link turned off"); go("wallet", { push: false }); } }, "Turn off") : chip("absent", s.state === "revoked" ? "Off" : "Expired")))) : null);
+  });
+  return [back(state.me.role === "parent" ? "children" : "path", "Back"), h("h2", {}, "Wallet"),
+    w.issuerReady ? null : h("p", { class: "notice" }, "Your district hasn't turned on credential signing yet, so credentials can't be downloaded or shared."),
+    list.length ? h("section", { class: "card", "aria-label": "Credentials" }, h("ul", { class: "list" }, list)) : empty("No credentials yet."),
+    h("p", { class: "small muted" }, w.profile)];
+};
+for (const view of ["path", "children"]) {
+  const base = VIEWS[view];
+  VIEWS[view] = async () => [...[await base()].flat(), ["pupil", "parent"].includes(state.me.role)
+    ? h("section", { class: "card", "aria-label": "Wallet" }, h("h2", {}, "Wallet"), h("p", { class: "small muted" }, "Download or share credentials. You choose who sees them and for how long."),
+      h("button", { class: "btn", type: "button", onclick: () => go("wallet") }, "Open wallet")) : null];
+}
+
 // ----- staff -----
 VIEWS.gradebook = async () => {
   if (!state.courseId) return VIEWS.courses();
