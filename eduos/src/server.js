@@ -47,6 +47,8 @@ import { registerEdgeDeviceRoutes } from "./edge-device-routes.js";
 import { registerEdgeUpdateRoutes } from "./edge-update-routes.js";
 import { registerIntegrationRoutes } from "./integrations/routes.js";
 import { registerAiRoutes } from "./ai/routes.js";
+import { registerLeoRoutes } from "./ai/leo.js";
+import { registerEdisonRoutes } from "./ai/edison.js";
 import { registerEdenHub } from "./eden/hub.js";
 import { registerEdenNode, startAgent } from "./eden/node.js";
 import { parseSisCsv, isCalendarDate } from "./csv.js";
@@ -1910,6 +1912,8 @@ registerEdgeDeviceRoutes(app);
 registerEdgeUpdateRoutes(app);
 registerIntegrationRoutes(app);
 registerAiRoutes(app);
+registerLeoRoutes(app);
+registerEdisonRoutes(app);
 // 32.7.0 EDEN: a district hub or a school node (EDUOS_NODE_TIER).
 const edenStatus = config.nodeTier === "district" ? registerEdenHub(app) : config.nodeTier === "school" ? registerEdenNode(app) : null;
 app.get("/api/eden/tier",requireSession,(req,res)=>{res.setHeader("Cache-Control","no-store");res.json({data:{tier:config.nodeTier||"classic",enabled:Boolean(edenStatus?.enabled),reason:edenStatus?.reason||null}})});
