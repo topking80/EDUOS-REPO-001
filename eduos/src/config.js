@@ -169,6 +169,11 @@ export const config = {
   twilioMessagingServiceSid: (process.env.TWILIO_MESSAGING_SERVICE_SID || "").trim(),
   twilioFromNumber: (process.env.TWILIO_FROM_NUMBER || "").trim(),
   twilioTimeoutMs: Number(process.env.TWILIO_TIMEOUT_MS || 10000),
+  fcmProjectId: (process.env.FCM_PROJECT_ID || "").trim(),
+  fcmClientEmail: (process.env.FCM_CLIENT_EMAIL || "").trim(),
+  fcmPrivateKey: process.env.FCM_PRIVATE_KEY || "",
+  fcmTokenEncryptionKey: process.env.FCM_TOKEN_ENCRYPTION_KEY || "",
+  fcmTimeoutMs: Number(process.env.FCM_TIMEOUT_MS || 10000),
   // 32.5.0 SafetyOS and car pick-up.
   safetyTeachersMayInitiate: process.env.SAFETY_TEACHERS_MAY_INITIATE !== "false",
   safetyRateLimit: Number(process.env.SAFETY_RATE_LIMIT_PER_MIN || 120),
@@ -285,7 +290,14 @@ if (config.notifySmsAdapter === "twilio") {
   if (!config.twilioMessagingServiceSid && !/^\+[1-9]\d{7,14}$/.test(config.twilioFromNumber)) throw new Error("Configure TWILIO_MESSAGING_SERVICE_SID or a valid TWILIO_FROM_NUMBER");
 }
 intIn("TWILIO_TIMEOUT_MS", config.twilioTimeoutMs, 1000, 30000);
-if (!["off", "log"].includes(config.notifyPushAdapter)) throw new Error("NOTIFY_PUSH_ADAPTER must be off or log (FCM is not configured yet)");
+if (!["off", "log", "fcm"].includes(config.notifyPushAdapter)) throw new Error("NOTIFY_PUSH_ADAPTER must be off, log or fcm");
+if (config.notifyPushAdapter === "fcm") {
+  if (!/^[a-z][a-z0-9-]{4,62}$/.test(config.fcmProjectId)) throw new Error("FCM_PROJECT_ID is required for FCM");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(config.fcmClientEmail)) throw new Error("FCM_CLIENT_EMAIL must be a service-account email");
+  if (!config.fcmPrivateKey.includes("BEGIN PRIVATE KEY")) throw new Error("FCM_PRIVATE_KEY must be a PKCS8 service-account private key");
+  if (Buffer.from(config.fcmTokenEncryptionKey, "base64").length !== 32) throw new Error("FCM_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
+}
+intIn("FCM_TIMEOUT_MS", config.fcmTimeoutMs, 1000, 30000);
 if (config.notifyEmailAdapter === "smtp") {
   if (!/^[a-z0-9.-]+$/i.test(config.notifySmtpHost)) throw new Error("NOTIFY_SMTP_HOST is required when NOTIFY_EMAIL_ADAPTER=smtp");
   if (config.notifySmtpPort !== 465) throw new Error("NOTIFY_SMTP_PORT must be 465 (implicit TLS only)");
