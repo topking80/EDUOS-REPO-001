@@ -9,7 +9,7 @@ ALTER TABLE user_preferences
 
 ALTER TABLE user_preferences
   ADD CONSTRAINT user_preferences_phone_e164_check
-  CHECK(phone_e164 IS NULL OR phone_e164 ~ '^\\+[1-9][0-9]{7,14}$');
+  CHECK(phone_e164 IS NULL OR phone_e164 ~ '^\+[1-9][0-9]{7,14}$');
 
 ALTER TABLE user_preferences
   ADD CONSTRAINT user_preferences_phone_verification_pair_check
