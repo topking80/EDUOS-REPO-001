@@ -1,0 +1,89 @@
+# Prometheus alert rules for EduOS 37.5.0 queue and API reliability.
+# Import this file through Prometheus rule_files. Scrape /metrics with its
+# required METRICS_TOKEN; never expose the endpoint publicly.
+groups:
+  - name: eduos.queue-reliability
+    rules:
+      - alert: EduOSQueueBacklogUnavailable
+        expr: eduos_queue_backlog_up == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: eduos
+        annotations:
+          summary: EduOS queue backlog metrics are unavailable
+          description: The API cannot read the aggregate webhook and notification backlog. Check database connectivity, runtime grants, and the authenticated metrics scrape before treating an absent queue as empty.
+          runbook: docs/OPERATIONS-QUEUE-ALERTS.md
+
+      - alert: EduOSWebhookQueueAgeHigh
+        expr: eduos_queue_oldest_ready_seconds{queue="webhook"} > 300
+        for: 10m
+        labels:
+          severity: warning
+          service: eduos
+        annotations:
+          summary: EduOS webhook deliveries are waiting too long
+          description: The oldest due webhook has waited more than five minutes for ten minutes. Check the dispatcher sweep, signing configuration, destination policy, DNS resolution, and receiver response.
+          runbook: docs/OPERATIONS-QUEUE-ALERTS.md
+
+      - alert: EduOSNotificationQueueAgeHigh
+        expr: eduos_queue_oldest_ready_seconds{queue="notification"} > 120
+        for: 10m
+        labels:
+          severity: warning
+          service: eduos
+        annotations:
+          summary: EduOS notifications are waiting too long
+          description: The oldest due external notification has waited more than two minutes for ten minutes. Check the configured notification dispatch job and its database role; off and log adapters do not send externally.
+          runbook: docs/OPERATIONS-QUEUE-ALERTS.md
+
+      - alert: EduOSWebhookDeadLettersPresent
+        expr: eduos_queue_jobs{queue="webhook",state="dead_letter"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: eduos
+        annotations:
+          summary: EduOS has webhook deliveries in the dead-letter queue
+          description: One or more webhook deliveries have exhausted their retry policy or were blocked by destination security checks. Inspect aggregate counts and sanitized failure reasons before replaying.
+          runbook: docs/OPERATIONS-QUEUE-ALERTS.md
+
+      - alert: EduOSNotificationFailuresPresent
+        expr: eduos_queue_jobs{queue="notification",state="failed"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: eduos
+        annotations:
+          summary: EduOS has failed external notifications
+          description: One or more notification attempts have exhausted their retry policy or failed permanently. Confirm the adapter is real and configured before treating a notification as sent.
+          runbook: docs/OPERATIONS-QUEUE-ALERTS.md
+
+      - alert: EduOSDatabasePoolWaiting
+        expr: eduos_db_pool_connections{state="waiting"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: eduos
+        annotations:
+          summary: EduOS requests are waiting for PostgreSQL connections
+          description: The API pool has queued connection requests for five minutes. Check database saturation and total pool capacity across all API and worker replicas before increasing pool size.
+          runbook: docs/OPERATIONS-QUEUE-ALERTS.md
+
+      - alert: EduOSHttpServerErrorRatioHigh
+        expr: |
+          (
+            sum(rate(eduos_http_requests_total{status="5xx"}[5m]))
+            /
+            clamp_min(sum(rate(eduos_http_requests_total[5m])), 1)
+          ) > 0.05
+          and
+          sum(rate(eduos_http_requests_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: eduos
+        annotations:
+          summary: EduOS HTTP server error ratio is elevated
+          description: More than five percent of API requests have returned server errors for ten minutes with sufficient traffic. Use route-template metrics and request IDs in application logs; do not log learner data or raw request URLs.
+          runbook: docs/OPERATIONS-QUEUE-ALERTS.md
