@@ -43,38 +43,41 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
     for (let done = 0; done < limit;) {
       const token = crypto.randomUUID();
       const claimed = await inTx(db, d.id, c => c.query(
-        `WITH due AS (
-          SELECT o.id,CASE WHEN o.channel='email' THEN u.email END AS recipient_email,
-                 coalesce(p.email_notifications_enabled,false) AS email_opted_in
-            FROM notification_outbox o
-            LEFT JOIN users u ON u.id=o.recipient_user_id
-            LEFT JOIN user_preferences p ON p.district_id=o.district_id AND p.user_id=o.recipient_user_id
-           WHERE o.district_id=$1 AND o.status='pending' AND o.channel<>'in_app'
-             AND (o.next_attempt_at IS NULL OR o.next_attempt_at<=now())
-             AND (o.lease_expires_at IS NULL OR o.lease_expires_at<=now())
-           ORDER BY o.created_at,o.id LIMIT $4 FOR UPDATE OF o SKIP LOCKED
-        )
-        UPDATE notification_outbox o SET lease_token=$2, lease_expires_at=now()+make_interval(secs => $3::float8)
-          FROM due WHERE o.id=due.id
-          RETURNING o.id,o.channel,o.recipient_user_id,o.attempts,o.created_at,due.recipient_email,due.email_opted_in`,
+        `UPDATE notification_outbox o SET lease_token=$2, lease_expires_at=now()+make_interval(secs => $3::float8)
+          WHERE o.id IN (SELECT id FROM notification_outbox
+                          WHERE district_id=$1 AND status='pending' AND channel<>'in_app'
+                            AND (next_attempt_at IS NULL OR next_attempt_at<=now())
+                            AND (lease_expires_at IS NULL OR lease_expires_at<=now())
+                          ORDER BY created_at,id LIMIT $4 FOR UPDATE SKIP LOCKED)
+          RETURNING o.id,o.channel,o.recipient_user_id,o.attempts,o.created_at`,
         [d.id, token, leaseSeconds, Math.min(batch, limit - done)]));
       const rows = claimed.rows.sort((a, b) => a.created_at - b.created_at || String(a.id).localeCompare(String(b.id)));
       if (!rows.length) break;
       for (const row of rows) {
-        // Renew this row's lease for the length of its send; skip it if another
-        // dispatcher took it over while earlier rows were being sent.
-        const renewed = await inTx(db, d.id, c => c.query(
-          `UPDATE notification_outbox SET lease_expires_at=now()+make_interval(secs => $3::float8)
-            WHERE id=$1 AND lease_token=$2 AND lease_expires_at>now() AND status='pending'`, [row.id, token, leaseSeconds]));
+        const adapter = adapters(row.channel);
+        // Renew immediately before sending. For real SMTP, read the current
+        // address and consent in this same short transaction so stale batch
+        // claims cannot send to an old address or after an earlier opt-out.
+        const renewed = await inTx(db, d.id, async c => {
+          const lease = await c.query(
+            `UPDATE notification_outbox SET lease_expires_at=now()+make_interval(secs => $3::float8)
+              WHERE id=$1 AND lease_token=$2 AND lease_expires_at>now() AND status='pending' RETURNING id`,
+            [row.id, token, leaseSeconds]);
+          if (!lease.rowCount || row.channel !== "email" || adapter.name !== "smtp") return lease;
+          const contact = await c.query(
+            `SELECT u.email,coalesce(p.email_notifications_enabled,false) AS email_opted_in
+               FROM users u LEFT JOIN user_preferences p ON p.user_id=u.id AND p.district_id=$2
+              WHERE u.id=$1`, [row.recipient_user_id, d.id]);
+          return { ...lease, recipientEmail: contact.rows[0]?.email || null, emailOptedIn: Boolean(contact.rows[0]?.email_opted_in) };
+        });
         if (!renewed.rowCount) { done++; tally.lostLease++; continue; }
         let result, timer;
         try {
-          const adapter = adapters(row.channel);
-          if (row.channel === "email" && adapter.name === "smtp" && !row.email_opted_in) {
+          if (row.channel === "email" && adapter.name === "smtp" && !renewed.emailOptedIn) {
             result = { status: "skipped", note: "recipient has not opted in to email notifications" };
           } else {
             result = await Promise.race([
-              adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id, recipient_email: row.channel === "email" ? row.recipient_email : undefined }, log),
+              adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id, recipient_email: row.channel === "email" ? renewed.recipientEmail : undefined }, log),
               new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
             ]);
           }
