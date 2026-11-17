@@ -25,7 +25,7 @@ test("queue alert rules use only metrics exported by EduOS", async () => {
 test("every alert has a unique name, duration, severity and operator guidance", async () => {
   const rules = await read("../monitoring/eduos-alerts.yml");
   const blocks = rules.split(/^      - alert: /m).slice(1);
-  assert.equal(blocks.length, 7, "all seven operational alerts are present");
+  assert.equal(blocks.length, 8, "all eight operational alerts are present");
   const names = blocks.map(block => block.split("\n", 1)[0].trim());
   assert.equal(new Set(names).size, names.length, "alert names are unique");
   for (const block of blocks) {
@@ -37,6 +37,21 @@ test("every alert has a unique name, duration, severity and operator guidance", 
     assert.match(block, /^          description: .+/m);
     assert.match(block, /^          runbook: docs\/OPERATIONS-QUEUE-ALERTS\.md$/m);
   }
+});
+
+test("scrape alert detects both a failed target and a missing target", async () => {
+  const rules = await read("../monitoring/eduos-alerts.yml");
+  const scrapeAlert = rules.split(/^      - alert: /m).find(block => block.startsWith("EduOSScrapeUnavailable\n"));
+  assert.ok(scrapeAlert, "scrape-health alert exists");
+  assert.match(scrapeAlert, /up\{job="eduos"\} == 0/);
+  assert.match(scrapeAlert, /absent\(up\{job="eduos"\}\)/);
+  assert.match(scrapeAlert, /^        for: 2m$/m);
+});
+
+test("HTTP error ratio uses a small denominator floor and retains its traffic gate", async () => {
+  const rules = await read("../monitoring/eduos-alerts.yml");
+  assert.match(rules, /clamp_min\(sum\(rate\(eduos_http_requests_total\[5m\]\)\), 0\.000001\)/);
+  assert.match(rules, /sum\(rate\(eduos_http_requests_total\[5m\]\)\) > 0\.1/);
 });
 
 test("queue alerts retain the documented operational thresholds and failure states", async () => {

@@ -4,6 +4,17 @@
 groups:
   - name: eduos.queue-reliability
     rules:
+      - alert: EduOSScrapeUnavailable
+        expr: up{job="eduos"} == 0 or absent(up{job="eduos"})
+        for: 2m
+        labels:
+          severity: warning
+          service: eduos
+        annotations:
+          summary: EduOS Prometheus scrape is unavailable
+          description: Prometheus cannot scrape the EduOS metrics endpoint, or the configured target is missing. Check target discovery, internal network reachability, TLS, the bearer token credentials file, and the API health before relying on queue alerts.
+          runbook: docs/OPERATIONS-QUEUE-ALERTS.md
+
       - alert: EduOSQueueBacklogUnavailable
         expr: eduos_queue_backlog_up == 0
         for: 5m
@@ -75,7 +86,7 @@ groups:
           (
             sum(rate(eduos_http_requests_total{status="5xx"}[5m]))
             /
-            clamp_min(sum(rate(eduos_http_requests_total[5m])), 1)
+            clamp_min(sum(rate(eduos_http_requests_total[5m])), 0.000001)
           ) > 0.05
           and
           sum(rate(eduos_http_requests_total[5m])) > 0.1
