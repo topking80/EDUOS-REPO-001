@@ -92,3 +92,4 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - The cross-district media read test asserts the early tenant-scope rejection before registry access.
 
 - Migration `056_clubs_sports_school_scope_rls.sql` tightens RLS from district-only to district plus active school context for club, event, ticket, roster, consent, and private-media tables. Superintendent and district IT roles retain cross-school access.
+- The composite constraints also bind private object registry rows to their media asset and each guardian consent row to a registered media participant, preventing orphaned object metadata and unregistered-student consent records.
