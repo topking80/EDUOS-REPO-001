@@ -6,6 +6,9 @@
 // - A use case runs only if the superintendent enabled it for the district and
 //   the caller's role is allowed it. Students and families have none here
 //   (student tutoring is Christie, with its own controls).
+// - Leo (leo_lesson) sees only curriculum: standards, approved lessons and
+//   approved primary sources. Edison (ops_trends) sees only counts released
+//   by the EDEN aggregation gate (src/eden/aggregation-gate.js).
 // - The AI never queries student records. Input is the text the staff member
 //   typed, or for the operations brief, counts EduOS computes inside the
 //   caller's own tenant transaction from what they may already see.
@@ -18,6 +21,11 @@ export const USECASES = Object.freeze({
   resource_summary: { label: "Summarize a resource", roles: ["teacher", "principal", "vice_principal", "superintendent", "counselor", "librarian"], input: { min: 20, max: 12000 } },
   writing_feedback: { label: "Writing feedback", roles: ["teacher", "principal", "vice_principal"], input: { min: 20, max: 12000 } },
   ops_brief: { label: "Operations brief", roles: ["principal", "vice_principal", "superintendent"], input: null },
+  // 37.6.0. These run only through their own endpoints (src/ai/leo.js and
+  // src/ai/edison.js), which build the input on the server: Leo from the
+  // course's curriculum, Edison from aggregation-gate output only.
+  leo_lesson: { label: "Leo lesson drafts (saved for approval)", roles: ["teacher", "principal", "superintendent"], input: null, endpoint: "/api/leo/drafts" },
+  ops_trends: { label: "Edison trends brief (gate-released counts only)", roles: ["principal", "vice_principal", "superintendent"], input: null, endpoint: "/api/edison/brief" },
 });
 export const POLICY_EDITORS = ["superintendent"];
 export const POLICY_READERS = ["superintendent", "it_admin", "principal"];

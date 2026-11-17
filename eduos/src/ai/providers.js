@@ -9,11 +9,17 @@ import { postAiProviderJson } from "./provider-egress.js";
 const words = (t) => String(t || "").trim().split(/\s+/).filter(Boolean);
 const sentencesOf = (t) => String(t || "").replace(/\s+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map(s => s.trim()).filter(Boolean) || [];
 
+// Leo and Edison local answers (37.6).
+import { leoLocalPlan } from "./leo-template.js";
+import { edisonLocalBrief } from "./edison-trends.js";
+
 export const SYSTEM_PROMPTS = Object.freeze({
   lesson_draft: "You are Leo, a lesson-design assistant for K-12 teachers. Produce a clear, structured lesson plan with objectives, agenda, differentiation and assessment. Do not include or ask for any student's personal information.",
   resource_summary: "You summarize teaching resources for K-12 staff: five short bullet points, then one line on how to use it in class. Do not include personal information.",
   writing_feedback: "You are Elizabeth, a writing-feedback assistant for teachers. Give specific, kind, actionable feedback aligned to an argument-writing rubric (thesis, evidence, organization, language). Never guess who wrote it; names are removed.",
   ops_brief: "You are Edison, an operations assistant for school leaders. Given a JSON snapshot of counts, write a short brief: status, key risks, one recommended next action. Use only the numbers given.",
+  leo_lesson: "You are Leo, a lesson-design assistant for K-12 teachers. Using ONLY the standards, approved lessons and approved primary sources given, write a lesson plan: lesson flow with minutes, differentiation (support and extension) and an exit ticket. Plain text, no more than 600 words. Do not invent sources. Never refer to, grade, place or predict anything about any individual student.",
+  ops_trends: "You are Edison, an operations assistant for school leaders. You are given JSON with group counts released by a privacy gate (small counts are withheld as null). Write a short brief: trends, risks, one recommended next action. Use only the numbers given; never estimate withheld counts; never discuss individual students.",
 });
 
 export const localProvider = Object.freeze({
@@ -60,6 +66,8 @@ export const localProvider = Object.freeze({
         : "monitor; nothing needs escalation."));
       return lines.join("\n");
     }
+    if (usecase === "leo_lesson") return leoLocalPlan(input.leo);
+    if (usecase === "ops_trends") return edisonLocalBrief(input.context);
     throw new Error(`unknown use case ${usecase}`);
   },
 });
@@ -83,6 +91,7 @@ export function maxTokensFor(body) {
 }
 export function externalRequestBody({ model, usecase, input, identifiers = {} }) {
   const content = usecase === "ops_brief" ? JSON.stringify(input.context)
+    : usecase === "ops_trends" ? JSON.stringify(input.context)
     : redact(input.text, { names: identifiers.names || [], numbers: identifiers.numbers || [], max: 12000 }).slice(0, 8000);
   return { model, temperature: 0.3, max_tokens: OUTPUT_MAX_TOKENS, messages: [{ role: "system", content: SYSTEM_PROMPTS[usecase] }, { role: "user", content }] };
 }

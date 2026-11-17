@@ -2197,6 +2197,58 @@ function renderSignIn() {
 // Staff AI assistant (src/ai/): only the use cases the district enabled for
 // this role. Nothing about students is sent unless the person types it, and
 // the operations brief uses only counts EduOS computes from their own scope.
+// ---- 37.6.0 Leo (lesson drafts) and Edison (gate-released trends) ----------
+async function leoCard() {
+  if (!["teacher", "principal", "superintendent"].includes(state.me.role) || !state.courseId) return null;
+  const o = (await safe(api.get(`/api/leo/options?courseId=${state.courseId}`)))?.data;
+  if (!Array.isArray(o?.units)) return null;
+  const body = [h("h2", {}, "Leo: draft a lesson"),
+    h("p", { class: "muted small" }, `Leo builds a draft from this course's standards, approved lessons and approved primary sources only, never from student data. The draft is saved here and a school leader approves it before it can be published. ${o.provider === "external" ? "Uses the district's external AI service; names are removed first." : "Runs on EduOS itself."}`)];
+  if (!o.enabled) return h("section", { class: "card", "aria-label": "Leo" }, ...body, empty("Your district hasn't turned on Leo lesson drafts."));
+  if (!o.units.length || !o.standards.length) return h("section", { class: "card", "aria-label": "Leo" }, ...body, empty("Add a unit and standards to this course first."));
+  const unit = h("select", { id: "leo-unit" }, o.units.map(u => h("option", { value: u.id }, `Unit ${u.seq}: ${u.title}`)));
+  const minutes = h("select", { id: "leo-minutes" }, o.minutes.map(m => h("option", { value: m, selected: m === 45 }, `${m} minutes`)));
+  const focus = h("input", { id: "leo-focus", maxlength: 100, placeholder: "Optional focus, e.g. Comparing fractions" });
+  const box = (name, list, label) => h("fieldset", {}, h("legend", {}, label), list.map(x => h("label", { class: "inline" }, h("input", { type: "checkbox", name, value: x.id }), ` ${x.code ? `${x.code}: ${x.description.slice(0, 80)}` : x.title}`)));
+  const fs = [box("leo-std", o.standards, "Standards (1 to 4)"), o.lessons.length ? box("leo-lesson", o.lessons, "Build on approved lessons (up to 3)") : null,
+    o.sources.length ? box("leo-src", o.sources, "Approved primary sources (up to 2)") : null];
+  const picked = (name) => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(x => x.value);
+  return h("section", { class: "card", "aria-label": "Leo" }, ...body,
+    h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
+      try {
+        const r = (await api.post("/api/leo/drafts", { courseId: state.courseId, unitId: unit.value, minutes: Number(minutes.value), focus: focus.value.trim() || undefined,
+          standardIds: picked("leo-std"), lessonIds: picked("leo-lesson"), sourceIds: picked("leo-src") })).data;
+        toast("Draft saved. A school leader approves it before it's published.");
+        openView("lesson", { lessonId: r.lesson.id });
+      } catch { toast("Leo couldn't draft that. Pick 1 to 4 standards and try again."); } } },
+      h("label", { for: unit.id }, "Unit"), unit, h("label", { for: minutes.id }, "Length"), minutes, h("label", { for: focus.id }, "Focus"), focus, ...fs,
+      h("button", { class: "btn primary", type: "submit" }, "Draft with Leo")));
+}
+async function edisonCard() {
+  if (!["principal", "vice_principal", "superintendent"].includes(state.me.role)) return null;
+  const t = (await safe(api.get("/api/edison/trends?days=10")))?.data;
+  if (!Array.isArray(t?.schools)) return null;
+  const pct = (d) => { const nr = d.suppressed.includes("not_recorded") ? null : (d.counts.not_recorded ?? 0);
+    const rec = d.total != null && nr != null ? d.total - nr : 0;
+    return rec && d.counts.present != null && !d.suppressed.includes("tardy") ? `${Math.round(100 * (d.counts.present + (d.counts.tardy || 0)) / rec)}%` : "—"; };
+  const out = h("div", { "aria-live": "polite" });
+  return h("section", { class: "card", "aria-label": "Edison trends" }, h("h2", {}, "Edison: trends"),
+    h("p", { class: "muted small" }, `Group counts only, released by the privacy gate: counts under ${t.k} are withheld and never estimated. No student is scored or predicted.`),
+    t.schools.map(s => h("div", {}, h("h3", {}, s.name),
+      h("ul", { class: "list" }, kv("Enrolled", s.enrolled ?? "withheld"),
+        kv("In school, last school days", s.attendance.map(pct).join(" · ") || "—"),
+        s.transport ? kv("Bus check-ins today", s.transport.riders == null ? "withheld" : `${s.transport.riders - (s.transport.counts.no_checkin ?? 0)} of ${s.transport.riders}`) : null))),
+    t.briefEnabled ? h("button", { class: "btn", type: "button", onclick: async () => {
+      out.replaceChildren(h("p", { class: "muted" }, "Writing…"));
+      try { const r = (await api.post("/api/edison/brief", { days: 10 })).data;
+        let text = r.text; for (const m of r.schools) text = text.split(m.label).join(m.name);
+        out.replaceChildren(h("div", { class: "lesson-text" }, text.split(/\n+/).map(p => h("p", {}, p)))); }
+      catch { out.replaceChildren(empty("Edison couldn't write a brief right now.")); } } }, "Write a brief") : null, out);
+}
+for (const [view, extra] of [["course", [leoCard]], ["overview", [edisonCard]], ["operations", [edisonCard]]]) {
+  const base = VIEWS[view];
+  VIEWS[view] = async () => [...[await base()].flat(), ...(await Promise.all(extra.map(f => f())))];
+}
 async function aiAssistantCard() {
   if (["pupil", "parent", "driver", "sro"].includes(state.me.role)) return null;
   const st = (await safe(api.get("/api/ai/status")))?.data;

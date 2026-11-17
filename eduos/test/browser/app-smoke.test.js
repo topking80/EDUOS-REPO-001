@@ -52,6 +52,9 @@ function mockApi(role, pathname) {
     case "/api/notifications": return { data: { unread: 0, items: [] } };
     case "/api/ai/status": return { data: { provider: "local", budget: { district: { used: 100, cap: 200000 }, you: { used: 50, cap: 20000 } },
       usecases: [{ id: "lesson_draft", label: "Lesson draft", enabled: true, input: { min: 3, max: 500 } }, { id: "ops_brief", label: "Operations brief", enabled: true, input: null }] } };
+    case "/api/edison/trends": return { data: { scope: "school", days: 10, k: 5, withheld: 1, briefEnabled: true, schools: [{ label: "School 1", schoolId: "s1", name: "Maple", today: today(), enrolled: 120,
+      attendance: [{ date: today(), total: 120, counts: { present: 100, absent: 12, tardy: 8 }, suppressed: [] }, { date: today(), total: null, counts: {}, suppressed: ["present"] }],
+      transport: { date: today(), riders: 40, counts: { boarded: 35, no_checkin: 5 }, suppressed: [] } }] } };
     case "/api/ai/policy": return { data: { canEdit: role === "superintendent", provider: "local", usage30d: [{ usecase: "lesson_draft", calls: 4, tokens: 1800 }],
       policy: { enabled_usecases: ["lesson_draft"], daily_token_cap: 200000, user_daily_token_cap: 20000 },
       usecases: [{ id: "lesson_draft", label: "Lesson draft", roles: ["teacher"] }, { id: "ops_brief", label: "Operations brief", roles: ["principal"] }] } };
