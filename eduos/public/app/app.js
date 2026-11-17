@@ -316,6 +316,7 @@ VIEWS.christie = async () => {
     try {
       const r = (await api.post(`/api/christie/sessions/${s.id}/turns`, { kind, text })).data;
       r.replies.forEach(addTurn);
+      if (r.crisis) chat.append(wbCrisisCard(r.crisis)); // 37.6.0: 988 Lifeline
       if (r.mastery) masteryEl.textContent = `Mastery: ${r.mastery.mastery}%${r.mastery.mastered ? " · Mastered!" : ""}`;
       composer.scrollIntoView({ block: "end" });
     } catch (e) { toast(e.status === 429 ? "Slow down a little and try again." : "Christie didn't get that. Try again."); }
@@ -1875,6 +1876,88 @@ VIEWS.guidance = specializedOpsView;
 VIEWS.healthoffice = specializedOpsView;
 VIEWS.facilities = specializedOpsView;
 VIEWS.meals = specializedOpsView;
+// ----- 37.6.0 Well-being check-ins (opt-in) and crisis support -----
+// Learners tell a counselor how they are doing; nothing is scored or ranked.
+// Crisis words always show the 988 Lifeline (here and in Christie).
+SUBVIEWS.push("checkin", "wbconsent", "wbqueue", "wbsettings");
+const WB_MOOD = { great: "Great", good: "Good", okay: "Okay", low: "Low", struggling: "Struggling" };
+const WB_NEED = { talk_to_someone: "I'd like to talk to someone", friends: "Friends", schoolwork: "Schoolwork", home: "Home", sleep: "Sleep", food: "Food", safety: "I don't feel safe", other: "Something else" };
+function wbCrisisCard(c) {
+  return h("section", { class: "card hero", role: "alert", "aria-label": "Crisis support" }, h("h2", {}, c.title),
+    ...c.lines.map(l => h("p", {}, l)),
+    h("div", { class: "row wrap" }, h("a", { class: "btn primary", href: c.tel }, "Call 988"), h("a", { class: "btn", href: c.sms }, "Text 988")));
+}
+VIEWS.checkin = async () => {
+  const s = (await api.get("/api/wellbeing/status")).data;
+  const head = [back("home", "Back"), h("h2", {}, "Check in")];
+  if (!s.allowed) return [...head, h("section", { class: "card" }, h("p", {}, "Check-ins aren't turned on for you. Your family can opt you in from their EduOS app."),
+    h("p", { class: "small muted" }, "You can always talk to a counselor or any adult you trust at school.")), wbCrisisCard(s.crisis)];
+  let mood = null;
+  const moods = h("div", { class: "row wrap", role: "radiogroup", "aria-label": "How are you feeling?" }, s.moods.map(m => h("button", { class: "btn", type: "button", role: "radio", "aria-checked": "false",
+    onclick: e => { mood = m; moods.querySelectorAll("button").forEach(b => b.setAttribute("aria-checked", String(b === e.currentTarget))); } }, WB_MOOD[m] || m)));
+  const needs = s.needs.map(n => h("label", { class: "row" }, h("input", { type: "checkbox", value: n }), " ", WB_NEED[n] || n));
+  const note = h("textarea", { id: "wb-note", maxlength: 500, rows: 3 });
+  const out = h("div", { "aria-live": "polite" });
+  return [...head, h("section", { class: "card" }, h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+      if (!mood) return toast("Pick how you're feeling.");
+      try { const r = (await api.post("/api/wellbeing/checkins", { mood, needs: needs.map(l => l.querySelector("input")).filter(i => i.checked).map(i => i.value), note: note.value || null })).data;
+        out.replaceChildren(...(r.crisis ? [wbCrisisCard(r.response)] : [h("p", { class: "notice" }, r.message)])); note.value = ""; }
+      catch { toast("Couldn't send. You can always talk to a counselor in person."); } } },
+    h("p", {}, "How are you feeling today?"), moods, h("p", {}, "Anything on your mind?"), ...needs,
+    h("label", { for: "wb-note" }, "Anything you want a counselor to know (optional)"), note,
+    h("button", { class: "btn primary", type: "submit" }, "Send to a counselor")), out,
+    h("p", { class: "small muted" }, s.privacy)),
+    s.recent.length ? h("section", { class: "card" }, h("h2", {}, "Recent"), h("ul", { class: "list" }, s.recent.map(c => kv(`${WB_MOOD[c.mood]} · ${fmtDay(c.at)}`, c.seen ? "A counselor saw it" : "Sent")))) : null];
+};
+VIEWS.wbconsent = async () => {
+  const c = (await api.get("/api/wellbeing/consent")).data;
+  const decide = (kid, decision) => h("button", { class: decision === "opted_in" ? "btn primary" : "btn", type: "button", onclick: async () => {
+    try { await api.post("/api/wellbeing/consent", { studentId: kid.id, decision, noticeVersion: c.noticeVersion }); toast("Saved"); go("wbconsent", { push: false }); }
+    catch (e) { toast(e.body?.error === "notice_changed_please_reread" ? "The notice changed. Please read it again." : "Couldn't save."); } } }, decision === "opted_in" ? "Opt in" : "Opt out");
+  return [back("children", "Back"), h("h2", {}, "Well-being check-ins"),
+    c.enabled ? null : h("p", { class: "notice" }, "Your district hasn't turned check-ins on. Your choice is saved for when it does."),
+    h("section", { class: "card", "aria-label": "Notice" }, h("h2", {}, "Notice to families"), h("p", {}, c.notice), h("p", { class: "small muted" }, `Notice ${c.noticeVersion} · kept ${c.retentionDays} days`)),
+    h("section", { class: "card", "aria-label": "Your children" }, h("ul", { class: "list" }, c.children.map(k => h("li", {},
+      h("div", { class: "row" }, h("span", { class: "grow" }, k.name), chip(k.active ? "present" : "expected", k.active ? "Opted in" : k.needsNewDecision ? "Notice changed" : k.decision === "opted_out" ? "Opted out" : "Not opted in")),
+      h("div", { class: "row wrap" }, decide(k, "opted_in"), decide(k, "opted_out"))))))];
+};
+VIEWS.wbqueue = async () => {
+  const q = (await api.get("/api/wellbeing/queue")).data;
+  const act = (c, action, label) => h("button", { class: "btn small", type: "button", onclick: async () => { await api.post(`/api/wellbeing/checkins/${c.id}/actions`, { action }); go("wbqueue", { push: false }); } }, label);
+  const item = c => h("li", {}, h("div", { class: "row" }, h("b", { class: "grow" }, `${c.student.name} · grade ${c.student.grade}`), c.crisis ? chip("absent", "Crisis words") : null, chip("expected", c.status)),
+    h("p", { class: "small" }, `${WB_MOOD[c.mood]}${c.needs.length ? ` · ${c.needs.map(n => WB_NEED[n] || n).join(", ")}` : ""} · ${ago(c.createdAt)}`),
+    c.note ? h("p", {}, c.note) : null,
+    h("div", { class: "row wrap" }, act(c, "seen", "Seen"), act(c, "assigned", "I'll take it"), act(c, "met_with_student", "Met"), act(c, "contacted_family", "Called family"), c.status === "closed" ? act(c, "reopened", "Reopen") : act(c, "closed", "Close")));
+  return [back("guidance", "Back"), h("h2", {}, "Well-being"),
+    ...q.alerts.map(a => h("section", { class: "card hero", role: "alert" }, h("h2", {}, `Crisis words: ${a.student.name}`), h("p", {}, `${a.source === "christie" ? "In a Christie chat" : "In a check-in"} · ${ago(a.at)}. Find the student now.`),
+      h("button", { class: "btn primary", type: "button", onclick: async () => { await api.post(`/api/wellbeing/alerts/${a.id}/ack`); toast("Acknowledged"); go("wbqueue", { push: false }); } }, "I'm on it"))),
+    h("section", { class: "card" }, h("h2", {}, "Needs a person now"), q.now.length ? h("ul", { class: "list" }, q.now.map(item)) : empty("No one right now.")),
+    h("section", { class: "card" }, h("h2", {}, "Today"), q.today.length ? h("ul", { class: "list" }, q.today.map(item)) : empty("Nothing waiting.")),
+    h("p", { class: "small muted" }, q.rule)];
+};
+VIEWS.wbsettings = async () => {
+  const s = (await api.get("/api/wellbeing/settings")).data;
+  const on = h("input", { id: "wb-on", type: "checkbox", checked: s.enabled });
+  const notice = h("textarea", { id: "wb-notice", rows: 8, maxlength: 3000 }, s.notice);
+  const days = h("input", { id: "wb-days", type: "number", min: 30, max: 2555, value: String(s.retentionDays) });
+  return [back("overview", "Back"), h("h2", {}, "Well-being check-ins"), h("section", { class: "card" }, h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+      try { const r = (await api.req("PUT", "/api/wellbeing/settings", { enabled: on.checked, notice: notice.value, retentionDays: Number(days.value) })).data; toast(`Saved (notice ${r.noticeVersion})`); } catch { toast("Couldn't save."); } } },
+    h("label", { class: "row" }, on, " Check-ins on for the district (families still opt each child in)"), h("label", { for: "wb-notice" }, "Notice families read before opting in"), notice,
+    h("label", { for: "wb-days" }, "Keep check-ins (days)"), days, h("button", { class: "btn primary", type: "submit" }, "Save")),
+    h("p", { class: "small muted" }, "Changing the notice asks every family to opt in again. District staff never see check-ins. Crisis words always show the 988 Lifeline and alert the school's counselors."))];
+};
+for (const [view, roles, title, text, target] of [["home", ["pupil"], "Check in", "Tell a counselor how you're doing.", "checkin"], ["children", ["parent"], "Well-being check-ins", "Read the notice and choose for each child.", "wbconsent"],
+  ["overview", ["superintendent"], "Well-being check-ins", "District switch, notice and retention.", "wbsettings"]]) {
+  const base = VIEWS[view];
+  VIEWS[view] = async () => [...[await base()].flat(), roles.includes(state.me.role)
+    ? h("section", { class: "card", "aria-label": title }, h("h2", {}, title), h("p", { class: "small muted" }, text), h("button", { class: "btn", type: "button", onclick: () => go(target) }, "Open")) : null];
+}
+{
+  const base = VIEWS.guidance;
+  VIEWS.guidance = async () => [state.me.role === "counselor" ? h("section", { class: "card", "aria-label": "Well-being" }, h("h2", {}, "Well-being check-ins and alerts"),
+    h("p", { class: "small muted" }, "Crisis alerts and check-ins for your school. Urgent items also appear in the counseling queue below."), h("button", { class: "btn primary", type: "button", onclick: () => go("wbqueue") }, "Open well-being")) : null,
+    ...[await base()].flat()];
+}
 VIEWS.library = async () => {
   if (state.me.role === "parent" || state.me.role === "pupil") {
     const endpoint = state.me.role === "parent" ? "/api/library/family-loans" : "/api/library/my-loans";

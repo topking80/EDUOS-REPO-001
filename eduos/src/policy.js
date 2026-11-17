@@ -1,5 +1,6 @@
 export const ROLE_PERMISSIONS = Object.freeze({
   superintendent: {
+    wellbeing: ["settings"], // 37.6.0: district switch, notice, retention (no check-in access)
     access_requests: ["read", "create", "review"],
     students: ["read"], schools: ["read", "create", "update"],
     assignments: ["read", "create", "update", "approve", "grade"],
@@ -57,6 +58,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     learning: ["read", "teach", "grade"], edal: ["proof"]
   },
   parent: {
+    wellbeing: ["consent"], // 37.6.0: read the notice, opt a child in or out
     access_requests: ["read", "create"],
     students: ["read"], assignments: ["read"],
     attendance: ["read", "acknowledge"], cases: ["read"],
@@ -66,6 +68,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     learning: ["read"], edal: ["proof"]
   },
   pupil: {
+    wellbeing: ["checkin"], // 37.6.0: opt-in check-ins (district switch + guardian opt-in)
     access_requests: ["read", "create"],
     students: ["read"], assignments: ["read", "submit"],
     attendance: ["read"], cases: [],
@@ -97,7 +100,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
   // the "counseling" operations queue. Granting any of these later means
   // changing the route and its row policies too, with tests.
   vice_principal: { schools:["read"], students:["read"], attendance:["read","create"], safety:["read"], transport:["read"], branding:["read"] },
-  counselor: { schools:["read"] },
+  counselor: { schools:["read"], wellbeing:["queue"] }, // 37.6.0: own school's check-ins and crisis alerts
   nurse: { schools:["read"], health_office:["read","create","update"] },
   maintenance: { schools:["read"], facilities:["read","create","update"] },
   lunch_staff: { schools:["read"], meal_service:["read","create","update"] }
