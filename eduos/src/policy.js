@@ -59,23 +59,21 @@ export const ROLE_PERMISSIONS = Object.freeze({
   parent: {
     access_requests: ["read", "create"],
     students: ["read"], assignments: ["read"],
+    wallet: ["hold"], // 37.6.0: export and share their own child's credentials (Wallet)
     attendance: ["read", "acknowledge"], cases: ["read"],
     flow_events: ["read"], apps: ["launch"], branding: ["read"],
     transport: ["read"], comms: ["read", "message"],
     safety: ["read"], pickup: ["read", "request"],
-    learning: ["read"], edal: ["proof"],
-    // 37.6.0: export and share their own child's credentials (Wallet).
-    wallet: ["hold"]
+    learning: ["read"], edal: ["proof"]
   },
   pupil: {
     access_requests: ["read", "create"],
     students: ["read"], assignments: ["read", "submit"],
+    wallet: ["hold"], // 37.6.0: export and share their own credentials (Wallet)
     attendance: ["read"], cases: [],
     flow_events: ["read"], apps: ["launch"], branding: ["read"],
     christie: ["tutor"], comms: ["read"], transport: ["read"], safety: ["read"],
-    learning: ["read", "learn"], edal: ["proof"],
-    // 37.6.0: export and share their own credentials (Wallet).
-    wallet: ["hold"]
+    learning: ["read", "learn"], edal: ["proof"]
   },
   // 32.4.0: school bus driver. Sees only the riders of routes assigned to them
   // (name, grade and stop) and records board/alight check-ins. No student
