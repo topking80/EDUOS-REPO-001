@@ -134,6 +134,19 @@ export function registerNotificationRoutes(app) {
     }
   });
 
+  app.get("/api/me/push-devices", requireSession, async (req, res, next) => {
+    try {
+      const devices = await withTenantTransaction(req.actor, async client => {
+        const result = await client.query(
+          "SELECT id,platform,created_at,last_seen_at FROM user_push_devices WHERE user_id=$1 AND district_id=$2 AND revoked_at IS NULL ORDER BY last_seen_at DESC",
+          [req.actor.userId, req.actor.districtId]);
+        return result.rows;
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data: devices });
+    } catch (error) { next(error); }
+  });
+
   app.post("/api/me/push-devices", requireSession, requireCsrf, pushDeviceLimiter, async (req, res, next) => {
     if (config.notifyPushAdapter !== "fcm") return res.status(503).json({ error: "push_registration_unavailable" });
     const token = req.body?.token, platform = req.body?.platform;
