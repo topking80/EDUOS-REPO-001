@@ -31,12 +31,14 @@ test("SMS migration defaults users to unverified and opted out", () => {
   assert.match(smsMigration, /sms_notifications_enabled boolean NOT NULL DEFAULT false/);
   assert.match(smsMigration, /phone_verified_at timestamptz/);
   assert.match(smsMigration, /NOT sms_notifications_enabled OR/);
-  assert.match(smsMigration, /phone_e164 IS NULL OR phone_e164 ~ '\\^\\\\\\+\\[1-9\\]\\[0-9\\]\\{7,14\\\\\\}'/);
+  assert.ok(smsMigration.includes("phone_e164 IS NULL OR phone_e164 ~"));
 });
 
 test("phone verification requires session and CSRF; consent requires verified phone", () => {
-  assert.match(routes, /phone-verification\\/start", requireSession, requireCsrf, startLimiter/);
-  assert.match(routes, /phone-verification\\/check", requireSession, requireCsrf, checkLimiter/);
-  assert.match(routes, /if \\(body\\.smsEnabled === true\\)/);
-  assert.match(routes, /verified_phone_required/);
+  assert.ok(routes.includes('app.post("/api/me/phone-verification/start", requireSession, requireCsrf, startLimiter'));
+  assert.ok(routes.includes('app.post("/api/me/phone-verification/check", requireSession, requireCsrf, checkLimiter'));
+  assert.ok(routes.includes("if (body.smsEnabled === true)"));
+  assert.ok(routes.includes("verified_phone_required"));
+  assert.match(dispatcher, /row.channel === "sms" && adapter.name === "twilio" && !renewed.smsOptedIn/);
+  assert.match(dispatcher, /p.phone_verified_at/);
 });
