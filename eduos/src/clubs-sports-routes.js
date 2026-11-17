@@ -296,15 +296,36 @@ export function registerClubsSportsRoutes(app) {
    FROM activity_media_assets m WHERE m.district_id=$1 AND m.school_id=$2 AND m.activity_id=$3 ORDER BY m.created_at DESC LIMIT 200`,
    [a.districtId,activity.school_id,activity.id]);
  }));
+ app.get("/api/events/:id/media",requireSession,wrap(async(c,req)=>{
+  const a=req.actor;if(!validId(req.params.id))throw new HttpError(400,"invalid_event_id");
+  const event=await one(c,"SELECT id,school_id,activity_id FROM school_events WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3)",[req.params.id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);
+  if(!event)throw new HttpError(404,"event_not_found");
+  if(event.activity_id){
+   if(!LEAD(a.role)&&!await canManage(c,a,event.activity_id))throw new HttpError(403,"media_staff_access_required");
+  }else if(!LEAD(a.role))throw new HttpError(403,"media_staff_access_required");
+  return rows(c,`SELECT m.id,m.activity_id,m.event_id,m.media_kind,m.mime_type,m.byte_size,m.consent_status,m.moderation_status,m.created_at,
+    (SELECT count(*)::int FROM activity_media_participants p WHERE p.media_asset_id=m.id) AS participant_count,
+    (SELECT count(*)::int FROM activity_media_participants p WHERE p.media_asset_id=m.id AND p.consent_status='approved') AS consented_count
+   FROM activity_media_assets m WHERE m.district_id=$1 AND m.school_id=$2 AND m.event_id=$3 ORDER BY m.created_at DESC LIMIT 200`,
+   [a.districtId,event.school_id,event.id]);
+ }));
  app.post("/api/media/:id/participants",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,b=req.body||{};
   if(!validId(req.params.id)||!Array.isArray(b.studentIds)||b.studentIds.length<1||b.studentIds.length>100||!b.studentIds.every(validId)||new Set(b.studentIds).size!==b.studentIds.length)return res.status(400).json({error:"invalid_media_participants"});
   try{const data=await withTenantTransaction(a,async c=>{
    const asset=await one(c,"SELECT * FROM activity_media_assets WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
    if(!asset)throw new HttpError(404,"media_asset_not_found");
-   if(!asset.activity_id)throw new HttpError(409,"media_activity_required");
-   const activity=await requireActivityManager(c,a,asset.activity_id);
-   if(asset.school_id!==activity.school_id)throw new HttpError(403,"media_school_scope_denied");
+   if(asset.activity_id){
+    const activity=await requireActivityManager(c,a,asset.activity_id);
+    if(asset.school_id!==activity.school_id)throw new HttpError(403,"media_school_scope_denied");
+   }else{
+    if(!asset.event_id)throw new HttpError(409,"media_parent_record_required");
+    const event=await one(c,"SELECT id,school_id,activity_id FROM school_events WHERE id=$1 AND district_id=$2",[asset.event_id,a.districtId]);
+    if(!event)throw new HttpError(404,"media_event_not_found");
+    if(asset.school_id!==event.school_id)throw new HttpError(403,"media_school_scope_denied");
+    if(event.activity_id)await requireActivityManager(c,a,event.activity_id);
+    else if(!LEAD(a.role))throw new HttpError(403,"media_staff_access_required");
+   }
    if(asset.moderation_status!=="pending")throw new HttpError(409,"media_moderation_already_decided");
    const students=await rows(c,"SELECT id FROM students WHERE district_id=$1 AND school_id=$2 AND id=ANY($3::uuid[])",[a.districtId,asset.school_id,b.studentIds]);
    if(students.length!==b.studentIds.length)throw new HttpError(400,"participant_outside_media_school");
