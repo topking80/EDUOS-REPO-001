@@ -2,7 +2,7 @@
 // adapters. Run as the migration OWNER role, like the retention job:
 //   DATABASE_URL=<owner url> node src/notify-dispatch.js
 //   docker compose --profile ops run --rm notify
-// SMTP email is available only after recipient opt-in; SMS and push remain off/log.
+// SMTP email and Twilio SMS require channel-specific verified recipient consent; push remains off/log.
 //
 // Outcomes: delivered_at is set only when an adapter confirms delivery;
 // "skipped" (dry run, channel off) is not a delivery. A temporary failure waits
