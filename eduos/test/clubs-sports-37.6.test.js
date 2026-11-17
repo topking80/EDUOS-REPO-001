@@ -56,6 +56,9 @@ test("media consent is participant-specific and publication fails closed", async
  assert.match(sql, /FORCE ROW LEVEL SECURITY/);
  const routes = await readFile(new URL("src/clubs-sports-routes.js", root), "utf8");
  assert.match(routes, /active_guardian_link_required/);
+ assert.match(routes, /approved_consent_required_for_withdrawal/);
+ assert.match(routes, /withdraw_media_consent/);
+ assert.match(routes, /status='withdrawn'/);
  assert.match(routes, /guardianDecision\.denials/);
  assert.match(routes, /asset\.school_id!==activity\.school_id/);
  assert.match(routes, /media_participant_not_registered/);
