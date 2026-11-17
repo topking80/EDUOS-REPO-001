@@ -25,6 +25,7 @@ import { registerAdminRoutes } from "./admin-routes.js";
 import { registerMeshRoutes } from "./mesh-routes.js";
 import { registerHomeRoutes } from "./home-routes.js";
 import { registerBrandingRoutes } from "./branding-routes.js";
+import { registerNotificationRoutes } from "./notify-routes.js";
 import { registerTransportRoutes } from "./transport-routes.js";
 import { registerChristieRoutes } from "./christie-routes.js";
 import { registerCommsRoutes } from "./comms-routes.js";
@@ -1887,6 +1888,7 @@ registerAdminRoutes(app);
 registerMeshRoutes(app,{emitServerFlow});
 registerHomeRoutes(app);
 registerBrandingRoutes(app,{emitServerFlow});
+registerNotificationRoutes(app);
 // 32.4.0: mobile role apps (transport, Christie tutor, Comms Hub).
 registerTransportRoutes(app);
 registerChristieRoutes(app);
