@@ -44,7 +44,7 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
       const token = crypto.randomUUID();
       const claimed = await inTx(db, d.id, c => c.query(
         `WITH due AS (
-          SELECT o.id,u.email AS recipient_email,
+          SELECT o.id,CASE WHEN o.channel='email' THEN u.email END AS recipient_email,
                  coalesce(p.email_notifications_enabled,false) AS email_opted_in
             FROM notification_outbox o
             LEFT JOIN users u ON u.id=o.recipient_user_id
@@ -74,7 +74,7 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
             result = { status: "skipped", note: "recipient has not opted in to email notifications" };
           } else {
             result = await Promise.race([
-              adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id, recipient_email: row.recipient_email }, log),
+              adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id, recipient_email: row.channel === "email" ? row.recipient_email : undefined }, log),
               new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
             ]);
           }
