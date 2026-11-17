@@ -1,7 +1,7 @@
 // Twilio Verify and Messaging adapters. Credentials are never logged.
 import { config } from "./config.js";
 
-const E164 = /^\\+[1-9]\\d{7,14}$/;
+const E164 = /^\+[1-9]\d{7,14}$/;
 const base = "https://api.twilio.com/2010-04-01/Accounts/";
 
 function classify(status) {
@@ -43,7 +43,7 @@ export function createTwilioClient(cfg = config, request = fetch) {
       return post("/Services/" + cfg.twilioVerifyServiceSid + "/Verifications.json", { To: phone, Channel: "sms" });
     },
     async checkVerification(phone, code) {
-      if (!isE164(phone) || typeof code !== "string" || !/^\\d{4,10}$/.test(code)) throw new TypeError("invalid verification input");
+      if (!isE164(phone) || typeof code !== "string" || !/^\d{4,10}$/.test(code)) throw new TypeError("invalid verification input");
       return post("/Services/" + cfg.twilioVerifyServiceSid + "/VerificationCheck.json", { To: phone, Code: code });
     },
     async sendSms(phone, body, id) {
