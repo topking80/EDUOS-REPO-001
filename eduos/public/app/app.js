@@ -117,16 +117,16 @@ function applyBranding(b) {
 
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
-  pupil: [["home", "Home", "home"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["news", "News", "news"]],
-  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["messages", "Messages", "chat"]],
-  parent: [["children", "Children", "child"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  pupil: [["home", "Home", "home"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
+  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"]],
+  parent: [["children", "Children", "child"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["messages", "Messages", "chat"]],
   vice_principal: [["operations", "Operations", "grid"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["messages", "Messages", "chat"]],
   counselor: [["guidance", "Counseling", "heart"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
-  principal: [["overview", "School", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  principal: [["overview", "School", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   superintendent: [["overview", "District", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
@@ -437,6 +437,44 @@ VIEWS.news = async () => {
   const list = (await api.get("/api/comms/announcements")).data;
   return [h("h2", {}, "News from school"), h("section", { class: "card" }, announcementsCard(list)),
     h("p", { class: "notice" }, "Students can read school and class news here. Messaging is between families and staff.")];
+};
+ 
+// Clubs & Sports Hub preview. Ticket checkout and live video remain disabled
+// until district-approved payment and streaming services are configured.
+const ACTIVITY_SAMPLE = [
+  { kind: "CLUB", name: "Robotics & Engineering", detail: "Build, program and compete · Advisor-led", when: "Wednesdays · 3:30 PM", icon: "🤖" },
+  { kind: "CLUB", name: "Art & Creative Media", detail: "Photography, design and student showcases", when: "Thursdays · 3:15 PM", icon: "🎨" },
+  { kind: "SPORT", name: "Falcons Basketball", detail: "Varsity · Home game", when: "Friday · 6:00 PM", icon: "🏀" },
+  { kind: "SPORT", name: "Falcons Soccer", detail: "Junior varsity · Away game", when: "Saturday · 10:00 AM", icon: "⚽" }
+];
+VIEWS.activities = async () => {
+  const staff = ["teacher", "principal", "superintendent", "it_admin"].includes(state.me.role);
+  const cards = ACTIVITY_SAMPLE.map(item => h("article", { class: "card", "aria-label": item.name },
+    h("div", { class: "row" }, h("span", { class: "grow" }, h("span", { class: "small muted" }, item.kind), h("h3", {}, item.name)), h("span", { "aria-hidden": "true" }, item.icon)),
+    h("p", { class: "muted small" }, item.detail), h("p", {}, "📅 ", item.when),
+    h("button", { class: "btn block", type: "button", onclick: () => toast("Registration will open when the activities service is connected.") }, item.kind === "CLUB" ? "View club details" : "View team details")));
+  const events = [
+    ["🎭", "Spring Arts Showcase", "May 8 · 6:30 PM", "Ticketing planned"],
+    ["🏀", "Falcons vs. Central", "May 12 · 7:00 PM", "Ticketing planned"],
+    ["🎓", "Senior Celebration", "May 20 · 5:00 PM", "School event"]
+  ];
+  return [
+    h("div", { class: "row" }, h("div", { class: "grow" }, h("h2", {}, "Clubs & Sports"), h("p", { class: "muted small" }, "Discover activities, follow teams and watch approved school events.")),
+      staff ? h("button", { class: "btn primary", type: "button", onclick: () => toast("Coach and club advisor publishing tools are planned for the next implementation phase.") }, "Advisor tools") : null),
+    h("section", { class: "card" }, h("h3", {}, "Explore clubs and teams"), h("p", { class: "muted small" }, "Sample activities for the interface preview. Live rosters and schedules are not connected yet.")),
+    h("div", { class: "grid" }, cards),
+    h("section", { class: "card" }, h("h3", {}, "Upcoming events & tickets"),
+      h("ul", { class: "list" }, events.map(e => h("li", { class: "row" }, h("span", {}, e[0]), h("span", { class: "grow" }, h("b", {}, e[1]), h("p", { class: "small muted" }, e[2])), h("span", { class: "small muted" }, e[3])))),
+      h("p", { class: "notice" }, "Ticket sales are not enabled in this preview. No payment is collected and no ticket is issued."),
+      h("button", { class: "btn block", type: "button", onclick: () => toast("Ticket checkout requires a district-approved payment provider.") }, "Ticketing setup status")),
+    h("section", { class: "card" }, h("h3", {}, "Live streams & highlights"),
+      h("div", { class: "row" }, h("span", {}, "🔴"), h("span", { class: "grow" }, h("b", {}, "School events live"), h("p", { class: "small muted" }, "Approved event streams and recorded highlights will appear here."))),
+      h("p", { class: "notice" }, "Live streaming is not connected. This preview does not capture video, audio or student images."),
+      h("button", { class: "btn block", type: "button", onclick: () => toast("Live streaming requires an approved provider and school event permissions.") }, "Streaming setup status")),
+    staff ? h("section", { class: "card" }, h("h3", {}, "Coach & club advisor workspace"),
+      h("p", { class: "muted small" }, "Planned tools: publish club updates, manage team calendars, submit media for review and prepare event pages. Access will be limited to assigned clubs and teams; principals retain school-level oversight."),
+      h("button", { class: "btn block", type: "button", onclick: () => toast("Publishing and moderation workflows are planned for the next implementation phase.") }, "Open publishing preview")) : null
+  ];
 };
 
 // ---------------- teacher ----------------

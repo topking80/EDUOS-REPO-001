@@ -8,7 +8,7 @@
 // no-op, and the API must start and serve only the caller's district.
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import pg from "pg";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
@@ -18,7 +18,10 @@ const METRICS_TOKEN = "upgrade-metrics-token-0123456789";
 
 async function migrationList() {
   const text = await readFile(new URL("../../src/migrate.js", import.meta.url), "utf8");
-  return JSON.parse(/const migrations = (\[[^\]]*\]);/.exec(text)[1]);
+  const listed = JSON.parse(/const migrations = (\[[^\]]*\]);/.exec(text)[1]);
+  // 37.6.0: after the listed 001-050, the migrator applies the numbered files in db/ in name order.
+  const shipped = (await readdir(new URL("../../db/", import.meta.url))).filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f)).sort();
+  return [...listed, ...shipped.filter(n => !listed.includes(n))];
 }
 
 // The older release's grants: the current template, statement by statement,

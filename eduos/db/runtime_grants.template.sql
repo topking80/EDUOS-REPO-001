@@ -316,3 +316,42 @@ GRANT SELECT ON student_redact_tokens TO eduos_app;
 
 -- 048: aggregate queue backlog for /metrics (totals and ages only).
 GRANT EXECUTE ON FUNCTION eduos_queue_backlog() TO eduos_app;
+
+
+-- 37.6.0 Clubs, sports, school events and ticket inventory. The API emits
+-- audit events and applies school/assignment checks; RLS is district-wide.
+GRANT SELECT, INSERT, UPDATE ON school_activities, activity_staff, activity_memberships,
+  school_events, event_ticket_types, event_streams TO eduos_app;
+GRANT SELECT, INSERT ON event_ticket_orders, event_tickets, activity_media_assets TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON event_ticket_orders, event_tickets, activity_media_assets FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON school_activities, activity_staff, activity_memberships,
+  school_events, event_ticket_types, event_streams FROM eduos_app;
+
+
+-- 37.7.0 Sports roster and result records.
+GRANT SELECT, INSERT, UPDATE ON activity_roster_entries, activity_event_results TO eduos_app;
+REVOKE DELETE, TRUNCATE ON activity_roster_entries, activity_event_results FROM eduos_app;
+
+-- 37.8.0 media governance.
+GRANT SELECT, INSERT, UPDATE ON activity_media_participants, activity_media_consents TO eduos_app;
+GRANT SELECT, INSERT ON activity_media_consent_history TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON activity_media_consent_history FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON activity_media_participants, activity_media_consents FROM eduos_app;
+GRANT UPDATE (consent_status, moderation_status, approved_by) ON activity_media_assets TO eduos_app;
+
+ 
+-- 37.9.3 private media object registry. Storage keys are readable only by
+-- tenant-scoped server code; no public-facing route selects this table.
+GRANT SELECT, INSERT, UPDATE ON private_media_objects TO eduos_app;
+REVOKE DELETE, TRUNCATE ON private_media_objects FROM eduos_app;
+
+-- 37.6.0 sports eligibility, athletic directors and permission slips (060).
+-- Signatures are append-only; eligibility inputs come only through the
+-- SECURITY DEFINER function, which checks coach / athletic director itself.
+GRANT SELECT, INSERT, UPDATE ON school_athletic_directors, sports_eligibility_policy TO eduos_app;
+GRANT SELECT, INSERT ON activity_permission_slips, activity_permission_slip_signatures TO eduos_app;
+GRANT UPDATE (status, closed_at) ON activity_permission_slips TO eduos_app;
+REVOKE DELETE, TRUNCATE ON school_athletic_directors, sports_eligibility_policy, activity_permission_slips, activity_permission_slip_signatures FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_sports_eligibility_inputs(uuid) TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_is_athletic_director(uuid), eduos_is_activity_staff(uuid, text[]), eduos_activity_school(uuid),
+  eduos_can_see_eligibility(uuid), eduos_can_read_roster(uuid, uuid, uuid), eduos_can_manage_roster(uuid, uuid), eduos_family_on_roster(uuid) TO eduos_app;

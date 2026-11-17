@@ -9,6 +9,7 @@ import 'screens/alerts_screen.dart';
 import 'screens/arrival_screen.dart';
 import 'screens/children_screen.dart';
 import 'screens/class_register_screen.dart';
+import 'screens/clubs_sports_screen.dart';
 import 'screens/courses_screen.dart';
 import 'screens/driver_route_screen.dart';
 import 'screens/family_library_screen.dart';
@@ -88,6 +89,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       'copilot' when role == 'teacher' => const CopilotScreen(),
       'staffing' => const StaffingScreen(),
       'news' when role == 'pupil' => const NewsScreen(),
+      'activities' when role == 'pupil' => const ClubsSportsScreen(),
       'arrival' => const ArrivalScreen(),
       'pickup' when role == 'parent' => const FamilyPickupScreen(),
       'pickup' => const StaffPickupScreen(),

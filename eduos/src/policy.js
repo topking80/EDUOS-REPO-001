@@ -13,7 +13,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     safety: ["read", "initiate", "lead"], pickup: ["read", "verify", "manage"],
     learning: ["read", "teach", "grade", "approve", "credential"], edal: ["verify", "checkpoint", "proof"],
     // 32.7.0: only a superintendent authorizes a DECN failover.
-    eden: ["read", "manage", "authorize", "node"]
+    eden: ["read", "manage", "authorize", "node"],
+    activities: ["read", "manage", "join"], ticketing: ["configure"], streaming: ["schedule"]
   },
   // 32.2.0: district IT administrator. Runs schools, accounts (not other
   // district roles), SIS imports, integrations, webhooks and the app catalog.
@@ -27,7 +28,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     apps: ["read", "manage", "report", "decide", "launch"], district: ["read", "manage"],
     branding: ["read", "manage"],
     edal: ["verify", "checkpoint"],
-    eden: ["read", "manage", "node"]
+    eden: ["read", "manage", "node"], activities: ["read"]
   },
   principal: {
     access_requests: ["read", "create"],
@@ -42,7 +43,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     transport: ["read", "manage"], christie: ["review", "author", "approve"], comms: ["read", "announce", "message", "moderate"],
     safety: ["read", "initiate", "lead"], pickup: ["read", "verify", "manage"],
     learning: ["read", "teach", "grade", "approve", "credential"], edal: ["verify", "checkpoint", "proof"],
-    eden: ["node"]
+    eden: ["node"],
+    activities: ["read", "manage", "join"], ticketing: ["configure"], streaming: ["schedule"]
   },
   teacher: {
     access_requests: ["read", "create"],
@@ -54,7 +56,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     apps: ["read", "launch", "request"], branding: ["read"],
     transport: ["read"], christie: ["review", "author"], comms: ["read", "announce", "message"],
     safety: ["read", "initiate", "rollcall"], pickup: ["read", "verify"],
-    learning: ["read", "teach", "grade"], edal: ["proof"]
+    learning: ["read", "teach", "grade"], edal: ["proof"],
+    activities: ["read", "manage", "join"]
   },
   parent: {
     access_requests: ["read", "create"],
@@ -63,7 +66,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     flow_events: ["read"], apps: ["launch"], branding: ["read"],
     transport: ["read"], comms: ["read", "message"],
     safety: ["read"], pickup: ["read", "request"],
-    learning: ["read"], edal: ["proof"]
+    learning: ["read"], edal: ["proof"], activities: ["read"]
   },
   pupil: {
     access_requests: ["read", "create"],
@@ -71,7 +74,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     attendance: ["read"], cases: [],
     flow_events: ["read"], apps: ["launch"], branding: ["read"],
     christie: ["tutor"], comms: ["read"], transport: ["read"], safety: ["read"],
-    learning: ["read", "learn"], edal: ["proof"]
+    learning: ["read", "learn"], edal: ["proof"], activities: ["read", "join"]
   },
   // 32.4.0: school bus driver. Sees only the riders of routes assigned to them
   // (name, grade and stop) and records board/alight check-ins. No student
