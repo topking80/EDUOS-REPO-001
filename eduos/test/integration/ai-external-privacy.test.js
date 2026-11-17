@@ -60,7 +60,7 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     for (const [n, name] of Object.entries(INTERNATIONAL))
       await admin.query("INSERT INTO students(district_id, school_id, local_student_number, display_name, grade_level) VALUES ($1,$2,$3,$4,'4')", [ID.d1, ID.s2, `INTL-${n}`, name]);
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
-    for (const name of ["supt1", "p1", "t1", "vp1", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
+    for (const name of ["supt1", "supt2", "p1", "t1", "vp1", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     const p = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
     assert.equal(p.status, 200, JSON.stringify({ body: p.body, serverLog: server.log() }));
   });
@@ -80,6 +80,28 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
       /ai_external_provider_ack_required/
     );
   });
+  it("external-provider policy reads, writes and revocation stay isolated between districts", async () => {
+    const d2Before = await as("supt2")("GET", "/api/ai/policy");
+    assert.equal(d2Before.status, 200, JSON.stringify(d2Before.body));
+    assert.equal(d2Before.body.data.externalProviderEnabled, false);
+    const enabled = await as("supt2")("PUT", "/api/ai/policy", {
+      enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000,
+      externalProviderEnabled: true, privacyAcknowledged: true
+    });
+    assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
+    assert.equal((await as("supt2")("GET", "/api/ai/policy")).body.data.externalProviderEnabled, true);
+    assert.equal((await as("supt1")("GET", "/api/ai/policy")).body.data.externalProviderEnabled, true,
+      "changing district two did not alter district one's policy");
+    const revoked = await as("supt2")("PUT", "/api/ai/policy", {
+      enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000,
+      externalProviderEnabled: false
+    });
+    assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
+    assert.equal((await as("supt2")("GET", "/api/ai/policy")).body.data.externalProviderEnabled, false);
+    assert.equal((await as("supt1")("GET", "/api/ai/policy")).body.data.externalProviderEnabled, true,
+      "revoking district two did not revoke district one");
+  });
+
   it("district external-provider opt-in is default-deny and blocks egress until acknowledged", async () => {
     const disabled = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: false });
     assert.equal(disabled.status, 200, JSON.stringify(disabled.body));
