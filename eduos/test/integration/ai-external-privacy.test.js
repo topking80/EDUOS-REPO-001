@@ -62,7 +62,7 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
     for (const name of ["supt1", "p1", "t1", "vp1", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     const p = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
-    assert.equal(p.status, 200, JSON.stringify(p.body));
+    assert.equal(p.status, 200, JSON.stringify({ body: p.body, serverLog: server.log() }));
   });
   after(async () => { await server?.stop(); await admin?.end(); await provider?.close(); await idp?.close(); await db?.drop(); });
 
