@@ -3,7 +3,7 @@
 ALTER TABLE ai_district_policy
   ADD COLUMN external_provider_enabled boolean NOT NULL DEFAULT false,
   ADD COLUMN external_provider_acknowledged_at timestamptz,
-  ADD COLUMN external_provider_acknowledged_by uuid REFERENCES users(id) ON DELETE SET NULL;
+  ADD COLUMN external_provider_acknowledged_by uuid REFERENCES users(id) ON DELETE RESTRICT;
 
 ALTER TABLE ai_district_policy
   ADD CONSTRAINT ai_external_provider_ack_required
