@@ -79,6 +79,29 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     const enabled = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
     assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
   });
+  it("revoking external AI while a request waits for the district budget lock blocks provider egress", async () => {
+    const lock = new pg.Client(db.adminUrl); await lock.connect();
+    const sentBefore = provider.received.length;
+    try {
+      await lock.query("BEGIN");
+      await lock.query("SELECT pg_advisory_xact_lock(hashtext('eduos-ai-budget'), hashtext($1::text))", [ID.d1]);
+      let done = false;
+      const pending = runAi("p1", "resource_summary", "A resource about the water cycle for elementary teachers.").then(r => { done = true; return r; });
+      await new Promise(r => setTimeout(r, 500));
+      assert.equal(done, false, "the request waits for the district budget lock");
+      await lock.query("UPDATE ai_district_policy SET external_provider_enabled=false, external_provider_acknowledged_at=NULL, external_provider_acknowledged_by=NULL WHERE district_id=$1", [ID.d1]);
+      await lock.query("COMMIT");
+      const result = await pending;
+      assert.equal(result.status, 403, JSON.stringify(result.body));
+      assert.equal(result.body.error, "ai_external_provider_disabled");
+      assert.equal(provider.received.length, sentBefore, "the revoked request never reaches the external provider");
+    } finally {
+      await lock.query("ROLLBACK").catch(() => {});
+      await lock.end();
+    }
+    const restored = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
+    assert.equal(restored.status, 200, JSON.stringify(restored.body));
+  });
   it("Christie: a learner's question loses the names of their family and teachers, titled adults, addresses, birth dates and links (EDUOS-PRIV-01)", async () => {
     await admin.query("UPDATE users SET display_name='Grace Okafor' WHERE id=$1", [USERS.pa[0]]);
     await admin.query("UPDATE users SET display_name='Hollis Varga' WHERE id=$1", [USERS.t1[0]]);
