@@ -277,7 +277,7 @@ if (config.notifyEmailAdapter === "smtp") {
   if (!/^[a-z0-9.-]+$/i.test(config.notifySmtpHost)) throw new Error("NOTIFY_SMTP_HOST is required when NOTIFY_EMAIL_ADAPTER=smtp");
   if (config.notifySmtpPort !== 465) throw new Error("NOTIFY_SMTP_PORT must be 465 (implicit TLS only)");
   if (!config.notifySmtpUsername || !config.notifySmtpPassword) throw new Error("NOTIFY_SMTP_USERNAME and NOTIFY_SMTP_PASSWORD are required for SMTP");
-  if (!/^[^@\\s<>]+@[^@\\s<>]+\\.[^@\\s<>]+$/.test(config.notifySmtpFrom)) throw new Error("NOTIFY_SMTP_FROM must be a valid email address");
+  if (!/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$/.test(config.notifySmtpFrom)) throw new Error("NOTIFY_SMTP_FROM must be a valid email address");
 }
 intIn("NOTIFY_SMTP_TIMEOUT_MS", config.notifySmtpTimeoutMs, 1000, 60000);
 if (config.metricsToken && config.metricsToken.length < 16) {
