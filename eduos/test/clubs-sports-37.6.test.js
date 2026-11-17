@@ -103,3 +103,27 @@ test("private media pipeline never exposes storage keys and gates tenant-scoped 
  assert.match(url.url,/read\\.example/);
  assert.equal(Object.hasOwn(url,"storageKey"),false);
 });
+
+test("PostgreSQL media delivery authorization locks asset, participants and guardian decisions", async () => {
+ const {createPostgresMediaAuthorization}=await import("../src/media-delivery-authorization.js");
+ let denied=false, issued=0;
+ const statements=[];
+ const authorization=createPostgresMediaAuthorization({withTenantTransaction:async(actor,fn)=>{
+  assert.equal(actor.districtId,"district-id");
+  return fn({query:async(sql,params)=>{
+   statements.push(sql);
+   if(sql.includes("FROM activity_media_assets"))return {rows:[{id:"asset",school_id:"school-id",activity_id:"activity",consent_status:"approved",moderation_status:"approved"}],rowCount:1};
+   if(sql.includes("FROM activity_media_participants"))return {rows:[{student_id:"student-1",consent_status:"approved"},{student_id:"student-2",consent_status:"approved"}],rowCount:2};
+   if(sql.includes("FROM activity_media_consents"))return {rows:[{status:denied&&params[3]==="student-2"?"denied":"approved"}],rowCount:1};
+   throw new Error("unexpected query");
+  }});
+ }});
+ const args={actor:{userId:"principal",role:"principal",districtId:"district-id",schoolId:"school-id"},assetId:"asset",districtId:"district-id",schoolId:"school-id",issueReadUrl:async()=>{issued++;return {url:"https://read.example.invalid/short"};}};
+ const result=await authorization.withAuthorizedMediaDelivery(args);
+ assert.match(result.url,/read/);
+ assert.equal(issued,1);
+ assert.ok(statements.every(sql=>/FOR UPDATE/i.test(sql)));
+ denied=true;
+ await assert.rejects(()=>authorization.withAuthorizedMediaDelivery(args),e=>e.code==="media_not_approved");
+ assert.equal(issued,1);
+});
