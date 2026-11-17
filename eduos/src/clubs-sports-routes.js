@@ -19,8 +19,10 @@ async function requirePupilLink(c,a,schoolId) {
 }
 async function canManage(c,a,id) {
  if(LEAD(a.role))return true;
- if(a.role!=="teacher")return false;
- return Boolean(await one(c,"SELECT id FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id=$4",[a.districtId,a.schoolId,id,a.userId]));
+ if(a.role==="teacher"&&await one(c,"SELECT id FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id=$4",[a.districtId,a.schoolId,id,a.userId]))return true;
+ // 37.6.0: the school's athletic director manages its sports teams too (db/060).
+ if(!["teacher","vice_principal"].includes(a.role))return false;
+ return Boolean((await one(c,`SELECT a.kind='sport' AND eduos_is_athletic_director(a.school_id) AS ok FROM school_activities a WHERE a.id=$1 AND a.district_id=$2`,[id,a.districtId]))?.ok);
 }
 async function requireActivityManager(c,a,id) {
  const activity=await scopedActivity(c,a,id,true);if(!activity)throw new HttpError(404,"activity_not_found");
