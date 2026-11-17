@@ -17,7 +17,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     // 32.7.0: only a superintendent authorizes a DECN failover.
     eden: ["read", "manage", "authorize", "node"],
     activities: ["read", "manage", "join"], ticketing: ["configure"], streaming: ["schedule"],
-    commerce: ["settings", "report", "refund", "purchase"] // 37.7.0 sandbox commerce: rates, revenue, refunds, marketplace buying
+    commerce: ["settings", "report", "refund", "purchase", "providers"] // 37.7.0 commerce: rates, revenue, refunds, marketplace buying; 37.7.1 payment providers
   },
   // 32.2.0: district IT administrator. Runs schools, accounts (not other
   // district roles), SIS imports, integrations, webhooks and the app catalog.
@@ -31,7 +31,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     apps: ["read", "manage", "report", "decide", "launch"], district: ["read", "manage"],
     branding: ["read", "manage"],
     edal: ["verify", "checkpoint"],
-    eden: ["read", "manage", "node"], activities: ["read"]
+    eden: ["read", "manage", "node"], activities: ["read"],
+    commerce: ["providers"] // 37.7.1: connects the district's payment processors (no revenue or refunds)
   },
   principal: {
     enrollment: ["manage"], // 37.6.0: own school's enrollment board

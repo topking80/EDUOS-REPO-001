@@ -121,6 +121,22 @@ export const config = {
   integrationsAllowedHosts: (process.env.INTEGRATIONS_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
   // Development and tests only: permits http:// to a loopback server. Ignored in production.
   integrationsAllowInsecureLoopback: process.env.INTEGRATIONS_ALLOW_INSECURE_LOOPBACK === "true" && (process.env.NODE_ENV || "development") !== "production",
+  // 37.7.1 commerce: each district picks its own payment processors.
+  // COMMERCE_SECRETS_KEY (32+ chars) encrypts their credentials at rest;
+  // without it no credential can be saved (the built-in sandbox still works).
+  commerceSecretsKey: process.env.COMMERCE_SECRETS_KEY || "",
+  // Global kill switch: no district takes live payments unless this is "true".
+  commerceLivePaymentsEnabled: process.env.COMMERCE_LIVE_PAYMENTS_ENABLED === "true",
+  // Self-hosted processors (BTCPay Server): the hosts a district may point at.
+  commerceAllowedHosts: (process.env.COMMERCE_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
+  // Development and tests only: send every processor API call to this
+  // loopback mock (http://127.0.0.1:PORT). Ignored in production.
+  commerceTestApiBase: (process.env.NODE_ENV || "development") !== "production" && /^http:\/\/127\.0\.0\.1:\d{2,5}$/.test(process.env.COMMERCE_TEST_API_BASE || "")
+    ? process.env.COMMERCE_TEST_API_BASE : "",
+  // Finishing processor calls cut off midway (crash, deploy): how often the
+  // API looks (0 = off) and how long a call must be in flight to count.
+  commerceReconcileIntervalSeconds: Number(process.env.COMMERCE_RECONCILE_INTERVAL_SECONDS ?? 60),
+  commerceReconcileStaleSeconds: Number(process.env.COMMERCE_RECONCILE_STALE_SECONDS ?? 90),
   // Native mobile app sign-in (RFC 8252). Comma-separated redirect URIs the
   // EduOS app may return to after district sign-in, e.g.
   // "org.eduos.app:/oauth2redirect". Empty (default) disables native sign-in.
@@ -284,6 +300,11 @@ if (config.aiProvider !== "local") {
   if (!config.aiProviderModel) throw new Error("AI_PROVIDER_MODEL is required for an external AI provider");
 }
 intIn("AI_PROVIDER_TIMEOUT_MS", config.aiProviderTimeoutMs, 1000, 120000);
+if (config.commerceSecretsKey && config.commerceSecretsKey.length < 32) {
+  throw new Error("COMMERCE_SECRETS_KEY must be at least 32 characters");
+}
+intIn("COMMERCE_RECONCILE_INTERVAL_SECONDS", config.commerceReconcileIntervalSeconds, 0, 3600);
+intIn("COMMERCE_RECONCILE_STALE_SECONDS", config.commerceReconcileStaleSeconds, 10, 86400);
 if (config.integrationsKey && config.integrationsKey.length < 32) {
   throw new Error("INTEGRATIONS_KEY must be at least 32 characters");
 }

@@ -382,6 +382,16 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON commerce_ledger_entries, commerce_rec
 GRANT EXECUTE ON FUNCTION eduos_commerce_record(uuid, text, uuid, jsonb, text), eduos_commerce_expire_holds() TO eduos_app;
 REVOKE ALL ON FUNCTION eduos_retention_feature_commerce(jsonb), eduos_ticket_order_guard(), eduos_ticket_guard(),
   eduos_marketplace_purchase_guard(), eduos_commerce_payment_guard() FROM eduos_app;
+-- 37.7.1 per-district payment providers (066). Credentials are stored sealed;
+-- payers and school leaders reach one account only through
+-- eduos_commerce_checkout_account(), for their own district.
+GRANT SELECT, INSERT, UPDATE ON commerce_provider_accounts, commerce_payment_setup TO eduos_app;
+REVOKE DELETE, TRUNCATE ON commerce_provider_accounts, commerce_payment_setup FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_commerce_checkout_account(text) TO eduos_app;
+-- Two-phase processor calls: confirm stretches a seat hold while the processor
+-- captures; a refund in flight blocks check-in. The sweep lists stale calls.
+GRANT UPDATE (hold_expires_at, refund_pending) ON event_ticket_orders TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_commerce_stale_payments(integer) TO eduos_app;
 
 
 -- 37.7.0 Sports roster and result records.
