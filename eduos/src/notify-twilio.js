@@ -63,7 +63,7 @@ export function createTwilioSmsAdapter(client = createTwilioClient()) {
     async send(row) {
       if (!isE164(row.recipient_phone)) return { status: "failed", note: "verified recipient phone is missing or invalid" };
       try {
-        const response = await client.sendSms(row.recipient_phone,
+        await client.sendSms(row.recipient_phone,
           "You have a new EduOS notification. Open the EduOS app to read it.", row.id);
         // Twilio accepted the message for processing. This is not a carrier
         // delivery receipt; the outbox note deliberately preserves that nuance.
