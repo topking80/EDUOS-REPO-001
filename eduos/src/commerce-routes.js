@@ -1,9 +1,11 @@
-// EduOS 37.7.0 commerce routes (SANDBOX ONLY). See docs/COMMERCE-SANDBOX.md.
-// Paid checkout starts at POST /api/events/:id/tickets (clubs-sports-routes)
-// for a priced ticket type; this file confirms and refunds payments, shows
-// receipts and revenue, runs the district settings, and buys marketplace
-// licenses on the 37.6 fee hook. No real processor exists: the only adapter
-// is "sandbox" and nothing is charged.
+// EduOS 37.7.0 commerce routes. See docs/COMMERCE-SANDBOX.md and
+// docs/COMMERCE-PROVIDERS.md. Paid checkout starts at POST
+// /api/events/:id/tickets (clubs-sports-routes) for a priced ticket type;
+// this file confirms and refunds payments, shows receipts and revenue, runs
+// the district settings, and buys marketplace licenses on the 37.6 fee hook.
+// 37.7.1: district administrators choose the payment processors
+// (/api/commerce/providers...). Live payments stay off unless the server sets
+// COMMERCE_LIVE_PAYMENTS_ENABLED=true.
 import rateLimit from "express-rate-limit";
 import { requireSession, requireCsrf } from "./auth.js";
 import { requirePermission, canPerform } from "./policy.js";
@@ -13,6 +15,7 @@ import { wrap, created, need, str, isoDate } from "./route-helpers.js";
 import { SANDBOX_OUTCOMES } from "./commerce/payments.js";
 import { summarize, DEFAULT_RATES } from "./commerce/split.js";
 import { commerceStatus, loadSettings, settingsOut, confirmPayment, refundPayment, startMarketplaceCheckout, paymentOut } from "./commerce/service.js";
+import { providersOverview, saveAccount, testAccount, saveSetup } from "./commerce/setup.js";
 
 const intIn = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 const canPay = (req, res, next) => (canPerform(req.actor, "commerce", "pay") || canPerform(req.actor, "commerce", "purchase"))
@@ -24,9 +27,15 @@ export function registerCommerceRoutes(app) {
   // Anyone signed in: is paid checkout on, and at what rates (shown on receipts).
   app.get("/api/commerce/status", requireSession, wrap(async (c, req) => {
     const s = await commerceStatus(c, req.actor.districtId);
-    return { provider: s.provider, live: false, sandbox: s.sandbox, enabled: s.enabled, settings: s.settings,
+    const ready = s.methods.filter(m => m.ready);
+    return { provider: s.provider, live: s.live, sandbox: s.sandbox, enabled: s.enabled, settings: s.settings,
+      methods: ready.map(m => ({ method: m.method, label: m.label, processor: m.processor, mode: m.mode, default: m.default })),
+      defaultMethod: ready.some(m => m.method === s.defaultMethod) ? s.defaultMethod : (ready[0]?.method || null),
       canPay: canPerform(req.actor, "commerce", "pay") || canPerform(req.actor, "commerce", "purchase"),
-      note: s.provider === "none" ? "No payment provider is connected. Paid tickets are off." : "Sandbox only: no real money moves and no card is charged." };
+      canManageProviders: canPerform(req.actor, "commerce", "providers"),
+      note: !ready.length ? "No payment method is ready. Paid tickets are off."
+        : s.live ? "Payments are live: real money moves." : s.sandbox ? "Sandbox only: no real money moves and no card is charged."
+        : "Test mode: payments go to the processor's test system. No real money moves." };
   }));
 
   app.put("/api/commerce/settings", limiter, requireSession, requireCsrf, requirePermission("commerce", "settings"), wrap(async (c, req) => {
@@ -87,21 +96,24 @@ export function registerCommerceRoutes(app) {
   app.get("/api/commerce/receipts/:id", requireSession, wrap(async (c, req) => {
     need(validId(req.params.id), 400, "invalid_receipt_id");
     // RLS: the payer, the school's principal, the superintendent.
-    const r = await one(c, `SELECT r.*, sc.name AS school_name, e.entry_hash, e.seq FROM commerce_receipts r LEFT JOIN schools sc ON sc.id=r.school_id
-        LEFT JOIN edal_entries e ON e.id=r.edal_entry_id WHERE r.id=$1`, [req.params.id]);
+    const r = await one(c, `SELECT r.*, sc.name AS school_name, e.entry_hash, e.seq, p.provider, p.mode, p.payment_method FROM commerce_receipts r LEFT JOIN schools sc ON sc.id=r.school_id
+        LEFT JOIN edal_entries e ON e.id=r.edal_entry_id LEFT JOIN commerce_payments p ON p.id=r.payment_id WHERE r.id=$1`, [req.params.id]);
     need(r, 404, "receipt_not_found");
     const s = await loadSettings(c, req.actor.districtId);
     await audit(c, req, "read", "commerce_receipt", r.id);
     return { id: r.id, number: r.receipt_number, kind: r.kind, amountCents: Number(r.amount_cents), currency: r.currency, description: r.description,
       school: r.school_name || null, issuedAt: r.issued_at, lines: r.lines, stateFundLabel: s.state_fund_label,
-      edal: r.entry_hash ? { seq: Number(r.seq), entryHash: r.entry_hash } : null, sandbox: true,
-      note: "Sandbox receipt: no real payment was taken." };
+      edal: r.entry_hash ? { seq: Number(r.seq), entryHash: r.entry_hash } : null, sandbox: r.provider === "sandbox", mode: r.mode || "test", method: r.payment_method || "sandbox",
+      note: r.provider === "sandbox" ? "Sandbox receipt: no real payment was taken."
+        : r.mode === "live" ? "Paid through the district's payment processor." : "Test-mode receipt: the processor's test system, no real money." };
   }));
 
   app.post("/api/commerce/payments/:id/confirm", limiter, requireSession, requireCsrf, canPay, wrap(async (c, req) => {
     need(validId(req.params.id), 400, "invalid_payment_id");
-    const outcome = req.body?.testOutcome ?? "sandbox_success";
-    need(SANDBOX_OUTCOMES.includes(outcome), 400, "invalid_test_outcome", { allowed: SANDBOX_OUTCOMES });
+    // testOutcome applies to sandbox payments only; a processor payment is
+    // confirmed by asking the processor.
+    const outcome = req.body?.testOutcome;
+    need(outcome === undefined || SANDBOX_OUTCOMES.includes(outcome), 400, "invalid_test_outcome", { allowed: SANDBOX_OUTCOMES });
     return confirmPayment(c, req, req.params.id, outcome);
   }));
 
@@ -162,4 +174,13 @@ export function registerCommerceRoutes(app) {
     const r = await startMarketplaceCheckout(c, req, req.params.id, req.body || {});
     return r.replayed ? r : created(r);
   }));
+
+  // 37.7.1 District payment providers (superintendent and district IT).
+  // Credentials are write-only: responses say which secrets are set, never
+  // their values.
+  const provAdmin = [limiter, requireSession, requireCsrf, requirePermission("commerce", "providers")];
+  app.get("/api/commerce/providers", requireSession, requirePermission("commerce", "providers"), wrap(async (c, req) => providersOverview(c, req.actor.districtId)));
+  app.put("/api/commerce/providers/:processor", ...provAdmin, wrap(async (c, req) => saveAccount(c, req, req.params.processor, req.body || {})));
+  app.post("/api/commerce/providers/:processor/test", ...provAdmin, wrap(async (c, req) => testAccount(c, req, req.params.processor)));
+  app.put("/api/commerce/payment-methods", ...provAdmin, wrap(async (c, req) => saveSetup(c, req, req.body || {})));
 }

@@ -1,18 +1,18 @@
-// EduOS 37.7.0 commerce service (sandbox only): paid ticket checkout with
-// inventory holds, payment confirmation, refunds, marketplace purchases, and
-// the settlement -> EDAL -> ledger -> receipt record. Every amount is integer
-// cents; every write is in the caller's tenant transaction under RLS.
-import { randomBytes, createHash } from "node:crypto";
-import { paymentProvider } from "./payments.js";
+// EduOS 37.7.0 commerce service: paid ticket checkout with inventory holds,
+// payment confirmation, refunds, marketplace purchases, and the settlement ->
+// EDAL -> ledger -> receipt record. Every amount is integer cents; every
+// write is in the caller's tenant transaction under RLS.
+// 37.7.1: the processor is the district's choice (src/commerce/setup.js):
+// the built-in sandbox confirms instantly; PayPal, Square and BTCPay send the
+// payer to their own hosted page and confirm when the payer comes back.
+import { randomBytes, createHash, randomUUID } from "node:crypto";
+import { config } from "../config.js";
+import { ProviderError } from "./adapters.js";
+import { resolveCheckout, adapterFor, checkoutMethods } from "./setup.js";
 import { ticketSettlement, marketplaceSettlement, DEFAULT_RATES, formatCents } from "./split.js";
 import { appendEntry } from "../edal.js";
 import { qrRows } from "../pickup-routes.js";
 import { audit, one, rows, HttpError } from "../role-app-util.js";
-
-let provider = paymentProvider;
-export const currentProvider = () => provider;
-/** Unit tests only: swap the provider (never a live one). */
-export function useProviderForTests(p) { if (p && p.live) throw new Error("live providers are not allowed"); provider = p; }
 
 const DEFAULTS = Object.freeze({ enabled: false, network_fee_bps: DEFAULT_RATES.networkFeeBps, sales_tax_bps: DEFAULT_RATES.salesTaxBps,
   school_share_bps: DEFAULT_RATES.split.school, district_share_bps: DEFAULT_RATES.split.district, state_share_bps: DEFAULT_RATES.split.state,
@@ -26,12 +26,20 @@ export function settingsOut(s) {
 export async function loadSettings(c, districtId) {
   return (await one(c, "SELECT * FROM commerce_settings WHERE district_id=$1", [districtId])) || { ...DEFAULTS };
 }
-/** What every screen needs: is paid checkout on, through which adapter, at what rates. */
+/** What every screen needs: is paid checkout on, through which methods, at what rates. */
 export async function commerceStatus(c, districtId) {
   const s = await loadSettings(c, districtId);
-  return { provider: provider?.name || "none", live: false, sandbox: provider?.name === "sandbox",
-    enabled: Boolean(provider) && s.enabled, settings: settingsOut(s), raw: s };
+  const cm = await checkoutMethods(c, districtId);
+  const ready = cm.methods.filter(m => m.ready), main = ready.find(m => m.default) || ready[0];
+  return { provider: main?.processor || "none", live: ready.some(m => m.mode === "live"), sandbox: ready.length > 0 && ready.every(m => m.processor === "sandbox"),
+    enabled: s.enabled && ready.length > 0, methods: cm.methods, defaultMethod: cm.defaultMethod, settings: settingsOut(s), raw: s };
 }
+const disabledReason = st => !st.raw.enabled ? "district_commerce_disabled" : "district_payment_provider_not_connected";
+const providerFail = (e, processor) => { if (e instanceof ProviderError) throw new HttpError(502, e.code, { processor }); throw e; };
+const methodOf = b => { const m = b?.paymentMethod; if (m !== undefined && m !== null && (typeof m !== "string" || m.length > 20)) throw new HttpError(400, "invalid_payment_method"); return m ?? undefined; };
+// Where the hosted page sends the payer back. The app confirms on arrival.
+const returnUrls = (paymentId, view) => ({ returnUrl: `${config.publicOrigin}/app/?commerce_return=${paymentId}#/${view}`,
+  cancelUrl: `${config.publicOrigin}/app/?commerce_return=${paymentId}&commerce_cancel=1#/${view}` });
 const rates = s => ({ salesTaxBps: s.sales_tax_bps, networkFeeBps: s.network_fee_bps,
   split: { school: s.school_share_bps, district: s.district_share_bps, state: s.state_share_bps } });
 const jsonLines = lines => lines.map(l => (l.recipientId ? { line: l.line, recipient: l.recipient, amount: l.amount, recipientId: l.recipientId }
@@ -42,7 +50,8 @@ function feesGuard(fn) {
 }
 export function paymentOut(p, extra = {}) {
   return { id: p.id, purpose: p.purpose, status: p.status, amountCents: p.amount_cents, currency: p.currency,
-    processingFeeCents: p.processing_fee_cents, provider: p.provider, sandbox: p.provider === "sandbox", createdAt: p.created_at,
+    processingFeeCents: p.processing_fee_cents, provider: p.provider, sandbox: p.provider === "sandbox", method: p.payment_method || "sandbox",
+    mode: p.mode || "test", test: (p.mode || "test") === "test", redirectUrl: p.status === "requires_confirmation" ? p.checkout_url || null : null, createdAt: p.created_at,
     confirmedAt: p.confirmed_at || null, refundedAt: p.refunded_at || null, ...extra };
 }
 
@@ -62,25 +71,29 @@ async function record(c, actor, p, kind, lines, description) {
 export async function startTicketCheckout(c, req, { event, type, quantity, key }) {
   const a = req.actor;
   if (a.role !== "parent") throw new HttpError(403, "guardian_payment_required", { reason: "Only a parent or guardian can pay. Students can't make purchases." });
-  const st = await commerceStatus(c, a.districtId);
-  if (!st.enabled) throw new HttpError(503, "paid_ticketing_not_configured", { checkoutEnabled: false,
-    reason: provider ? "district_commerce_disabled" : "district_payment_provider_not_connected" });
+  const st = await commerceStatus(c, a.districtId), wanted = methodOf(req.body);
+  if (!st.raw.enabled || (!st.enabled && wanted === undefined)) throw new HttpError(503, "paid_ticketing_not_configured", { checkoutEnabled: false, reason: disabledReason(st) });
+  const { adapter, method, processor, mode } = await resolveCheckout(c, a.districtId, wanted);
   await c.query("SELECT eduos_commerce_expire_holds()");
   const t = await one(c, "SELECT * FROM event_ticket_types WHERE id=$1 AND district_id=$2 FOR UPDATE", [type.id, a.districtId]);
   if (!t.sales_open) throw new HttpError(404, "ticket_type_not_available");
   if (t.sold_count + quantity > t.capacity) throw new HttpError(409, "ticket_capacity_exceeded");
-  const total = t.price_cents * quantity, fee = provider.feeFor(total);
+  const total = t.price_cents * quantity, fee = adapter.feeFor(total);
   feesGuard(() => ticketSettlement({ grossCents: total, processingFeeCents: fee, ...rates(st.raw), schoolId: event.school_id }));
+  // A hosted page (PayPal, Square, BTCPay) takes longer than the sandbox.
+  const holdMinutes = processor === "sandbox" ? st.raw.hold_minutes : Math.max(st.raw.hold_minutes, 20);
   await c.query("UPDATE event_ticket_types SET sold_count=sold_count+$2 WHERE id=$1", [t.id, quantity]);
   const order = await one(c, `INSERT INTO event_ticket_orders(district_id,school_id,event_id,buyer_user_id,ticket_type_id,quantity,total_cents,currency,status,idempotency_key,hold_expires_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'payment_pending',$9, now() + make_interval(mins => $10)) RETURNING id,status,total_cents,currency,hold_expires_at`,
-    [a.districtId, event.school_id, event.id, a.userId, t.id, quantity, total, t.currency, key, st.raw.hold_minutes]);
-  const created = await provider.createPayment({ amountCents: total, currency: t.currency, reference: order.id });
-  const p = await one(c, `INSERT INTO commerce_payments(district_id,school_id,purpose,ticket_order_id,payer_user_id,amount_cents,currency,processing_fee_cents,provider,provider_ref)
-      VALUES($1,$2,'event_tickets',$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [a.districtId, event.school_id, order.id, a.userId, total, t.currency, fee, provider.name, created.providerRef]);
+    [a.districtId, event.school_id, event.id, a.userId, t.id, quantity, total, t.currency, key, holdMinutes]);
+  const paymentId = randomUUID();
+  const created = await adapter.createPayment({ amountCents: total, currency: t.currency, reference: paymentId, method, holdMinutes,
+    description: `${quantity} × ${t.name}, ${event.title}`, ...returnUrls(paymentId, "tickets") }).catch(e => providerFail(e, processor));
+  const p = await one(c, `INSERT INTO commerce_payments(id,district_id,school_id,purpose,ticket_order_id,payer_user_id,amount_cents,currency,processing_fee_cents,provider,provider_ref,payment_method,mode,checkout_url)
+      VALUES($1,$2,$3,'event_tickets',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+    [paymentId, a.districtId, event.school_id, order.id, a.userId, total, t.currency, fee, processor, created.providerRef, method, mode, created.redirectUrl || null]);
   await c.query("UPDATE event_ticket_orders SET provider_reference=$2 WHERE id=$1", [order.id, created.providerRef]);
-  await audit(c, req, "checkout", "event_ticket_order", order.id, `event=${event.id};quantity=${quantity};payment=${p.id};provider=${provider.name}`);
+  await audit(c, req, "checkout", "event_ticket_order", order.id, `event=${event.id};quantity=${quantity};payment=${p.id};provider=${processor};method=${method};mode=${mode}`);
   return { order, tickets: [], replayed: false, payment: paymentOut(p, { holdExpiresAt: order.hold_expires_at }) };
 }
 /** Idempotent replay of a checkout that is still waiting for payment. */
@@ -96,11 +109,19 @@ async function confirmTickets(c, req, p, testOutcome) {
       FROM event_ticket_orders o JOIN school_events e ON e.id=o.event_id JOIN event_ticket_types t ON t.id=o.ticket_type_id WHERE o.id=$1 FOR UPDATE OF o`, [p.ticket_order_id]);
   if (!o || o.status !== "payment_pending") throw new HttpError(409, "order_not_awaiting_payment", { status: o?.status });
   if (o.hold_expired) {
+    // Square and BTCPay take the money on their own page; if it arrived
+    // after the hold ran out, say so (the school refunds it in that
+    // processor's dashboard). PayPal is never captured after expiry.
+    let paidAfterHold = false;
+    if (p.provider === "square" || p.provider === "btcpay") paidAfterHold = (await providerConfirm(c, a, p).catch(() => ({}))).status === "succeeded";
     await c.query("SELECT eduos_commerce_expire_holds()");
-    await audit(c, req, "hold_expired", "commerce_payment", p.id, `order=${o.id}`);
-    return { status: "expired", reason: "The seats were held for a few minutes and have been released. Start again to buy." };
+    await audit(c, req, "hold_expired", "commerce_payment", p.id, `order=${o.id}${paidAfterHold ? ";paid_after_hold=true" : ""}`, paidAfterHold ? "failure" : "success");
+    return { status: "expired", paidAfterHold, reason: paidAfterHold
+      ? "The payment arrived after the seats were released. The school will refund it; contact the school office."
+      : "The seats were held for a few minutes and have been released. Start again to buy." };
   }
-  const result = await provider.confirmPayment(p.provider_ref, { testOutcome });
+  const result = await providerConfirm(c, a, p, testOutcome);
+  if (result.status === "pending") return { status: "pending", payment: paymentOut(p, { holdExpiresAt: o.hold_expires_at }) };
   if (result.status !== "succeeded") {
     await c.query("UPDATE commerce_payments SET status='declined', decline_code=$2, confirmed_at=now() WHERE id=$1", [p.id, result.declineCode || "declined"]);
     await c.query("UPDATE event_ticket_orders SET status='cancelled' WHERE id=$1", [o.id]);
@@ -108,7 +129,7 @@ async function confirmTickets(c, req, p, testOutcome) {
     await audit(c, req, "payment_declined", "commerce_payment", p.id, `order=${o.id};code=${result.declineCode || "declined"}`);
     return { status: "declined", declineCode: result.declineCode || "declined" };
   }
-  const paid = await one(c, "UPDATE commerce_payments SET status='succeeded', confirmed_at=now() WHERE id=$1 RETURNING *", [p.id]);
+  const paid = await one(c, "UPDATE commerce_payments SET status='succeeded', confirmed_at=now(), provider_capture_ref=$2 WHERE id=$1 RETURNING *", [p.id, result.captureRef || null]);
   await c.query("UPDATE event_ticket_orders SET status='paid', paid_at=now() WHERE id=$1", [o.id]);
   const tickets = [];
   for (let i = 0; i < o.quantity; i++) {
@@ -130,8 +151,8 @@ async function confirmTickets(c, req, p, testOutcome) {
 export async function startMarketplaceCheckout(c, req, feeEventId, b) {
   const a = req.actor, key = b?.idempotencyKey;
   if (typeof key !== "string" || key.length < 16 || key.length > 120) throw new HttpError(400, "invalid_idempotency_key");
-  const st = await commerceStatus(c, a.districtId);
-  if (!st.enabled) throw new HttpError(503, "commerce_not_enabled", { reason: provider ? "district_commerce_disabled" : "district_payment_provider_not_connected" });
+  const st = await commerceStatus(c, a.districtId), wanted = methodOf(b);
+  if (!st.raw.enabled || (!st.enabled && wanted === undefined)) throw new HttpError(503, "commerce_not_enabled", { reason: disabledReason(st) });
   await c.query("SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))", [a.districtId, "mkt:" + feeEventId]);
   const prior = await one(c, "SELECT * FROM marketplace_purchases WHERE created_by=$1 AND idempotency_key=$2", [a.userId, key]);
   if (prior) {
@@ -153,14 +174,18 @@ export async function startMarketplaceCheckout(c, req, feeEventId, b) {
   }
   const total = qty * fe.unit_price_cents;
   if (total > 100_000_000) throw new HttpError(400, "amount_too_large");
-  const fee = provider.feeFor(total);
+  const { adapter, method, processor, mode } = await resolveCheckout(c, a.districtId, wanted);
+  const fee = adapter.feeFor(total);
   feesGuard(() => marketplaceSettlement({ grossCents: total, processingFeeCents: fee, marketplaceFeeBps: st.raw.marketplace_fee_bps, vendorId: fe.vendor_id }));
   const m = await one(c, `INSERT INTO marketplace_purchases(district_id,fee_event_id,listing_id,vendor_id,license_id,quantity,unit_price_cents,total_cents,idempotency_key,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [a.districtId, fe.id, fe.listing_id, fe.vendor_id, fe.license_id, qty, fe.unit_price_cents, total, key, a.userId]);
-  const created = await provider.createPayment({ amountCents: total, currency: "USD", reference: m.id });
-  const p = await one(c, `INSERT INTO commerce_payments(district_id,school_id,purpose,marketplace_purchase_id,payer_user_id,amount_cents,currency,processing_fee_cents,provider,provider_ref)
-      VALUES($1,NULL,'marketplace_license',$2,$3,$4,'USD',$5,$6,$7) RETURNING *`, [a.districtId, m.id, a.userId, total, fee, provider.name, created.providerRef]);
-  await audit(c, req, "checkout", "marketplace_purchase", m.id, `fee_event=${fe.id};listing=${fe.listing_id};seats=${qty};payment=${p.id};provider=${provider.name}`);
+  const paymentId = randomUUID();
+  const created = await adapter.createPayment({ amountCents: total, currency: "USD", reference: paymentId, method, holdMinutes: 60,
+    description: `${qty === 1 ? "License" : `${qty} seats`}: ${fe.name}`, ...returnUrls(paymentId, "commerce") }).catch(e => providerFail(e, processor));
+  const p = await one(c, `INSERT INTO commerce_payments(id,district_id,school_id,purpose,marketplace_purchase_id,payer_user_id,amount_cents,currency,processing_fee_cents,provider,provider_ref,payment_method,mode,checkout_url)
+      VALUES($1,$2,NULL,'marketplace_license',$3,$4,$5,'USD',$6,$7,$8,$9,$10,$11) RETURNING *`,
+    [paymentId, a.districtId, m.id, a.userId, total, fee, processor, created.providerRef, method, mode, created.redirectUrl || null]);
+  await audit(c, req, "checkout", "marketplace_purchase", m.id, `fee_event=${fe.id};listing=${fe.listing_id};seats=${qty};payment=${p.id};provider=${processor};method=${method};mode=${mode}`);
   return { purchase: purchaseOut(m), payment: paymentOut(p), replayed: false };
 }
 const purchaseOut = m => ({ id: m.id, feeEventId: m.fee_event_id, listingId: m.listing_id, licenseId: m.license_id, quantity: m.quantity,
@@ -170,14 +195,15 @@ async function confirmMarketplace(c, req, p, testOutcome) {
   const a = req.actor;
   const m = await one(c, `SELECT m.*, l.name FROM marketplace_purchases m JOIN marketplace_listings l ON l.id=m.listing_id WHERE m.id=$1 FOR UPDATE OF m`, [p.marketplace_purchase_id]);
   if (!m || m.status !== "payment_pending") throw new HttpError(409, "purchase_not_awaiting_payment", { status: m?.status });
-  const result = await provider.confirmPayment(p.provider_ref, { testOutcome });
+  const result = await providerConfirm(c, a, p, testOutcome);
+  if (result.status === "pending") return { status: "pending", payment: paymentOut(p) };
   if (result.status !== "succeeded") {
     await c.query("UPDATE commerce_payments SET status='declined', decline_code=$2, confirmed_at=now() WHERE id=$1", [p.id, result.declineCode || "declined"]);
     await c.query("UPDATE marketplace_purchases SET status='cancelled' WHERE id=$1", [m.id]);
     await audit(c, req, "payment_declined", "commerce_payment", p.id, `purchase=${m.id};code=${result.declineCode || "declined"}`);
     return { status: "declined", declineCode: result.declineCode || "declined" };
   }
-  const paid = await one(c, "UPDATE commerce_payments SET status='succeeded', confirmed_at=now() WHERE id=$1 RETURNING *", [p.id]);
+  const paid = await one(c, "UPDATE commerce_payments SET status='succeeded', confirmed_at=now(), provider_capture_ref=$2 WHERE id=$1 RETURNING *", [p.id, result.captureRef || null]);
   await c.query("UPDATE marketplace_purchases SET status='paid', paid_at=now() WHERE id=$1", [m.id]);
   const s = await loadSettings(c, a.districtId);
   const lines = marketplaceSettlement({ grossCents: paid.amount_cents, processingFeeCents: paid.processing_fee_cents, marketplaceFeeBps: s.marketplace_fee_bps, vendorId: m.vendor_id });
@@ -188,12 +214,18 @@ async function confirmMarketplace(c, req, p, testOutcome) {
 
 // ---------------- confirm / refund ----------------
 
+/** Ask the payment's own processor where it stands (sandbox: the chosen test outcome). */
+async function providerConfirm(c, a, p, testOutcome) {
+  const { adapter } = await adapterFor(c, a.districtId, p.provider, { forCheckout: false });
+  const opts = p.provider === "sandbox" ? { testOutcome: testOutcome ?? "sandbox_success" } : { amountCents: p.amount_cents, currency: p.currency };
+  return adapter.confirmPayment(p.provider_ref, opts).catch(e => providerFail(e, p.provider));
+}
+
 export async function confirmPayment(c, req, paymentId, testOutcome) {
   const p = await one(c, "SELECT * FROM commerce_payments WHERE id=$1 FOR UPDATE", [paymentId]);
   if (!p || p.payer_user_id !== req.actor.userId) throw new HttpError(404, "payment_not_found");
   if (p.status !== "requires_confirmation") throw new HttpError(409, "payment_not_confirmable", { status: p.status });
-  if (!provider || provider.name !== p.provider) throw new HttpError(503, "payment_provider_unavailable");
-  if (!(await commerceStatus(c, req.actor.districtId)).enabled) throw new HttpError(503, "commerce_not_enabled");
+  if (!(await loadSettings(c, req.actor.districtId)).enabled) throw new HttpError(503, "commerce_not_enabled");
   return p.purpose === "event_tickets" ? confirmTickets(c, req, p, testOutcome) : confirmMarketplace(c, req, p, testOutcome);
 }
 
@@ -205,7 +237,7 @@ export async function refundPayment(c, req, paymentId) {
   const allowed = p && (a.role === "superintendent" || (a.role === "principal" && p.purpose === "event_tickets" && p.school_id === a.schoolId));
   if (!allowed) throw new HttpError(404, "payment_not_found");
   if (p.status !== "succeeded") throw new HttpError(409, "payment_not_refundable", { status: p.status });
-  if (!provider || provider.name !== p.provider) throw new HttpError(503, "payment_provider_unavailable");
+  const { adapter } = await adapterFor(c, a.districtId, p.provider, { forCheckout: false });
   let description = "Refund";
   if (p.purpose === "event_tickets") {
     const o = await one(c, `SELECT o.*, e.title FROM event_ticket_orders o JOIN school_events e ON e.id=o.event_id WHERE o.id=$1 FOR UPDATE OF o`, [p.ticket_order_id]);
@@ -220,15 +252,16 @@ export async function refundPayment(c, req, paymentId) {
     await c.query("UPDATE marketplace_purchases SET status='refunded', refunded_at=now() WHERE id=$1", [m.id]);
     description = `Refund: ${m.name}`;
   }
-  const r = await provider.refundPayment(p.provider_ref, p.amount_cents);
+  const r = await adapter.refundPayment(p.provider_ref, p.amount_cents, { captureRef: p.provider_capture_ref }).catch(e => providerFail(e, p.provider));
   const refunded = await one(c, "UPDATE commerce_payments SET status='refunded', refund_ref=$2, refunded_at=now() WHERE id=$1 RETURNING *", [p.id, r.refundRef]);
   const settled = await rows(c, "SELECT line, recipient, recipient_id, amount_cents FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [p.id]);
   if (!settled.length) throw new HttpError(409, "payment_not_settled");
   settled.sort((x, y) => LINE_ORDER.indexOf(x.line) - LINE_ORDER.indexOf(y.line));
   const lines = settled.map(l => ({ line: l.line, recipient: l.recipient, recipientId: l.recipient_id || undefined, amount: -Number(l.amount_cents) }));
   const receipt = await record(c, a, refunded, "refund", lines, description);
-  await audit(c, req, "refund", "commerce_payment", p.id, `receipt=${receipt.number};edal=${receipt.edal.seq}`);
-  return { status: "refunded", payment: paymentOut(refunded), receipt };
+  await audit(c, req, "refund", "commerce_payment", p.id, `receipt=${receipt.number};edal=${receipt.edal.seq};provider=${p.provider}${r.manual ? ";manual=true" : ""}`);
+  return { status: "refunded", payment: paymentOut(refunded), receipt, manual: Boolean(r.manual),
+    note: r.manual ? "Recorded. Bitcoin refunds are paid in dollars by the district, outside EduOS." : undefined };
 }
 
 export const money = formatCents;
