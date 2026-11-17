@@ -1,5 +1,6 @@
 export const ROLE_PERMISSIONS = Object.freeze({
   superintendent: {
+    enrollment: ["manage"], // 37.6.0: every school's enrollment board
     access_requests: ["read", "create", "review"],
     students: ["read"], schools: ["read", "create", "update"],
     assignments: ["read", "create", "update", "approve", "grade"],
@@ -31,6 +32,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     eden: ["read", "manage", "node"], activities: ["read"]
   },
   principal: {
+    enrollment: ["manage"], // 37.6.0: own school's enrollment board
     access_requests: ["read", "create"],
     students: ["read"], schools: ["read"],
     assignments: ["read", "create", "update", "grade"],
@@ -60,6 +62,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     activities: ["read", "manage", "join"]
   },
   parent: {
+    enrollment: ["apply"], // 37.6.0: apply for a seat and follow their own applications
     access_requests: ["read", "create"],
     students: ["read"], assignments: ["read"],
     wallet: ["hold"], // 37.6.0: export and share their own child's credentials (Wallet)
