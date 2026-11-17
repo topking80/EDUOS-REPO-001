@@ -98,9 +98,9 @@ services:
     restart: "no"
 
   # 32.4.0 notification dispatcher (opt-in): `docker compose --profile ops run --rm notify`.
-  # Processes pending email/SMS/push outbox rows. Every adapter is "off" or
-  # "log" (dry run) in 32.4.0, so nothing is ever sent; in-app notifications
-  # need no dispatcher.
+  # Processes pending external notification rows. SMTP email requires explicit
+  # recipient opt-in and TLS SMTP configuration; SMS/push remain off/log.
+  # In-app notifications need no dispatcher.
   notify:
     build: { context: ., target: app }
     image: eduos-app:local
