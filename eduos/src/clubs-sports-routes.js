@@ -266,7 +266,8 @@ export function registerClubsSportsRoutes(app) {
  });
  app.post("/api/media/:id/consent",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,b=req.body||{};
-  if(a.role!=="parent"||!validId(req.params.id)||!validId(b.studentId)||typeof b.granted!=="boolean")return res.status(400).json({error:"invalid_guardian_media_consent"});
+  const action=b.action||(typeof b.granted==="boolean"?(b.granted?"grant":"deny"):null);
+  if(a.role!=="parent"||!validId(req.params.id)||!validId(b.studentId)||!["grant","deny","withdraw"].includes(action))return res.status(400).json({error:"invalid_guardian_media_consent"});
   try{const data=await withTenantTransaction(a,async c=>{
    const asset=await one(c,"SELECT id,district_id,school_id,activity_id,moderation_status FROM activity_media_assets WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
    if(!asset)throw new HttpError(404,"media_asset_not_found");
@@ -276,10 +277,20 @@ export function registerClubsSportsRoutes(app) {
    if(!linked)throw new HttpError(403,"active_guardian_link_required");
    const participant=await one(c,"SELECT id FROM activity_media_participants WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3 FOR UPDATE",[a.districtId,asset.id,b.studentId]);
    if(!participant)throw new HttpError(404,"media_participant_not_registered");
-   await c.query(`INSERT INTO activity_media_consents(district_id,school_id,media_asset_id,student_id,guardian_user_id,status,decided_at)
-    VALUES($1,$2,$3,$4,$5,$6,now()) ON CONFLICT(district_id,media_asset_id,student_id,guardian_user_id)
-    DO UPDATE SET status=EXCLUDED.status,decided_at=now()`,
-    [a.districtId,asset.school_id,asset.id,b.studentId,a.userId,b.granted?"approved":"denied"]);
+   if(action==="withdraw"){
+    const prior=await one(c,`SELECT id,status FROM activity_media_consents
+      WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3 AND guardian_user_id=$4 FOR UPDATE`,
+      [a.districtId,asset.id,b.studentId,a.userId]);
+    if(!prior||prior.status!=="approved")throw new HttpError(409,"approved_consent_required_for_withdrawal");
+    await c.query(`UPDATE activity_media_consents SET status='withdrawn',decided_at=now()
+      WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3 AND guardian_user_id=$4`,
+      [a.districtId,asset.id,b.studentId,a.userId]);
+   }else{
+    await c.query(`INSERT INTO activity_media_consents(district_id,school_id,media_asset_id,student_id,guardian_user_id,status,decided_at)
+     VALUES($1,$2,$3,$4,$5,$6,now()) ON CONFLICT(district_id,media_asset_id,student_id,guardian_user_id)
+     DO UPDATE SET status=EXCLUDED.status,decided_at=now()`,
+     [a.districtId,asset.school_id,asset.id,b.studentId,a.userId,action==="grant"?"approved":"denied"]);
+   }
    const guardianDecision=await one(c,`SELECT count(*) FILTER(WHERE status='approved')::int AS approvals,
      count(*) FILTER(WHERE status IN ('denied','withdrawn'))::int AS denials FROM activity_media_consents
      WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3`,[a.districtId,asset.id,b.studentId]);
@@ -287,9 +298,11 @@ export function registerClubsSportsRoutes(app) {
    await c.query("UPDATE activity_media_participants SET consent_status=$3 WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$4",[a.districtId,asset.id,participantStatus,b.studentId]);
    const aggregate=await one(c,`SELECT count(*)::int AS total,count(*) FILTER(WHERE consent_status='approved')::int AS approved,
       count(*) FILTER(WHERE consent_status='denied')::int AS denied FROM activity_media_participants WHERE district_id=$1 AND media_asset_id=$2`,[a.districtId,asset.id]);
-   const overall=Number(aggregate.denied)>0?"denied":Number(aggregate.total)>0&&Number(aggregate.total)===Number(aggregate.approved)?"approved":"pending";
+   const withdrawn=await one(c,`SELECT count(*)::int AS n FROM activity_media_consents
+     WHERE district_id=$1 AND media_asset_id=$2 AND status='withdrawn'`,[a.districtId,asset.id]);
+   const overall=Number(withdrawn.n)>0?"withdrawn":Number(aggregate.denied)>0?"denied":Number(aggregate.total)>0&&Number(aggregate.total)===Number(aggregate.approved)?"approved":"pending";
    await c.query("UPDATE activity_media_assets SET consent_status=$3 WHERE district_id=$1 AND id=$2",[a.districtId,asset.id,overall]);
-   await audit(c,req,b.granted?"grant_media_consent":"deny_media_consent","activity_media_asset",asset.id,`student=${b.studentId}`);
+   await audit(c,req,action==="grant"?"grant_media_consent":action==="deny"?"deny_media_consent":"withdraw_media_consent","activity_media_asset",asset.id,`student=${b.studentId};decision=${action}`);
    return {mediaAssetId:asset.id,studentId:b.studentId,consentStatus:overall};
   });res.json({data});}catch(e){sendError(res,next,e)}
  });
