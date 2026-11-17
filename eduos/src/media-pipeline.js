@@ -103,7 +103,7 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
       // Video delivery remains unavailable until a video transcode/sanitization adapter exists.
       throw new MediaPipelineError("video_processing_adapter_not_configured");
     },
-    async createReadUrl({ assetId, districtId, schoolId }) {
+    async createReadUrl({ assetId, districtId, schoolId, actor }) {
       requireReady();
       const record = getPrivateObject({ assetId, districtId, schoolId });
       if (record.scanStatus !== "clean" || record.processingStatus !== "processed")
@@ -112,7 +112,7 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
       // every participant, and every guardian decision, then invoke issueReadUrl.
       // Caller-supplied consent/moderation values are deliberately not accepted.
       return authorization.withAuthorizedMediaDelivery({
-        assetId, districtId, schoolId,
+        actor, assetId, districtId, schoolId,
         issueReadUrl: async () => {
           const result = await storage.createPrivateReadUrl({
             storageKey: record.storageKey, expiresInSeconds: MEDIA_LIMITS.signedUrlSeconds
