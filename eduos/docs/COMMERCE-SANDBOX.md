@@ -1,20 +1,24 @@
-# Commerce, sandbox only (37.7.0 candidate)
+# Commerce (37.7.0 candidate; providers 37.7.1)
 
 Paid school-event tickets and marketplace purchases, with a revenue split
-ledger. **No real money moves.** The only payment adapter is `sandbox`: no
-keys, no network calls, nothing charged. Real payments stay disabled until
-the district chooses a processor and a new adapter is reviewed.
+ledger. 37.7.0 shipped the `sandbox` adapter only (no keys, no network,
+nothing charged). **37.7.1 moves the payment choice to each district**:
+PayPal, Visa/Mastercard (through Square), Square, Bitcoin (BTCPay Server),
+Venmo and Cash App quick-setup cards, in test mode unless the server allows
+live payments. See `docs/COMMERCE-PROVIDERS.md`.
 
 ## Turning it on
 
-1. Run the server with `COMMERCE_PAYMENT_PROVIDER=sandbox`. The default is
-   `none` (paid checkout off). Any other value stops the server at startup.
+1. The district connects at least one payment option and offers it
+   (**Payment options**, superintendent or district IT). The sandbox needs no
+   account. The old `COMMERCE_PAYMENT_PROVIDER` variable is gone; real money
+   also needs `COMMERCE_LIVE_PAYMENTS_ENABLED=true` (default `false`).
 2. The superintendent turns it on: **Clubs & Sports → Ticketing & revenue →
    District settings** (`PUT /api/commerce/settings`, `commerce:settings`).
 
 Both are needed. With either one off, a priced ticket answers 503
-`paid_ticketing_not_configured`, exactly as in 37.6. Free tickets work either
-way.
+`paid_ticketing_not_configured` (reason `district_payment_provider_not_connected`
+or `district_commerce_disabled`), as in 37.6. Free tickets work either way.
 
 ## The money model (deck p39-p40)
 
@@ -25,7 +29,7 @@ All amounts are integer cents. A rate is basis points (1% = 100 bps).
 | Line | Rate (default) | Goes to |
 | --- | --- | --- |
 | gross | the price × quantity | (paid by the guardian) |
-| processing_fee | sandbox: 2.9% + 30¢ per payment | processor |
+| processing_fee | the account's fee estimate (default 2.9% + 30¢; BTCPay 0) | processor |
 | sales_tax | district setting, default 0% | tax authority |
 | network_fee | 3% of gross | EduOS platform |
 | school_share | 85% of net | the school |
@@ -63,8 +67,11 @@ part, so a real payment of that size would show $290.30.
    The order is `payment_pending`, and a sandbox payment is created
    (`requires_confirmation`). Repeating the same idempotency key returns the
    same payment.
-3. `POST /api/commerce/payments/:id/confirm` with `testOutcome`
-   `sandbox_success` or `sandbox_decline`. Payer only.
+3. `POST /api/commerce/payments/:id/confirm`, payer only. Sandbox: with
+   `testOutcome` `sandbox_success` or `sandbox_decline`. A processor
+   payment (37.7.1): the payer first completes the processor's page
+   (`redirectUrl`); confirm then asks the processor and may answer
+   `pending`. Holds for processor payments are at least 20 minutes.
    - **Success:** the payment `succeeded`; the order is `paid`; the tickets are
      issued (codes shown once, as QR; only sha256 hashes are stored); the
      settlement is recorded.
@@ -159,15 +166,16 @@ Guard triggers allow only forward transitions:
 
 ## Not done (needs a decision before real money)
 
-- **A real processor.** That means an adapter, keys, webhooks, PCI scope
-  (hosted fields or redirect only), payouts to schools, vendors and the state
-  fund, and reconciliation.
+- **Real processors (37.7.1).** PayPal, Square and BTCPay adapters exist and
+  are tested against mocks only; see `COMMERCE-PROVIDERS.md`. Still missing:
+  a public webhook endpoint, Venmo and PayPal card fields, payouts to schools,
+  vendors and the state fund, and reconciliation.
 - **Sales tax.** Which items are taxable and at what rate is a legal and
   finance question per state. The rate defaults to 0% and is not
   per-jurisdiction.
 - **Legal review.** Terms, refunds policy, and state rules on fees charged to
   families. GAP-ANALYSIS lists commerce as high risk.
 - **Partial refunds, chargebacks and disputes.** None of these exist yet.
-- **Flutter:** native ticket buying and sandbox payment for families and
-  learners. The leader screens (settings, revenue, refunds, gate check-in) are
-  web only.
+- **Flutter:** native ticket buying for families and learners, with the
+  "Pay with" picker and processor checkout (37.7.1). The leader screens
+  (settings, payment options, revenue, refunds, gate check-in) are web only.
