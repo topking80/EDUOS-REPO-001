@@ -334,6 +334,8 @@ REVOKE DELETE, TRUNCATE ON activity_roster_entries, activity_event_results FROM 
 
 -- 37.8.0 media governance.
 GRANT SELECT, INSERT, UPDATE ON activity_media_participants, activity_media_consents TO eduos_app;
+GRANT SELECT, INSERT ON activity_media_consent_history TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON activity_media_consent_history FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON activity_media_participants, activity_media_consents FROM eduos_app;
 GRANT UPDATE (consent_status, moderation_status, approved_by) ON activity_media_assets TO eduos_app;
 
