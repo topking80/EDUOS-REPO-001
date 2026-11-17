@@ -21,7 +21,7 @@ test("Twilio Verify start and check use authenticated form requests", async () =
   });
   assert.equal((await client.startVerification("+14155552671")).status, "pending");
   assert.equal((await client.checkVerification("+14155552671", "123456")).status, "approved");
-  assert.match(calls[0].url, /Services\/VA[a-f0-9]{32}\/Verifications\.json$/);
+  assert.match(calls[0].url, /verify\\.twilioapis\\.com\\/v2\\/Services\\/VA[a-f0-9]{32}\\/Verifications$/);
   assert.equal(calls[0].fields.To, "+14155552671");
   assert.equal(calls[0].fields.Channel, "sms");
   assert.equal(calls[1].fields.Code, "123456");
