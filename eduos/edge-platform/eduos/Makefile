@@ -104,8 +104,8 @@ containers:
 	# eduos-update and eduos-bootstrap run on the host (they configure the node), so they have no image.
 	podman build -f containers/Containerfile.enrollment -t quay.io/eduos/eduos-enrollment:$(ENROLLMENT_VERSION) .
 	podman build -f containers/Containerfile.health -t quay.io/eduos/eduos-health:$(HEALTH_VERSION) .
-	podman save -o containers/eduos-enrollment-$(ENROLLMENT_VERSION).tar quay.io/eduos/eduos-enrollment:$(VERSION)
-	podman save -o containers/eduos-health-$(HEALTH_VERSION).tar quay.io/eduos/eduos-health:$(VERSION)
+	podman save -o containers/eduos-enrollment-$(ENROLLMENT_VERSION).tar quay.io/eduos/eduos-enrollment:$(ENROLLMENT_VERSION)
+	podman save -o containers/eduos-health-$(HEALTH_VERSION).tar quay.io/eduos/eduos-health:$(HEALTH_VERSION)
 	@echo "Container images built and saved in containers/"
 
 push-containers:
