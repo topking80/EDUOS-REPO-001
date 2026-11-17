@@ -33,8 +33,8 @@ export function denial({ usecase, role, enabled }) {
 }
 
 export async function policyOf(c, districtId) {
-  const r = (await c.query("SELECT enabled_usecases, daily_token_cap, user_daily_token_cap, updated_at FROM ai_district_policy WHERE district_id=$1", [districtId])).rows[0];
-  return r || { enabled_usecases: [], daily_token_cap: 200000, user_daily_token_cap: 20000, updated_at: null };
+  const r = (await c.query("SELECT enabled_usecases, daily_token_cap, user_daily_token_cap, external_provider_enabled, external_provider_acknowledged_at, updated_at FROM ai_district_policy WHERE district_id=$1", [districtId])).rows[0];
+  return r || { enabled_usecases: [], daily_token_cap: 200000, user_daily_token_cap: 20000, external_provider_enabled: false, external_provider_acknowledged_at: null, updated_at: null };
 }
 
 // Today's tokens. A reservation ('pending') counts in full until it is
