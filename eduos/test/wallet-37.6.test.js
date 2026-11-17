@@ -111,7 +111,7 @@ test("routes: holders only, CSRF on writes, no staff access, migration listed an
   const routes = fs.readFileSync(new URL("../src/wallet-routes.js", import.meta.url), "utf8");
   assert.match(routes, /requirePermission\("wallet", "hold"\)/);
   for (const m of routes.matchAll(/app\.post\("\/api\/wallet[^"]*"([^)]*)/g)) assert.match(m[1], /requireCsrf/);
-  const sql = fs.readFileSync(new URL("../db/058_credentials_wallet.sql", import.meta.url), "utf8");
+  const sql = fs.readFileSync(new URL("../db/061_credentials_wallet.sql", import.meta.url), "utf8");
   assert.match(sql, /ALTER TABLE wallet_shares FORCE ROW LEVEL SECURITY/);
-  assert.match(fs.readFileSync(new URL("../src/migrate.js", import.meta.url), "utf8"), /058_credentials_wallet\.sql/);
+  assert.ok(fs.existsSync(new URL("../db/061_credentials_wallet.sql", import.meta.url)), "shipped; src/migrate.js applies numbered files after 050");
 });

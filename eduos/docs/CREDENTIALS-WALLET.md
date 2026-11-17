@@ -67,7 +67,7 @@ Every download, link and revocation is written to `audit_events`.
 
 ## Data
 
-Migration `058_credentials_wallet.sql`: table `wallet_shares` (only the SHA-256
+Migration `061_credentials_wallet.sql`: table `wallet_shares` (only the SHA-256
 of each link token is stored), definer functions for the holder's list, export
 inputs, public lookup and status, and a FERPA purge step chained in front of
 `eduos_purge_student`. The runtime role can create links and set
