@@ -145,6 +145,44 @@ used (mastercard.us pages, Visa's usa.visa.com small-business page).
 - A payment that completes after the seat hold ran out (Square, BTCPay) is
   flagged in the audit log for a manual refund.
 
+## Processor calls and recovery
+
+No processor call (PayPal, Square, BTCPay; test connection included) runs
+while a database transaction is open. A slow or hung processor would
+otherwise hold row locks (seats, the order) and a pooled connection for the
+length of the call. Each call is three steps:
+
+1. **Reserve and commit.** Checkout holds the seats and records the payment
+   as `creating`. Confirm marks the payment in flight (`pending_since`, who
+   started it) and stretches the seat hold to at least five minutes. A refund
+   moves the payment to `refund_pending` and marks the ticket order
+   `refund_pending`, so gate check-in refuses its tickets
+   (`ticket_refund_pending`) until the refund is settled one way or the other.
+2. **Call the processor**, with no transaction open, under an idempotency key
+   taken from the payment: PayPal `PayPal-Request-Id` (order, capture,
+   refund), Square `idempotency_key` (payment link, refund). BTCPay Server's
+   API has no idempotency key, so a create first looks for the payment's
+   invoice by `orderId` and reuses it unless it expired or is invalid.
+3. **Record the answer in a new transaction.** If the processor failed, a
+   checkout is declined (`provider_unavailable`) and the seats are released;
+   a refund goes back to paid; the API answers 502 with the processor's
+   error code.
+
+If the API stops between steps 1 and 3 (crash, deploy), the payment stays
+in flight. Every `COMMERCE_RECONCILE_INTERVAL_SECONDS` (default 60; 0 = off)
+the API lists each district's calls in flight for longer than
+`COMMERCE_RECONCILE_STALE_SECONDS` (default 90) through
+`eduos_commerce_stale_payments()`, repeats the same idempotent call as the
+user who started it, and records the answer (audit detail
+`reconciled=true`). A family that retries checkout with the same
+idempotency key also finishes a cut-off create. A sandbox confirm cut off
+midway is simply cleared: its outcome is the payer's choice.
+
+Tests: `test/integration/commerce-providers.test.js` checks
+`pg_stat_activity` from inside the mock processor on every call (no EduOS
+transaction may be open), kills the API mid-checkout and mid-refund, and
+checks the sweep finishes each exactly once.
+
 ## API
 
 | Route | Who | |
