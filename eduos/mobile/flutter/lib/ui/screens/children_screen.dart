@@ -5,6 +5,7 @@ import '../../core/api_client.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
+import 'tickets_screen.dart';
 
 class ChildCardData {
   const ChildCardData(this.child, this.days, this.ride);
@@ -52,7 +53,19 @@ class ChildrenScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: cards.isEmpty
             ? [const EmptyState('No children are linked to your account yet.')]
-            : [for (final c in cards) _ChildCard(c, onOpenArrival: onOpenArrival)],
+            : [
+                for (final c in cards) _ChildCard(c, onOpenArrival: onOpenArrival),
+                // 37.7.0: school event tickets (sandbox payments, receipts).
+                SectionCard(title: 'Event tickets', children: [
+                  const Text('Tickets for games and school events, and your receipts.'),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => TicketsScreen.open(context),
+                    icon: const Icon(Icons.confirmation_number_outlined),
+                    label: const Text('Tickets & receipts'),
+                  ),
+                ]),
+              ],
       ),
     );
   }
