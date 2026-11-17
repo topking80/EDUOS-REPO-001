@@ -24,6 +24,8 @@ import { MESSAGES, MASTERED_AT, pick, isCorrect, classifyQuestion, itemScore, ne
 import { enqueueNotifications } from "./notify.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError, roleIn } from "./role-app-util.js";
 import { addEvidence } from "./learning-service.js";
+import { detectCrisis, CRISIS_RESPONSE } from "./wellbeing-model.js";
+import { raiseCrisisAlert } from "./wellbeing-routes.js";
 
 const provider = () => createProvider(config);
 
@@ -178,7 +180,21 @@ export function registerChristieRoutes(app) {
           const next = await serveNextItem(client, session, itemSeq);
           if (next) out.replies.push(turnView(next)); else await say("feedback", MESSAGES.allDone);
         };
-        if (kind === "skip") {
+        // 37.6.0: crisis words (in a question OR an answer) route to a human at
+        // once: the 988 Lifeline in the reply, an urgent counselor alert and
+        // counseling-queue item, and the session flagged for an adult. Nothing
+        // goes to any tutor provider.
+        if (kind !== "skip" && detectCrisis(text).crisis) {
+          await addTurn(client, session, { speaker: "student", kind: "question", body: text.trim(), itemId: item.item_id });
+          out.intent = "crisis";
+          await say("redirect", [CRISIS_RESPONSE.title + ".", ...CRISIS_RESPONSE.lines].join(" "));
+          out.crisis = CRISIS_RESPONSE;
+          if (req.actor.role === "pupil") out.alerted = (await raiseCrisisAlert(client, req, session.student_id, "christie", null)).notified > 0;
+          if (!session.needs_adult) {
+            await client.query(`UPDATE christie_sessions SET needs_adult=true,reviewed_at=NULL,reviewed_by=NULL WHERE id=$1`, [session.id]);
+            await audit(client, req, "flag", "christie_session", session.id, "crisis_rule");
+          }
+        } else if (kind === "skip") {
           await addTurn(client, session, { speaker: "student", kind: "attempt", body: "(skipped)", itemId: item.item_id, correct: false });
           await finishItem(0);
         } else if (kind === "attempt") {
