@@ -97,6 +97,20 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
           await registry.updatePrivateObject({ actor, assetId, districtId, schoolId, processingStatus: "failed" });
           throw new MediaPipelineError("image_processing_failed", 422);
         }
+        // Verify the actual private output object; never trust adapter-reported metadata alone.
+        const processedObject = await storage.headPrivateObject({ storageKey: processed.storageKey });
+        if (!processedObject || Number(processedObject.byteSize) !== processed.byteSize ||
+            processedObject.mimeType !== processed.mimeType) {
+          await registry.updatePrivateObject({ actor, assetId, districtId, schoolId, processingStatus: "failed" });
+          throw new MediaPipelineError("image_processing_output_mismatch", 422);
+        }
+        const processedScan = await scanner.scanPrivateObject({
+          storageKey: processed.storageKey, mimeType: processed.mimeType, byteSize: processed.byteSize
+        });
+        if (!processedScan || processedScan.verdict !== "clean") {
+          await registry.updatePrivateObject({ actor, assetId, districtId, schoolId, scanStatus: "blocked", processingStatus: "failed" });
+          throw new MediaPipelineError("processed_image_security_scan_blocked", 422);
+        }
         await registry.updatePrivateObject({
           actor, assetId, districtId, schoolId, storageKey: processed.storageKey,
           mimeType: processed.mimeType, byteSize: processed.byteSize,
