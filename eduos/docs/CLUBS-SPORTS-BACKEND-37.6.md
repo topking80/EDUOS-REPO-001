@@ -84,3 +84,9 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 ## Composite tenant/school integrity (37.13.0)
 - Migration `055_clubs_sports_composite_scope_constraints.sql` adds composite foreign keys tying activities, events, ticket types/orders/tickets, streams, rosters, results and media participants/consents to the same district and school.
 - The constraints supplement route-level checks and forced district RLS; mismatched school relationships now fail at the database boundary.
+
+ 
+## Follow-up audit hardening
+- Idempotent ticket retries now reject changes to the original event, ticket type, or quantity instead of silently replaying a different order.
+- Composite scope migration 055 also binds roster entries, media participants, and guardian consent records to the student's school as well as the district.
+- The cross-district media read test asserts the early tenant-scope rejection before registry access.
