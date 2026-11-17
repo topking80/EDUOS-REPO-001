@@ -24,7 +24,7 @@ import { dispatchWebhooks } from "./webhook-dispatch.js";
 import { registerAdminRoutes } from "./admin-routes.js";
 import { registerMeshRoutes } from "./mesh-routes.js";
 import { registerMarketplaceRoutes } from "./marketplace-routes.js";
-import { registerCommerceRoutes } from "./commerce-routes.js";
+import { registerCommerceRoutes, startCommerceReconcile } from "./commerce-routes.js";
 import { registerHomeRoutes } from "./home-routes.js";
 import { registerBrandingRoutes } from "./branding-routes.js";
 import { registerTransportRoutes } from "./transport-routes.js";
@@ -1978,6 +1978,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
   app.listen(config.port,()=>{
     console.log(`EduOS API listening on ${config.port}${config.nodeTier?` (EDEN ${config.nodeTier} tier)`:""}`);
     startWebhookSweep();
+    startCommerceReconcile();
     if(config.nodeTier==="school"&&process.env.EDEN_AGENT!=="off")startAgent();
   });
 }

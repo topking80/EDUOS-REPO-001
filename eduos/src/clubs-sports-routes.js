@@ -3,7 +3,8 @@ import { randomBytes, createHash } from "node:crypto";
 import { requireSession, requireCsrf } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
-import { startTicketCheckout, pendingCheckout } from "./commerce/service.js";
+import { startTicketCheckout, replayTicketCheckout } from "./commerce/service.js";
+import { runAfterCommit } from "./commerce/phases.js";
 const DISTRICT = role => ["superintendent","it_admin"].includes(role);
 const LEAD = role => ["superintendent","principal"].includes(role);
 const wrap = fn => async (req,res,next) => { try { const data=await withTenantTransaction(req.actor,c=>fn(c,req)); res.setHeader("Cache-Control","no-store"); res.json({data}); } catch(e) { sendError(res,next,e); } };
@@ -179,7 +180,7 @@ export function registerClubsSportsRoutes(app) {
   const a=req.actor,b=req.body||{},quantity=b.quantity===undefined?1:b.quantity,key=b.idempotencyKey;
   if(!["pupil","parent"].includes(a.role))return res.status(403).json({error:"ticket_buyer_role_required"});
   if(!validId(req.params.id)||!validId(b.ticketTypeId)||!Number.isInteger(quantity)||quantity<1||quantity>10||typeof key!=="string"||key.length<16||key.length>120)return res.status(400).json({error:"invalid_ticket_order"});
-  try{const data=await withTenantTransaction(a,async c=>{
+  try{const data=await runAfterCommit(await withTenantTransaction(a,async c=>{
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",[a.districtId,a.userId+":"+key]);
    const prior=await one(c,`SELECT o.id,o.status,o.total_cents,o.currency,o.event_id,o.ticket_type_id,o.quantity,e.school_id
      FROM event_ticket_orders o JOIN school_events e ON e.id=o.event_id AND e.district_id=o.district_id
@@ -199,7 +200,8 @@ export function registerClubsSportsRoutes(app) {
      await requirePupilLink(c,a,prior.school_id);
     }
     // 37.7.0: a checkout still waiting for payment replays its payment, not codes.
-    if(prior.status==="payment_pending")return {order:{id:prior.id,status:prior.status,total_cents:prior.total_cents,currency:prior.currency},replayed:true,tickets:[],payment:await pendingCheckout(c,prior.id)};
+    // 37.7.1: and finishes the processor call if it was cut off (after this transaction commits).
+    if(prior.status==="payment_pending")return await replayTicketCheckout(c,req,prior);
     const tickets=await rows(c,"SELECT id,status FROM event_tickets WHERE order_id=$1 FOR UPDATE",[prior.id]);
     const replayTickets=[];
     for(const ticket of tickets){
@@ -233,7 +235,7 @@ export function registerClubsSportsRoutes(app) {
    const tickets=[];for(let i=0;i<quantity;i++){const code=randomBytes(24).toString("base64url"),hash=createHash("sha256").update(code).digest("hex");
     const ticket=await one(c,"INSERT INTO event_tickets(district_id,school_id,order_id,event_id,ticket_code_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,status",[a.districtId,event.school_id,order.id,event.id,hash]);tickets.push({id:ticket.id,code});}
    await audit(c,req,"create","event_ticket_order",order.id,`event=${event.id};quantity=${quantity};complimentary=true`);return {order,tickets,replayed:false};
-  });res.status(201).json({data});}catch(e){sendError(res,next,e)}
+  }));res.status(201).json({data});}catch(e){sendError(res,next,e)}
  });
  app.get("/api/my/tickets",requireSession,wrap(async(c,req)=>{
   const a=req.actor;if(!["pupil","parent"].includes(a.role))throw new HttpError(403,"ticket_buyer_role_required");
@@ -254,8 +256,10 @@ export function registerClubsSportsRoutes(app) {
    const ticket=await one(c,"SELECT id,status,order_id FROM event_tickets WHERE district_id=$1 AND event_id=$2 AND ticket_code_hash=$3 FOR UPDATE",[a.districtId,event.id,hash]);
    if(!ticket)throw new HttpError(404,"ticket_not_found");
    if(ticket.status!=="issued")throw new HttpError(409,"ticket_not_checkin_eligible",{status:ticket.status});
-   const order=await one(c,"SELECT status FROM event_ticket_orders WHERE id=$1 AND district_id=$2",[ticket.order_id,a.districtId]);
+   // 37.7.1: FOR SHARE waits out a refund that's starting; a refund in flight blocks entry.
+   const order=await one(c,"SELECT status,refund_pending FROM event_ticket_orders WHERE id=$1 AND district_id=$2 FOR SHARE",[ticket.order_id,a.districtId]);
    if(!order||!["complimentary","paid"].includes(order.status))throw new HttpError(409,"ticket_order_not_paid_or_complimentary");
+   if(order.refund_pending)throw new HttpError(409,"ticket_refund_pending");
    const updated=await one(c,"UPDATE event_tickets SET status='checked_in',checked_in_at=now(),checked_in_by=$2 WHERE id=$1 RETURNING id,status,checked_in_at",[ticket.id,a.userId]);
    await audit(c,req,"check_in","event_ticket",ticket.id,`event=${event.id}`);return updated;
   });res.json({data});}catch(e){sendError(res,next,e)}

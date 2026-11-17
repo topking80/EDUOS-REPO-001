@@ -10,16 +10,54 @@ import rateLimit from "express-rate-limit";
 import { requireSession, requireCsrf } from "./auth.js";
 import { requirePermission, canPerform } from "./policy.js";
 import { config } from "./config.js";
-import { audit, rows, one, validId } from "./role-app-util.js";
+import { audit, rows, one, validId, sendError } from "./role-app-util.js";
 import { wrap, created, need, str, isoDate } from "./route-helpers.js";
+import { withTenantTransaction } from "./db.js";
+import { runAfterCommit } from "./commerce/phases.js";
 import { SANDBOX_OUTCOMES } from "./commerce/payments.js";
 import { summarize, DEFAULT_RATES } from "./commerce/split.js";
-import { commerceStatus, loadSettings, settingsOut, confirmPayment, refundPayment, startMarketplaceCheckout, paymentOut } from "./commerce/service.js";
+import { commerceStatus, loadSettings, settingsOut, confirmPayment, refundPayment, startMarketplaceCheckout, paymentOut, reconcileCommercePayments } from "./commerce/service.js";
 import { providersOverview, saveAccount, testAccount, saveSetup } from "./commerce/setup.js";
 
 const intIn = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 const canPay = (req, res, next) => (canPerform(req.actor, "commerce", "pay") || canPerform(req.actor, "commerce", "purchase"))
   ? next() : res.status(403).json({ error: req.actor?.role === "pupil" ? "guardian_payment_required" : "forbidden", resource: "commerce", action: "pay" });
+
+/**
+ * Like wrap() (route-helpers), for routes that call a payment processor: the
+ * request's transaction commits first, then the processor call deferred with
+ * afterCommit() runs with no transaction open, and records its answer in a
+ * transaction of its own. `then` shapes the final value (e.g. created()).
+ */
+const phased = (fn, then = x => x) => async (req, res, next) => {
+  try {
+    const out = then(await runAfterCommit(await withTenantTransaction(req.actor, c => fn(c, req))));
+    res.setHeader("Cache-Control", "no-store");
+    res.status(out?.__status || 200).json({ data: out?.__status ? out.data : out });
+  } catch (e) {
+    if (e?.code === "23505") return res.status(409).json({ error: "already_exists" });
+    if (e?.code === "23514" || e?.code === "22P02" || e?.code === "22023" || e?.code === "22007" || e?.code === "22008") return res.status(400).json({ error: "invalid_value" });
+    if (e?.code === "P0002") return res.status(404).json({ error: "not_found" });
+    sendError(res, next, e);
+  }
+};
+
+/**
+ * COMMERCE_RECONCILE_INTERVAL_SECONDS (default 60; 0 = off): finish processor
+ * calls that were cut off midway (see reconcileCommercePayments). A run still
+ * going when the next is due is skipped. Started by the server on listen.
+ */
+let reconcileRunning = false;
+export function startCommerceReconcile() {
+  if (!config.commerceReconcileIntervalSeconds) return null;
+  const timer = setInterval(() => {
+    if (reconcileRunning) return;
+    reconcileRunning = true;
+    reconcileCommercePayments().catch(e => console.error("Commerce reconcile failed", { message: e.message })).finally(() => { reconcileRunning = false; });
+  }, config.commerceReconcileIntervalSeconds * 1000);
+  timer.unref?.();
+  return timer;
+}
 
 export function registerCommerceRoutes(app) {
   const limiter = rateLimit({ windowMs: 60_000, limit: config.commsRateLimit, standardHeaders: true, legacyHeaders: false });
@@ -108,7 +146,7 @@ export function registerCommerceRoutes(app) {
         : r.mode === "live" ? "Paid through the district's payment processor." : "Test-mode receipt: the processor's test system, no real money." };
   }));
 
-  app.post("/api/commerce/payments/:id/confirm", limiter, requireSession, requireCsrf, canPay, wrap(async (c, req) => {
+  app.post("/api/commerce/payments/:id/confirm", limiter, requireSession, requireCsrf, canPay, phased(async (c, req) => {
     need(validId(req.params.id), 400, "invalid_payment_id");
     // testOutcome applies to sandbox payments only; a processor payment is
     // confirmed by asking the processor.
@@ -117,7 +155,7 @@ export function registerCommerceRoutes(app) {
     return confirmPayment(c, req, req.params.id, outcome);
   }));
 
-  app.post("/api/commerce/payments/:id/refund", limiter, requireSession, requireCsrf, requirePermission("commerce", "refund"), wrap(async (c, req) => {
+  app.post("/api/commerce/payments/:id/refund", limiter, requireSession, requireCsrf, requirePermission("commerce", "refund"), phased(async (c, req) => {
     need(validId(req.params.id), 400, "invalid_payment_id");
     return refundPayment(c, req, req.params.id);
   }));
@@ -140,7 +178,7 @@ export function registerCommerceRoutes(app) {
         LEFT JOIN school_events e ON e.id=o.event_id LEFT JOIN marketplace_purchases m ON m.id=p.marketplace_purchase_id
         LEFT JOIN marketplace_listings l ON l.id=m.listing_id
        WHERE ($1::uuid IS NULL OR p.school_id=$1) AND p.created_at >= $2::date AND p.created_at < $3::date + 1
-         AND p.status IN ('succeeded','refunded') ORDER BY p.created_at DESC LIMIT 200`, args);
+         AND p.status IN ('succeeded','refund_pending','refunded') ORDER BY p.created_at DESC LIMIT 200`, args);
     const s = await commerceStatus(c, a.districtId);
     await audit(c, req, "report", "commerce", null, `school=${school || "all"};payments=${payments.length}`);
     return { scope: school ? "school" : "district", status: { provider: s.provider, enabled: s.enabled, settings: s.settings }, totals, bySchool,
@@ -169,11 +207,10 @@ export function registerCommerceRoutes(app) {
     return { marketplaceFeeBps: s.marketplace_fee_bps, defaultFeeBps: DEFAULT_RATES.marketplaceFeeBps, licenses: list.map(f => ({ feeEventId: f.id, approvedAt: f.created_at,
       listingId: f.listing_id, name: f.name, vendor: f.vendor, unitPriceCents: f.unit_price_cents, priceUnit: f.price_unit, seatLimit: f.seat_limit, purchase: f.purchase })) };
   }));
-  app.post("/api/commerce/marketplace/fee-events/:id/checkout", limiter, requireSession, requireCsrf, requirePermission("commerce", "purchase"), wrap(async (c, req) => {
+  app.post("/api/commerce/marketplace/fee-events/:id/checkout", limiter, requireSession, requireCsrf, requirePermission("commerce", "purchase"), phased(async (c, req) => {
     need(validId(req.params.id), 400, "invalid_fee_event_id");
-    const r = await startMarketplaceCheckout(c, req, req.params.id, req.body || {});
-    return r.replayed ? r : created(r);
-  }));
+    return startMarketplaceCheckout(c, req, req.params.id, req.body || {});
+  }, r => (r.replayed ? r : created(r))));
 
   // 37.7.1 District payment providers (superintendent and district IT).
   // Credentials are write-only: responses say which secrets are set, never
@@ -181,6 +218,6 @@ export function registerCommerceRoutes(app) {
   const provAdmin = [limiter, requireSession, requireCsrf, requirePermission("commerce", "providers")];
   app.get("/api/commerce/providers", requireSession, requirePermission("commerce", "providers"), wrap(async (c, req) => providersOverview(c, req.actor.districtId)));
   app.put("/api/commerce/providers/:processor", ...provAdmin, wrap(async (c, req) => saveAccount(c, req, req.params.processor, req.body || {})));
-  app.post("/api/commerce/providers/:processor/test", ...provAdmin, wrap(async (c, req) => testAccount(c, req, req.params.processor)));
+  app.post("/api/commerce/providers/:processor/test", ...provAdmin, phased(async (c, req) => testAccount(c, req, req.params.processor)));
   app.put("/api/commerce/payment-methods", ...provAdmin, wrap(async (c, req) => saveSetup(c, req, req.body || {})));
 }
