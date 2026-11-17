@@ -76,20 +76,30 @@ test("private media pipeline never exposes storage keys and gates tenant-scoped 
   async createPrivateReadUrl(v){assert.equal(v.expiresInSeconds,60);assert.equal(v.storageKey,"private/district/object-clean");return {url:"https://read.example.invalid/short",expiresAt:new Date(Date.now()+30000).toISOString()};}
  };
  const scanner={async scanPrivateObject(v){assert.equal(v.storageKey,"private/district/object");return {verdict:"clean"};}};
- const processor={async processImage(v){return {storageKey:v.storageKey+"-clean",mimeType:"image/png",byteSize:90,checksum:"sha256:def"};}};
- const pipeline=(await import("../src/media-pipeline.js")).createMediaPipeline({storage,scanner,processor});
+ const processor={async processImage(v){return {storageKey:v.storageKey+"-clean",mimeType:"image/png",byteSize:90,metadataStripped:true,reencoded:true,checksum:"sha256:def"};}};
+ let deliveryState={consentStatus:"pending",moderationStatus:"approved",participantCount:1,approvedParticipantCount:0,deniedParticipantCount:0};
+ const authorization={async withAuthorizedMediaDelivery({issueReadUrl}){
+  if(deliveryState.consentStatus!=="approved"||deliveryState.moderationStatus!=="approved"||
+     deliveryState.participantCount<1||deliveryState.approvedParticipantCount!==deliveryState.participantCount||
+     deliveryState.deniedParticipantCount!==0) throw Object.assign(new Error("media_not_approved"),{code:"media_not_approved",status:403});
+  return issueReadUrl();
+ }};
+ const pipeline=(await import("../src/media-pipeline.js")).createMediaPipeline({storage,scanner,processor,authorization});
  const intent=await pipeline.beginUpload({districtId:"district-id",schoolId:"school-id",input:{kind:"image",mimeType:"image/png",byteSize:100}});
  assert.ok(intent.assetId);
  assert.equal(calls[0].assetId,intent.assetId);
  assert.equal(Object.hasOwn(calls[0],"storageKey"),false);
  assert.equal(Object.hasOwn(intent,"storageKey"),false);
- await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"other-district",schoolId:"school-id",consentStatus:"approved",moderationStatus:"approved"}),e=>e.code==="media_reference_not_found");
- await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id",consentStatus:"pending",moderationStatus:"approved"}),e=>e.code==="media_not_approved");
- await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id",consentStatus:"approved",moderationStatus:"approved"}),e=>e.code==="media_not_security_processed");
+ await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"other-district",schoolId:"school-id"}),e=>e.code==="media_reference_not_found");
+ await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id"}),e=>e.code==="media_not_security_processed");
  const processed=await pipeline.verifyUploadedObject({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id"});
  assert.equal(processed.processingStatus,"processed");
  assert.equal(Object.hasOwn(processed,"storageKey"),false);
- const url=await pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id",consentStatus:"approved",moderationStatus:"approved"});
+ await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id",consentStatus:"approved",moderationStatus:"approved"}),e=>e.code==="media_not_approved");
+ deliveryState={consentStatus:"approved",moderationStatus:"approved",participantCount:2,approvedParticipantCount:1,deniedParticipantCount:0};
+ await assert.rejects(()=>pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id"}),e=>e.code==="media_not_approved");
+ deliveryState={consentStatus:"approved",moderationStatus:"approved",participantCount:2,approvedParticipantCount:2,deniedParticipantCount:0};
+ const url=await pipeline.createReadUrl({assetId:intent.assetId,districtId:"district-id",schoolId:"school-id"});
  assert.match(url.url,/read\\.example/);
  assert.equal(Object.hasOwn(url,"storageKey"),false);
 });
