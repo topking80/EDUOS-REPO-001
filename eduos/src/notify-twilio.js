@@ -2,7 +2,8 @@
 import { config } from "./config.js";
 
 const E164 = /^\+[1-9]\d{7,14}$/;
-const base = "https://api.twilio.com/2010-04-01/Accounts/";
+const messagingBase = "https://api.twilio.com/2010-04-01/Accounts/";
+const verifyBase = "https://verify.twilio.com/v2/Services/";
 
 function classify(status) {
   if (status === 429 || status >= 500) return "pending";
@@ -14,10 +15,10 @@ export function isE164(value) { return typeof value === "string" && E164.test(va
 
 export function createTwilioClient(cfg = config, request = fetch) {
   const ready = Boolean(cfg.twilioAccountSid && cfg.twilioAuthToken);
-  async function post(path, fields) {
+  async function post(url, fields) {
     if (!ready) throw new Error("Twilio is not configured");
     const form = new URLSearchParams(fields);
-    const response = await request(base + cfg.twilioAccountSid + path, {
+    const response = await request(url, {
       method: "POST",
       headers: {
         authorization: "Basic " + Buffer.from(cfg.twilioAccountSid + ":" + cfg.twilioAuthToken).toString("base64"),
@@ -40,11 +41,11 @@ export function createTwilioClient(cfg = config, request = fetch) {
   return Object.freeze({
     async startVerification(phone) {
       if (!isE164(phone)) throw new TypeError("phone must be E.164");
-      return post("/Services/" + cfg.twilioVerifyServiceSid + "/Verifications.json", { To: phone, Channel: "sms" });
+      return post(verifyBase + cfg.twilioVerifyServiceSid + "/Verifications", { To: phone, Channel: "sms" });
     },
     async checkVerification(phone, code) {
       if (!isE164(phone) || typeof code !== "string" || !/^\d{4,10}$/.test(code)) throw new TypeError("invalid verification input");
-      return post("/Services/" + cfg.twilioVerifyServiceSid + "/VerificationCheck.json", { To: phone, Code: code });
+      return post(verifyBase + cfg.twilioVerifyServiceSid + "/VerificationCheck", { To: phone, Code: code });
     },
     async sendSms(phone, body, id) {
       if (!isE164(phone)) throw new TypeError("phone must be E.164");
@@ -52,7 +53,7 @@ export function createTwilioClient(cfg = config, request = fetch) {
       const fields = { To: phone, Body: body };
       if (cfg.twilioMessagingServiceSid) fields.MessagingServiceSid = cfg.twilioMessagingServiceSid;
       else fields.From = cfg.twilioFromNumber;
-      return post("/Messages.json", fields);
+      return post(messagingBase + cfg.twilioAccountSid + "/Messages.json", fields);
     }
   });
 }
