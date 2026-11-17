@@ -24,7 +24,7 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
     try {
       const data = await withTenantTransaction(a, async (c) => {
         const p = await policyOf(c, a.districtId), used = await usedToday(c, a.districtId, a.userId);
-        return { provider: external ? "external" : "local",
+        return { provider: external ? "external" : "local", externalProviderEnabled: Boolean(p.external_provider_enabled),
           usecases: Object.entries(USECASES).filter(([, u]) => u.roles.includes(a.role))
             .map(([id, u]) => ({ id, label: u.label, enabled: p.enabled_usecases.includes(id), input: u.input })),
           budget: { district: { used: used.district, cap: p.daily_token_cap }, you: { used: used.user, cap: p.user_daily_token_cap } } };
@@ -45,6 +45,7 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
       //    the caller's own scope; then reserve budget atomically.
       const prep = await withTenantTransaction(a, async (c) => {
         const p = await policyOf(c, a.districtId);
+        if (external && !p.external_provider_enabled) throw new HttpError(403, "ai_external_provider_disabled");
         const why = denial({ usecase, role: a.role, enabled: p.enabled_usecases });
         if (why) throw new HttpError(403, why);
         const input = usecase === "ops_brief" ? { context: await opsContext(c, a) } : { text };
@@ -116,7 +117,7 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
         const usage = (await c.query(`SELECT usecase, count(*)::int AS calls, sum(tokens_in + tokens_out)::int AS tokens
             FROM ai_usage WHERE district_id = $1 AND outcome IN ('ok','fallback') AND created_at >= now() - interval '30 days' GROUP BY usecase ORDER BY usecase`, [req.actor.districtId])).rows;
         return { policy: p, usecases: Object.entries(USECASES).map(([id, u]) => ({ id, label: u.label, roles: u.roles })),
-          usage30d: usage, provider: external ? "external" : "local", canEdit: POLICY_EDITORS.includes(req.actor.role) };
+          usage30d: usage, provider: external ? "external" : "local", externalProviderEnabled: Boolean(p.external_provider_enabled), externalProviderAcknowledgedAt: p.external_provider_acknowledged_at, canEdit: POLICY_EDITORS.includes(req.actor.role) };
       });
       res.setHeader("Cache-Control", "no-store");
       res.json({ data });
@@ -128,17 +129,24 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
     if (!POLICY_EDITORS.includes(a.role)) return res.status(403).json({ error: "ai_policy_edit_denied" });
     const ok = Array.isArray(b.enabledUsecases) && b.enabledUsecases.every(x => USECASES[x]) && new Set(b.enabledUsecases).size === b.enabledUsecases.length
       && Number.isInteger(b.dailyTokenCap) && b.dailyTokenCap >= 0 && b.dailyTokenCap <= 100000000
-      && Number.isInteger(b.userDailyTokenCap) && b.userDailyTokenCap >= 0 && b.userDailyTokenCap <= 10000000;
+      && Number.isInteger(b.userDailyTokenCap) && b.userDailyTokenCap >= 0 && b.userDailyTokenCap <= 10000000
+      && typeof b.externalProviderEnabled === "boolean"
+      && (!b.externalProviderEnabled || b.privacyAcknowledged === true);
     if (!ok) return res.status(400).json({ error: "invalid_ai_policy" });
     try {
       const data = await withTenantTransaction(a, async (c) => {
         // Same lock as budget reservations: a change and a request never overlap.
         await lockDistrictAi(c, a.districtId);
-        const r = (await c.query(`INSERT INTO ai_district_policy(district_id, enabled_usecases, daily_token_cap, user_daily_token_cap, updated_by, updated_at)
-            VALUES ($1,$2,$3,$4,$5,now()) ON CONFLICT (district_id) DO UPDATE SET enabled_usecases=EXCLUDED.enabled_usecases,
-              daily_token_cap=EXCLUDED.daily_token_cap, user_daily_token_cap=EXCLUDED.user_daily_token_cap, updated_by=EXCLUDED.updated_by, updated_at=now()
-            RETURNING enabled_usecases, daily_token_cap, user_daily_token_cap, updated_at`, [a.districtId, b.enabledUsecases, b.dailyTokenCap, b.userDailyTokenCap, a.userId])).rows[0];
-        await audit(c, req, "update", "ai_district_policy", null, `enabled=${b.enabledUsecases.join(",") || "none"}; caps=${b.dailyTokenCap}/${b.userDailyTokenCap}`);
+        const r = (await c.query(`INSERT INTO ai_district_policy(district_id, enabled_usecases, daily_token_cap, user_daily_token_cap, external_provider_enabled, external_provider_acknowledged_at, external_provider_acknowledged_by, updated_by, updated_at)
+            VALUES ($1,$2,$3,$4,$5,CASE WHEN $5 THEN now() ELSE NULL END,CASE WHEN $5 THEN $6 ELSE NULL END,$6,now())
+            ON CONFLICT (district_id) DO UPDATE SET enabled_usecases=EXCLUDED.enabled_usecases,
+              daily_token_cap=EXCLUDED.daily_token_cap, user_daily_token_cap=EXCLUDED.user_daily_token_cap,
+              external_provider_enabled=EXCLUDED.external_provider_enabled,
+              external_provider_acknowledged_at=CASE WHEN EXCLUDED.external_provider_enabled THEN now() ELSE NULL END,
+              external_provider_acknowledged_by=CASE WHEN EXCLUDED.external_provider_enabled THEN EXCLUDED.updated_by ELSE NULL END,
+              updated_by=EXCLUDED.updated_by, updated_at=now()
+            RETURNING enabled_usecases, daily_token_cap, user_daily_token_cap, external_provider_enabled, external_provider_acknowledged_at, updated_at`, [a.districtId, b.enabledUsecases, b.dailyTokenCap, b.userDailyTokenCap, b.externalProviderEnabled, a.userId])).rows[0];
+        await audit(c, req, "update", "ai_district_policy", null, `enabled=${b.enabledUsecases.join(",") || "none"}; caps=${b.dailyTokenCap}/${b.userDailyTokenCap}; external_provider=${b.externalProviderEnabled ? "enabled_acknowledged" : "disabled"}`);
         return r;
       });
       res.json({ data });
