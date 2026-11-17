@@ -6,6 +6,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS event_ticket_types_scope_id_uq ON event_ticket
 CREATE UNIQUE INDEX IF NOT EXISTS event_ticket_orders_scope_id_uq ON event_ticket_orders(district_id,school_id,event_id,id);
 CREATE UNIQUE INDEX IF NOT EXISTS activity_media_assets_scope_id_uq ON activity_media_assets(district_id,school_id,id);
 CREATE UNIQUE INDEX IF NOT EXISTS students_scope_id_uq ON students(district_id,school_id,id);
+CREATE UNIQUE INDEX IF NOT EXISTS activity_media_participants_scope_student_uq
+ ON activity_media_participants(district_id,school_id,media_asset_id,student_id);
 
 DO $$
 BEGIN
@@ -84,5 +86,14 @@ BEGIN
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='media_consent_student_school_fk') THEN
   ALTER TABLE activity_media_consents ADD CONSTRAINT media_consent_student_school_fk
    FOREIGN KEY(district_id,school_id,student_id) REFERENCES students(district_id,school_id,id);
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='private_media_object_asset_school_fk') THEN
+  ALTER TABLE private_media_objects ADD CONSTRAINT private_media_object_asset_school_fk
+   FOREIGN KEY(district_id,school_id,asset_id) REFERENCES activity_media_assets(district_id,school_id,id);
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='media_consent_registered_participant_fk') THEN
+  ALTER TABLE activity_media_consents ADD CONSTRAINT media_consent_registered_participant_fk
+   FOREIGN KEY(district_id,school_id,media_asset_id,student_id)
+   REFERENCES activity_media_participants(district_id,school_id,media_asset_id,student_id);
  END IF;
 END $$;
