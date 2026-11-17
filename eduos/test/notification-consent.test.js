@@ -62,6 +62,7 @@ test("FCM migration defaults push off and creates district-scoped, encrypted dev
 });
 
 test("push enrollment requires session, CSRF, explicit consent and supports revocation", () => {
+  assert.ok(routes.includes('app.get("/api/me/push-devices", requireSession'));
   assert.ok(routes.includes('app.post("/api/me/push-devices", requireSession, requireCsrf, pushDeviceLimiter'));
   assert.ok(routes.includes('app.delete("/api/me/push-devices/:deviceId", requireSession, requireCsrf'));
   assert.ok(routes.includes("if (body.pushEnabled === false)"));
