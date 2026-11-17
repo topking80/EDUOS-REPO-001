@@ -79,3 +79,8 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - A retry by the authenticated original buyer replays the same order. For each still-issued ticket, the server generates a fresh random code, replaces the stored SHA-256 hash, and returns the new code once. Any previously issued but unredeemed code is invalidated.
 - Checked-in, cancelled or refunded tickets do not receive a new code. Reusing an idempotency key for a different event is rejected.
 - Parent retries revalidate the active guardian-to-school relationship before revealing replacement codes. Ticket codes are never stored in plaintext.
+
+ 
+## Composite tenant/school integrity (37.13.0)
+- Migration `055_clubs_sports_composite_scope_constraints.sql` adds composite foreign keys tying activities, events, ticket types/orders/tickets, streams, rosters, results and media participants/consents to the same district and school.
+- The constraints supplement route-level checks and forced district RLS; mismatched school relationships now fail at the database boundary.
