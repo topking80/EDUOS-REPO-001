@@ -27,8 +27,11 @@ export function validateMediaIntent(input = {}) {
 
 const has = (value, method) => Boolean(value && typeof value[method] === "function");
 
-export function createMediaPipeline({ storage = null, scanner = null, processor = null, authorization = null, registry = null } = {}) {
-  const configured = has(storage, "createPrivateUpload") && has(storage, "headPrivateObject") &&
+export function createMediaPipeline({ storage = null, scanner = null, processor = null, authorization = null, registry = null,
+  allowedUploadHosts = [], allowedReadHosts = [] } = {}) {
+  const uploadHosts = new Set(allowedUploadHosts.filter(host => typeof host === "string").map(host => host.toLowerCase()));
+  const readHosts = new Set(allowedReadHosts.filter(host => typeof host === "string").map(host => host.toLowerCase()));
+  const configured = uploadHosts.size > 0 && readHosts.size > 0 && has(storage, "createPrivateUpload") && has(storage, "headPrivateObject") &&
     has(storage, "createPrivateReadUrl") && has(scanner, "scanPrivateObject") && has(processor, "processImage") &&
     has(authorization, "withAuthorizedMediaDelivery") && has(registry, "createPrivateObject") &&
     has(registry, "getPrivateObject") && has(registry, "updatePrivateObject");
@@ -59,6 +62,7 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
       let uploadUrl;
       try { uploadUrl = new URL(result?.uploadUrl); } catch { throw new MediaPipelineError("invalid_private_storage_response"); }
       if (!result || uploadUrl.protocol !== "https:" || !uploadUrl.hostname ||
+          uploadUrl.username || uploadUrl.password || !uploadHosts.has(uploadUrl.hostname.toLowerCase()) ||
           typeof result.storageKey !== "string" || !result.storageKey ||
           !Number.isFinite(uploadExpiry) || uploadExpiry <= Date.now() ||
           uploadExpiry - Date.now() > 5 * 60 * 1000)
@@ -136,7 +140,8 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
           let readUrl;
           try { readUrl = new URL(result?.url); } catch { throw new MediaPipelineError("invalid_private_storage_response"); }
           const readExpiry = Date.parse(result?.expiresAt);
-          if (readUrl.protocol !== "https:" || !readUrl.hostname || !Number.isFinite(readExpiry) ||
+          if (readUrl.protocol !== "https:" || !readUrl.hostname || readUrl.username || readUrl.password ||
+              !readHosts.has(readUrl.hostname.toLowerCase()) || !Number.isFinite(readExpiry) ||
               readExpiry <= Date.now() || readExpiry - Date.now() > MEDIA_LIMITS.signedUrlSeconds * 1000 + 5000)
             throw new MediaPipelineError("private_url_ttl_exceeded");
           return Object.freeze({ url: result.url, expiresAt: result.expiresAt });
