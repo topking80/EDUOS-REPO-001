@@ -336,3 +336,9 @@ REVOKE DELETE, TRUNCATE ON activity_roster_entries, activity_event_results FROM 
 GRANT SELECT, INSERT, UPDATE ON activity_media_participants, activity_media_consents TO eduos_app;
 REVOKE DELETE, TRUNCATE ON activity_media_participants, activity_media_consents FROM eduos_app;
 GRANT UPDATE (consent_status, moderation_status, approved_by) ON activity_media_assets TO eduos_app;
+
+ 
+-- 37.9.3 private media object registry. Storage keys are readable only by
+-- tenant-scoped server code; no public-facing route selects this table.
+GRANT SELECT, INSERT, UPDATE ON private_media_objects TO eduos_app;
+REVOKE DELETE, TRUNCATE ON private_media_objects FROM eduos_app;
