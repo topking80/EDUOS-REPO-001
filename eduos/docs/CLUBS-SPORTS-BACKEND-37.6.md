@@ -61,3 +61,9 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - Migration `054_private_media_object_registry.sql` is registered in `src/migrate.js`; the runtime role receives only SELECT/INSERT/UPDATE, with DELETE/TRUNCATE revoked.
 - The pipeline now requires a registry adapter and authenticated tenant actor for upload-intent persistence, object verification and delivery. Storage keys remain server-side and are not included in public pipeline results.
 - This removes the restart/multi-instance loss caused by the in-memory map. Production uploads remain disabled until the district-approved storage, scanner and image-processing adapters and authenticated upload routes are configured.
+
+ 
+## Guardian consent withdrawal (37.10.0)
+- The guardian consent endpoint accepts explicit `action: "grant" | "deny" | "withdraw"` (the existing `granted: boolean` request remains supported for grant/deny).
+- Withdrawal is allowed only when that guardian has an existing approved decision. The prior consent row is changed to `withdrawn`, and an audit event records the withdrawal decision.
+- A withdrawn decision blocks media delivery just like a denial; the asset consent state becomes withdrawn and the participant cannot be treated as approved.
