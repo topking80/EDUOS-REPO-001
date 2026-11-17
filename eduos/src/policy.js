@@ -63,7 +63,9 @@ export const ROLE_PERMISSIONS = Object.freeze({
     flow_events: ["read"], apps: ["launch"], branding: ["read"],
     transport: ["read"], comms: ["read", "message"],
     safety: ["read"], pickup: ["read", "request"],
-    learning: ["read"], edal: ["proof"]
+    learning: ["read"], edal: ["proof"],
+    // 37.6.0: export and share their own child's credentials (Wallet).
+    wallet: ["hold"]
   },
   pupil: {
     access_requests: ["read", "create"],
@@ -71,7 +73,9 @@ export const ROLE_PERMISSIONS = Object.freeze({
     attendance: ["read"], cases: [],
     flow_events: ["read"], apps: ["launch"], branding: ["read"],
     christie: ["tutor"], comms: ["read"], transport: ["read"], safety: ["read"],
-    learning: ["read", "learn"], edal: ["proof"]
+    learning: ["read", "learn"], edal: ["proof"],
+    // 37.6.0: export and share their own credentials (Wallet).
+    wallet: ["hold"]
   },
   // 32.4.0: school bus driver. Sees only the riders of routes assigned to them
   // (name, grade and stop) and records board/alight check-ins. No student
