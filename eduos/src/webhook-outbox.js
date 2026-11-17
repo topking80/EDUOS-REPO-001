@@ -14,6 +14,8 @@ export const DNS_NOT_FOUND_MAX_ATTEMPTS = 2;
 export const JOB_LEASE_SECONDS = 120;
 /** A delivery is cut off after this (DNS up to 15 s + HTTP 5 s fit well inside; the lease is longer still). */
 export const JOB_DEADLINE_MS = 45_000;
+/** A deployment-wide delivery slot's lease: the job deadline plus the abort grace, with room to spare. */
+export const SLOT_LEASE_SECONDS = 60;
 
 /**
  * At most `max` deliveries at once in this process (WEBHOOK_MAX_IN_FLIGHT).
@@ -39,6 +41,25 @@ export function createLimiter(max) {
 }
 const unlimited = { run: fn => fn() };
 
+/**
+ * Deployment-wide ceiling on deliveries in flight (WEBHOOK_GLOBAL_MAX_IN_FLIGHT),
+ * shared by every API replica and the standalone dispatcher through
+ * PostgreSQL (db/067_webhook_hardening.sql). Each delivery holds a slot row
+ * with a lease, so a crashed process's slots expire on their own.
+ * 2026-11-17 audit, finding 5: the in-process limiter alone let N replicas
+ * open N × WEBHOOK_MAX_IN_FLIGHT connections.
+ */
+export function createGlobalSlots(db, max, { leaseSeconds = 60 } = {}) {
+  const limit = Number(max) || 0;
+  if (limit <= 0) return null;
+  return {
+    max: limit,
+    async free() { return Number((await db.query("SELECT eduos_webhook_slots_free($1) AS n", [limit])).rows[0].n); },
+    async acquire() { return (await db.query("SELECT eduos_webhook_slot_acquire($1,$2) AS h", [limit, leaseSeconds])).rows[0].h || null; },
+    async release(holder) { if (holder) await db.query("SELECT eduos_webhook_slot_release($1)", [holder]); }
+  };
+}
+
 export const tenantActor = actor => ({ districtId: actor.districtId, userId: actor.userId, role: actor.role, schoolId: actor.schoolId || null });
 
 /**
@@ -49,14 +70,20 @@ export const tenantActor = actor => ({ districtId: actor.districtId, userId: act
 export async function processWebhookOutbox(actorInput, { limit = 10 } = {}, deps) {
   const { withTenantTransaction, signingKey, previousSigningKey = null, deliveryOptions = {}, deliver = deliverWebhook,
     disableAfterFailures = WEBHOOK_DISABLE_AFTER_FAILURES, log = console, limiter = unlimited,
-    leaseSeconds = JOB_LEASE_SECONDS, jobDeadlineMs = JOB_DEADLINE_MS } = deps;
+    leaseSeconds = JOB_LEASE_SECONDS, jobDeadlineMs = JOB_DEADLINE_MS, globalSlots = null } = deps;
   if (!(jobDeadlineMs > 0 && jobDeadlineMs < leaseSeconds * 1000)) throw new Error("jobDeadlineMs must be above 0 and below the lease");
+  // After the job deadline the request is aborted; wait this long for the
+  // transport to confirm the socket is gone before giving the slot back.
+  const abortGraceMs = Math.min(5000, Math.floor((leaseSeconds * 1000 - jobDeadlineMs) / 2));
   if (!signingKey) return 0;
   const actor = tenantActor(actorInput);
-  // Claim no more jobs than this process can start delivering now: a job
-  // claimed while every slot is busy would wait in the limiter queue, its
-  // claim could run out, and it would only be skipped and claimed again.
-  const free = Number.isFinite(limiter.capacity) ? Math.max(1, limiter.capacity - limiter.active - limiter.waiting) : Infinity;
+  // Claim no more jobs than can start delivering now: a job claimed while
+  // every slot is busy would wait in the limiter queue, its claim could run
+  // out, and it would only be skipped and claimed again. Zero free slots
+  // means zero claims (2026-11-17 audit, finding 6: this was at least 1).
+  let free = Number.isFinite(limiter.capacity) ? limiter.capacity - limiter.active - limiter.waiting : Infinity;
+  if (globalSlots && free > 0) free = Math.min(free, await globalSlots.free());
+  if (!(free > 0)) return 0;
   const safeLimit = Math.max(1, Math.min(25, Number(limit) || 10, free));
   const claimed = await withTenantTransaction(actor, async client => {
     const rows = await client.query(
@@ -89,27 +116,50 @@ export async function processWebhookOutbox(actorInput, { limit = 10 } = {}, deps
           return { cancelled: true };
         }
 
-        const renewed = await withTenantTransaction(actor, client => client.query(
-          `UPDATE webhook_outbox SET lease_until=now()+make_interval(secs => $3::float8),updated_at=now()
-            WHERE id=$1 AND lease_token=$2 AND status='processing' AND lease_until>now()`, [job.id, job.lease_token, leaseSeconds]));
-        if (!renewed.rowCount) {
-          log.warn?.('Webhook outbox lease lost before delivery', { jobId: job.id });
-          return { leaseLost: true };
+        // The deployment-wide slot, if configured. None free: hand the job
+        // back untouched (no attempt counted) for a later run.
+        const slot = globalSlots ? await globalSlots.acquire() : null;
+        if (globalSlots && !slot) {
+          await withTenantTransaction(actor, client => client.query(
+            `UPDATE webhook_outbox SET status='pending',available_at=now()+interval '5 seconds',lease_until=NULL,lease_token=NULL,updated_at=now()
+              WHERE id=$1 AND lease_token=$2`, [job.id, job.lease_token]));
+          return { deferred: true };
         }
+        try {
+          const renewed = await withTenantTransaction(actor, client => client.query(
+            `UPDATE webhook_outbox SET lease_until=now()+make_interval(secs => $3::float8),updated_at=now()
+              WHERE id=$1 AND lease_token=$2 AND status='processing' AND lease_until>now()`, [job.id, job.lease_token, leaseSeconds]));
+          if (!renewed.rowCount) {
+            log.warn?.('Webhook outbox lease lost before delivery', { jobId: job.id });
+            return { leaseLost: true };
+          }
 
-        let timer;
-        const attempts = await Promise.race([
-          Promise.resolve().then(() => deliver({ subscription: subscription.rows[0], secret: secrets[0], secrets,
-            eventType: job.event_type, deliveryId: job.delivery_id, body: JSON.stringify(job.payload), options: { ...deliveryOptions, maxAttempts: 1 } })),
-          new Promise(resolve => {
-            timer = setTimeout(() => resolve([{ attempt: 1, outcome: "timeout", statusCode: null, durationMs: jobDeadlineMs, reason: "job_deadline" }]), jobDeadlineMs);
-            timer.unref?.();
-          })
-        ]).finally(() => clearTimeout(timer));
-        return { attempts };
+          // An absolute job deadline that cancels the real request (2026-11-17
+          // audit, finding 1): racing a timer alone left the socket open after
+          // the slot was given back, so a slow-trickling receiver could hold
+          // connections beyond WEBHOOK_MAX_IN_FLIGHT and overlap a retry.
+          const controller = new AbortController();
+          let timer;
+          const sending = Promise.resolve().then(() => deliver({ subscription: subscription.rows[0], secret: secrets[0], secrets,
+            eventType: job.event_type, deliveryId: job.delivery_id, body: JSON.stringify(job.payload),
+            options: { ...deliveryOptions, maxAttempts: 1, signal: controller.signal } }));
+          const cutOff = [{ attempt: 1, outcome: "timeout", statusCode: null, durationMs: jobDeadlineMs, reason: "job_deadline" }];
+          const attempts = await Promise.race([
+            sending,
+            new Promise(resolve => { timer = setTimeout(() => resolve(cutOff), jobDeadlineMs); })
+          ]).finally(() => clearTimeout(timer));
+          if (attempts === cutOff) {
+            controller.abort();
+            // Keep the slot until the transport has actually let go (bounded,
+            // in case an injected sender ignores the signal).
+            let grace;
+            await Promise.race([sending.catch(() => {}), new Promise(r => { grace = setTimeout(r, abortGraceMs); })]).finally(() => clearTimeout(grace));
+          }
+          return { attempts };
+        } finally { if (slot) await globalSlots.release(slot).catch(() => {}); }
       });
 
-      if (delivery.cancelled || delivery.leaseLost) continue;
+      if (delivery.cancelled || delivery.leaseLost || delivery.deferred) continue;
       const attempts = delivery.attempts;
       const result = attempts[attempts.length - 1];
       await withTenantTransaction(actor, async client => {

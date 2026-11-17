@@ -139,6 +139,9 @@ export const config = {
   flowEventRateLimit: Number(process.env.FLOW_EVENT_RATE_LIMIT_PER_MIN || 120),
   webhookAdminRateLimit: Number(process.env.WEBHOOK_ADMIN_RATE_LIMIT_PER_15M || 200),
   webhookMaxInFlight: Number(process.env.WEBHOOK_MAX_IN_FLIGHT || 16),
+  // 37.7.0 audit: deliveries in flight across the whole deployment (every API
+  // replica plus the dispatcher), enforced in PostgreSQL. 0 = per-process only.
+  webhookGlobalMaxInFlight: Number(process.env.WEBHOOK_GLOBAL_MAX_IN_FLIGHT ?? 64),
   sessionCacheMax: Number(process.env.SESSION_CACHE_MAX || 5000),
   // 32.3.0 school branding: mascot upload size and the public (sign-in page) branding endpoints.
   brandingUploadMaxBytes: Number(process.env.BRANDING_UPLOAD_MAX_KB || 2048) * 1024,
@@ -253,6 +256,7 @@ intIn("GUARDIAN_ACCEPT_RATE_LIMIT_PER_15M", config.guardianAcceptRateLimit, 1, 1
 intIn("FLOW_EVENT_RATE_LIMIT_PER_MIN", config.flowEventRateLimit, 1, 1000000);
 intIn("WEBHOOK_ADMIN_RATE_LIMIT_PER_15M", config.webhookAdminRateLimit, 1, 1000000);
 intIn("WEBHOOK_MAX_IN_FLIGHT", config.webhookMaxInFlight, 1, 1024);
+intIn("WEBHOOK_GLOBAL_MAX_IN_FLIGHT", config.webhookGlobalMaxInFlight, 0, 16384);
 intIn("SESSION_CACHE_MAX", config.sessionCacheMax, 1, 10000000);
 intIn("BRANDING_UPLOAD_MAX_KB", config.brandingUploadMaxBytes / 1024, 64, 10240);
 intIn("PUBLIC_BRANDING_RATE_LIMIT_PER_MIN", config.publicBrandingRateLimit, 1, 1000000);
