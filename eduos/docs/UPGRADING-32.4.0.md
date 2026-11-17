@@ -46,7 +46,7 @@ it. Only redacted text from the current question, plus approved lesson
 content, is sent.
 
 ## 5. Notification job and email consent
-Run `051_notification_email_consent.sql` through the normal migration runner.
+Run `051_notification_email_consent.sql`, `052_notification_sms_verification.sql`, and `053_notification_provider_acceptance.sql` through the normal migration runner.
 All existing users are opted out. Users can review and change their own setting
 through `GET/PUT /api/me/notification-preferences`; the PUT requires the normal
 CSRF token and writes an audit event. Email outbox rows are skipped unless the
@@ -59,7 +59,7 @@ details. The SMTP server's acceptance is recorded as accepted by the relay; it
 does not prove final mailbox delivery. Never place credentials in source control.
 
 Schedule `node src/notify-dispatch.js` with the owner role (like `db:retention`).
-For SMS, apply `052_notification_sms_verification.sql`. With Twilio configured,
+For SMS, with Twilio configured,
 users request a verification code through `POST /api/me/phone-verification/start`
 and confirm it through `POST /api/me/phone-verification/check`. Only then can
 they enable `smsEnabled` through the notification-preferences endpoint. All
