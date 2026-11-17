@@ -1,12 +1,12 @@
 export const ROLE_PERMISSIONS = Object.freeze({
   superintendent: {
-    wellbeing: ["settings"], // 37.6.0: district switch, notice, retention (no check-in access)
     access_requests: ["read", "create", "review"],
     students: ["read"], schools: ["read", "create", "update"],
     assignments: ["read", "create", "update", "approve", "grade"],
     attendance: ["read", "create", "update", "export"],
     cases: ["read", "create", "update", "approve", "export"],
     audit: ["read", "export"],
+    wellbeing: ["settings"], // 37.6.0: district switch, notice, retention (no check-in access)
     flow_events: ["read"], webhooks: ["read", "manage"],
     apps: ["read", "manage", "report", "decide", "launch"], district: ["read", "manage"],
     branding: ["read", "manage"],
@@ -58,12 +58,12 @@ export const ROLE_PERMISSIONS = Object.freeze({
     learning: ["read", "teach", "grade"], edal: ["proof"]
   },
   parent: {
-    wellbeing: ["consent"], // 37.6.0: read the notice, opt a child in or out
     access_requests: ["read", "create"],
     students: ["read"], assignments: ["read"],
     attendance: ["read", "acknowledge"], cases: ["read"],
     flow_events: ["read"], apps: ["launch"], branding: ["read"],
     transport: ["read"], comms: ["read", "message"],
+    wellbeing: ["consent"], // 37.6.0: read the notice, opt a child in or out
     safety: ["read"], pickup: ["read", "request"],
     learning: ["read"], edal: ["proof"]
   },
