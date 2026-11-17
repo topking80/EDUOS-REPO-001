@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const migration = fs.readFileSync(new URL("../db/051_notification_email_consent.sql", import.meta.url), "utf8");
+const migration = fs.readFileSync(new URL("../db/051_notification_preference.sql", import.meta.url), "utf8");
 const smsMigration = fs.readFileSync(new URL("../db/052_notification_sms_verification.sql", import.meta.url), "utf8");
 const acceptanceMigration = fs.readFileSync(new URL("../db/053_notification_provider_acceptance.sql", import.meta.url), "utf8");
 const pushMigration = fs.readFileSync(new URL("../db/054_notification_fcm_devices.sql", import.meta.url), "utf8");
