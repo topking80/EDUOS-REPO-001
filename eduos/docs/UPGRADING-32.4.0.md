@@ -32,7 +32,11 @@ Keep `Permissions-Policy: geolocation=()`.
 | `COMMS_RATE_LIMIT_PER_MIN` | `60` | per-client Comms writes |
 | `TRANSPORT_CHECKIN_RATE_LIMIT_PER_MIN` | `300` | per-client check-ins |
 | `NOTIFY_EMAIL_ADAPTER` | `off` | `off`, `log` (dry run), or `smtp` (implicit TLS, port 465). SMTP requires the variables below. |
-| `NOTIFY_SMS_ADAPTER`, `NOTIFY_PUSH_ADAPTER` | `off` | `off` or `log`; Twilio and FCM are not enabled yet. |
+| `NOTIFY_SMS_ADAPTER` | `off` | `off`, `log`, or `twilio`. Twilio requires verified phone enrollment and explicit user consent. |
+| `NOTIFY_PUSH_ADAPTER` | `off` | `off` or `log`; FCM is not enabled yet. |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | empty | Required for Twilio Verify and SMS. Store the auth token in the deployment secret manager. |
+| `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM_NUMBER` | empty | Configure a Messaging Service SID or a verified E.164 sender number. |
+| `TWILIO_TIMEOUT_MS` | `10000` | Twilio HTTP request timeout (1–30 seconds). |
 | `NOTIFY_SMTP_HOST`, `NOTIFY_SMTP_USERNAME`, `NOTIFY_SMTP_PASSWORD`, `NOTIFY_SMTP_FROM` | empty | Required when email adapter is `smtp`. |
 | `NOTIFY_SMTP_PORT` | `465` | Only implicit TLS on port 465 is supported. |
 | `NOTIFY_SMTP_EHLO`, `NOTIFY_SMTP_TIMEOUT_MS` | `eduos.local`, `15000` | SMTP greeting identity and connection timeout. |
@@ -55,8 +59,18 @@ details. The SMTP server's acceptance is recorded as accepted by the relay; it
 does not prove final mailbox delivery. Never place credentials in source control.
 
 Schedule `node src/notify-dispatch.js` with the owner role (like `db:retention`).
-SMS and push remain disabled pending their separate phone-consent and device
-registration work.
+For SMS, apply `052_notification_sms_verification.sql`. With Twilio configured,
+users request a verification code through `POST /api/me/phone-verification/start`
+and confirm it through `POST /api/me/phone-verification/check`. Only then can
+they enable `smsEnabled` through the notification-preferences endpoint. All
+existing users remain unverified and opted out. Verification start/check are
+rate-limited per user; phone numbers are district-scoped and audit events record
+only the last four digits. Twilio acceptance is recorded as provider acceptance,
+not carrier delivery confirmation. SMS messages are generic and contain no
+student or incident details. Twilio Messaging API sends do not offer a general
+idempotency guarantee, so an ambiguous timeout can result in a duplicate.
+
+Push remains disabled pending FCM device registration and revocation work.
 
 ## 6. Known limits
 - Transport "today" uses the database `current_date`. Set the database
