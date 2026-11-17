@@ -2,7 +2,7 @@
 // adapters. Run as the migration OWNER role, like the retention job:
 //   DATABASE_URL=<owner url> node src/notify-dispatch.js
 //   docker compose --profile ops run --rm notify
-// SMTP email is available only after recipient opt-in; SMS and push remain off/log.
+// SMTP email and Twilio SMS require channel-specific verified recipient consent; push remains off/log.
 //
 // Outcomes: delivered_at is set only when an adapter confirms delivery;
 // "skipped" (dry run, channel off) is not a delivery. A temporary failure waits
@@ -38,7 +38,7 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
   log = console.log, adapters = adapterFor } = {}) {
   if (!(sendTimeoutSeconds > 0 && sendTimeoutSeconds < leaseSeconds)) throw new Error("sendTimeoutSeconds must be above 0 and below leaseSeconds");
   const districts = (await db.query("SELECT id FROM districts WHERE status='active'")).rows;
-  const tally = { handled: 0, delivered: 0, skipped: 0, retrying: 0, failed: 0, lostLease: 0 };
+  const tally = { handled: 0, accepted: 0, delivered: 0, skipped: 0, retrying: 0, failed: 0, lostLease: 0 };
   for (const d of districts) {
     for (let done = 0; done < limit;) {
       const token = crypto.randomUUID();
@@ -56,28 +56,37 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
       for (const row of rows) {
         const adapter = adapters(row.channel);
         // Renew immediately before sending. For real SMTP, read the current
-        // address and consent in this same short transaction so stale batch
-        // claims cannot send to an old address or after an earlier opt-out.
+        // address/number and consent in this same short transaction so stale batch
+        // claims cannot send after a contact change or an earlier opt-out.
         const renewed = await inTx(db, d.id, async c => {
           const lease = await c.query(
             `UPDATE notification_outbox SET lease_expires_at=now()+make_interval(secs => $3::float8)
               WHERE id=$1 AND lease_token=$2 AND lease_expires_at>now() AND status='pending' RETURNING id`,
             [row.id, token, leaseSeconds]);
-          if (!lease.rowCount || row.channel !== "email" || adapter.name !== "smtp") return lease;
+          if (!lease.rowCount || !((row.channel === "email" && adapter.name === "smtp") || (row.channel === "sms" && adapter.name === "twilio"))) return lease;
           const contact = await c.query(
-            `SELECT u.email,coalesce(p.email_notifications_enabled,false) AS email_opted_in
+            `SELECT u.email,p.phone_e164,
+                    coalesce(p.email_notifications_enabled,false) AS email_opted_in,
+                    coalesce(p.sms_notifications_enabled,false) AS sms_opted_in,
+                    p.phone_verified_at
                FROM users u LEFT JOIN user_preferences p ON p.user_id=u.id AND p.district_id=$2
               WHERE u.id=$1`, [row.recipient_user_id, d.id]);
-          return { ...lease, recipientEmail: contact.rows[0]?.email || null, emailOptedIn: Boolean(contact.rows[0]?.email_opted_in) };
+          const person = contact.rows[0] || {};
+          return { ...lease, recipientEmail: person.email || null, emailOptedIn: Boolean(person.email_opted_in),
+            recipientPhone: person.phone_verified_at ? person.phone_e164 : null, smsOptedIn: Boolean(person.sms_opted_in) };
         });
         if (!renewed.rowCount) { done++; tally.lostLease++; continue; }
         let result, timer;
         try {
           if (row.channel === "email" && adapter.name === "smtp" && !renewed.emailOptedIn) {
             result = { status: "skipped", note: "recipient has not opted in to email notifications" };
+          } else if (row.channel === "sms" && adapter.name === "twilio" && !renewed.smsOptedIn) {
+            result = { status: "skipped", note: "recipient has not opted in to SMS notifications" };
           } else {
             result = await Promise.race([
-              adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id, recipient_email: row.channel === "email" ? renewed.recipientEmail : undefined }, log),
+              adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id,
+                recipient_email: row.channel === "email" ? renewed.recipientEmail : undefined,
+                recipient_phone: row.channel === "sms" ? renewed.recipientPhone : undefined }, log),
               new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
             ]);
           }
@@ -114,6 +123,6 @@ async function inTx(db, districtId, fn) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  dispatchPending().then(t => { console.log(`notification dispatch: ${t.handled} handled (${t.delivered} delivered, ${t.skipped} skipped, ${t.retrying} to retry, ${t.failed} failed${t.lostLease ? `, ${t.lostLease} lease lost` : ""})`); return pool.end(); })
+  dispatchPending().then(t => { console.log(`notification dispatch: ${t.handled} handled (${t.accepted} provider-accepted, ${t.delivered} delivered, ${t.skipped} skipped, ${t.retrying} to retry, ${t.failed} failed${t.lostLease ? `, ${t.lostLease} lease lost` : ""})`); return pool.end(); })
     .catch(async e => { console.error(`notification dispatch failed: ${e.message}`); await pool.end(); process.exit(1); });
 }

@@ -51,7 +51,7 @@ test("SMTP adapter completes a TLS-authenticated SMTP conversation", async () =>
     connect: value => { options = value; queueMicrotask(() => socket.emit("data", Buffer.from("220 ready\r\n"))); return socket; }
   });
   const result = await adapter.send({ id: "12345678-1234-1234-1234-123456789abc", recipient_email: "family@example.net" });
-  assert.equal(result.status, "delivered");
+  assert.equal(result.status, "accepted");
   assert.equal(options.rejectUnauthorized, true);
   assert.equal(options.port, 465);
   assert.ok(socket.writes.some(value => value.startsWith("AUTH PLAIN ")));
