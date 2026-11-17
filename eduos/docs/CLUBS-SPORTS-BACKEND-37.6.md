@@ -107,3 +107,53 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - The storage key remains internal to server-side registry/provider calls. Upload intents, verification results, and read-URL responses omit it.
 - The registry requires an injected tenant transaction function, avoiding implicit database-pool creation at module import. Storage, scanner, and processor providers remain unconfigured by default, so media stays disabled until explicitly provisioned.
 - Dedicated tests cover persistence across registry instances, tenant/school mismatch rejection, state updates, and fail-closed default provider configuration.
+
+## 37.6.0 additions: eligibility, athletic directors, permission slips (db/060)
+
+Migration `060_sports_eligibility_permission_slips.sql` (058 is the district AI
+privacy controls in #48 and 059 is Leo/Edison; `src/migrate.js` applies every
+numbered file after 050 in name order).
+
+**Athletic director.** A per-school role. The school's principal or the
+superintendent grants it to an active teacher, vice principal or principal of
+that school (`POST /api/schools/:id/athletic-directors`, revoke with
+`POST /api/athletic-directors/:id/revoke`; history is kept). The athletic
+director manages the school's sports teams like a coach and sees eligibility.
+
+**Eligibility.** `GET /api/activities/:id/eligibility` returns, for each learner
+on the active roster, `eligible`, `not_eligible` or `not_enough_records` plus the
+named district rule that is not met (grades in a named course, attendance in the
+window). It is computed on each read from the gradebook and attendance records by
+`src/sports-eligibility.js`, is never stored, never a score, rank or prediction,
+and every view is audited with counts only. Only the team's coach and the
+school's athletic director get it; everyone else, including principals and the
+superintendent, gets 404, and the database function
+`eduos_sports_eligibility_inputs()` refuses them too. The superintendent sets the
+district rules (`PUT /api/sports/eligibility-policy`: minimum course percent,
+minimum attendance percent, window days, minimum records; defaults 60/90/30/5).
+
+**Permission slips.** Coaches, advisors, the athletic director and school leads
+send a slip for an activity (`POST /api/activities/:id/permission-slips`). The
+server stores the SHA-256 of the exact text; the text cannot change afterwards
+(close it and send a new one). A guardian linked to a rostered learner signs
+with their typed name, an explicit consent tick and the hash of the text they
+read (`POST /api/permission-slips/:id/sign`); a stale hash gets 409. Signatures
+are append-only and the latest answer per guardian and learner counts. Families
+see their slips at `GET /api/my/permission-slips`; staff see per-learner
+granted / declined / pending at `GET /api/activities/:id/permission-slips`.
+
+**Roster scoping in the database.** 056 limited rosters to the school; 060 adds
+RESTRICTIVE policies so a roster row is readable only by school leads, the
+activity's staff, the athletic director, and the learner or guardian for their
+own row, and writable only by leads, staff and the athletic director. Slips and
+signatures follow the same rule.
+
+**Deletion and retention.** Deleting a student record now removes their roster
+rows, media participation and consents, and slip signatures
+(`eduos_purge_student` → `eduos_purge_student_pre_sports`). Slips more than
+`RETENTION_PERMISSION_SLIP_DAYS` (default 730, minimum 90) past their due date
+are removed with their signatures by `eduos_retention_feature_activities`, run
+by the feature retention loop once that loop is merged.
+
+No location data, facial recognition, threat scoring or predictive analytics are
+involved.

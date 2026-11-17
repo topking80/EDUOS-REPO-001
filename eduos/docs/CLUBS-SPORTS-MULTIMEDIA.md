@@ -4,7 +4,7 @@
 
 The Clubs & Sports Hub is a shared extracurricular destination for learners and families, with publishing and oversight workflows for teachers serving as coaches or club advisors and for principals.
 
-The first UI slice adds a role-aware destination to the learner, family, teacher and principal web-app navigation and exposes it in the Flutter learner app through its existing web fallback. The current screen is an explicitly labelled preview using sample activity and event data. It does not provide live enrollment, purchases, media uploads or streaming.
+The web app has a role-aware Clubs & Sports destination for learners, families, teachers and principals, and the Flutter learner app has a native screen. Since 37.6.0 (#46 on the #47 backend) the web screen reads the live API: published clubs and teams, joining (learners), upcoming events, permission slips (guardians sign, learners see the status), sports eligibility (the team's coach and the athletic director only), slip management for activity staff, and naming athletic directors (principals). It does not provide purchases, media uploads or streaming.
 
 ## Product areas
 
@@ -32,12 +32,13 @@ Use an approved streaming provider rather than relaying video through the applic
 
 ## Data and implementation boundary
 
-The UI remains a preview with sample data; it is not yet connected to the live clubs/sports APIs. The backend foundation now includes district- and school-scoped activity, event, ticket inventory, roster, result, stream-schedule and media-consent tables and APIs, forced RLS, composite scope constraints, staff-assignment checks, guardian consent history and moderation gates.
+The web UI is connected to the live clubs/sports APIs (see above). The backend foundation includes district- and school-scoped activity, event, ticket inventory, roster, result, stream-schedule and media-consent tables and APIs, forced RLS, composite scope constraints, staff-assignment checks, guardian consent history and moderation gates.
 
 The following are still deliberately unavailable and must not be presented as live features:
 - Paid ticket checkout, refunds, chargebacks and settlement. Paid orders fail closed with `paid_ticketing_not_configured`; complimentary tickets and check-in are implemented.
 - Stream playback and recording. The backend stores schedules and audience metadata only; `playbackEnabled` remains false.
 - Media upload and publication. The provider-neutral private pipeline is disabled unless storage, scanning, image-processing adapters and explicit upload/read hostname allowlists are configured. Video processing remains disabled. The current API does not expose a complete upload-to-publication workflow.
 - The Flutter Clubs & Sports destination is currently learner-only; other roles continue through the role-specific app experience.
+- Sports eligibility, athletic directors and guardian e-sign permission slips are live (db/060); see CLUBS-SPORTS-BACKEND-37.6.md. Eligibility is pass/fail by named district rule for the coach and athletic director only, computed on read and never stored.
 
-Before production launch, connect the UI to the APIs, configure approved storage/scanner/processor providers, add a complete upload workflow, integrate payment and streaming providers, and add real PostgreSQL/API authorization tests for tenant boundaries, consent changes, ticket recovery and stream audience access.
+Before production launch, configure approved storage/scanner/processor providers, add a complete upload workflow, integrate payment and streaming providers, and add real PostgreSQL/API authorization tests for tenant boundaries, consent changes, ticket recovery and stream audience access.
