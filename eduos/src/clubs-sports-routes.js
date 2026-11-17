@@ -229,11 +229,24 @@ export function registerClubsSportsRoutes(app) {
  });
  app.get("/api/events/:id/stream",requireSession,wrap(async(c,req)=>{
   if(!validId(req.params.id))throw new HttpError(400,"invalid_event_id");const a=req.actor;
-  const r=await one(c,`SELECT s.id,s.event_id,s.status,s.audience,s.starts_at,s.ends_at,s.recording_allowed,s.provider FROM event_streams s
-   JOIN school_events e ON e.id=s.event_id AND e.district_id=s.district_id WHERE s.event_id=$1 AND s.district_id=$2
-   AND (s.school_id=$3 OR $4) AND e.status='published' ORDER BY s.created_at DESC LIMIT 1`,
+  if(!["superintendent","it_admin","principal","teacher","parent","pupil"].includes(a.role))
+   throw new HttpError(403,"stream_schedule_access_forbidden");
+  const r=await one(c,`SELECT s.id,s.event_id,s.school_id,s.status,s.audience,s.starts_at,s.ends_at,s.recording_allowed,s.provider
+   FROM event_streams s JOIN school_events e ON e.id=s.event_id AND e.district_id=s.district_id
+   WHERE s.event_id=$1 AND s.district_id=$2 AND (s.school_id=$3 OR $4) AND e.status='published'
+   ORDER BY s.created_at DESC LIMIT 1`,
    [req.params.id,a.districtId,a.schoolId,DISTRICT(a.role)]);
-  return r?{...r,playbackEnabled:false,reason:"stream_provider_not_connected"}:null;
+  if(!r)return null;
+  if(r.audience==="district"&&!DISTRICT(a.role))throw new HttpError(403,"district_stream_audience_required");
+  if(r.audience==="ticket_holders"){
+   const ticket=await one(c,`SELECT 1 FROM event_ticket_orders o JOIN event_tickets t
+     ON t.order_id=o.id AND t.district_id=o.district_id
+     WHERE o.district_id=$1 AND o.event_id=$2 AND o.buyer_user_id=$3
+       AND o.status IN ('complimentary','paid') AND t.status IN ('issued','checked_in') LIMIT 1`,
+     [a.districtId,r.event_id,a.userId]);
+   if(!ticket)throw new HttpError(403,"stream_ticket_holder_required");
+  }
+  return {...r,playbackEnabled:false,reason:"stream_provider_not_connected"};
  }));
  // 37.8.0 media governance. Storage is deliberately not exposed by these APIs.
  app.get("/api/activities/:id/media",requireSession,wrap(async(c,req)=>{
