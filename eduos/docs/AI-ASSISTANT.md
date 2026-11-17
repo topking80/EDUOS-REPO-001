@@ -10,6 +10,11 @@ sign-in, roles and row-level security. Student tutoring stays with Christie
 | Summarize a resource | the above, counselor, librarian | pasted text |
 | Writing feedback | teacher, principal, vice principal | pasted student writing |
 | Operations brief | principal, vice principal, superintendent | none: counts EduOS computes |
+| Leo lesson drafts (37.6.0) | teacher, principal, superintendent | the course's standards, approved lessons and approved primary sources; saved as a draft lesson for approval |
+| Edison trends brief (37.6.0) | principal, vice principal, superintendent | none: counts released by the EDEN aggregation gate |
+
+Leo and Edison run only through their own endpoints (`/api/leo/drafts`,
+`/api/edison/brief`), never `/api/ai/run`; see `docs/LEO-EDISON.md`.
 
 ## Rules
 
@@ -48,7 +53,8 @@ sign-in, roles and row-level security. Student tutoring stays with Christie
     given back, so a failure can over-count a day's budget but not under-count
     it. The provider call is cut off at AI_PROVIDER_TIMEOUT_MS (at most 120 s).
 - **Kept:** use case, role, tokens and provider for each use; every use is in
-  the audit log. **Not kept:** the prompt or the answer.
+  the audit log. **Not kept:** the prompt or the answer. (Exception by design:
+  a Leo draft IS the answer, saved as a draft lesson the teacher asked for.)
 
 ## Provider
 
