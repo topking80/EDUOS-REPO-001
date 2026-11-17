@@ -95,7 +95,7 @@ jobs:
           name: ignition-configs
           path: ignition/
       - name: Build ${{ matrix.role }} ISO
-        run: make iso-${{ matrix.role }} VERSION=${{ env.VERSION }} ARCH=${{ env.ARCH }} || true
+        run: make iso-${{ matrix.role }} VERSION=${{ env.VERSION }} ARCH=${{ env.ARCH }}
       - name: Upload ISO
         uses: actions/upload-artifact@v4
         with:
@@ -116,7 +116,7 @@ jobs:
           name: ignition-configs
           path: ignition/
       - name: Build Universal ISO
-        run: make iso-universal VERSION=${{ env.VERSION }} ARCH=${{ env.ARCH }} || true
+        run: make iso-universal VERSION=${{ env.VERSION }} ARCH=${{ env.ARCH }}
       - name: Upload Universal ISO
         uses: actions/upload-artifact@v4
         with:

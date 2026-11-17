@@ -86,13 +86,18 @@ all-isos: teacher.ign student.ign admin.ign edge.ign district.ign state.ign
 iso-universal: teacher.ign student.ign admin.ign edge.ign
 	@mkdir -p boot
 	@echo "==> Building universal EduOS ISO with multiple Ignition configs"
+	@if ! command -v $(COREOS_INSTALLER) >/dev/null 2>&1; then \
+		echo "Error: coreos-installer not found. Install it or run in COSA container."; \
+		exit 1; \
+	fi
 	$(COREOS_INSTALLER) iso customize \
 		--dest-ignition ignition/teacher.ign \
 		--dest-ignition ignition/student.ign \
 		--dest-ignition ignition/admin.ign \
 		--dest-ignition ignition/edge.ign \
 		$(BASE_ISO) \
-		-o boot/eduos-universal-$(VERSION).iso || true
+		-o boot/eduos-universal-$(VERSION).iso
+	@test -s boot/eduos-universal-$(VERSION).iso
 	@echo "==> Created: boot/eduos-universal-$(VERSION).iso"
 
 # ============================================================

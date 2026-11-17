@@ -25,6 +25,19 @@ test('Vision Studio deployment concepts link to Device & Edge Operations', () =>
   assert.match(vision, /"School technology"\s*:\s*"deviceops"/);
   assert.match(vision, /"Deployment pathways"\s*:\s*"deviceops"/);
 });
+test('universal ISO build fails on installer errors and verifies a non-empty artifact', () => {
+  const makefile = fs.readFileSync(path.join(root, 'edge-platform/eduos/Makefile'), 'utf8');
+  const target = makefile.split('iso-universal:')[1].split('# ============================================================')[0];
+  assert.ok(target, 'iso-universal target exists');
+  assert.doesNotMatch(target, /\|\|\s*true/, 'installer errors must propagate to make');
+  assert.match(target, /command -v \$\(COREOS_INSTALLER\)/, 'missing installer must fail clearly');
+  assert.match(target, /@test -s boot\/eduos-universal-\$\(VERSION\)\.iso/, 'success requires a non-empty ISO');
+  const workflow = fs.readFileSync(path.join(root, 'edge-platform/eduos/.github/workflows/build-eduos.yml'), 'utf8');
+  assert.match(workflow, /run: make iso-\$\{\{ matrix\.role \}\} VERSION=\$\{\{ env\.VERSION \}\} ARCH=\$\{\{ env\.ARCH \}\}(?!\s*\|\|)/,
+    'role ISO workflow must propagate make failures');
+  assert.match(workflow, /run: make iso-universal VERSION=\$\{\{ env\.VERSION \}\} ARCH=\$\{\{ env\.ARCH \}\}(?!\s*\|\|)/,
+    'universal ISO workflow must propagate make failures');
+});
 // 32.0.54: the un-hardened reference copy was removed and tombstoned; the
 // security review and the hardened tree (edge-platform/eduos) are retained.
 test('deprecated edge reference bundle is tombstoned; security review is retained', () => {
