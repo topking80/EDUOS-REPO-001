@@ -114,6 +114,9 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     assert.equal(unacknowledged.status, 400, "enabling requires an explicit privacy acknowledgement");
     const enabled = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
     assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
+    // Restore the broader policy expected by subsequent privacy/budget tests.
+    const restored = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
+    assert.equal(restored.status, 200, JSON.stringify(restored.body));
   });
   it("revoking external AI while a request waits for the district budget lock blocks provider egress", async () => {
     const lock = new pg.Client(db.adminUrl); await lock.connect();
