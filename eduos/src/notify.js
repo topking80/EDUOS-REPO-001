@@ -12,7 +12,7 @@
 //    SMTP adapter receives a recipient address only after the user opts in.
 // src/notify-dispatch.js (owner role, like the retention job) hands pending
 // rows to the adapter. Email may use implicit-TLS SMTP after recipient opt-in;
-// SMS and push remain off/log until their enrollment paths ship.
+// Twilio SMS requires a verified phone and explicit consent; push remains off/log.
 import { config } from "./config.js";
 import { createSmtpAdapter } from "./notify-smtp.js";
 import { createTwilioSmsAdapter } from "./notify-twilio.js";
