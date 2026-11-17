@@ -227,6 +227,17 @@ REVOKE DELETE, TRUNCATE ON library_borrowing_policies FROM eduos_app;
 
 -- 36.4.0 specialized school operations queues.
 GRANT SELECT, INSERT, UPDATE ON school_service_work TO eduos_app;
+-- 37.6.0 well-being check-ins: consents and the actions log are append-only;
+-- alerts are created only by eduos_wellbeing_raise_alert (SECURITY DEFINER).
+GRANT SELECT, INSERT, UPDATE ON wellbeing_settings, wellbeing_checkins TO eduos_app;
+GRANT SELECT, INSERT ON wellbeing_consents, wellbeing_actions TO eduos_app;
+GRANT SELECT, UPDATE (acknowledged_by, acknowledged_at) ON wellbeing_alerts TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON wellbeing_consents, wellbeing_actions FROM eduos_app;
+REVOKE INSERT, DELETE, TRUNCATE ON wellbeing_alerts FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON wellbeing_settings, wellbeing_checkins FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_is_counselor(uuid), eduos_is_my_pupil_record(uuid), eduos_wellbeing_allowed(uuid),
+  eduos_wellbeing_raise_alert(uuid, text, uuid), eduos_wellbeing_request_talk(uuid) TO eduos_app;
+REVOKE ALL ON FUNCTION eduos_wellbeing_open_work(uuid, text, text, text), eduos_purge_student_pre_wellbeing(uuid), eduos_retention_feature_wellbeing(jsonb) FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON school_service_work FROM eduos_app;
 
 -- 36.6.0 recurring school operations schedules.
