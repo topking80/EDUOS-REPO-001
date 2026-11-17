@@ -57,8 +57,8 @@ class ClubsSportsScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              SectionCard(
-                children: const [
+              const SectionCard(
+                children: [
                   Row(children: [
                     Icon(Icons.emoji_events_outlined, size: 28),
                     SizedBox(width: 10),
