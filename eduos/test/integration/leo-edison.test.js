@@ -60,7 +60,7 @@ describe("Leo and Edison against real PostgreSQL", { skip }, () => {
     appDb = new pg.Client(db.appUrl); await appDb.connect();
     local = await startServer({ ...env, DATABASE_URL: db.appUrl });
     ext = await startServer({ ...env, DATABASE_URL: db.appUrl, AI_PROVIDER: "openai_compatible", AI_ALLOW_EXTERNAL_PROVIDER: "true",
-      AI_PROVIDER_URL: provider.url, AI_PROVIDER_MODEL: "fake-model", AI_ALLOW_INSECURE_LOOPBACK: "true", AI_PROVIDER_TIMEOUT_MS: "2000" });
+      AI_PROVIDER_URL: provider.url, AI_PROVIDER_MODEL: "fake-model", AI_PROVIDER_ALLOWED_HOSTS: "127.0.0.1", AI_ALLOW_INSECURE_LOOPBACK: "true", AI_PROVIDER_TIMEOUT_MS: "2000" });
     for (const name of ["supt1", "p1", "p2", "t1", "pu", "pa", "vp1", "supt2"]) s[name] = await login(local.base, idp, name, { email_verified: true });
     // Curriculum: course, unit, an approved lesson, an approved primary source.
     course = ok(await as("t1")("POST", "/api/learning/courses", { title: "Grade 3 Fractions", subject: "Math", gradeLevel: "3" }), 201);

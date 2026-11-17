@@ -5,11 +5,13 @@
 // failure falls back to the local answer.
 // Ported from EdOS app/backend/app/ai/providers.py (OfflineProvider).
 import { redact } from "../christie/providers.js";
-import { leoLocalPlan } from "./leo-template.js";
-import { edisonLocalBrief } from "./edison-trends.js";
 
 const words = (t) => String(t || "").trim().split(/\s+/).filter(Boolean);
 const sentencesOf = (t) => String(t || "").replace(/\s+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map(s => s.trim()).filter(Boolean) || [];
+
+// Leo and Edison local answers (37.6).
+import { leoLocalPlan } from "./leo-template.js";
+import { edisonLocalBrief } from "./edison-trends.js";
 
 export const SYSTEM_PROMPTS = Object.freeze({
   lesson_draft: "You are Leo, a lesson-design assistant for K-12 teachers. Produce a clear, structured lesson plan with objectives, agenda, differentiation and assessment. Do not include or ask for any student's personal information.",
@@ -110,7 +112,8 @@ export function maxTokensFor(body) {
 /** Exact request body sent to an external provider (exported for tests). */
 export function externalRequestBody({ model, usecase, input, identifiers = {} }) {
   // Redact the whole text, then cut: the tutor's redact() stops at 500 characters by default.
-  const content = usecase === "ops_brief" || usecase === "ops_trends" ? JSON.stringify(input.context)
+  const content = usecase === "ops_brief" ? JSON.stringify(input.context)
+    : usecase === "ops_trends" ? JSON.stringify(input.context)
     : redact(input.text, { names: identifiers.names || [], numbers: identifiers.numbers || [], max: 12000 }).slice(0, 8000);
   return { model, temperature: 0.3, max_tokens: OUTPUT_MAX_TOKENS, messages: [{ role: "system", content: SYSTEM_PROMPTS[usecase] }, { role: "user", content }] };
 }
