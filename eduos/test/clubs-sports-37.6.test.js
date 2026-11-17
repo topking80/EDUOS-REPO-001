@@ -128,7 +128,7 @@ test("private media pipeline uses a durable registry and gates tenant-scoped del
  await assert.rejects(()=>pipeline.createReadUrl({actor,assetId:intent.assetId,districtId:"district-id",schoolId:"school-id"}),e=>e.code==="media_not_approved");
  deliveryState={consentStatus:"approved",moderationStatus:"approved",participantCount:2,approvedParticipantCount:2,deniedParticipantCount:0};
  const url=await pipeline.createReadUrl({actor,assetId:intent.assetId,districtId:"district-id",schoolId:"school-id"});
- assert.match(url.url,/read\\.example/);
+ assert.match(url.url,/read\.example/);
  assert.equal(Object.hasOwn(url,"storageKey"),false);
 });
 
