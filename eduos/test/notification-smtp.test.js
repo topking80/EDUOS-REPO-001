@@ -4,14 +4,14 @@ import { buildNotificationMessage, createSmtpAdapter } from "../src/notify-smtp.
 
 test("SMTP notification contains only generic content and stable message id", () => {
   const message = buildNotificationMessage({ id: "12345678-1234-1234-1234-123456789abc", from: "alerts@example.edu", to: "family@example.net" });
-  assert.match(message, /Message-ID: <12345678-1234-1234-1234-123456789abc@example\\.edu>/);
+  assert.match(message, /Message-ID: <12345678-1234-1234-1234-123456789abc@example\.edu>/);
   assert.match(message, /You have a new EduOS notification/);
   assert.doesNotMatch(message, /student|incident|guardian|diagnosis/i);
 });
 
 test("SMTP message rejects header injection and malformed recipients", () => {
-  assert.throws(() => buildNotificationMessage({ id: "12345678-1234-1234-1234-123456789abc", from: "alerts@example.edu\\r\\nBcc:bad@example.net", to: "family@example.net" }));
-  assert.throws(() => buildNotificationMessage({ id: "12345678-1234-1234-1234-123456789abc", from: "alerts@example.edu", to: "bad\\r\\n@example.net" }));
+  assert.throws(() => buildNotificationMessage({ id: "12345678-1234-1234-1234-123456789abc", from: "alerts@example.edu\r\nBcc:bad@example.net", to: "family@example.net" }));
+  assert.throws(() => buildNotificationMessage({ id: "12345678-1234-1234-1234-123456789abc", from: "alerts@example.edu", to: "bad\r\n@example.net" }));
 });
 
 test("SMTP adapter refuses a missing recipient without opening a socket", async () => {
