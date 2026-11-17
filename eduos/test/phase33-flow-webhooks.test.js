@@ -320,9 +320,10 @@ test("server routes are authenticated, CSRF-protected, permissioned and fail clo
   assert.match(server, /recordFlowEvent\(req\.actor,event,req\.actor\.schoolId\)/, "school scope comes from the session, never the client");
   assert.match(server, /\$1 IN \('principal','teacher'\) AND \(school_id IS NULL OR school_id=\$3\)/);
   assert.ok(!/secret/.test(server.match(/app\.get\("\/api\/webhooks",[\s\S]*?\n\}\);/)[0]), "listing must not return secrets");
-  assert.match(server, /emitServerFlow\(req,"assignment\.created",row\.id,row\.school_id\)/);
+  // 2026-11-17 audit: server events are written with the business transaction's client.
+  assert.match(server, /await emitServerFlow\(req,"assignment\.created",a\.id,a\.school_id,null,client\)/);
   // 32.0.53: attendance events carry the learner's school and subject student.
-  assert.match(server, /emitServerFlow\(req,"attendance\.recorded",result\.id,attendanceSchoolId,result\.student_id\)/);
+  assert.match(server, /await emitServerFlow\(req,"attendance\.recorded",saved\.rows\[0\]\.id,student\.rows\[0\]\.school_id,saved\.rows\[0\]\.student_id,client\)/);
 });
 test("migration enforces tenant isolation and stores no secrets; runtime role is least-privilege", () => {
   for (const table of ["flow_events", "webhook_subscriptions", "webhook_deliveries"]) {

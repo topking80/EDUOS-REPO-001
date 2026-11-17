@@ -120,16 +120,25 @@ export async function assertSchemaReady(db = pool, expected = null) {
 
 /**
  * Refuse to run with a database role that defeats row-level security:
- * superusers and BYPASSRLS roles ignore RLS, and table owners can disable it.
+ * superusers and BYPASSRLS roles ignore RLS, and an object's owner (or any
+ * member of the owning role) can disable it, rewrite policies or replace a
+ * SECURITY DEFINER function. 2026-11-17 audit, finding 7: every
+ * table, view, sequence and function in the schema is checked, not just
+ * students.
  */
 export async function assertSafeRuntimeRole(db = pool) {
   const { rows: [role] } = await db.query(
     `SELECT current_user AS name, r.rolsuper, r.rolbypassrls,
-            (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='students') AS students_owner
+            (SELECT array_agg(DISTINCT c.relname::text ORDER BY c.relname::text) FROM pg_class c
+              WHERE c.relnamespace='public'::regnamespace AND c.relkind IN ('r','p','v','m','S','f')
+                AND pg_has_role(current_user, c.relowner, 'MEMBER')) AS owned_relations,
+            (SELECT array_agg(DISTINCT p.proname::text ORDER BY p.proname::text) FROM pg_proc p
+              WHERE p.pronamespace='public'::regnamespace AND pg_has_role(current_user, p.proowner, 'MEMBER')) AS owned_functions
        FROM pg_roles r WHERE r.rolname=current_user`);
   if (!role) throw new Error("Unable to inspect the database role");
   if (role.rolsuper) throw new Error(`Refusing to start: database role ${role.name} is a superuser (row-level security would be bypassed)`);
   if (role.rolbypassrls) throw new Error(`Refusing to start: database role ${role.name} has BYPASSRLS`);
-  if (role.students_owner === role.name) throw new Error(`Refusing to start: database role ${role.name} owns the EduOS tables; use the dedicated runtime role`);
+  const owned = [...(role.owned_relations || []), ...(role.owned_functions || []).map(f => `${f}()`)];
+  if (owned.length) throw new Error(`Refusing to start: database role ${role.name} owns EduOS schema objects (${owned.slice(0, 5).join(", ")}${owned.length > 5 ? `, +${owned.length - 5} more` : ""}); use the dedicated runtime role`);
   return role.name;
 }

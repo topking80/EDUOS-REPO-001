@@ -170,10 +170,13 @@ export function registerBrandingRoutes(app, { emitServerFlow }) {
         const scope = await loadScope(client, req.params.scope);
         if (!scope) return fail(404, "school_not_found");
         if (!canEdit(req.actor, scope.schoolId)) return fail(403, "forbidden");
-        return handler(req, client, scope);
+        const out = await handler(req, client, scope);
+        // Same transaction as the change (2026-11-17 audit, finding 4): the flow event and its
+        // webhook jobs commit with it or not at all.
+        if (after && out.status < 300) await after(req, out, client);
+        return out;
       });
       send(res, r);
-      if (after && r.status < 300) after(req, r); // after COMMIT
     } catch (e) {
       if (e instanceof ImageRejected) return res.status(e.reason === "too_large" ? 413 : 422).json({ error: "image_rejected", reason: e.reason });
       next(e);
@@ -261,7 +264,7 @@ export function registerBrandingRoutes(app, { emitServerFlow }) {
       [max.rows[0].v, req.actor.userId, JSON.stringify(c), d.id]);
     await audit(client, req, "publish", d.id, { version: max.rows[0].v, warnings: c.summary.warnings }, scope.schoolId);
     return { status: 200, data: { version: max.rows[0].v, profileId: d.id, schoolId: scope.schoolId, view: await view(client, scope) } };
-  }, (req, r) => emitServerFlow(req, "branding.published", r.data.profileId, r.data.schoolId)));
+  }, (req, r, client) => emitServerFlow(req, "branding.published", r.data.profileId, r.data.schoolId, null, client)));
 
   app.post("/api/branding/:scope/restore", requireSession, requireCsrf, requirePermission("branding", "manage"), editor(async (req, client, scope) => {
     const version = Number(req.body?.version);

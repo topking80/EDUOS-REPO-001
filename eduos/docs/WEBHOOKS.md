@@ -8,14 +8,18 @@ counters, never names.
 ## Delivery
 
 - **Outbox.** Each event is written to a durable outbox in the same
-  transaction that records it (`webhook_outbox`).
+  transaction that records it (`webhook_outbox`), and server-raised events
+  (assignments, attendance, app mesh, branding) are written in the same
+  transaction as the change itself: no change commits without its event.
 - **When jobs go out.** Workers deliver due jobs after the request that raised
-  the event, and on a sweep the API runs every
+  the event has been answered, and on a sweep the API runs every
   `WEBHOOK_DISPATCH_INTERVAL_SECONDS` (default 60; `0` turns it off), so a
   quiet district's webhooks and retries go out without cron.
   `src/webhook-dispatch.js` (`npm run webhooks:dispatch`, or the compose
   `webhooks` service) does the same from a scheduler. Any number of API
-  instances and dispatchers can run at once.
+  instances and dispatchers can run at once. Reading the event feed
+  (`GET /api/flow-events`) never starts a delivery, so keep the sweep or the
+  dispatcher running.
 - **Leases.** A worker claims a batch with a lease. Just before each job's
   delivery it renews that job's lease, and skips the job if another worker has
   taken it. A delivery is cut off at 45 seconds (DNS at most 15 s, HTTP 5 s),
@@ -23,9 +27,21 @@ counters, never names.
   at once, even when a batch takes longer than its original claim. A crash
   can still re-send a job after its lease runs out; the `X-EduOS-Delivery` id
   is the same on every attempt, so receivers should de-duplicate on it.
+- **Deadlines.** The 5-second HTTP timeout is absolute (connect to last
+  byte), not an idle timer, and the 45-second job deadline aborts the request:
+  a receiver that trickles bytes is cut off and its socket closed before the
+  slot is reused.
 - **Concurrency.** Every delivery from one process (request-triggered
   workers, the sweep, "Send test") goes through one limiter of
-  `WEBHOOK_MAX_IN_FLIGHT` (default 16).
+  `WEBHOOK_MAX_IN_FLIGHT` (default 16). Across the whole deployment (all API
+  replicas and dispatchers) at most `WEBHOOK_GLOBAL_MAX_IN_FLIGHT` (default
+  64; `0` = per-process only) are in flight, tracked in PostgreSQL with
+  leased slots. A job that finds no slot is put back without using an attempt;
+  "Send test" answers 503 `webhook_capacity_busy`. A worker claims no more jobs
+  than it has free slots.
+- **Registration.** One active subscription per URL per district, and at most
+  `max_active_webhooks` (district setting); both are enforced by PostgreSQL,
+  so concurrent requests can't get past them.
 - **Retries.** A timeout, network error, 5xx or 429 is retried with back-off
   (15 s, 30 s, 60 s … at most an hour). If the receiver sends `Retry-After`
   (seconds or an HTTP date) on a 429 or 503, the next attempt waits at least

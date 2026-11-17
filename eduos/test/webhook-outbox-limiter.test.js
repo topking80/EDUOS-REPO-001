@@ -4,8 +4,9 @@ import { createLimiter, processWebhookOutbox } from "../src/webhook-outbox.js";
 
 test("webhook lease is renewed only after a concurrency slot is acquired", async () => {
   const limiter = createLimiter(1);
-  let releaseSlot;
-  const occupied = limiter.run(() => new Promise(resolve => { releaseSlot = resolve; }));
+  // The slot is free when the job is claimed (a worker claims nothing when
+  // every slot is busy) and taken by another delivery right after the claim.
+  let releaseSlot, occupied;
   const order = [];
   let claimResolved;
   const claimDone = new Promise(resolve => { claimResolved = resolve; });
@@ -20,6 +21,7 @@ test("webhook lease is renewed only after a concurrency slot is acquired", async
     query: async sql => {
       if (sql.includes("WITH candidates AS")) {
         order.push("claim");
+        occupied = limiter.run(() => new Promise(resolve => { releaseSlot = resolve; }));
         claimResolved();
         return { rows: [job], rowCount: 1 };
       }
@@ -83,8 +85,11 @@ test("a worker claims no more jobs than there are free delivery slots", async ()
   await run();
   assert.equal(claimLimit, 2, "three slots, one busy");
   const busy = [limiter.run(() => new Promise(() => {})), limiter.run(() => new Promise(() => {}))];
-  await run();
-  assert.equal(claimLimit, 1, "no free slot: claim one, never zero");
+  claimLimit = undefined;
+  // 2026-11-17 audit, finding 6: with no free slot the worker claims nothing
+  // (it used to claim one, which then sat in the limiter queue).
+  assert.equal(await run(), 0, "no free slot: nothing claimed");
+  assert.equal(claimLimit, undefined, "the claim query never ran");
   releaseSlot(); await occupied; void busy;
   await processWebhookOutbox({ districtId: "d", userId: "s", role: "s" }, { limit: 25 },
     { withTenantTransaction, signingKey: "k".repeat(40), log: { warn() {}, error() {} } });

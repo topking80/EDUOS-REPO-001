@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool } from "./db.js";
 import { config } from "./config.js";
-import { processWebhookOutbox, createLimiter } from "./webhook-outbox.js";
+import { processWebhookOutbox, createLimiter, createGlobalSlots, SLOT_LEASE_SECONDS } from "./webhook-outbox.js";
 
 /** A tenant transaction for scheduled jobs: district-scoped RLS, no user identity. */
 export function districtTransaction(db) {
@@ -35,11 +35,13 @@ export function districtTransaction(db) {
 export async function dispatchWebhooks({
   db = pool, signingKey = config.webhookSigningKey, previousSigningKey = config.webhookPreviousSigningKey || null,
   deliveryOptions = { allowInsecureLoopback: config.webhookAllowInsecureLoopback, allowedHosts: config.webhookAllowedHosts },
-  deliver, maxPerDistrict = 200, log = console, limiter = createLimiter(config.webhookMaxInFlight)
+  deliver, maxPerDistrict = 200, log = console, limiter = createLimiter(config.webhookMaxInFlight),
+  // Shared with every API replica through PostgreSQL (WEBHOOK_GLOBAL_MAX_IN_FLIGHT; 0 = off).
+  globalSlots = createGlobalSlots(db, config.webhookGlobalMaxInFlight, { leaseSeconds: SLOT_LEASE_SECONDS })
 } = {}) {
   if (!signingKey) return { skipped: "webhooks_not_configured", claimed: 0 };
   const districts = (await db.query("SELECT id FROM districts WHERE status='active' ORDER BY id")).rows;
-  const deps = { withTenantTransaction: districtTransaction(db), signingKey, previousSigningKey, deliveryOptions, log, limiter, ...(deliver ? { deliver } : {}) };
+  const deps = { withTenantTransaction: districtTransaction(db), signingKey, previousSigningKey, deliveryOptions, log, limiter, globalSlots, ...(deliver ? { deliver } : {}) };
   let claimed = 0;
   for (const { id } of districts) {
     const actor = { districtId: id, userId: "scheduler", role: "scheduler" };

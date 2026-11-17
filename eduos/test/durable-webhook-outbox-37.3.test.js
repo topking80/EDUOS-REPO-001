@@ -25,7 +25,7 @@ test('37.3 records flow events and outbox rows in the same tenant transaction', 
   const start = server.indexOf('async function recordFlowEvent');
   const end = server.indexOf('async function processWebhookOutbox', start);
   const implementation = server.slice(start, end);
-  assert.match(implementation, /return withTenantTransaction\(actor,async client=>/);
+  assert.match(implementation, /return withTenantTransaction\(actor,client=>insertFlowEvent\(client,actor,event,schoolId,subjectStudentId\)\)/);
   assert.ok(implementation.indexOf('INSERT INTO flow_events') < implementation.indexOf('INSERT INTO webhook_outbox'));
   assert.match(implementation, /ON CONFLICT\(district_id,subscription_id,event_id\) DO NOTHING/);
 });
@@ -34,7 +34,7 @@ test('37.3 records flow events and outbox rows in the same tenant transaction', 
 test('37.3 outbox leases exceed bounded network operations to reduce premature reclaim', async () => {
   // The worker moved to src/webhook-outbox.js in the 37.4.0 audit; server.js delegates to it.
   const server = await readFile(new URL('../src/server.js', import.meta.url), 'utf8');
-  assert.match(server, /import \{ processWebhookOutbox as processOutbox, createLimiter \} from "\.\/webhook-outbox\.js"/);
+  assert.match(server, /import \{ processWebhookOutbox as processOutbox, createLimiter, createGlobalSlots, SLOT_LEASE_SECONDS \} from "\.\/webhook-outbox\.js"/);
   // 2026-11-16 audit: each job's lease is renewed just before its delivery, and
   // a delivery is cut off well inside it (lifecycle tests in
   // test/integration/webhook-outbox.test.js).
