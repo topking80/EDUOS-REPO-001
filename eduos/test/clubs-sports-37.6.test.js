@@ -33,6 +33,11 @@ test("migration establishes forced district RLS and protected ticket codes", asy
  assert.match(mediaRegistry, /storage_key/);
  const grants = await readFile(new URL("db/runtime_grants.template.sql", root), "utf8");
  assert.match(grants, /SELECT, INSERT, UPDATE ON private_media_objects/);
+ assert.match(grants, /SELECT, INSERT ON activity_media_consent_history/);
+ assert.match(grants, /REVOKE UPDATE, DELETE, TRUNCATE ON activity_media_consent_history/);
+ const history = await readFile(new URL("db/057_activity_media_consent_history.sql", root), "utf8");
+ assert.match(history, /FORCE ROW LEVEL SECURITY/);
+ assert.match(history, /decision text NOT NULL/);
  const scoped = await readFile(new URL("db/055_clubs_sports_composite_scope_constraints.sql", root), "utf8");
  const schoolRls = await readFile(new URL("db/056_clubs_sports_school_scope_rls.sql", root), "utf8");
  assert.match(schoolRls, /app\.school_id/);
@@ -71,6 +76,7 @@ test("media consent is participant-specific and publication fails closed", async
  assert.match(routes, /active_guardian_link_required/);
  assert.match(routes, /approved_consent_required_for_withdrawal/);
  assert.match(routes, /withdraw_media_consent/);
+ assert.match(routes, /activity_media_consent_history/);
  assert.match(routes, /status='withdrawn'/);
  assert.match(routes, /guardianDecision\.denials/);
  assert.match(routes, /asset\.school_id!==activity\.school_id/);
