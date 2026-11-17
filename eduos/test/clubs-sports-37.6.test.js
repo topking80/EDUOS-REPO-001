@@ -113,7 +113,7 @@ test("private media pipeline uses a durable registry and gates tenant-scoped del
  assert.equal(calls[0].assetId,intent.assetId);
  assert.equal(Object.hasOwn(calls[0],"storageKey"),false);
  assert.equal(Object.hasOwn(intent,"storageKey"),false);
- await assert.rejects(()=>pipeline.createReadUrl({actor,assetId:intent.assetId,districtId:"other-district",schoolId:"school-id"}),e=>e.code==="media_reference_not_found");
+ await assert.rejects(()=>pipeline.createReadUrl({actor,assetId:intent.assetId,districtId:"other-district",schoolId:"school-id"}),e=>e.code==="media_tenant_scope_required");
  await assert.rejects(()=>pipeline.createReadUrl({actor,assetId:intent.assetId,districtId:"district-id",schoolId:"school-id"}),e=>e.code==="media_not_security_processed");
  const processed=await pipeline.verifyUploadedObject({actor,assetId:intent.assetId,districtId:"district-id",schoolId:"school-id"});
  assert.equal(processed.processingStatus,"processed");
