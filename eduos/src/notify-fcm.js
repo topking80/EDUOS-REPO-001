@@ -18,7 +18,6 @@ export function createFcmClient(cfg = config, request = fetch) {
       const assertion = await new SignJWT({ scope: FCM_SCOPE })
         .setProtectedHeader({ alg: "RS256", typ: "JWT" })
         .setIssuer(cfg.fcmClientEmail)
-        .setSubject(cfg.fcmClientEmail)
         .setAudience(TOKEN_URL)
         .setIssuedAt(now)
         .setExpirationTime(now + 3600)
