@@ -1,8 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { createFcmClient, createFcmPushAdapter } from "../src/notify-fcm.js";
-import { decryptPushToken, encryptPushToken, hashPushToken } from "../src/notify-push-token.js";
+const ENV = {
+  DATABASE_URL: "postgres://eduos_test:eduos_test@127.0.0.1:5432/eduos_test",
+  PUBLIC_ORIGIN: "http://localhost:8080",
+  OIDC_ISSUER: "https://idp.example.test",
+  OIDC_CLIENT_ID: "eduos-test",
+  OIDC_CLIENT_SECRET: "test-secret",
+  OIDC_REDIRECT_URI: "http://localhost:8080/auth/callback"
+};
+for (const [key, value] of Object.entries(ENV)) process.env[key] ||= value;
+const { createFcmClient, createFcmPushAdapter } = await import("../src/notify-fcm.js");
+const { decryptPushToken, encryptPushToken, hashPushToken } = await import("../src/notify-push-token.js");
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048,
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
