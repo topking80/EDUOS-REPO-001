@@ -13,7 +13,10 @@ DO $$
 DECLARE def text; kinds text[];
 BEGIN
   SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conrelid='notification_outbox'::regclass AND conname='notification_outbox_kind_check';
-  kinds := ARRAY(SELECT (regexp_matches(def, '''([a-z_]+)''', 'g'))[1]);
+  -- Reads both forms PostgreSQL prints: ARRAY['a'::text, ...] (as created
+  -- by 013/030) and '{a,b}'::text[] (after another widening like this one),
+  -- so the 37.6 migrations can widen the list in any order.
+  kinds := ARRAY(SELECT DISTINCT (regexp_matches(def, '[''{,]([a-z0-9_]+)(?=[''},])', 'g'))[1]);
   IF NOT 'enrollment' = ANY(kinds) THEN
     kinds := kinds || 'enrollment'::text;
     ALTER TABLE notification_outbox DROP CONSTRAINT notification_outbox_kind_check;
