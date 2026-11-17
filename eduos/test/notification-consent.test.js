@@ -56,7 +56,7 @@ test("FCM migration defaults push off and creates district-scoped, encrypted dev
   assert.match(pushMigration, /token_ciphertext text NOT NULL/);
   assert.match(pushMigration, /token_hash text NOT NULL/);
   assert.match(pushMigration, /ENABLE ROW LEVEL SECURITY/);
-  assert.match(pushMigration, /CREATE POLICY own_user AS RESTRICTIVE/);
+  assert.match(pushMigration, /CREATE POLICY own_user ON user_push_devices AS RESTRICTIVE/);
   assert.match(grants, /GRANT SELECT, INSERT, UPDATE ON user_push_devices TO eduos_app/);
 });
 
