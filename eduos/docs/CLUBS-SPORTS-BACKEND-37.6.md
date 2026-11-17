@@ -90,3 +90,5 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - Idempotent ticket retries now reject changes to the original event, ticket type, or quantity instead of silently replaying a different order.
 - Composite scope migration 055 also binds roster entries, media participants, and guardian consent records to the student's school as well as the district.
 - The cross-district media read test asserts the early tenant-scope rejection before registry access.
+
+- Migration `056_clubs_sports_school_scope_rls.sql` tightens RLS from district-only to district plus active school context for club, event, ticket, roster, consent, and private-media tables. Superintendent and district IT roles retain cross-school access.
