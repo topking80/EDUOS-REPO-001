@@ -32,4 +32,12 @@ Use an approved streaming provider rather than relaying video through the applic
 
 ## Data and implementation boundary
 
-The initial UI is a navigation and experience preview only. No database schema, API route, payment processor, streaming provider, media storage, upload endpoint or ticket inventory was added. The next implementation phase must introduce tenant- and school-scoped tables and APIs, row-level security, audited staff assignment checks, moderation and consent workflows, payment-provider integration, streaming-provider integration and integration tests before presenting ticket purchases or live video as available.
+The UI remains a preview with sample data; it is not yet connected to the live clubs/sports APIs. The backend foundation now includes district- and school-scoped activity, event, ticket inventory, roster, result, stream-schedule and media-consent tables and APIs, forced RLS, composite scope constraints, staff-assignment checks, guardian consent history and moderation gates.
+
+The following are still deliberately unavailable and must not be presented as live features:
+- Paid ticket checkout, refunds, chargebacks and settlement. Paid orders fail closed with `paid_ticketing_not_configured`; complimentary tickets and check-in are implemented.
+- Stream playback and recording. The backend stores schedules and audience metadata only; `playbackEnabled` remains false.
+- Media upload and publication. The provider-neutral private pipeline is disabled unless storage, scanning, image-processing adapters and explicit upload/read hostname allowlists are configured. Video processing remains disabled. The current API does not expose a complete upload-to-publication workflow.
+- The Flutter Clubs & Sports destination is currently learner-only; other roles continue through the role-specific app experience.
+
+Before production launch, connect the UI to the APIs, configure approved storage/scanner/processor providers, add a complete upload workflow, integrate payment and streaming providers, and add real PostgreSQL/API authorization tests for tenant boundaries, consent changes, ticket recovery and stream audience access.
