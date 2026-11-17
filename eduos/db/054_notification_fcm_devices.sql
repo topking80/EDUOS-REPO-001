@@ -8,7 +8,7 @@ CREATE TABLE user_push_devices (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   district_id uuid NOT NULL REFERENCES districts(id),
   user_id uuid NOT NULL REFERENCES users(id),
-  platform text NOT NULL CHECK(platform IN ('ios','android','web')),
+  platform text NOT NULL CHECK(platform IN ('ios','android')),
   token_hash text NOT NULL CHECK(token_hash ~ '^[0-9a-f]{64}$'),
   token_ciphertext text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
