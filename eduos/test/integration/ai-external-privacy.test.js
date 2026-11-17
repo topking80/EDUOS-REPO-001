@@ -61,11 +61,24 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
       await admin.query("INSERT INTO students(district_id, school_id, local_student_number, display_name, grade_level) VALUES ($1,$2,$3,$4,'4')", [ID.d1, ID.s2, `INTL-${n}`, name]);
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
     for (const name of ["supt1", "p1", "t1", "vp1", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
-    const p = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000 });
+    const p = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
     assert.equal(p.status, 200, JSON.stringify(p.body));
   });
   after(async () => { await server?.stop(); await admin?.end(); await provider?.close(); await idp?.close(); await db?.drop(); });
 
+  it("district external-provider opt-in is default-deny and blocks egress until acknowledged", async () => {
+    const disabled = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: false });
+    assert.equal(disabled.status, 200, JSON.stringify(disabled.body));
+    const before = provider.received.length;
+    const denied = await runAi("supt1", "lesson_draft", "Volcanoes");
+    assert.equal(denied.status, 403, JSON.stringify(denied.body));
+    assert.equal(denied.body.error, "ai_external_provider_disabled");
+    assert.equal(provider.received.length, before, "no request reached the external provider");
+    const unacknowledged = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true });
+    assert.equal(unacknowledged.status, 400, "enabling requires an explicit privacy acknowledgement");
+    const enabled = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
+    assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
+  });
   it("Christie: a learner's question loses the names of their family and teachers, titled adults, addresses, birth dates and links (EDUOS-PRIV-01)", async () => {
     await admin.query("UPDATE users SET display_name='Grace Okafor' WHERE id=$1", [USERS.pa[0]]);
     await admin.query("UPDATE users SET display_name='Hollis Varga' WHERE id=$1", [USERS.t1[0]]);
@@ -204,7 +217,7 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
       await lock.query("COMMIT");
       assert.equal((await put).status, 200);
     } finally { await lock.query("ROLLBACK").catch(() => {}); await lock.end(); }
-    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000 });
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
   });
 
   it("a request bigger than a budget is refused before anything is sent", async () => {
@@ -213,7 +226,7 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     const r = await runAi("supt1", "resource_summary", "教".repeat(8000)); // 24,000 bytes: more than 20,000 tokens could be needed
     assert.equal(r.status, 429); assert.equal(r.body.error, "ai_request_exceeds_budget");
     assert.equal(provider.received.length, before);
-    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000 });
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
   });
 
   it("a provider that reports more than it could have used is recorded and flagged", async () => {
@@ -288,7 +301,7 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     // Each reserves about 1,300 tokens and uses 950: room for three at most
     // (four would use 3,800), however the requests interleave.
     const cap = used + 3700;
-    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: cap, userDailyTokenCap: 1000000 });
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: cap, userDailyTokenCap: 1000000, externalProviderEnabled: true, privacyAcknowledged: true });
     const sentBefore = provider.received.length;
     const results = await Promise.all(Array.from({ length: 20 }, (_, i) => runAi(i % 2 ? "p1" : "t1", "lesson_draft", "Volcanoes")));
     const ok = results.filter(r => r.status === 200).length;
