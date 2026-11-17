@@ -1,6 +1,4 @@
-// 37.9.1: private media pipeline contract. No provider ships enabled by default.
-// Storage object keys are retained only in this module's private, process-local registry.
-// A durable tenant-scoped registry is required before multi-instance/production use.
+// 37.9.3: private media pipeline. Providers are injected and disabled by default.
 import { randomUUID } from "node:crypto";
 
 export const MEDIA_LIMITS = Object.freeze({
@@ -29,27 +27,30 @@ export function validateMediaIntent(input = {}) {
 
 const has = (value, method) => Boolean(value && typeof value[method] === "function");
 
-export function createMediaPipeline({ storage = null, scanner = null, processor = null, authorization = null } = {}) {
+export function createMediaPipeline({ storage = null, scanner = null, processor = null, authorization = null, registry = null } = {}) {
   const configured = has(storage, "createPrivateUpload") && has(storage, "headPrivateObject") &&
     has(storage, "createPrivateReadUrl") && has(scanner, "scanPrivateObject") && has(processor, "processImage") &&
-    has(authorization, "withAuthorizedMediaDelivery");
-  // Never return or accept storage keys at the public pipeline boundary.
-  // The key map is intentionally private and fails closed after process restart.
-  const privateObjects = new Map();
+    has(authorization, "withAuthorizedMediaDelivery") && has(registry, "createPrivateObject") &&
+    has(registry, "getPrivateObject") && has(registry, "updatePrivateObject");
   const requireReady = () => { if (!configured) throw new MediaPipelineError("private_media_pipeline_not_configured"); };
-  const getPrivateObject = ({ assetId, districtId, schoolId }) => {
+  const requireActor = (actor, districtId, schoolId) => {
+    if (!actor?.userId || !actor?.role || actor.districtId !== districtId || !schoolId)
+      throw new MediaPipelineError("media_tenant_scope_required", 403);
+  };
+  const getPrivateObject = async ({ actor, assetId, districtId, schoolId }) => {
     if (typeof assetId !== "string" || !assetId || !districtId || !schoolId)
       throw new MediaPipelineError("invalid_media_reference", 400);
-    const record = privateObjects.get(assetId);
+    requireActor(actor, districtId, schoolId);
+    const record = await registry.getPrivateObject({ actor, assetId, districtId, schoolId });
     if (!record || record.districtId !== districtId || record.schoolId !== schoolId)
       throw new MediaPipelineError("media_reference_not_found", 404);
     return record;
   };
   return Object.freeze({
     enabled: configured,
-    async beginUpload({ districtId, schoolId, input }) {
+    async beginUpload({ actor, districtId, schoolId, input }) {
       requireReady();
-      if (!districtId || !schoolId) throw new MediaPipelineError("media_tenant_scope_required", 400);
+      requireActor(actor, districtId, schoolId);
       const intent = validateMediaIntent(input);
       const result = await storage.createPrivateUpload({
         assetId: intent.id, districtId, schoolId, mimeType: intent.mimeType, byteSize: intent.byteSize
@@ -62,24 +63,26 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
           !Number.isFinite(uploadExpiry) || uploadExpiry <= Date.now() ||
           uploadExpiry - Date.now() > 5 * 60 * 1000)
         throw new MediaPipelineError("invalid_private_storage_response");
-      privateObjects.set(intent.id, {
-        districtId, schoolId, storageKey: result.storageKey,
-        kind: intent.kind, mimeType: intent.mimeType, byteSize: intent.byteSize,
-        scanStatus: "pending", processingStatus: "pending"
+      await registry.createPrivateObject({
+        actor, assetId: intent.id, districtId, schoolId, storageKey: result.storageKey,
+        kind: intent.kind, mimeType: intent.mimeType, byteSize: intent.byteSize
       });
       return Object.freeze({ assetId: intent.id, kind: intent.kind, mimeType: intent.mimeType,
         byteSize: intent.byteSize, uploadUrl: result.uploadUrl, expiresAt: result.expiresAt });
     },
-    async verifyUploadedObject({ assetId, districtId, schoolId }) {
+    async verifyUploadedObject({ actor, assetId, districtId, schoolId }) {
       requireReady();
-      const record = getPrivateObject({ assetId, districtId, schoolId });
+      const record = await getPrivateObject({ actor, assetId, districtId, schoolId });
       const object = await storage.headPrivateObject({ storageKey: record.storageKey });
-      if (!object || object.byteSize !== record.byteSize || object.mimeType !== record.mimeType)
+      if (!object || Number(object.byteSize) !== Number(record.byteSize) || object.mimeType !== record.mimeType)
         throw new MediaPipelineError("uploaded_object_mismatch", 422);
       const scan = await scanner.scanPrivateObject({
-        storageKey: record.storageKey, mimeType: record.mimeType, byteSize: record.byteSize
+        storageKey: record.storageKey, mimeType: record.mimeType, byteSize: Number(record.byteSize)
       });
-      if (!scan || scan.verdict !== "clean") throw new MediaPipelineError("media_security_scan_blocked", 422);
+      if (!scan || scan.verdict !== "clean") {
+        await registry.updatePrivateObject({ actor, assetId, districtId, schoolId, scanStatus: "blocked", processingStatus: "failed" });
+        throw new MediaPipelineError("media_security_scan_blocked", 422);
+      }
       if (record.kind === "image") {
         const processed = await processor.processImage({
           storageKey: record.storageKey, mimeType: record.mimeType,
@@ -90,27 +93,26 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
             !MEDIA_LIMITS.imageMimeTypes.includes(processed.mimeType) ||
             !Number.isSafeInteger(processed.byteSize) || processed.byteSize < 1 ||
             processed.byteSize > MEDIA_LIMITS.imageBytes ||
-            processed.metadataStripped !== true || processed.reencoded !== true)
+            processed.metadataStripped !== true || processed.reencoded !== true) {
+          await registry.updatePrivateObject({ actor, assetId, districtId, schoolId, processingStatus: "failed" });
           throw new MediaPipelineError("image_processing_failed", 422);
-        record.storageKey = processed.storageKey;
-        record.mimeType = processed.mimeType;
-        record.byteSize = processed.byteSize;
-        record.scanStatus = "clean";
-        record.processingStatus = "processed";
-        return Object.freeze({ assetId, mimeType: record.mimeType, byteSize: record.byteSize,
-          scanStatus: record.scanStatus, processingStatus: record.processingStatus });
+        }
+        await registry.updatePrivateObject({
+          actor, assetId, districtId, schoolId, storageKey: processed.storageKey,
+          mimeType: processed.mimeType, byteSize: processed.byteSize,
+          scanStatus: "clean", processingStatus: "processed"
+        });
+        return Object.freeze({ assetId, mimeType: processed.mimeType, byteSize: processed.byteSize,
+          scanStatus: "clean", processingStatus: "processed" });
       }
       // Video delivery remains unavailable until a video transcode/sanitization adapter exists.
       throw new MediaPipelineError("video_processing_adapter_not_configured");
     },
-    async createReadUrl({ assetId, districtId, schoolId, actor }) {
+    async createReadUrl({ actor, assetId, districtId, schoolId }) {
       requireReady();
-      const record = getPrivateObject({ assetId, districtId, schoolId });
+      const record = await getPrivateObject({ actor, assetId, districtId, schoolId });
       if (record.scanStatus !== "clean" || record.processingStatus !== "processed")
         throw new MediaPipelineError("media_not_security_processed", 403);
-      // The authorization adapter must hold DB row locks while checking the asset,
-      // every participant, and every guardian decision, then invoke issueReadUrl.
-      // Caller-supplied consent/moderation values are deliberately not accepted.
       return authorization.withAuthorizedMediaDelivery({
         actor, assetId, districtId, schoolId,
         issueReadUrl: async () => {
