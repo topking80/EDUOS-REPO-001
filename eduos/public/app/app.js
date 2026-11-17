@@ -531,9 +531,10 @@ async function athleticDirectorsCard(schoolId) {
 async function activitiesLiveView() {
   const role = state.me.role, family = ["parent", "pupil"].includes(role);
   const staff = ["teacher", "principal", "vice_principal", "superintendent", "it_admin"].includes(role);
-  const [acts, events, roles, slips] = await Promise.all([
+  const [acts, events, roles, slips, commerce] = await Promise.all([
     safe(api.get("/api/activities"), { data: [] }), safe(api.get("/api/events"), { data: [] }),
-    staff ? safe(api.get("/api/sports/my-roles"), { data: {} }) : null, family ? safe(api.get("/api/my/permission-slips"), { data: [] }) : null]);
+    staff ? safe(api.get("/api/sports/my-roles"), { data: {} }) : null, family ? safe(api.get("/api/my/permission-slips"), { data: [] }) : null,
+    safe(api.get("/api/commerce/status"))]);
   const activities = actList(acts?.data), upcoming = actList(events?.data).filter(e => new Date(e.ends_at || e.starts_at) >= new Date()).slice(0, 10);
   const my = roles?.data && !Array.isArray(roles.data) ? roles.data : {};
   const coachOf = new Set(actList(my.coachOf));
@@ -558,7 +559,10 @@ async function activitiesLiveView() {
     detail,
     h("section", { class: "card" }, h("h3", {}, "Upcoming events"),
       upcoming.length ? h("ul", { class: "list" }, upcoming.map(e => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, e.title), h("p", { class: "small muted" }, `${new Date(e.starts_at).toLocaleString()}${e.venue ? ` · ${e.venue}` : ""}`))))) : h("p", { class: "muted" }, "No upcoming events."),
-      h("p", { class: "notice" }, "Paid tickets and live video are not enabled. No payment is collected here.")),
+      h("p", { class: "notice" }, commerce?.data?.enabled ? "Paid tickets use sandbox payments: no real money moves. Live video is not enabled."
+        : "Paid tickets and live video are not enabled. No payment is collected here."),
+      family ? h("button", { class: "btn block", type: "button", onclick: () => go("tickets") }, "Tickets & receipts") : null,
+      ["principal", "superintendent"].includes(role) ? h("button", { class: "btn block", type: "button", onclick: () => go("commerce") }, "Ticketing & revenue") : null),
     adCard
   ];
 }
@@ -2521,6 +2525,201 @@ for (const view of ["children", "overview"]) {
     ? h("section", { class: "card", "aria-label": "Enrollment" }, h("h2", {}, "Enrollment"), h("p", { class: "small muted" }, "Apply for a seat for a new child and follow each step."), h("button", { class: "btn", type: "button", onclick: () => go("enroll") }, "Open enrollment"))
     : ["principal", "superintendent"].includes(state.me.role) ? h("section", { class: "card", "aria-label": "Enrollment" }, h("h2", {}, "Enrollment"), h("p", { class: "small muted" }, "Applications, seats and the waitlist."), h("button", { class: "btn", type: "button", onclick: () => go("enrollboard") }, "Open enrollment board")) : null];
 }
+
+// ----- 37.7.0 Commerce, SANDBOX ONLY: tickets, receipts, revenue, refunds, marketplace -----
+// No real processor exists: "Pay" confirms a sandbox payment and nothing is charged.
+SUBVIEWS.push("tickets", "receipt", "commerce");
+const money = (c, cur = "USD") => `${c < 0 ? "-" : ""}${cur === "USD" ? "$" : cur + " "}${(Math.abs(Number(c)) / 100).toFixed(2)}`;
+const CM_LINE = { gross: "Paid", processing_fee: "Payment processing", sales_tax: "Sales tax", network_fee: "EduOS network fee", school_share: "School",
+  district_share: "District", state_share: "State fund", marketplace_fee: "Marketplace fee", vendor_payable: "Vendor" };
+const CM_ERR = { paid_ticketing_not_configured: "Paid tickets aren't turned on for your district.", guardian_payment_required: "A parent or guardian has to pay for tickets.",
+  ticket_capacity_exceeded: "Not enough tickets left.", guardian_school_link_required: "Tickets are for families of this school.", price_below_fees: "The price is lower than the fees.",
+  ticket_already_used: "A ticket on this order was already scanned at the gate.", payment_not_refundable: "This payment can't be refunded.",
+  split_must_total_100_percent: "The split must add up to 100%.", invalid_rate: "Check the rates.", listing_not_priced: "Set a price for this listing first.",
+  already_purchased: "This license is already paid for.", invalid_quantity: "Say how many seats to pay for.", ticket_not_found: "That code isn't a ticket for this event.",
+  ticket_not_checkin_eligible: "That ticket was already used or refunded.", invalid_ticket_type: "Check the name, price and capacity.", commerce_not_enabled: "Commerce is off." };
+const cmErr = (e, fallback = "Couldn't do that.") => toast(CM_ERR[e?.body?.error] || fallback);
+const cmKey = () => [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, "0")).join("");
+const pct = bps => `${(bps / 100).toFixed(bps % 100 ? 2 : 0)}%`;
+function cmBanner(st) {
+  return h("p", { class: "notice" }, st?.enabled ? "Sandbox payments: no real money moves and no card is charged."
+    : st?.provider === "none" || !st ? "Paid tickets are off: no payment provider is connected. No payment is collected here." : "Paid tickets are off until the district turns them on.");
+}
+function issuedTickets(tickets, title) {
+  return h("section", { class: "card pass", "aria-label": "Your tickets" }, h("h2", {}, title || "Your tickets"),
+    tickets.map((t, i) => h("div", { class: "stack" }, t.qr ? qrSvg(t.qr, `QR code for ticket ${i + 1}`) : null, h("p", { class: "code" }, t.code))),
+    h("p", { class: "small muted" }, "Show these at the gate. They're shown once: EduOS keeps only a fingerprint of each code, so save or screenshot them now."));
+}
+function payPanel(pay, { onDone } = {}) {
+  const out = h("div", { class: "stack" });
+  const confirmPay = async outcome => {
+    try {
+      const r = (await api.post(`/api/commerce/payments/${pay.id}/confirm`, { testOutcome: outcome })).data;
+      if (r.status === "succeeded") {
+        toast("Paid (sandbox)");
+        out.replaceChildren(r.tickets ? issuedTickets(r.tickets) : h("p", {}, "Paid."),
+          h("button", { class: "btn", type: "button", onclick: () => { state.receiptId = r.receipt.id; go("receipt"); } }, `Receipt ${r.receipt.number}`));
+      } else if (r.status === "declined") { toast("Payment declined. Your seats were released."); out.replaceChildren(h("p", { class: "muted" }, "Declined (sandbox). Nothing was charged.")); }
+      else { toast("The hold ran out. Start again."); out.replaceChildren(h("p", { class: "muted" }, r.reason || "The hold expired.")); }
+      onDone?.(r);
+    } catch (e) { cmErr(e, "Couldn't confirm the payment."); }
+  };
+  return h("section", { class: "card", "aria-label": "Pay" }, h("h3", {}, `Pay ${money(pay.amountCents, pay.currency)}`),
+    pay.holdExpiresAt ? h("p", { class: "small muted" }, `Seats are held until ${fmtTime(pay.holdExpiresAt)}.`) : null,
+    h("p", { class: "notice" }, "Sandbox: pick an outcome. No card, no real money."),
+    h("div", { class: "row wrap" },
+      h("button", { class: "btn primary", type: "button", onclick: () => confirmPay("sandbox_success") }, "Pay (sandbox)"),
+      h("button", { class: "btn", type: "button", onclick: () => confirmPay("sandbox_decline") }, "Simulate a decline")), out);
+}
+
+// Families: tickets on sale, checkout, my tickets and receipts.
+VIEWS.tickets = async () => {
+  const role = state.me.role, parent = role === "parent";
+  const [st, shop, mine, my] = await Promise.all([safe(api.get("/api/commerce/status")), safe(api.get("/api/commerce/shop"), { data: { events: [] } }),
+    parent ? safe(api.get("/api/commerce/my"), { data: { payments: [] } }) : null, safe(api.get("/api/my/tickets"), { data: [] })]);
+  const s = st?.data, area = h("div", { class: "stack", id: "ticket-checkout" });
+  const buy = async (ev, t, qty) => {
+    try {
+      const r = (await api.post(`/api/events/${ev.id}/tickets`, { ticketTypeId: t.id, quantity: qty, idempotencyKey: cmKey() })).data;
+      area.replaceChildren(r.payment ? payPanel(r.payment) : issuedTickets(r.tickets, "Your free tickets"));
+      area.scrollIntoView?.({ behavior: "smooth" });
+    } catch (e) { cmErr(e, "Couldn't get tickets."); }
+  };
+  const typeRow = (ev, t) => {
+    const paid = t.priceCents > 0, max = Math.min(10, t.available);
+    const qty = h("select", { "aria-label": `How many ${t.name} tickets` }, Array.from({ length: Math.max(max, 1) }, (_, i) => h("option", { value: i + 1 }, String(i + 1))));
+    const blocked = t.available < 1 ? "Sold out" : paid && !parent ? "Ask a parent or guardian to buy this." : paid && !s?.enabled ? "Paid tickets are off" : null;
+    return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, t.name), " · ", paid ? money(t.priceCents, t.currency) : "Free",
+      h("span", { class: "small muted" }, ` · ${t.available} left`)),
+      blocked ? h("span", { class: "small muted" }, blocked) : [qty, h("button", { class: "btn primary", type: "button", onclick: () => buy(ev, t, Number(qty.value)) }, paid ? "Buy" : "Get")]);
+  };
+  const events = shop?.data?.events || [];
+  return [back("activities", "Clubs & Sports"), h("h2", {}, "Tickets"), cmBanner(s),
+    !parent ? h("p", { class: "small muted" }, "Students can get free tickets. A parent or guardian buys paid ones.") : null,
+    events.length ? events.map(ev => h("section", { class: "card", "aria-label": ev.title }, h("h3", {}, ev.title),
+      h("p", { class: "small muted" }, `${fmtDay(ev.startsAt)} ${fmtTime(ev.startsAt)}${ev.venue ? ` · ${ev.venue}` : ""} · ${ev.school}`),
+      h("ul", { class: "list" }, ev.ticketTypes.map(t => typeRow(ev, t))))) : h("section", { class: "card" }, empty("No tickets on sale right now.")),
+    area,
+    h("section", { class: "card", "aria-label": "My tickets" }, h("h2", {}, "My tickets"),
+      (my?.data || []).length ? h("ul", { class: "list" }, my.data.map(t => h("li", { class: "row" }, h("span", { class: "grow" }, t.event_title, h("span", { class: "small muted" }, ` · ${fmtDay(t.starts_at)}`)),
+        chip(t.status === "issued" ? "present" : t.status === "checked_in" ? "present" : "absent", t.status.replace("_", " "))))) : empty("No tickets yet.")),
+    parent ? h("section", { class: "card", "aria-label": "Payments and receipts" }, h("h2", {}, "Payments & receipts"),
+      (mine?.data?.payments || []).length ? h("ul", { class: "list" }, mine.data.payments.map(p => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, `${p.title || "Purchase"} · ${money(p.amountCents, p.currency)}`, h("span", { class: "small muted" }, ` · ${fmtDay(p.createdAt)}`)),
+        chip(p.status === "succeeded" ? "present" : p.status === "refunded" ? "expected" : "absent", p.status.replace("_", " ")),
+        p.receipts.map(r => h("button", { class: "btn", type: "button", onclick: () => { state.receiptId = r.id; go("receipt"); } }, r.kind === "refund" ? "Refund receipt" : "Receipt"))))) : empty("No payments.")) : null];
+};
+
+VIEWS.receipt = async () => {
+  if (!state.receiptId) return VIEWS.tickets();
+  const r = (await api.get(`/api/commerce/receipts/${state.receiptId}`)).data;
+  const label = l => l.line === "state_share" ? r.stateFundLabel : CM_LINE[l.line] || l.line;
+  const backTo = ["principal", "superintendent"].includes(state.me.role) ? back("commerce", "Ticketing & revenue") : back("tickets", "Tickets");
+  return [backTo, h("section", { class: "card", "aria-label": "Receipt" },
+    h("h2", {}, r.kind === "refund" ? "Refund receipt" : "Receipt"), h("p", { class: "code" }, r.number),
+    h("ul", { class: "list" }, kv("Item", r.description), r.school ? kv("School", r.school) : null, kv("Date", `${fmtDay(r.issuedAt)} ${fmtTime(r.issuedAt)}`),
+      kv(r.kind === "refund" ? "Refunded" : "Total", money(Math.abs(r.amountCents), r.currency))),
+    h("h3", {}, "Where the money goes"),
+    h("ul", { class: "list" }, r.lines.filter(l => l.line !== "gross").map(l => kv(label(l), money(l.amount, r.currency)))),
+    r.edal ? h("p", { class: "small muted" }, `Recorded in the district ledger (EDAL #${r.edal.seq}, ${r.edal.entryHash.slice(0, 12)}…).`) : null,
+    h("p", { class: "notice" }, r.note),
+    h("button", { class: "btn", type: "button", onclick: () => window.print() }, "Print"))];
+};
+
+// Leaders: settings (superintendent), revenue, refunds, gate check-in, ticket types, marketplace.
+VIEWS.commerce = async () => {
+  const supt = state.me.role === "superintendent";
+  const [st, rep, evs, mkt] = await Promise.all([api.get("/api/commerce/status"), safe(api.get("/api/commerce/report")), safe(api.get("/api/events"), { data: [] }),
+    supt ? safe(api.get("/api/commerce/marketplace")) : null]);
+  const s = st.data, set = s.settings, report = rep?.data, reload = () => go("commerce", { push: false });
+  const upcoming = (evs?.data || []).filter(e => new Date(e.ends_at || e.starts_at) >= new Date());
+  const evPick = id => h("select", { id, "aria-label": "Event" }, upcoming.map(e => h("option", { value: e.id }, `${e.title} · ${fmtDay(e.starts_at)}`)));
+  const out = [back("activities", "Clubs & Sports"), h("h2", {}, "Ticketing & revenue"), cmBanner(s)];
+
+  if (supt) {
+    const num = (id, v, step = "0.01") => h("input", { id, type: "number", step, min: 0, value: v });
+    const en = h("input", { id: "cm-en", type: "checkbox", class: "check", checked: set.enabled }), nf = num("cm-nf", set.networkFeeBps / 100), tx = num("cm-tx", set.salesTaxBps / 100),
+      sc = num("cm-sc", set.split.schoolBps / 100), di = num("cm-di", set.split.districtBps / 100), stt = num("cm-st", set.split.stateBps / 100),
+      lbl = h("input", { id: "cm-lbl", maxlength: 120, value: set.stateFundLabel }), mf = num("cm-mf", set.marketplaceFeeBps / 100), hold = num("cm-hold", set.holdMinutes, "1");
+    const bps = el => Math.round(Number(el.value) * 100);
+    out.push(h("section", { class: "card", "aria-label": "Commerce settings" }, h("h2", {}, "District settings"),
+      h("p", { class: "small muted" }, "Defaults follow the EduOS plan: 3% network fee; net revenue 85% school, 10% district, 5% state fund; 5% marketplace fee. Check sales tax with your finance office."),
+      h("form", { class: "stack", onsubmit: async e => {
+        e.preventDefault();
+        try { await api.put("/api/commerce/settings", { enabled: en.checked, networkFeeBps: bps(nf), salesTaxBps: bps(tx), split: { schoolBps: bps(sc), districtBps: bps(di), stateBps: bps(stt) },
+          stateFundLabel: lbl.value, marketplaceFeeBps: bps(mf), holdMinutes: Number(hold.value) }); toast("Saved"); reload(); } catch (err) { cmErr(err, "Couldn't save."); }
+      } },
+        h("label", { class: "row" }, en, h("span", {}, s.provider === "none" ? "Turn on paid tickets (needs the sandbox provider on the server)" : "Turn on paid tickets (sandbox)")),
+        h("label", { for: "cm-nf" }, "Network fee (%)"), nf, h("label", { for: "cm-tx" }, "Sales tax (%)"), tx,
+        h("label", { for: "cm-sc" }, "School share of net (%)"), sc, h("label", { for: "cm-di" }, "District share of net (%)"), di, h("label", { for: "cm-st" }, "State fund share of net (%)"), stt,
+        h("label", { for: "cm-lbl" }, "State fund name"), lbl, h("label", { for: "cm-mf" }, "Marketplace fee (%)"), mf, h("label", { for: "cm-hold" }, "Hold seats at checkout (minutes)"), hold,
+        h("button", { class: "btn primary", type: "submit" }, "Save settings"))));
+  } else {
+    out.push(h("section", { class: "card" }, h("ul", { class: "list" }, kv("Paid tickets", s.enabled ? "On (sandbox)" : "Off"), kv("Network fee", pct(set.networkFeeBps)),
+      kv("School share of net", pct(set.split.schoolBps)), kv("District share of net", pct(set.split.districtBps)), kv(`${set.stateFundLabel} share of net`, pct(set.split.stateBps)))));
+  }
+
+  if (report) {
+    const t = report.totals || {}, row = k => t[k] ? kv(k === "state_share" ? set.stateFundLabel : CM_LINE[k], money(t[k])) : null;
+    out.push(h("section", { class: "card", "aria-label": "Revenue" }, h("h2", {}, report.scope === "school" ? "School revenue" : "District revenue"),
+      Object.keys(t).length ? h("ul", { class: "list" }, ["gross", "processing_fee", "sales_tax", "network_fee", "school_share", "district_share", "state_share", "marketplace_fee", "vendor_payable"].map(row))
+        : empty("No sales yet."),
+      report.bySchool?.length > 1 ? h("ul", { class: "list" }, report.bySchool.map(b => kv(b.name, `${money(b.totals.gross || 0)} sold · ${money(b.totals.school_share || 0)} to the school`))) : null,
+      h("p", { class: "small muted" }, "Refunds appear as negative lines, so totals are net of refunds.")));
+    out.push(h("section", { class: "card", "aria-label": "Payments" }, h("h2", {}, "Payments"),
+      report.payments.length ? h("ul", { class: "list" }, report.payments.map(p => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, `${p.title || "Purchase"}${p.quantity ? ` × ${p.quantity}` : ""} · ${money(p.amountCents, p.currency)}`, h("span", { class: "small muted" }, ` · ${p.payer} · ${fmtDay(p.createdAt)}`)),
+        chip(p.status === "succeeded" ? "present" : "expected", p.status),
+        p.refundable ? h("button", { class: "btn", type: "button", onclick: async () => {
+          if (!(await ask({ title: "Refund this payment?", text: `Refund ${money(p.amountCents, p.currency)} to ${p.payer}? Their tickets stop working.`, confirm: "Refund", danger: true }))) return;
+          try { await api.post(`/api/commerce/payments/${p.id}/refund`, {}); toast("Refunded (sandbox)"); reload(); } catch (e) { cmErr(e, "Couldn't refund."); }
+        } }, "Refund") : null))) : empty("No payments yet.")));
+  }
+
+  if (upcoming.length) {
+    const ev = evPick("cm-gate-ev"), code = h("input", { id: "cm-code", autocomplete: "off", required: true, minlength: 20, maxlength: 128 }), res = h("p", { class: "small", role: "status" });
+    out.push(h("section", { class: "card", "aria-label": "Gate check-in" }, h("h2", {}, "Gate check-in"),
+      h("form", { class: "stack", onsubmit: async e => {
+        e.preventDefault();
+        try { await api.post(`/api/events/${ev.value}/check-in`, { ticketCode: code.value.trim() }); res.textContent = "✓ Admitted."; code.value = ""; }
+        catch (err) { res.textContent = CM_ERR[err?.body?.error] || "Not admitted."; }
+        code.focus();
+      } }, h("label", { for: "cm-gate-ev" }, "Event"), ev, h("label", { for: "cm-code" }, "Ticket code (scan or type)"), code,
+        h("button", { class: "btn primary", type: "submit" }, "Check in"), res)));
+    const ev2 = evPick("cm-tt-ev"), name = h("input", { id: "cm-tt-name", required: true, maxlength: 80, value: "General admission" }),
+      price = h("input", { id: "cm-tt-price", type: "number", min: 0, step: "0.01", value: "0" }), cap = h("input", { id: "cm-tt-cap", type: "number", min: 1, step: "1", value: "100" }),
+      open = h("input", { id: "cm-tt-open", type: "checkbox", class: "check", checked: true });
+    out.push(h("section", { class: "card", "aria-label": "Add tickets" }, h("h2", {}, "Add tickets to an event"),
+      h("form", { class: "stack", onsubmit: async e => {
+        e.preventDefault();
+        try { await api.post(`/api/events/${ev2.value}/ticket-types`, { name: name.value, priceCents: Math.round(Number(price.value) * 100), capacity: Number(cap.value), salesOpen: open.checked });
+          toast("Tickets added"); reload(); } catch (err) { cmErr(err, "Couldn't add tickets."); }
+      } }, h("label", { for: "cm-tt-ev" }, "Event"), ev2, h("label", { for: "cm-tt-name" }, "Ticket name"), name, h("label", { for: "cm-tt-price" }, "Price ($, 0 for free)"), price,
+        h("label", { for: "cm-tt-cap" }, "How many"), cap, h("label", { class: "row" }, open, h("span", {}, "On sale now")),
+        h("p", { class: "small muted" }, s.enabled ? "Families pay in the sandbox. Students can only get free tickets." : "Paid tickets can't be sold until commerce is on; free tickets work now."),
+        h("button", { class: "btn primary", type: "submit" }, "Add tickets"))));
+  }
+
+  if (supt && mkt?.data) {
+    const area = h("div", { class: "stack" });
+    out.push(h("section", { class: "card", "aria-label": "Marketplace purchases" }, h("h2", {}, "Marketplace purchases"),
+      h("p", { class: "small muted" }, `Approved marketplace licenses. The vendor is paid the price less processing and the ${pct(mkt.data.marketplaceFeeBps)} marketplace fee.`),
+      mkt.data.licenses.length ? h("ul", { class: "list" }, mkt.data.licenses.map(l => {
+        const pr = h("input", { type: "number", min: 0.01, step: "0.01", "aria-label": `Price for ${l.name}`, value: l.unitPriceCents ? (l.unitPriceCents / 100).toFixed(2) : "" });
+        const unit = h("select", { "aria-label": "Priced per" }, h("option", { value: "seat", selected: l.priceUnit === "seat" }, "per seat"), h("option", { value: "flat", selected: l.priceUnit === "flat" }, "flat"));
+        const seats = l.seatLimit ? null : h("input", { type: "number", min: 1, step: "1", "aria-label": "Seats to pay for", placeholder: "Seats" });
+        return h("li", { class: "stack" }, h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, l.name), ` · ${l.vendor}${l.seatLimit ? ` · ${l.seatLimit} seats` : ""}`),
+            l.purchase ? chip(l.purchase.status === "paid" ? "present" : "expected", `${l.purchase.status.replace("_", " ")} · ${money(l.purchase.total_cents)}`) : null),
+          l.purchase?.status === "paid" ? null : h("div", { class: "row wrap" }, pr, unit,
+            h("button", { class: "btn", type: "button", onclick: async () => { try { await api.post(`/api/commerce/marketplace/listings/${l.listingId}/price`, { unitPriceCents: Math.round(Number(pr.value) * 100), priceUnit: unit.value }); toast("Price saved"); reload(); } catch (e) { cmErr(e, "Couldn't save the price."); } } }, "Save price"),
+            seats, l.unitPriceCents && s.enabled ? h("button", { class: "btn primary", type: "button", onclick: async () => {
+              try { const r = (await api.post(`/api/commerce/marketplace/fee-events/${l.feeEventId}/checkout`, { idempotencyKey: cmKey(), quantity: seats ? Number(seats.value) : undefined })).data;
+                area.replaceChildren(payPanel(r.payment, { onDone: () => setTimeout(reload, 1500) })); } catch (e) { cmErr(e, "Couldn't start the purchase."); }
+            } }, "Buy (sandbox)") : null));
+      })) : empty("No approved marketplace licenses yet."), area));
+  }
+  return out;
+};
 
 async function boot() {
   try {
