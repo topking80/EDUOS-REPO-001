@@ -18,8 +18,9 @@
 //      carries this lease (WHERE lease_token=$token), then clears the lease.
 // A dispatcher that dies mid-batch leaves leases that run out after
 // `leaseSeconds`; the next run claims those rows again. The adapter is handed
-// the row id, which a real sender passes on as its idempotency key, so a row
-// sent just before a crash isn't delivered twice by a provider that honours it.
+// the row id, which provider APIs can use as an idempotency key. SMTP has no
+// standard idempotency contract, so ambiguous relay acceptance can still
+// produce a duplicate if the dispatcher crashes before settling the row.
 //
 // Slow senders: a batch is claimed together but sent one row at a time, so a
 // row's claim could run out while earlier rows are still being sent, and a
@@ -68,11 +69,12 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
         if (!renewed.rowCount) { done++; tally.lostLease++; continue; }
         let result, timer;
         try {
-          if (row.channel === "email" && !row.email_opted_in) {
+          const adapter = adapters(row.channel);
+          if (row.channel === "email" && adapter.name === "smtp" && !row.email_opted_in) {
             result = { status: "skipped", note: "recipient has not opted in to email notifications" };
           } else {
             result = await Promise.race([
-              adapters(row.channel).send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id, recipient_email: row.recipient_email }, log),
+              adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id, recipient_email: row.recipient_email }, log),
               new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
             ]);
           }
