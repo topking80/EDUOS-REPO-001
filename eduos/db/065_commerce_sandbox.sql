@@ -12,8 +12,10 @@
 -- No student data is stored in any commerce table: the payer is the adult
 -- (guardian or district) account, and pupils cannot pay.
 --
--- Numbered 065 (after the 37.6 marketplace, 064). The open FCM device push
--- branch (#52) must renumber past this file before it merges.
+-- Numbered 065 (after the 37.6 marketplace, 064). (Corrected 2026-11-17: PR
+-- #52 is the opt-in SMTP notification branch, not FCM push; its 051-053
+-- migrations must be renumbered past main's newest file before it merges.
+-- See docs/release-candidates/37.7.0-audit-hardening.md.)
 
 -- 1. EDAL learns two kinds. Reads both printed forms of the CHECK, like the
 --    notification widenings in 062-064.
