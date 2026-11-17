@@ -61,7 +61,8 @@ export async function enqueueNotifications(client, input, cfg = config) {
 
 // ---- adapters (used by src/notify-dispatch.js) ----
 // An adapter's send() returns { status, note }:
-//   delivered  the channel confirmed delivery (the only status that sets delivered_at)
+//   delivered  delivery confirmed by the provider (sets delivered_at)
+//   accepted   provider accepted the message; final device delivery is unknown
 //   skipped    nothing was sent on purpose (channel off, dry run)
 //   pending    a temporary failure: try again later (with back-off)
 //   failed     a permanent failure: stop
@@ -85,7 +86,7 @@ export function adapterFor(channel, cfg = config) {
   return ADAPTERS[name] || ADAPTERS.off;
 }
 
-export const SEND_STATUSES = Object.freeze(["delivered", "skipped", "pending", "failed"]);
+export const SEND_STATUSES = Object.freeze(["delivered", "accepted", "skipped", "pending", "failed"]);
 export const MAX_ATTEMPTS = 5;
 /** Seconds to wait before attempt n+1 after n failed attempts: 30 s, 1, 2, 4 min ... at most an hour. */
 export const retryDelaySeconds = attempts => Math.min(3600, 30 * 2 ** Math.max(0, attempts - 1));
