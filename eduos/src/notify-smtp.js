@@ -100,7 +100,7 @@ export function createSmtpAdapter({ config, connect = tls.connect }) {
         await session.command("DATA", [354]);
         await session.data(buildNotificationMessage({ id: row.id, from, to, domain: config.notifySmtpEhlo }));
         await session.command("QUIT", [221]);
-        return { status: "delivered", note: "accepted by SMTP relay" };
+        return { status: "accepted", note: "accepted by SMTP relay; mailbox delivery is not confirmed" };
       } catch (error) {
         const transient = !error.smtpCode || (error.smtpCode >= 400 && error.smtpCode < 500);
         return { status: transient ? "pending" : "failed", note: transient ? "SMTP temporary failure" : "SMTP permanent rejection (" + error.smtpCode + ")" };
