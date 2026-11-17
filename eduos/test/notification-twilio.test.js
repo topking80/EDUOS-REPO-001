@@ -45,7 +45,7 @@ test("Twilio SMS sends generic content through the configured Messaging Service"
   });
   const adapter = createTwilioSmsAdapter(client);
   const result = await adapter.send({ id: "12345678-1234-1234-1234-123456789abc", recipient_phone: "+14155552671" });
-  assert.equal(result.status, "delivered");
+  assert.equal(result.status, "accepted");
   assert.match(result.note, /accepted by Twilio/);
   assert.match(sent.url, /\/Messages\.json$/);
   assert.equal(sent.fields.To, "+14155552671");
