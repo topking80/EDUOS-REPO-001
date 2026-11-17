@@ -5,7 +5,7 @@ import fs from "node:fs";
 import * as W from "../src/wellbeing-model.js";
 import { ROLE_PERMISSIONS } from "../src/policy.js";
 
-const sql = fs.readFileSync(new URL("../db/060_wellbeing_checkins.sql", import.meta.url), "utf8");
+const sql = fs.readFileSync(new URL("../db/063_wellbeing_checkins.sql", import.meta.url), "utf8");
 const grants = fs.readFileSync(new URL("../db/runtime_grants.template.sql", import.meta.url), "utf8");
 const christie = fs.readFileSync(new URL("../src/christie-routes.js", import.meta.url), "utf8");
 const routes = fs.readFileSync(new URL("../src/wellbeing-routes.js", import.meta.url), "utf8");
@@ -46,7 +46,7 @@ test("roles: pupil checks in, parent consents, counselor reads, superintendent s
   const want = { pupil: ["checkin"], parent: ["consent"], counselor: ["queue"], superintendent: ["settings"] };
   for (const [role, perms] of Object.entries(ROLE_PERMISSIONS)) assert.deepEqual(perms.wellbeing || [], want[role] || [], role);
 });
-test("migration 060: off by default, opt-in under the current notice, RLS, append-only, purge, counseling queue", () => {
+test("migration 063: off by default, opt-in under the current notice, RLS, append-only, purge, counseling queue", () => {
   assert.match(sql, /checkins_enabled boolean NOT NULL DEFAULT false/);
   assert.match(sql, /decision='opted_in' AND notice_version=/);
   assert.match(sql, /'counseling',p_kind/);
