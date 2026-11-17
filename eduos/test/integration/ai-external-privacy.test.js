@@ -283,7 +283,7 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
   });
 
   it("a request bigger than a budget is refused before anything is sent", async () => {
-    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 20000 });
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft", "resource_summary", "writing_feedback"], dailyTokenCap: 1000000, userDailyTokenCap: 20000, externalProviderEnabled: true, privacyAcknowledged: true });
     const before = provider.received.length;
     const r = await runAi("supt1", "resource_summary", "教".repeat(8000)); // 24,000 bytes: more than 20,000 tokens could be needed
     assert.equal(r.status, 429); assert.equal(r.body.error, "ai_request_exceeds_budget");
@@ -347,7 +347,7 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     const u = (await admin.query("SELECT coalesce(sum(tokens_in + tokens_out), 0)::int AS n FROM ai_usage WHERE user_id = $1", [USERS.vp1[0]])).rows[0].n;
     // A "Volcanoes" lesson draft reserves about 1,300 tokens (system prompt +
     // text + framing + 900 output) and uses 950: room for two, never three.
-    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: u + 2700 });
+    await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: u + 2700, externalProviderEnabled: true, privacyAcknowledged: true });
     const before = provider.received.length;
     const results = await Promise.all(Array.from({ length: 20 }, () => runAi("vp1", "lesson_draft", "Volcanoes")));
     const ok = results.filter(r => r.status === 200).length;
