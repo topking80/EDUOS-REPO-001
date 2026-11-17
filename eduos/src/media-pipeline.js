@@ -27,7 +27,7 @@ export function validateMediaIntent(input = {}) {
   return Object.freeze({ id: randomUUID(), kind, mimeType, byteSize: input.byteSize });
 }
 
-const has = (value, method) => value && typeof value[method] === "function";
+const has = (value, method) => Boolean(value && typeof value[method] === "function");
 
 /**
  * Adapter contract:
