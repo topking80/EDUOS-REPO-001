@@ -88,18 +88,21 @@ test("tenant transaction rejects incomplete identity before acquiring a connecti
   } finally { pool.connect = original; }
 });
 
-test("runtime database role guard rejects superuser, BYPASSRLS, and table owner", async () => {
+test("runtime database role guard rejects superuser, BYPASSRLS, and an owner of any schema object", async () => {
   const original = pool.query;
   try {
     for (const role of [
-      { name: "root", rolsuper: true, rolbypassrls: false, students_owner: "owner" },
-      { name: "bypass", rolsuper: false, rolbypassrls: true, students_owner: "owner" },
-      { name: "owner", rolsuper: false, rolbypassrls: false, students_owner: "owner" }
+      { name: "root", rolsuper: true, rolbypassrls: false, owned_relations: null, owned_functions: null },
+      { name: "bypass", rolsuper: false, rolbypassrls: true, owned_relations: null, owned_functions: null },
+      { name: "owner", rolsuper: false, rolbypassrls: false, owned_relations: ["students"], owned_functions: null },
+      // 37.7.0 audit: owning any table (not just students) or a function is refused too.
+      { name: "partial", rolsuper: false, rolbypassrls: false, owned_relations: ["webhook_outbox"], owned_functions: null },
+      { name: "definer", rolsuper: false, rolbypassrls: false, owned_relations: null, owned_functions: ["eduos_webhook_slot_acquire"] }
     ]) {
       pool.query = async () => ({ rows: [role] });
       await assert.rejects(assertSafeRuntimeRole(pool), /Refusing to start/);
     }
-    pool.query = async () => ({ rows: [{ name: "eduos_app", rolsuper: false, rolbypassrls: false, students_owner: "eduos_owner" }] });
+    pool.query = async () => ({ rows: [{ name: "eduos_app", rolsuper: false, rolbypassrls: false, owned_relations: null, owned_functions: null }] });
     assert.equal(await assertSafeRuntimeRole(pool), "eduos_app");
   } finally { pool.query = original; }
 });
