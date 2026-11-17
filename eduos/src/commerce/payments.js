@@ -1,20 +1,11 @@
-// EduOS 37.7.0 commerce: the PaymentProvider interface and its only adapter,
-// "sandbox". No real processor, no keys, no network calls. Real payments stay
-// disabled until the district picks a processor and a new adapter is reviewed.
+// EduOS 37.7.0 commerce: the built-in "sandbox" adapter. No processor, no
+// keys, no network calls. 37.7.1: the choice of processor is per district
+// (src/commerce/catalog.js, db/066); the real processors' adapters are in
+// adapters.js and share this interface (see the header there). The old
+// global COMMERCE_PAYMENT_PROVIDER switch is gone.
 //
-// COMMERCE_PAYMENT_PROVIDER = "none" (default: paid checkout off) | "sandbox".
-// Any other value stops the server at startup.
-//
-// Interface (every adapter):
-//   name                          "sandbox"
-//   live                          false (true only for a real processor)
-//   feeFor(amountCents)           -> processing fee in cents (integer)
-//   createPayment({amountCents, currency, reference})
-//                                 -> { providerRef, status: "requires_confirmation" }
-//   confirmPayment(providerRef, {testOutcome})
-//                                 -> { status: "succeeded" | "declined", declineCode? }
-//   refundPayment(providerRef, amountCents)
-//                                 -> { status: "refunded", refundRef }
+// The sandbox confirms instantly with a chosen test outcome:
+//   confirmPayment(providerRef, {testOutcome}) -> { status: "succeeded" | "declined", declineCode? }
 import { randomBytes } from "node:crypto";
 import { pctOf, MAX_CENTS } from "./split.js";
 
@@ -28,7 +19,8 @@ export function sandboxProvider({ feeBps = 290, feeFixedCents = 30 } = {}) {
   const ref = p => `${p}_sandbox_${randomBytes(12).toString("hex")}`;
   const amountOk = a => Number.isSafeInteger(a) && a > 0 && a <= MAX_CENTS;
   return Object.freeze({
-    name: "sandbox", live: false,
+    name: "sandbox", live: false, checkout: true,
+    async testConnection() { return { ok: true, detail: "sandbox" }; },
     feeFor(amountCents) { if (!amountOk(amountCents)) throw new RangeError("amount out of range"); return pctOf(amountCents, feeBps) + feeFixedCents; },
     async createPayment({ amountCents, currency = "USD" }) {
       if (!amountOk(amountCents) || !/^[A-Z]{3}$/.test(currency)) throw new RangeError("invalid payment");
@@ -37,7 +29,7 @@ export function sandboxProvider({ feeBps = 290, feeFixedCents = 30 } = {}) {
     async confirmPayment(providerRef, { testOutcome = "sandbox_success" } = {}) {
       if (typeof providerRef !== "string" || !providerRef.startsWith("pay_sandbox_")) throw new Error("not a sandbox payment");
       if (!SANDBOX_OUTCOMES.includes(testOutcome)) throw new RangeError("unknown sandbox outcome");
-      return testOutcome === "sandbox_success" ? { status: "succeeded" } : { status: "declined", declineCode: "sandbox_card_declined" };
+      return testOutcome === "sandbox_success" ? { status: "succeeded", captureRef: null } : { status: "declined", declineCode: "sandbox_card_declined" };
     },
     async refundPayment(providerRef, amountCents) {
       if (typeof providerRef !== "string" || !providerRef.startsWith("pay_sandbox_") || !amountOk(amountCents)) throw new Error("invalid sandbox refund");
@@ -46,13 +38,9 @@ export function sandboxProvider({ feeBps = 290, feeFixedCents = 30 } = {}) {
   });
 }
 
-/** The configured provider, or null when paid checkout is off. */
+/** "none" -> null, "sandbox" -> the sandbox adapter. Real processors are built per district by the service. */
 export function createPaymentProvider(name = "none", opts = {}) {
   if (name === "none" || name === "" || name == null) return null;
   if (name === "sandbox") return sandboxProvider(opts);
-  throw new Error(`COMMERCE_PAYMENT_PROVIDER=${name} is not available: only "sandbox" exists. Real payment processors are disabled until one is chosen and reviewed.`);
+  throw new Error(`"${name}" is not a built-in provider: real processors are set up per district (Ticketing & revenue > Payment providers).`);
 }
-
-const envProvider = (process.env.COMMERCE_PAYMENT_PROVIDER || "none").trim();
-if (!PROVIDERS.includes(envProvider)) createPaymentProvider(envProvider); // throws at startup with the reason
-export const paymentProvider = createPaymentProvider(envProvider);
