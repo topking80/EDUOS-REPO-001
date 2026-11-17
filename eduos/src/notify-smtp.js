@@ -2,8 +2,8 @@
 // Uses implicit TLS only (port 465); credentials and message content are never logged.
 import tls from "node:tls";
 
-const validAddress = value => typeof value === "string" && value.length <= 254 && !/[\\r\\n<>\\s]/.test(value)
-  && /^[^@]+@[^@]+\\.[^@]+$/.test(value);
+const validAddress = value => typeof value === "string" && value.length <= 254 && !/[\r\n<>\s]/.test(value)
+  && /^[^@]+@[^@]+\.[^@]+$/.test(value);
 const safeDomain = value => /^[a-z0-9.-]+$/i.test(value) ? value : "eduos.local";
 
 function smtpError(message, code = null) {
@@ -31,9 +31,9 @@ class SmtpSession {
     }
   }
   parseResponse() {
-    const lines = this.buffer.split("\\r\\n");
+    const lines = this.buffer.split("\r\n");
     if (lines.length < 2) return null;
-    const first = /^(\\d{3})([- ])/.exec(lines[0]);
+    const first = /^(\d{3})([- ])/.exec(lines[0]);
     if (!first) return null;
     const code = Number(first[1]);
     let end = -1;
@@ -41,8 +41,8 @@ class SmtpSession {
       if (new RegExp("^" + code + " ").test(lines[i])) { end = i; break; }
     }
     if (end < 0) return null;
-    const response = { code, text: lines.slice(0, end + 1).join("\\n") };
-    this.buffer = lines.slice(end + 1).join("\\r\\n");
+    const response = { code, text: lines.slice(0, end + 1).join("\n") };
+    this.buffer = lines.slice(end + 1).join("\r\n");
     return response;
   }
   response() {
@@ -52,13 +52,13 @@ class SmtpSession {
     return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
   }
   async command(value, expected) {
-    this.socket.write(value + "\\r\\n");
+    this.socket.write(value + "\r\n");
     const result = await this.response();
     if (!expected.includes(result.code)) throw smtpError("SMTP command rejected (" + result.code + ")", result.code);
     return result;
   }
   async data(value) {
-    this.socket.write(value.replace(/\\r?\\n/g, "\\r\\n") + "\\r\\n.\\r\\n");
+    this.socket.write(value.replace(/\r?\n/g, "\r\n") + "\r\n.\r\n");
     const result = await this.response();
     if (result.code !== 250) throw smtpError("SMTP message rejected (" + result.code + ")", result.code);
     return result;
@@ -75,7 +75,7 @@ export function buildNotificationMessage({ id, from, to, domain }) {
     'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit", "",
     "You have a new EduOS notification.", "Open the EduOS app to read it."
   ];
-  return lines.join("\\r\\n").replace(/\\n\\./g, "\\n..");
+  return lines.join("\r\n").replace(/\n\./g, "\n..");
 }
 
 export function createSmtpAdapter({ config, connect = tls.connect }) {
@@ -93,7 +93,7 @@ export function createSmtpAdapter({ config, connect = tls.connect }) {
         const greeting = await session.response();
         if (greeting.code !== 220) throw smtpError("SMTP greeting rejected (" + greeting.code + ")", greeting.code);
         await session.command("EHLO " + safeDomain(config.notifySmtpEhlo), [250]);
-        const auth = Buffer.from("\\0" + config.notifySmtpUsername + "\\0" + config.notifySmtpPassword).toString("base64");
+        const auth = Buffer.from("\0" + config.notifySmtpUsername + "\0" + config.notifySmtpPassword).toString("base64");
         await session.command("AUTH PLAIN " + auth, [235]);
         await session.command("MAIL FROM:<" + from + ">", [250]);
         await session.command("RCPT TO:<" + to + ">", [250, 251]);
