@@ -344,3 +344,14 @@ GRANT UPDATE (consent_status, moderation_status, approved_by) ON activity_media_
 -- tenant-scoped server code; no public-facing route selects this table.
 GRANT SELECT, INSERT, UPDATE ON private_media_objects TO eduos_app;
 REVOKE DELETE, TRUNCATE ON private_media_objects FROM eduos_app;
+
+-- 37.6.0 sports eligibility, athletic directors and permission slips (060).
+-- Signatures are append-only; eligibility inputs come only through the
+-- SECURITY DEFINER function, which checks coach / athletic director itself.
+GRANT SELECT, INSERT, UPDATE ON school_athletic_directors, sports_eligibility_policy TO eduos_app;
+GRANT SELECT, INSERT ON activity_permission_slips, activity_permission_slip_signatures TO eduos_app;
+GRANT UPDATE (status, closed_at) ON activity_permission_slips TO eduos_app;
+REVOKE DELETE, TRUNCATE ON school_athletic_directors, sports_eligibility_policy, activity_permission_slips, activity_permission_slip_signatures FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_sports_eligibility_inputs(uuid) TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_is_athletic_director(uuid), eduos_is_activity_staff(uuid, text[]), eduos_activity_school(uuid),
+  eduos_can_see_eligibility(uuid), eduos_can_read_roster(uuid, uuid, uuid), eduos_can_manage_roster(uuid, uuid), eduos_family_on_roster(uuid) TO eduos_app;
