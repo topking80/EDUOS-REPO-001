@@ -55,7 +55,7 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
         // Reserve a hard upper bound for exactly what would be sent (system
         // prompt, redacted text, output cap), whatever the tokenizer.
         const reserve = maxTokensFor(externalRequestBody({ model: "", usecase, input, identifiers }));
-        const id = await reserveBudget(c, a, usecase, reserve).catch(e => { if (e.status === 429 || e.status === 403) throw new HttpError(e.status, e.message); throw e; });
+        const id = await reserveBudget(c, a, usecase, reserve, { requireExternal: external }).catch(e => { if (e.status === 429 || e.status === 403) throw new HttpError(e.status, e.message); throw e; });
         return { input, identifiers, id, reserve };
       });
       reservation = prep.id; reserved = prep.reserve;
