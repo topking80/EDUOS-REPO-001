@@ -8,8 +8,8 @@
 //    External rows never carry the in-app title/body: they hold a generic
 //    "You have a new EduOS notification" line, so no student-identifying text
 //    can leave EduOS through email, SMS or push. They keep the reference ids
-//    (ref_type/ref_id) so a delivery report can count them per incident; the
-//    adapter is handed only the row id, channel and recipient.
+//    (ref_type/ref_id) so a delivery report can count them per incident. The
+//    SMTP adapter receives a recipient address only after the user opts in.
 // src/notify-dispatch.js (owner role, like the retention job) hands pending
 // rows to the adapter. Email may use implicit-TLS SMTP after recipient opt-in;
 // SMS and push remain off/log until their enrollment paths ship.
