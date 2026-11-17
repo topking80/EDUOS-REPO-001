@@ -38,7 +38,7 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
   log = console.log, adapters = adapterFor } = {}) {
   if (!(sendTimeoutSeconds > 0 && sendTimeoutSeconds < leaseSeconds)) throw new Error("sendTimeoutSeconds must be above 0 and below leaseSeconds");
   const districts = (await db.query("SELECT id FROM districts WHERE status='active'")).rows;
-  const tally = { handled: 0, delivered: 0, skipped: 0, retrying: 0, failed: 0, lostLease: 0 };
+  const tally = { handled: 0, accepted: 0, delivered: 0, skipped: 0, retrying: 0, failed: 0, lostLease: 0 };
   for (const d of districts) {
     for (let done = 0; done < limit;) {
       const token = crypto.randomUUID();
@@ -123,6 +123,6 @@ async function inTx(db, districtId, fn) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  dispatchPending().then(t => { console.log(`notification dispatch: ${t.handled} handled (${t.delivered} delivered, ${t.skipped} skipped, ${t.retrying} to retry, ${t.failed} failed${t.lostLease ? `, ${t.lostLease} lease lost` : ""})`); return pool.end(); })
+  dispatchPending().then(t => { console.log(`notification dispatch: ${t.handled} handled (${t.accepted} provider-accepted, ${t.delivered} delivered, ${t.skipped} skipped, ${t.retrying} to retry, ${t.failed} failed${t.lostLease ? `, ${t.lostLease} lease lost` : ""})`); return pool.end(); })
     .catch(async e => { console.error(`notification dispatch failed: ${e.message}`); await pool.end(); process.exit(1); });
 }
