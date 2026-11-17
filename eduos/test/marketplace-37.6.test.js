@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { CHECKLIST } from "../src/marketplace/checklist.js";
 import { FEES_STATUS } from "../src/marketplace/fees.js";
 
-const sql = fs.readFileSync(new URL("../db/061_marketplace.sql", import.meta.url), "utf8");
+const sql = fs.readFileSync(new URL("../db/064_marketplace.sql", import.meta.url), "utf8");
 const grants = fs.readFileSync(new URL("../db/runtime_grants.template.sql", import.meta.url), "utf8");
 const mesh = fs.readFileSync(new URL("../src/mesh-routes.js", import.meta.url), "utf8");
 const routes = fs.readFileSync(new URL("../src/marketplace-routes.js", import.meta.url), "utf8");
@@ -25,8 +25,9 @@ test("approval reuses the existing licensing tables and the request queue", () =
   assert.match(mesh, /if \(decision === "approved" && q\.listing_id\) return fail\(409, "use_marketplace_approval"\)/);
   assert.match(sql, /CREATE TRIGGER app_requests_marketplace_guard BEFORE UPDATE ON app_requests/);
 });
-test("migration 061 is registered; RLS hides unapproved listings from schools; reviews and fee events are append-only", () => {
-  assert.match(migrate, /"061_marketplace\.sql"/);
+test("migration 064 is registered; RLS hides unapproved listings from schools; reviews and fee events are append-only", () => {
+  assert.match(migrate, /for \(const name of await shippedMigrations\(\)\) if \(!migrations\.includes\(name\)\) migrations\.push\(name\);/);
+  assert.ok(fs.existsSync(new URL("../db/064_marketplace.sql", import.meta.url)));
   assert.match(sql, /eduos_ctx_role\(\) IN \('principal','teacher'\) AND status='listed' AND privacy_status='approved'/);
   assert.match(grants, /REVOKE UPDATE, DELETE, TRUNCATE ON marketplace_privacy_reviews, marketplace_fee_events FROM eduos_app/);
 });
