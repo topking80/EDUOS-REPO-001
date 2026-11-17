@@ -14,6 +14,7 @@
 // rows to the adapter. The only adapters shipped are "off" and "log" (a dry
 // run that records that a send WOULD happen and sends nothing).
 import { config } from "./config.js";
+import { createSmtpAdapter } from "./notify-smtp.js";
 
 export const KINDS = ["announcement", "message", "transport", "christie", "moderation", "safety", "pickup"];
 export const EXTERNAL_TEXT = "You have a new EduOS notification. Open the EduOS app to read it.";
@@ -64,8 +65,11 @@ export async function enqueueNotifications(client, input, cfg = config) {
 //   pending    a temporary failure: try again later (with back-off)
 //   failed     a permanent failure: stop
 // Anything else is treated as failed, so an adapter bug can't look like a delivery.
+const smtpAdapter = createSmtpAdapter({ config });
+
 export const ADAPTERS = Object.freeze({
   off: Object.freeze({ name: "off", async send() { return { status: "skipped", note: "adapter off" }; } }),
+  smtp: smtpAdapter,
   log: Object.freeze({ name: "log", async send(row, log = console.log) {
     // Dry run: record that a send would happen. Nothing leaves the server, and
     // only opaque ids are logged.
