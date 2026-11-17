@@ -281,7 +281,7 @@ if (!["off", "log", "twilio"].includes(config.notifySmsAdapter)) throw new Error
 if (config.notifySmsAdapter === "twilio") {
   if (!/^AC[0-9a-f]{32}$/i.test(config.twilioAccountSid) || !config.twilioAuthToken) throw new Error("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are required for Twilio");
   if (!/^VA[0-9a-f]{32}$/i.test(config.twilioVerifyServiceSid)) throw new Error("TWILIO_VERIFY_SERVICE_SID is required for Twilio SMS verification");
-  if (!config.twilioMessagingServiceSid && !/^\\+[1-9]\\d{7,14}$/.test(config.twilioFromNumber)) throw new Error("Configure TWILIO_MESSAGING_SERVICE_SID or a valid TWILIO_FROM_NUMBER");
+  if (!config.twilioMessagingServiceSid && !/^\+[1-9]\d{7,14}$/.test(config.twilioFromNumber)) throw new Error("Configure TWILIO_MESSAGING_SERVICE_SID or a valid TWILIO_FROM_NUMBER");
 }
 intIn("TWILIO_TIMEOUT_MS", config.twilioTimeoutMs, 1000, 30000);
 if (!["off", "log"].includes(config.notifyPushAdapter)) throw new Error("NOTIFY_PUSH_ADAPTER must be off or log (FCM is not configured yet)");
