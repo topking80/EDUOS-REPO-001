@@ -109,8 +109,8 @@ containers:
 	@echo "Container images built and saved in containers/"
 
 push-containers:
-	podman push quay.io/eduos/eduos-enrollment:$(VERSION)
-	podman push quay.io/eduos/eduos-health:$(VERSION)
+	podman push quay.io/eduos/eduos-enrollment:$(ENROLLMENT_VERSION)
+	podman push quay.io/eduos/eduos-health:$(HEALTH_VERSION)
 
 # ============================================================
 # USB Boot Drive Creation
