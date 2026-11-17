@@ -130,8 +130,8 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
     const ok = Array.isArray(b.enabledUsecases) && b.enabledUsecases.every(x => USECASES[x]) && new Set(b.enabledUsecases).size === b.enabledUsecases.length
       && Number.isInteger(b.dailyTokenCap) && b.dailyTokenCap >= 0 && b.dailyTokenCap <= 100000000
       && Number.isInteger(b.userDailyTokenCap) && b.userDailyTokenCap >= 0 && b.userDailyTokenCap <= 10000000
-      && typeof b.externalProviderEnabled === "boolean"
-      && (!b.externalProviderEnabled || b.privacyAcknowledged === true);
+      && (b.externalProviderEnabled === undefined || typeof b.externalProviderEnabled === "boolean")
+      && (!(b.externalProviderEnabled === true) || b.privacyAcknowledged === true);
     if (!ok) return res.status(400).json({ error: "invalid_ai_policy" });
     try {
       const data = await withTenantTransaction(a, async (c) => {
@@ -145,7 +145,7 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
               external_provider_acknowledged_at=CASE WHEN EXCLUDED.external_provider_enabled THEN now() ELSE NULL END,
               external_provider_acknowledged_by=CASE WHEN EXCLUDED.external_provider_enabled THEN EXCLUDED.updated_by ELSE NULL END,
               updated_by=EXCLUDED.updated_by, updated_at=now()
-            RETURNING enabled_usecases, daily_token_cap, user_daily_token_cap, external_provider_enabled, external_provider_acknowledged_at, updated_at`, [a.districtId, b.enabledUsecases, b.dailyTokenCap, b.userDailyTokenCap, b.externalProviderEnabled, a.userId])).rows[0];
+            RETURNING enabled_usecases, daily_token_cap, user_daily_token_cap, external_provider_enabled, external_provider_acknowledged_at, updated_at`, [a.districtId, b.enabledUsecases, b.dailyTokenCap, b.userDailyTokenCap, b.externalProviderEnabled === true, a.userId])).rows[0];
         await audit(c, req, "update", "ai_district_policy", null, `enabled=${b.enabledUsecases.join(",") || "none"}; caps=${b.dailyTokenCap}/${b.userDailyTokenCap}; external_provider=${b.externalProviderEnabled ? "enabled_acknowledged" : "disabled"}`);
         return r;
       });
