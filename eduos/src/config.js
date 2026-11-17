@@ -1,3 +1,5 @@
+import { validateAiProviderUrl } from "./ai/provider-egress.js";
+
 // dotenv is a convenience for local development; production environments may
 // inject variables directly and need not load the optional helper at import time.
 try { await import("dotenv/config"); } catch (error) {
@@ -105,6 +107,8 @@ export const config = {
   aiProvider: (process.env.AI_PROVIDER || "local").trim(),
   aiAllowExternal: process.env.AI_ALLOW_EXTERNAL_PROVIDER === "true",
   aiProviderUrl: (process.env.AI_PROVIDER_URL || "").trim(),
+  // Explicit egress allowlist for external AI provider origins (exact hosts or parent domains).
+  aiProviderAllowedHosts: (process.env.AI_PROVIDER_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
   aiProviderModel: (process.env.AI_PROVIDER_MODEL || "").trim(),
   aiProviderApiKey: process.env.AI_PROVIDER_API_KEY || "",
   aiProviderTimeoutMs: Number(process.env.AI_PROVIDER_TIMEOUT_MS || 20000),
@@ -271,8 +275,8 @@ if (config.metricsToken && config.metricsToken.length < 16) {
 if (!["local", "openai_compatible"].includes(config.aiProvider)) throw new Error("AI_PROVIDER must be local or openai_compatible");
 if (config.aiProvider !== "local") {
   if (!config.aiAllowExternal) throw new Error("AI_PROVIDER=openai_compatible also requires AI_ALLOW_EXTERNAL_PROVIDER=true");
-  if (!/^https:\/\//.test(config.aiProviderUrl) && !(config.aiAllowInsecureLoopback && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(config.aiProviderUrl)))
-    throw new Error("AI_PROVIDER_URL must be an https:// URL");
+  const checked = validateAiProviderUrl(config.aiProviderUrl, config.aiProviderAllowedHosts, { allowInsecureLoopback: config.aiAllowInsecureLoopback });
+  if (!checked.ok) throw new Error(`AI_PROVIDER_URL rejected: ${checked.reason}`);
   if (!config.aiProviderModel) throw new Error("AI_PROVIDER_MODEL is required for an external AI provider");
 }
 intIn("AI_PROVIDER_TIMEOUT_MS", config.aiProviderTimeoutMs, 1000, 120000);
