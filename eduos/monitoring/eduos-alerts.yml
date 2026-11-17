@@ -1,4 +1,4 @@
-# Prometheus alert rules for EduOS 37.5.0 queue and API reliability.
+# Prometheus alert rules for EduOS 37.7.0 queue and API reliability.
 # Import this file through Prometheus rule_files. Scrape /metrics with its
 # required METRICS_TOKEN; never expose the endpoint publicly.
 groups:
