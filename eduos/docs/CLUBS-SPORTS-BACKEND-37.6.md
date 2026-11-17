@@ -46,3 +46,11 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - Read-URL creation additionally requires successful malware scanning and image processing, as well as approved guardian consent and moderation. The returned read URL and expiry are the only storage-delivery fields exposed.
 - The current private key registry is process-local and intentionally fails closed after restart. It is a security boundary for the adapter contract, not a durable production registry. Before enabling uploads in production or across multiple app instances, replace it with a durable, tenant-scoped server-side asset registry (for example, a protected database table with forced RLS), and add authenticated upload/verification routes that never serialize storage keys.
 - Do not log adapter responses, storage keys, signed URLs or upload URLs. Keep provider credentials in server-only secret configuration.
+
+ 
+## Media delivery security hardening (37.9.2)
+- Image processor output is rejected unless it returns an allowlisted JPEG/PNG/WebP MIME type, a positive size no greater than 20 MiB, and explicit `metadataStripped: true` and `reencoded: true` attestations. The processor receives the allowlist, output-size cap and sanitization requirements.
+- Upload URLs must use HTTPS and expire in the future within five minutes. Read URLs must use HTTPS and expire in the future within the 60-second delivery limit.
+- Read-URL creation no longer accepts caller-supplied consent or moderation statuses. A configured authorization adapter must execute the PostgreSQL-backed `createPostgresMediaAuthorization` gate, which locks the asset, every participant row and every guardian decision, checks all participants and denials/withdrawals, and mints the signed URL before the tenant transaction releases its locks.
+- The database authorization adapter restricts delivery to principals/superintendents in scope and assigned activity teachers. The pipeline remains disabled unless storage, scanning, image processing and authorization adapters are all configured.
+- These changes harden the provider contract; no production storage, scanner or image processor is connected, and the API does not expose upload or delivery routes. The process-local storage-key registry remains a production blocker until replaced by a durable tenant-scoped registry.
