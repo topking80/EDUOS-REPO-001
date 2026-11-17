@@ -8,7 +8,7 @@ function encryptionKey(cfg = config) {
 }
 
 export function hashPushToken(token) {
-  if (typeof token !== "string" || token.length < 20 || token.length > 4096 || /\\s/.test(token))
+  if (typeof token !== "string" || token.length < 20 || token.length > 4096 || /\s/.test(token))
     throw new TypeError("invalid FCM registration token");
   return crypto.createHash("sha256").update(token, "utf8").digest("hex");
 }
