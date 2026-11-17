@@ -2069,6 +2069,100 @@ for (const [view, extra] of [["copilot", [aiAssistantCard]], ["operations", [aiA
   const base = VIEWS[view];
   VIEWS[view] = async () => [...[await base()].flat(), ...(await Promise.all(extra.map(f => f())))];
 }
+// ----- 37.6.0 Enrollment: family applications and the school leaders' board -----
+// Families apply for a seat and follow each step; principals (own school) and
+// superintendents (all schools) move applications through review, offer,
+// waitlist and enrollment within the seats they set.
+SUBVIEWS.push("enroll", "enrollboard", "enrollapp");
+const ENR_GRADE = g => g === "K" ? "Kindergarten" : g === "PK" ? "Pre-K" : `Grade ${g}`;
+const ENR_ACTION = { applied: "Submit application", documents: "Ask for documents", review: "Send to review", offered: "Offer a seat", waitlisted: "Waitlist",
+  accepted: "Accept the offer", declined: "Decline", withdrawn: "Withdraw" };
+async function enrollUpload(appId, kind, file) {
+  if (!api.csrf) api.csrf = (await api.req("GET", "/api/csrf")).csrfToken;
+  const r = await fetch(`/api/enrollment/applications/${appId}/documents?kind=${encodeURIComponent(kind)}&filename=${encodeURIComponent(file.name)}`,
+    { method: "POST", credentials: "same-origin", headers: { "content-type": file.type || "application/octet-stream", "x-csrf-token": api.csrf }, body: file });
+  if (!r.ok) throw Object.assign(new Error("upload"), { body: await r.json().catch(() => ({})) });
+}
+const enrollMove = (id, to, view) => h("button", { class: to === "withdrawn" || to === "declined" ? "btn" : "btn primary", type: "button", onclick: async () => {
+  if (["withdrawn", "declined"].includes(to) && !await ask({ title: `${ENR_ACTION[to]}?`, text: "This can't be undone.", confirm: ENR_ACTION[to], danger: true })) return;
+  try { await api.post(`/api/enrollment/applications/${id}/status`, { to }); toast("Updated"); go(view, { push: false }); }
+  catch (e) { toast({ no_seats_left_use_waitlist: "No seats left. Use the waitlist.", upload_a_document_first: "Upload a document first." }[e.body?.error] || "Couldn't update."); } } }, ENR_ACTION[to] || to);
+VIEWS.enroll = async () => {
+  const [mine, opt] = await Promise.all([api.get("/api/enrollment/mine"), api.get("/api/enrollment/options")]);
+  const { applications, stages } = mine.data, o = opt.data;
+  const school = h("select", { id: "en-s" }, o.schools.map(s => h("option", { value: s.id }, s.name)));
+  const year = h("select", { id: "en-y" }, o.schoolYears.map(y => h("option", { value: y }, y)));
+  const grade = h("select", { id: "en-g" }, o.grades.map(g => h("option", { value: g }, ENR_GRADE(g))));
+  const first = h("input", { id: "en-f", required: true, maxlength: 80, autocomplete: "off" }), last = h("input", { id: "en-l", required: true, maxlength: 80, autocomplete: "off" });
+  const born = h("input", { id: "en-b", type: "date" });
+  const list = applications.map(a => {
+    const at = stages.findIndex(s => s.id === a.status);
+    const kind = h("select", { id: `en-k-${a.id}`, "aria-label": "Document type" }, o.documentKinds.map(k => h("option", { value: k.id }, k.label)));
+    const file = h("input", { id: `en-file-${a.id}`, type: "file", accept: "application/pdf,image/png,image/jpeg", "aria-label": "Document file" });
+    return h("li", {},
+      h("div", { class: "row" }, h("h3", { class: "grow" }, `${a.child.firstName} ${a.child.lastName}`), chip(a.status === "enrolled" ? "present" : ["declined", "withdrawn"].includes(a.status) ? "absent" : "expected", a.statusLabel)),
+      h("p", { class: "small muted" }, `${a.schoolName} · ${ENR_GRADE(a.grade)} · ${a.schoolYear}`),
+      at >= 0 ? h("p", { class: "small" }, stages.map((s, i) => `${i <= at ? "●" : "○"} ${s.label}`).join("  ")) : null,
+      a.waitlistPosition ? h("p", { class: "notice" }, `Waitlist position ${a.waitlistPosition}`) : null,
+      a.offerExpiresOn && a.status === "offered" ? h("p", { class: "notice" }, `Please answer by ${fmtDay(a.offerExpiresOn)}.`) : null,
+      a.files.length ? h("ul", { class: "list" }, a.files.map(f => kv(`${f.filename}`, f.status))) : null,
+      ["inquiry", "applied", "documents", "review"].includes(a.status) ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        if (!file.files[0]) return toast("Choose a file.");
+        try { await enrollUpload(a.id, kind.value, file.files[0]); toast("Uploaded"); go("enroll", { push: false }); }
+        catch (err) { toast({ file_too_large: "Files must be 2 MB or less.", unsupported_document_type: "Use a PDF, PNG or JPEG." }[err.body?.error] || "Couldn't upload."); } } },
+        h("label", { for: kind.id }, "Add a document"), kind, file, h("button", { class: "btn", type: "submit" }, "Upload")) : null,
+      a.nextActions.length ? h("div", { class: "row wrap" }, a.nextActions.map(to => enrollMove(a.id, to, "enroll"))) : null);
+  });
+  return [back("children", "Back"), h("h2", {}, "Enrollment"),
+    list.length ? h("section", { class: "card", "aria-label": "Your applications" }, h("ul", { class: "list" }, list)) : empty("No applications yet."),
+    h("section", { class: "card", "aria-label": "Apply for a seat" }, h("h2", {}, "Apply for a seat"),
+      h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        try { await api.post("/api/enrollment/applications", { schoolId: school.value, schoolYear: year.value, gradeLevel: grade.value, childFirstName: first.value, childLastName: last.value, childBirthDate: born.value || null });
+          toast("Application sent"); go("enroll", { push: false }); } catch { toast("Couldn't send the application."); } } },
+        h("label", { for: "en-f" }, "Child's first name"), first, h("label", { for: "en-l" }, "Child's last name"), last, h("label", { for: "en-b" }, "Date of birth (optional)"), born,
+        h("label", { for: "en-s" }, "School"), school, h("label", { for: "en-y" }, "School year"), year, h("label", { for: "en-g" }, "Grade"), grade,
+        h("button", { class: "btn primary", type: "submit" }, "Send application")),
+      h("p", { class: "small muted" }, "Only you and the school's leaders see this application. Documents are deleted after the decision on the district's schedule."))];
+};
+VIEWS.enrollboard = async () => {
+  const b = (await api.get(`/api/enrollment/board${state.enrollYear ? `?year=${encodeURIComponent(state.enrollYear)}` : ""}`)).data;
+  const yearSel = h("select", { id: "eb-y", "aria-label": "School year", onchange: e => { state.enrollYear = e.target.value; go("enrollboard", { push: false }); } }, (b.years.length ? b.years : [b.year].filter(Boolean)).map(y => h("option", { value: y, selected: y === b.year }, y)));
+  const cy = h("input", { id: "eb-cy", value: b.year || "", placeholder: "2027-28", pattern: "\\d{4}-\\d{2}" }), cg = h("input", { id: "eb-cg", value: "K", maxlength: 2 }), cs = h("input", { id: "eb-cs", type: "number", min: 0, max: 5000, value: "20" });
+  const capForm = state.me.role === "principal" ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+    try { await api.req("PUT", "/api/enrollment/capacity", { schoolYear: cy.value, gradeLevel: cg.value, seats: Number(cs.value) }); state.enrollYear = cy.value; toast("Seats saved"); go("enrollboard", { push: false }); } catch { toast("Couldn't save seats."); } } },
+    h("label", { for: "eb-cy" }, "School year"), cy, h("label", { for: "eb-cg" }, "Grade (PK, K, 1-12)"), cg, h("label", { for: "eb-cs" }, "New-student seats"), cs, h("button", { class: "btn", type: "submit" }, "Save seats")) : null;
+  return [back("overview", "Back"), h("h2", {}, "Enrollment"), b.years.length ? yearSel : null,
+    b.capacity.length ? h("section", { class: "card", "aria-label": "Seats" }, h("h2", {}, "Seats"), h("ul", { class: "list" }, b.capacity.map(c =>
+      kv(`${c.schoolName} · ${ENR_GRADE(c.grade)}`, `${c.committed} of ${c.seats} committed${c.waitlisted ? ` · ${c.waitlisted} waitlisted` : ""}${c.full ? " · full" : ""}`)))) : null,
+    ...b.columns.filter(c => c.items.length).map(c => h("section", { class: "card", "aria-label": c.label }, h("h2", {}, `${c.label} (${c.items.length})`),
+      h("ul", { class: "list" }, c.items.map(a => h("li", { class: "row" }, h("span", { class: "grow" }, `${a.child.firstName} ${a.child.lastName}`, h("br"), h("span", { class: "small muted" }, `${ENR_GRADE(a.grade)} · ${a.schoolName}${a.waitlistPosition ? ` · #${a.waitlistPosition}` : ""}`)),
+        h("button", { class: "btn", type: "button", onclick: () => { state.enrollApp = a.id; go("enrollapp"); } }, "Open")))))),
+    b.columns.some(c => c.items.length) ? null : empty("No applications for this year."),
+    capForm ? h("section", { class: "card", "aria-label": "Set seats" }, h("h2", {}, "Set seats"), capForm) : null];
+};
+VIEWS.enrollapp = async () => {
+  if (!state.enrollApp) return VIEWS.enrollboard();
+  const a = (await api.get(`/api/enrollment/applications/${state.enrollApp}`)).data;
+  return [back("enrollboard", "Enrollment"), h("h2", {}, `${a.child.firstName} ${a.child.lastName}`),
+    h("section", { class: "card" }, h("ul", { class: "list" }, kv("Status", a.statusLabel), kv("School", a.schoolName), kv("Grade", ENR_GRADE(a.grade)), kv("Year", a.schoolYear),
+      kv("Guardian", a.guardian.name), kv("Seats", a.seats?.seats == null ? "No limit set" : `${a.seats.committed} of ${a.seats.seats} committed`))),
+    h("section", { class: "card", "aria-label": "Documents" }, h("h2", {}, "Documents"), a.files.length ? h("ul", { class: "list" }, a.files.map(f => h("li", { class: "row wrap" },
+      h("a", { class: "grow", href: `/api/enrollment/documents/${f.id}` }, f.filename), chip(f.status === "verified" ? "present" : f.status === "rejected" ? "absent" : "expected", f.status),
+      f.status === "pending" ? ["verified", "rejected"].map(st => h("button", { class: "btn", type: "button", onclick: async () => {
+        try { await api.post(`/api/enrollment/documents/${f.id}/review`, { status: st }); go("enrollapp", { push: false }); } catch { toast("Couldn't save."); } } }, st === "verified" ? "Verify" : "Reject")) : null))) : empty("No documents yet.")),
+    a.nextActions.length || a.status === "accepted" ? h("section", { class: "card", "aria-label": "Next step" }, h("div", { class: "row wrap" },
+      a.nextActions.filter(t => t !== "enrolled").map(to => enrollMove(a.id, to, "enrollapp")),
+      a.status === "accepted" ? h("button", { class: "btn primary", type: "button", onclick: async () => {
+        try { const r = (await api.post(`/api/enrollment/applications/${a.id}/enroll`, {})).data; toast(`Enrolled as ${r.studentNumber}`); go("enrollapp", { push: false }); } catch { toast("Couldn't enroll."); } } }, "Enroll") : null)) : null,
+    h("section", { class: "card", "aria-label": "History" }, h("h2", {}, "History"), h("ul", { class: "list" }, a.events.map(e => kv(`${e.to_status}${e.note ? ` · ${e.note}` : ""}`, `${fmtDay(e.at)} · ${e.actor_role}`))))];
+};
+for (const view of ["children", "overview"]) {
+  const base = VIEWS[view];
+  VIEWS[view] = async () => [...[await base()].flat(), state.me.role === "parent"
+    ? h("section", { class: "card", "aria-label": "Enrollment" }, h("h2", {}, "Enrollment"), h("p", { class: "small muted" }, "Apply for a seat for a new child and follow each step."), h("button", { class: "btn", type: "button", onclick: () => go("enroll") }, "Open enrollment"))
+    : ["principal", "superintendent"].includes(state.me.role) ? h("section", { class: "card", "aria-label": "Enrollment" }, h("h2", {}, "Enrollment"), h("p", { class: "small muted" }, "Applications, seats and the waitlist."), h("button", { class: "btn", type: "button", onclick: () => go("enrollboard") }, "Open enrollment board")) : null];
+}
+
 async function boot() {
   try {
     state.me = await api.get("/api/me");

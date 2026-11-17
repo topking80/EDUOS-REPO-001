@@ -1,5 +1,6 @@
 export const ROLE_PERMISSIONS = Object.freeze({
   superintendent: {
+    enrollment: ["manage"], // 37.6.0: every school's enrollment board
     access_requests: ["read", "create", "review"],
     students: ["read"], schools: ["read", "create", "update"],
     assignments: ["read", "create", "update", "approve", "grade"],
@@ -30,6 +31,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     eden: ["read", "manage", "node"]
   },
   principal: {
+    enrollment: ["manage"], // 37.6.0: own school's enrollment board
     access_requests: ["read", "create"],
     students: ["read"], schools: ["read"],
     assignments: ["read", "create", "update", "grade"],
@@ -57,6 +59,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     learning: ["read", "teach", "grade"], edal: ["proof"]
   },
   parent: {
+    enrollment: ["apply"], // 37.6.0: apply for a seat and follow their own applications
     access_requests: ["read", "create"],
     students: ["read"], assignments: ["read"],
     attendance: ["read", "acknowledge"], cases: ["read"],
