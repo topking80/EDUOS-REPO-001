@@ -84,6 +84,8 @@ test("media consent is participant-specific and publication fails closed", async
  assert.match(routes, /guardianDecision\.denials/);
  assert.match(routes, /asset\.school_id!==activity\.school_id/);
  assert.match(routes, /media_participant_not_registered/);
+ assert.match(routes, /api\/events\/:id\/media/);
+ assert.match(routes, /media_parent_record_required/);
  assert.match(routes, /all_guardian_consents_required/);
  assert.match(routes, /publicationEnabled:false/);
  assert.match(routes, /private_storage_and_publication_adapter_not_configured/);
