@@ -209,7 +209,7 @@ export function registerLearningRoutes(app) {
     const manage = c.can_manage;
     const learner = manage ? null : await resolveLearner(client, req.actor, req.query.studentId);
     const units = await rows(client, `SELECT id,seq,title,summary FROM course_units WHERE course_id=$1 ORDER BY seq`, [c.id]);
-    const lessons = await rows(client, `SELECT l.id,l.unit_id,l.seq,l.title,l.objective,l.status,l.approved_at IS NOT NULL AS approved,
+    const lessons = await rows(client, `SELECT l.id,l.unit_id,l.seq,l.title,l.objective,l.status,l.approved_at IS NOT NULL AS approved,l.generated_by AS "generatedBy",
         coalesce((SELECT array_agg(ls.code ORDER BY ls.code) FROM lesson_standards x JOIN learning_standards ls ON ls.id=x.standard_id WHERE x.lesson_id=l.id), '{}') AS standards,
         (SELECT count(*)::int FROM lesson_sources s WHERE s.lesson_id=l.id) AS sources
         FROM lessons l WHERE l.course_id=$1 ORDER BY l.seq`, [c.id]);
@@ -284,6 +284,10 @@ export function registerLearningRoutes(app) {
     if ((title !== undefined && !cleanText(title, 120)) || (objective !== undefined && !cleanText(objective, 300)) ||
         (content !== undefined && !cleanText(content, 8000)) || (status !== undefined && !["draft", "published"].includes(status)) ||
         [title, objective, content, status].every(v => v === undefined)) throw new HttpError(400, "invalid_lesson_update");
+    // 37.6.0: a Leo draft is published only after a school leader approves it
+    // (also enforced by the database: db/062_leo_edison.sql).
+    if (status === "published" && await one(client, `SELECT 1 FROM lessons WHERE id=$1 AND generated_by IS NOT NULL AND approved_at IS NULL AND status='draft'
+        AND eduos_can_manage_course(course_id)`, [req.params.id])) throw new HttpError(409, "leo_draft_needs_approval");
     const l = await one(client, `UPDATE lessons SET title=coalesce($2,title),objective=coalesce($3,objective),content=coalesce($4,content),status=coalesce($5,status)
         WHERE id=$1 AND eduos_can_manage_course(course_id) RETURNING id,status,approved_at IS NOT NULL AS approved`,
       [req.params.id, title?.trim() ?? null, objective?.trim() ?? null, content?.trim() ?? null, status ?? null]);
@@ -317,7 +321,7 @@ export function registerLearningRoutes(app) {
     }
     await audit(client, req, "read", "lesson", l.id);
     return { id: l.id, courseId: l.course_id, course: l.course_title, unit: l.unit_title, title: l.title, objective: l.objective, content: l.content,
-      status: l.status, approved: Boolean(l.approved_at), canManage: l.can_manage, standards, sources: sources.map(sourceView), christieSkills: skills, assignments: work, mastery };
+      status: l.status, approved: Boolean(l.approved_at), canManage: l.can_manage, generatedBy: l.can_manage ? l.generated_by : undefined, standards, sources: sources.map(sourceView), christieSkills: skills, assignments: work, mastery };
   }));
 
   // ---------- assignments (work with rubric, or quiz) ----------
