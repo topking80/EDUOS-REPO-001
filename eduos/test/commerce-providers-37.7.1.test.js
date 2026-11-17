@@ -151,8 +151,10 @@ test("Square webhook signature: matches Square's documented example; constant-ti
 
 test("BTCPay adapter: Greenfield invoice, settlement check, refunds recorded as paid in dollars; BTCPay-Sig", async () => {
   const inv = { id: "INV12345", status: "New", amount: "25.00", currency: "USD" };
+  const listed = [];
   const t = mockTransport([
     [/^GET https:\/\/pay\.district\.example\/api\/v1\/stores\/STORE12345$/, (_m, o) => o.headers.authorization === "token k1" ? [200, { id: "STORE12345" }] : [403, {}]],
+    [/^GET .*\/invoices\?orderId=pay-4$/, () => [200, listed]],
     [/^POST .*\/invoices$/, () => [200, { id: "INV12345", checkoutLink: "https://pay.district.example/i/INV12345" }]],
     [/^GET .*\/invoices\/INV12345$/, () => [200, inv]]
   ]);
@@ -162,6 +164,16 @@ test("BTCPay adapter: Greenfield invoice, settlement check, refunds recorded as 
   const c = await a.createPayment({ amountCents: 2500, currency: "USD", reference: "pay-4", returnUrl: "https://edu.example/r" });
   assert.equal(c.redirectUrl, "https://pay.district.example/i/INV12345");
   assert.deepEqual(JSON.parse(t.calls.at(-1).body), { amount: "25.00", currency: "USD", metadata: { orderId: "pay-4" }, checkout: { redirectURL: "https://edu.example/r", redirectAutomatically: true } });
+  // No idempotency key in Greenfield: a retried create finds the invoice by
+  // orderId and reuses it (unless it expired, was invalid, or doesn't match).
+  assert.equal(t.calls.at(-2).method, "GET");
+  listed.push({ id: "INVOLD1", status: "Expired", amount: "25.00", currency: "USD", metadata: { orderId: "pay-4" }, checkoutLink: "https://pay.district.example/i/INVOLD1" },
+    { id: "INVOTHER", status: "New", amount: "99.00", currency: "USD", metadata: { orderId: "pay-4" }, checkoutLink: "https://pay.district.example/i/INVOTHER" },
+    { id: "INV12345", status: "New", amount: "25.00", currency: "USD", metadata: { orderId: "pay-4" }, checkoutLink: "https://pay.district.example/i/INV12345" });
+  const posts = t.calls.filter(x => x.method === "POST").length;
+  const again = await a.createPayment({ amountCents: 2500, currency: "USD", reference: "pay-4", returnUrl: "https://edu.example/r" });
+  assert.deepEqual([again.providerRef, again.redirectUrl, again.reused], ["INV12345", "https://pay.district.example/i/INV12345", true]);
+  assert.equal(t.calls.filter(x => x.method === "POST").length, posts, "no second invoice");
   assert.deepEqual(await a.confirmPayment("INV12345", { amountCents: 2500, currency: "USD" }), { status: "pending" });
   inv.status = "Expired";
   assert.deepEqual(await a.confirmPayment("INV12345", { amountCents: 2500, currency: "USD" }), { status: "declined", declineCode: "invoice_expired" });
@@ -169,6 +181,7 @@ test("BTCPay adapter: Greenfield invoice, settlement check, refunds recorded as 
   assert.deepEqual(await a.confirmPayment("INV12345", { amountCents: 2500, currency: "USD" }), { status: "succeeded", captureRef: "INV12345" });
   const r = await a.refundPayment("INV12345", 2500);
   assert.equal(r.manual, true); assert.match(r.refundRef, /^manual_fiat_[0-9a-f]{24}$/);
+  assert.equal((await a.refundPayment("INV12345", 2500)).refundRef, r.refundRef, "a retried refund records the same reference");
   const raw = '{"type":"InvoiceSettled","invoiceId":"INV12345"}';
   const sig = "sha256=" + createHmac("sha256", "whsec").update(raw).digest("hex");
   assert.equal(a.verifyWebhook({ headers: { "btcpay-sig": sig }, rawBody: raw }), true);
@@ -206,4 +219,31 @@ test("migration 066 and grants: sealed-only credentials, admin-only RLS, checkou
   assert.match(cfg, /commerceLivePaymentsEnabled: process\.env\.COMMERCE_LIVE_PAYMENTS_ENABLED === "true"/);
   assert.match(cfg, /COMMERCE_SECRETS_KEY must be at least 32 characters/);
   assert.match(cfg, /commerceTestApiBase: \(process\.env\.NODE_ENV \|\| "development"\) !== "production"/);
+});
+
+test("processor calls run after commit: afterCommit continuations, in-flight states, the reconcile sweep", async () => {
+  const { afterCommit, isAfterCommit, runAfterCommit } = await import("../src/commerce/phases.js");
+  const order = [];
+  const v = afterCommit(async () => { order.push("call"); return afterCommit(() => { order.push("record"); return 7; }); });
+  assert.equal(isAfterCommit(v), true); assert.equal(isAfterCommit({ x: 1 }), false);
+  assert.equal(await runAfterCommit(v), 7); assert.deepEqual(order, ["call", "record"]);
+  assert.deepEqual(await runAfterCommit({ plain: true }), { plain: true });
+  const sql = await read("db/066_commerce_district_providers.sql");
+  assert.match(sql, /status IN \('creating','requires_confirmation','succeeded','declined','expired','refund_pending','refunded'\)/);
+  assert.match(sql, /OLD\.status='refund_pending' AND NEW\.status IN \('refunded','succeeded'\)/);
+  assert.match(sql, /CREATE FUNCTION eduos_commerce_stale_payments\(p_stale_seconds integer\)[\s\S]*SECURITY DEFINER/);
+  assert.match(sql, /ADD COLUMN refund_pending boolean NOT NULL DEFAULT false/);
+  const grants = await read("db/runtime_grants.template.sql");
+  assert.match(grants, /GRANT EXECUTE ON FUNCTION eduos_commerce_stale_payments\(integer\) TO eduos_app;/);
+  assert.match(grants, /GRANT UPDATE \(hold_expires_at, refund_pending\) ON event_ticket_orders TO eduos_app;/);
+  // The service never awaits a processor inside the request's transaction:
+  // every adapter call sits in an afterCommit continuation or outside().
+  const svc = await read("src/commerce/service.js");
+  const direct = [...svc.matchAll(/(.{0,40})adapter\.(createPayment|refundPayment)\(/g)], viaConfirm = [...svc.matchAll(/(.{0,40})providerConfirm\(/g)];
+  assert.equal(direct.length, 2); assert.ok(viaConfirm.length >= 3);
+  for (const m of direct) assert.match(m[1], /outside\(\(\) => $/, m[0]);
+  for (const m of viaConfirm) assert.match(m[1], /outside\(\(\) => $|^function $/, m[0]);
+  assert.equal([...svc.matchAll(/adapter\.confirmPayment\(/g)].length, 1, "only providerConfirm calls confirmPayment");
+  assert.match(await read("src/server.js"), /startCommerceReconcile\(\);/);
+  assert.match(await read(".env.example"), /COMMERCE_RECONCILE_INTERVAL_SECONDS=60/);
 });
