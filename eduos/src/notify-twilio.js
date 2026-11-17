@@ -67,7 +67,7 @@ export function createTwilioSmsAdapter(client = createTwilioClient()) {
           "You have a new EduOS notification. Open the EduOS app to read it.", row.id);
         // Twilio accepted the message for processing. This is not a carrier
         // delivery receipt; the outbox note deliberately preserves that nuance.
-        return { status: "delivered", note: "accepted by Twilio; carrier delivery is not confirmed" };
+        return { status: "accepted", note: "accepted by Twilio; carrier delivery is not confirmed" };
       } catch (error) {
         const status = Number(error.status) || 0;
         return { status: classify(status), note: status ? "Twilio rejected the request (" + status + ")" : "Twilio temporarily unavailable" };
