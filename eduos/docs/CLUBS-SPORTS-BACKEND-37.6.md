@@ -98,3 +98,12 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - Migration `057_activity_media_consent_history.sql` and the consent API now preserve every grant, denial, and withdrawal in a separate append-only, RLS-protected history table. The runtime role can read/insert history but cannot update or delete it.
 - Pupil activity joins and pupil ticket purchases (including idempotent recovery) now require an active pupil-to-student identity link at the event/activity's school, even when an activity has no grade restrictions.
 - Event-linked media without an activity is now supported: school leads can list event media and register participants, while events tied to an activity remain restricted to assigned staff and school leads.
+
+
+## Durable private media registry (37.9.4)
+- Private object-storage keys are persisted in PostgreSQL `private_media_objects` by `createPostgresMediaRegistry`; no in-process Map is used by the production registry.
+- Registry reads and writes run through the caller's tenant transaction and include district, school, and asset predicates. Non-district roles must match the active school context; PostgreSQL forced RLS remains the final boundary.
+- `createPostgresBackedMediaPipeline` composes the PostgreSQL registry and consent/moderation authorization gate so a configured media pipeline cannot accidentally use an ephemeral registry.
+- The storage key remains internal to server-side registry/provider calls. Upload intents, verification results, and read-URL responses omit it.
+- The registry requires an injected tenant transaction function, avoiding implicit database-pool creation at module import. Storage, scanner, and processor providers remain unconfigured by default, so media stays disabled until explicitly provisioned.
+- Dedicated tests cover persistence across registry instances, tenant/school mismatch rejection, state updates, and fail-closed default provider configuration.
