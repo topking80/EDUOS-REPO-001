@@ -572,6 +572,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         }
         if (!canPerform(req.actor, "apps", "decide")) return fail(403, "district_administrator_required");
         if (!["approved", "denied"].includes(decision) || !optText(note, 1000)) return fail(400, "invalid_decision");
+        // 37.6.0: marketplace requests need an approved privacy review and go
+        // through POST /api/marketplace/requests/:id/approve (license + fee hook).
+        if (decision === "approved" && q.listing_id) return fail(409, "use_marketplace_approval");
         let assignmentId = null;
         if (decision === "approved" && q.app_id) {
           const ins = await client.query(

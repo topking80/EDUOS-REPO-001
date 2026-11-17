@@ -1480,6 +1480,61 @@ VIEWS.alerts = async () => {
         h("button", { class: "btn", type: "button", onclick: async () => { await api.post(`/api/comms/reports/${r.id}/resolve`, { action: "dismiss", reason: "No action needed" }); toast("Dismissed"); go("alerts", { push: false }); } }, "Dismiss"))))) : empty("Nothing to review.")));
   return out;
 };
+// ----- 37.6.0 Marketplace (vendor listings, privacy review, request -> license) -----
+SUBVIEWS.push("market");
+const MK_PRIV = { not_reviewed: ["expected", "Not reviewed"], in_review: ["expected", "In review"], changes_requested: ["absent", "Changes requested"], approved: ["present", "Privacy approved"], rejected: ["absent", "Rejected"] };
+VIEWS.market = async () => {
+  const m = (await api.get("/api/marketplace")).data;
+  const reload = () => go("market", { push: false });
+  const err = e => toast({ checklist_incomplete: "Every privacy item must be checked to approve.", privacy_review_not_approved: "This listing's privacy review isn't approved.",
+    request_already_pending: "Your school already asked for this.", dpa_expired: "The data privacy agreement has expired.", note_required: "Add a note." }[e.body?.error] || "Couldn't save.");
+  const card = l => {
+    const out = [h("div", { class: "row" }, h("h3", { class: "grow" }, l.name), chip(...(MK_PRIV[l.privacy.status] || ["expected", l.privacy.status]))),
+      h("p", { class: "small muted" }, `${l.vendor} · ${l.category} · data shared: ${l.dataSharingScope}${l.pricingNote ? ` · ${l.pricingNote}` : ""}`), h("p", {}, l.description)];
+    if (m.canRequest && l.requestable) {
+      const reason = h("input", { id: `mk-r-${l.id}`, maxlength: 2000, required: true }), seats = h("input", { id: `mk-s-${l.id}`, type: "number", min: 1, max: 100000 });
+      const scope = state.me.role === "principal" ? h("select", { id: `mk-sc-${l.id}` }, h("option", { value: "school" }, "My school"), h("option", { value: "district" }, "Whole district")) : null;
+      out.push(h("form", { class: "stack", onsubmit: async e => { e.preventDefault(); try { await api.post(`/api/marketplace/listings/${l.id}/request`, { reason: reason.value, seats: seats.value || null, scope: scope?.value || "school" }); toast("Request sent to the district"); reload(); } catch (x) { err(x); } } },
+        h("label", { for: reason.id }, "Why do you need it?"), reason, h("label", { for: seats.id }, "Seats (optional)"), seats, scope ? [h("label", { for: scope.id }, "For"), scope] : null, h("button", { class: "btn", type: "submit" }, "Request")));
+    }
+    if (l.requests.length) out.push(h("ul", { class: "list" }, l.requests.map(r => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${r.school} · ${r.status}${r.seats ? ` · ${r.seats} seats` : ""}`, h("br"), h("span", { class: "small muted" }, `${r.requestedBy}: ${r.reason}`)),
+      m.canDecide && r.status === "pending" ? [h("button", { class: "btn primary small", type: "button", onclick: async () => { try { await api.post(`/api/marketplace/requests/${r.id}/approve`, {}); toast("Approved: license and access added"); reload(); } catch (x) { err(x); } } }, "Approve"),
+        h("button", { class: "btn small", type: "button", onclick: async () => { try { await api.req("PATCH", `/api/app-requests/${r.id}`, { decision: "denied" }); toast("Denied"); reload(); } catch (x) { err(x); } } }, "Deny")] : null))));
+    if (m.canManage) {
+      const boxes = m.checklist.map(c => h("label", { class: "row" }, h("input", { type: "checkbox", value: c.key, checked: l.privacy.checklist?.[c.key] === true }), " ", c.label));
+      const st = h("select", { id: `mk-ps-${l.id}` }, ["in_review", "changes_requested", "approved", "rejected"].map(s => h("option", { value: s }, MK_PRIV[s][1])));
+      const note = h("input", { id: `mk-pn-${l.id}`, maxlength: 1000 }), dpa = h("input", { id: `mk-pd-${l.id}`, type: "date", value: l.privacy.dpaExpiresOn ? String(l.privacy.dpaExpiresOn).slice(0, 10) : "" });
+      out.push(h("details", {}, h("summary", {}, "Privacy review"), h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        try { await api.post(`/api/marketplace/listings/${l.id}/review`, { status: st.value, note: note.value || null, dpaExpiresOn: dpa.value || null, checklist: Object.fromEntries(boxes.map(b => b.querySelector("input")).map(i => [i.value, i.checked])) }); toast("Review saved"); reload(); } catch (x) { err(x); } } },
+        ...boxes, h("label", { for: dpa.id }, "DPA expires"), dpa, h("label", { for: st.id }, "Decision"), st, h("label", { for: note.id }, "Note"), note, h("button", { class: "btn", type: "submit" }, "Save review")),
+        l.reviews.length ? h("ul", { class: "list" }, l.reviews.map(r => kv(`${r.from} → ${r.to}${r.note ? ` · ${r.note}` : ""}`, `${r.by} · ${fmtDay(r.at)}`))) : null));
+    }
+    return h("li", {}, ...out);
+  };
+  const views = [back(state.me.role === "teacher" ? "classes" : "overview", "Back"), h("h2", {}, "Marketplace"),
+    m.listings.length ? h("section", { class: "card", "aria-label": "Listings" }, h("ul", { class: "list" }, m.listings.map(card))) : empty(m.canManage ? "No listings yet. Add a vendor and a listing below." : "No approved apps to request yet.")];
+  if (m.canManage) {
+    const vn = h("input", { id: "mk-vn", maxlength: 120, required: true }), vw = h("input", { id: "mk-vw", type: "url", placeholder: "https://" });
+    views.push(h("section", { class: "card", "aria-label": "Add vendor" }, h("h2", {}, "Add a vendor"), h("form", { class: "stack", onsubmit: async e => { e.preventDefault(); try { await api.post("/api/marketplace/vendors", { name: vn.value, website: vw.value || null }); toast("Vendor added"); reload(); } catch (x) { err(x); } } },
+      h("label", { for: "mk-vn" }, "Name"), vn, h("label", { for: "mk-vw" }, "Website"), vw, h("button", { class: "btn", type: "submit" }, "Add vendor"))));
+    if (m.vendors.length) {
+      const f = { vendorId: h("select", { id: "mk-lv" }, m.vendors.map(v => h("option", { value: v.id }, v.name))), name: h("input", { id: "mk-ln", maxlength: 120, required: true }), category: h("input", { id: "mk-lc", maxlength: 40, required: true }),
+        description: h("textarea", { id: "mk-ld", maxlength: 1000, required: true }), launchUrl: h("input", { id: "mk-lu", type: "url", required: true, placeholder: "https://" }),
+        dataSharingScope: h("select", { id: "mk-lsc" }, ["none", "identity", "roster_basic", "roster_full"].map(s => h("option", { value: s }, s))), pricingNote: h("input", { id: "mk-lp", maxlength: 300 }) };
+      views.push(h("section", { class: "card", "aria-label": "Add listing" }, h("h2", {}, "Add a listing"), h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+          try { await api.post("/api/marketplace/listings", Object.fromEntries(Object.entries(f).map(([k, el]) => [k, el.value || null]))); toast("Listing added: review its privacy next"); reload(); } catch (x) { err(x); } } },
+        ...Object.entries({ vendorId: "Vendor", name: "App name", category: "Category", description: "Description", launchUrl: "Launch URL", dataSharingScope: "Data shared", pricingNote: "Pricing note" }).flatMap(([k, t]) => [h("label", { for: f[k].id }, t), f[k]]),
+        h("button", { class: "btn", type: "submit" }, "Add listing"))));
+    }
+    views.push(h("p", { class: "small muted" }, m.feeAccounting));
+  }
+  return views;
+};
+for (const view of ["overview", "classes"]) {
+  const base = VIEWS[view];
+  VIEWS[view] = async () => [...[await base()].flat(), ["principal", "teacher", "superintendent"].includes(state.me.role)
+    ? h("section", { class: "card", "aria-label": "Marketplace" }, h("h2", {}, "Marketplace"), h("p", { class: "small muted" }, "Privacy-reviewed apps your school can request."), h("button", { class: "btn", type: "button", onclick: () => go("market") }, "Open marketplace")) : null];
+}
 // ---- 32.7.0 EDEN: district hub "Nodes" screen and school node status ------
 const NODE_STATE = { online: ["present", "Online"], offline: ["absent", "Offline"], never: ["expected", "Not synced yet"], disabled: ["expected", "Not set up"] };
 const FO_STATE = { authorized: ["expected", "Authorized"], active: ["absent", "Partner hosting"], handing_back: ["expected", "Handing back"], returned: ["expected", "Returned"], closed: ["present", "Closed"], cancelled: ["present", "Cancelled"] };
