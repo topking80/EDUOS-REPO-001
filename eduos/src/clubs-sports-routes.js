@@ -173,9 +173,10 @@ export function registerClubsSportsRoutes(app) {
    await c.query("SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",[a.districtId,a.userId+":"+key]);
    const prior=await one(c,`SELECT o.id,o.status,o.total_cents,o.currency,o.event_id,e.school_id
      FROM event_ticket_orders o JOIN school_events e ON e.id=o.event_id AND e.district_id=o.district_id
-     WHERE o.district_id=$1 AND o.buyer_user_id=$2 AND o.idempotency_key=$3 AND o.event_id=$4`,
-     [a.districtId,a.userId,key,req.params.id]);
+     WHERE o.district_id=$1 AND o.buyer_user_id=$2 AND o.idempotency_key=$3`,
+     [a.districtId,a.userId,key]);
    if(prior){
+    if(prior.event_id!==req.params.id)throw new HttpError(409,"idempotency_key_reused");
     if(a.role==="parent"){
      const linked=await one(c,`SELECT 1 FROM student_user_links l JOIN students s ON s.id=l.student_id AND s.district_id=l.district_id
        WHERE l.district_id=$1 AND l.user_id=$2 AND l.status='active' AND l.relationship IN ('parent','guardian') AND s.school_id=$3 LIMIT 1`,
