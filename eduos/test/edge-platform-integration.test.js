@@ -32,6 +32,11 @@ test('universal ISO build fails on installer errors and verifies a non-empty art
   assert.doesNotMatch(target, /\|\|\s*true/, 'installer errors must propagate to make');
   assert.match(target, /command -v \$\(COREOS_INSTALLER\)/, 'missing installer must fail clearly');
   assert.match(target, /@test -s boot\/eduos-universal-\$\(VERSION\)\.iso/, 'success requires a non-empty ISO');
+  const workflow = fs.readFileSync(path.join(root, 'edge-platform/eduos/.github/workflows/build-eduos.yml'), 'utf8');
+  assert.match(workflow, /run: make iso-\$\{\{ matrix\.role \}\} VERSION=\$\{\{ env\.VERSION \}\} ARCH=\$\{\{ env\.ARCH \}\}(?!\s*\|\|)/,
+    'role ISO workflow must propagate make failures');
+  assert.match(workflow, /run: make iso-universal VERSION=\$\{\{ env\.VERSION \}\} ARCH=\$\{\{ env\.ARCH \}\}(?!\s*\|\|)/,
+    'universal ISO workflow must propagate make failures');
 });
 // 32.0.54: the un-hardened reference copy was removed and tombstoned; the
 // security review and the hardened tree (edge-platform/eduos) are retained.
