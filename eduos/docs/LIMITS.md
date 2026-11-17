@@ -58,7 +58,8 @@ admin can call. They are enforced when the matching record is created.
 | `PAGE_SIZE_MAX` | 1000 | Bounds the memory and time one request can use. Callers page through larger lists. |
 | `SESSION_MAX_PER_USER` | 5 (allowed range 1–1000) | Limits how many sessions one stolen account can keep open. Raise it for shared devices. |
 | `SESSION_CACHE_MAX` | 5000 | Memory bound for the optional session cache |
-| `WEBHOOK_MAX_IN_FLIGHT` | 16 | Concurrency bound for outbound deliveries (queued, not dropped) |
+| `WEBHOOK_MAX_IN_FLIGHT` | 16 | Concurrency bound for outbound deliveries per process (queued, not dropped) |
+| `WEBHOOK_GLOBAL_MAX_IN_FLIGHT` | 64 | Deliveries in flight across the whole deployment, enforced in PostgreSQL (`0` = per-process only); a job with no free slot waits 5 s without using an attempt |
 | Webhooks: 3 attempts, 64 KB response, 2,048-character URL, at most 16 event types per subscription | fixed | SSRF and resource protections |
 | CSRF tokens, session idle timeout and TTL, OIDC state binding | fixed or configured as before | Unchanged |
 
