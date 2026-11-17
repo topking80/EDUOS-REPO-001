@@ -62,6 +62,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
   parent: {
     access_requests: ["read", "create"],
     students: ["read"], assignments: ["read"],
+    wallet: ["hold"], // 37.6.0: export and share their own child's credentials (Wallet)
     attendance: ["read", "acknowledge"], cases: ["read"],
     flow_events: ["read"], apps: ["launch"], branding: ["read"],
     transport: ["read"], comms: ["read", "message"],
@@ -71,6 +72,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
   pupil: {
     access_requests: ["read", "create"],
     students: ["read"], assignments: ["read", "submit"],
+    wallet: ["hold"], // 37.6.0: export and share their own credentials (Wallet)
     attendance: ["read"], cases: [],
     flow_events: ["read"], apps: ["launch"], branding: ["read"],
     christie: ["tutor"], comms: ["read"], transport: ["read"], safety: ["read"],

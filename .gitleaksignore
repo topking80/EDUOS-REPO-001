@@ -2,3 +2,6 @@
 3662f77a135704cd28249cc6246cf928a1882270:eduos/test/integration/integrations.test.js:generic-api-key:67
 # Not a secret: the localStorage key name "eduos_staffing_v1" (moved from public/index.html).
 3a286a69eb9698f69a7d291d427b3931efe10374:eduos/public/legacy-app.js:generic-api-key:938
+# 37.6.0 Credentials Wallet tests: the published W3C eddsa-jcs-2022 test-vector key and a fixed test-only issuer secret.
+7465bebf6cd200b730c7ec1ea48fd4fc97d3886a:eduos/test/wallet-37.6.test.js:generic-api-key:10
+7465bebf6cd200b730c7ec1ea48fd4fc97d3886a:eduos/test/integration/wallet.test.js:generic-api-key:12

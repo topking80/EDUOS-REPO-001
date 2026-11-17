@@ -176,6 +176,14 @@ REVOKE ALL ON edal_heads FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_edal_head(), eduos_edal_chain(bigint,integer), eduos_edal_head_info(), eduos_edal_neighbors(uuid),
   eduos_quiz_keys(uuid), eduos_quiz_submit(uuid), eduos_quiz_record_auto(uuid,jsonb,numeric), eduos_course_students(uuid) TO eduos_app;
 REVOKE ALL ON FUNCTION eduos_purge_student_325(uuid) FROM eduos_app;
+-- 37.6.0 Credentials Wallet: holders create and revoke share links; links are
+-- never deleted by the runtime role (FERPA purge runs through the definer chain).
+GRANT SELECT, INSERT ON wallet_shares TO eduos_app;
+GRANT UPDATE (revoked_by, revoked_at) ON wallet_shares TO eduos_app;
+REVOKE DELETE, TRUNCATE ON wallet_shares FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_wallet_export_inputs(uuid), eduos_wallet_credentials(), eduos_wallet_share_lookup(text),
+  eduos_wallet_credential_status(uuid) TO eduos_app;
+REVOKE ALL ON FUNCTION eduos_purge_student_pre_wallet(uuid) FROM eduos_app;
 -- 32.7.0 offline node, EDEN and DECN. Logs and inbound records are
 -- append-only; the outbox is written only by src/eden/egress.js; student data
 -- is reachable for EDEN only through the definer functions (counts, the
