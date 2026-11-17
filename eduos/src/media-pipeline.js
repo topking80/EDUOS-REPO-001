@@ -53,8 +53,13 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
       const result = await storage.createPrivateUpload({
         assetId: intent.id, districtId, schoolId, mimeType: intent.mimeType, byteSize: intent.byteSize
       });
-      if (!result || typeof result.uploadUrl !== "string" || typeof result.storageKey !== "string" ||
-          !result.storageKey || !Number.isFinite(Date.parse(result.expiresAt)))
+      const uploadExpiry = Date.parse(result?.expiresAt);
+      let uploadUrl;
+      try { uploadUrl = new URL(result?.uploadUrl); } catch { throw new MediaPipelineError("invalid_private_storage_response"); }
+      if (!result || uploadUrl.protocol !== "https:" || !uploadUrl.hostname ||
+          typeof result.storageKey !== "string" || !result.storageKey ||
+          !Number.isFinite(uploadExpiry) || uploadExpiry <= Date.now() ||
+          uploadExpiry - Date.now() > 5 * 60 * 1000)
         throw new MediaPipelineError("invalid_private_storage_response");
       privateObjects.set(intent.id, {
         districtId, schoolId, storageKey: result.storageKey,
@@ -75,11 +80,19 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
       });
       if (!scan || scan.verdict !== "clean") throw new MediaPipelineError("media_security_scan_blocked", 422);
       if (record.kind === "image") {
-        const processed = await processor.processImage({ storageKey: record.storageKey, mimeType: record.mimeType });
-        if (!processed || !processed.storageKey || !Number.isSafeInteger(processed.byteSize) || processed.byteSize < 1)
+        const processed = await processor.processImage({
+          storageKey: record.storageKey, mimeType: record.mimeType,
+          outputMimeTypes: MEDIA_LIMITS.imageMimeTypes, maxOutputBytes: MEDIA_LIMITS.imageBytes,
+          stripMetadata: true, reencode: true
+        });
+        if (!processed || typeof processed.storageKey !== "string" || !processed.storageKey ||
+            !MEDIA_LIMITS.imageMimeTypes.includes(processed.mimeType) ||
+            !Number.isSafeInteger(processed.byteSize) || processed.byteSize < 1 ||
+            processed.byteSize > MEDIA_LIMITS.imageBytes ||
+            processed.metadataStripped !== true || processed.reencoded !== true)
           throw new MediaPipelineError("image_processing_failed", 422);
         record.storageKey = processed.storageKey;
-        record.mimeType = processed.mimeType || record.mimeType;
+        record.mimeType = processed.mimeType;
         record.byteSize = processed.byteSize;
         record.scanStatus = "clean";
         record.processingStatus = "processed";
@@ -99,9 +112,11 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
       const result = await storage.createPrivateReadUrl({
         storageKey: record.storageKey, expiresInSeconds: MEDIA_LIMITS.signedUrlSeconds
       });
-      if (!result || typeof result.url !== "string" || !Number.isFinite(Date.parse(result.expiresAt)))
-        throw new MediaPipelineError("invalid_private_storage_response");
-      if (Date.parse(result.expiresAt) - Date.now() > MEDIA_LIMITS.signedUrlSeconds * 1000 + 5000)
+      let readUrl;
+      try { readUrl = new URL(result?.url); } catch { throw new MediaPipelineError("invalid_private_storage_response"); }
+      const readExpiry = Date.parse(result?.expiresAt);
+      if (readUrl.protocol !== "https:" || !readUrl.hostname || !Number.isFinite(readExpiry) ||
+          readExpiry <= Date.now() || readExpiry - Date.now() > MEDIA_LIMITS.signedUrlSeconds * 1000 + 5000)
         throw new MediaPipelineError("private_url_ttl_exceeded");
       return Object.freeze({ url: result.url, expiresAt: result.expiresAt });
     }
