@@ -43,6 +43,11 @@ export function retentionSettings(env = process.env) {
   };
 }
 
+/** 37.6.0: RETENTION_* numbers passed to the feature retention functions. */
+export function featureRetentionSettings(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([k, v]) => /^RETENTION_[A-Z_]+_DAYS$/.test(k) && /^[0-9]{1,5}$/.test(String(v))).map(([k, v]) => [k, Number(v)]));
+}
+
 export async function runRetention(settings = retentionSettings()) {
   const summary = { districts: {}, sessions: null };
   const districts = await pool.query("SELECT id FROM districts ORDER BY id");
@@ -58,8 +63,17 @@ export async function runRetention(settings = retentionSettings()) {
         [settings.offlineReplayDays ?? retentionSettings({}).offlineReplayDays]);
       const er = await client.query("SELECT eduos_retention_purge_edge_reports($1) AS counts",
         [settings.edgeReportDays ?? retentionSettings({}).edgeReportDays]);
+      // 37.6.0: each feature migration may add eduos_retention_feature_<name>(jsonb);
+      // all of them run here with the RETENTION_* settings from the environment.
+      const fr = {};
+      const feats = await client.query(`SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+         WHERE n.nspname='public' AND p.proname LIKE 'eduos\\_retention\\_feature\\_%' ORDER BY p.proname`);
+      for (const { proname } of feats.rows) {
+        if (!/^eduos_retention_feature_[a-z0-9_]+$/.test(proname)) continue;
+        Object.assign(fr, (await client.query(`SELECT ${proname}($1::jsonb) AS counts`, [JSON.stringify(settings.features || featureRetentionSettings())])).rows[0].counts);
+      }
       await client.query("COMMIT");
-      summary.districts[id] = { ...r.rows[0].counts, ...ra.rows[0].counts, ...or.rows[0].counts, ...er.rows[0].counts };
+      summary.districts[id] = { ...r.rows[0].counts, ...ra.rows[0].counts, ...or.rows[0].counts, ...er.rows[0].counts, ...fr };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;
