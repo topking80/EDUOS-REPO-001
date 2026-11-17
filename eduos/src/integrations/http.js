@@ -20,7 +20,8 @@ export function checkUrl(raw, options) {
   return v.url;
 }
 
-async function request(raw, { method = "GET", headers = {}, body = null, options = {} }) {
+// 37.7.1: also used by the commerce processor adapters (src/commerce/setup.js).
+export async function request(raw, { method = "GET", headers = {}, body = null, options = {} }) {
   const url = checkUrl(raw, options);
   const target = await resolveWebhookTarget(url, options);
   if (!target.ok) throw new IntegrationError(target.reason === "address_not_allowed" ? "connector_url_not_allowed" : "connector_unreachable", target.reason);
