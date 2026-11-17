@@ -32,13 +32,13 @@ test("SMTP adapter completes a TLS-authenticated SMTP conversation", async () =>
     write(value) {
       this.writes.push(value);
       let response = null;
-      if (value.startsWith("EHLO ")) response = "250-smtp.example.edu\\r\\n250 AUTH PLAIN\\r\\n";
-      else if (value.startsWith("AUTH PLAIN ")) response = "235 authenticated\\r\\n";
-      else if (value.startsWith("MAIL FROM:")) response = "250 sender ok\\r\\n";
-      else if (value.startsWith("RCPT TO:")) response = "250 recipient ok\\r\\n";
-      else if (value === "DATA\\r\\n") response = "354 send content\\r\\n";
-      else if (value.endsWith("\\r\\n.\\r\\n")) response = "250 queued\\r\\n";
-      else if (value === "QUIT\\r\\n") response = "221 bye\\r\\n";
+      if (value.startsWith("EHLO ")) response = "250-smtp.example.edu\r\n250 AUTH PLAIN\r\n";
+      else if (value.startsWith("AUTH PLAIN ")) response = "235 authenticated\r\n";
+      else if (value.startsWith("MAIL FROM:")) response = "250 sender ok\r\n";
+      else if (value.startsWith("RCPT TO:")) response = "250 recipient ok\r\n";
+      else if (value === "DATA\r\n") response = "354 send content\r\n";
+      else if (value.endsWith("\r\n.\r\n")) response = "250 queued\r\n";
+      else if (value === "QUIT\r\n") response = "221 bye\r\n";
       if (response) queueMicrotask(() => this.emit("data", Buffer.from(response)));
       return true;
     }
@@ -48,7 +48,7 @@ test("SMTP adapter completes a TLS-authenticated SMTP conversation", async () =>
   const adapter = createSmtpAdapter({
     config: { notifySmtpHost: "smtp.example.edu", notifySmtpPort: 465, notifySmtpFrom: "alerts@example.edu",
       notifySmtpEhlo: "eduos.example.edu", notifySmtpUsername: "user", notifySmtpPassword: "secret", notifySmtpTimeoutMs: 5000 },
-    connect: value => { options = value; queueMicrotask(() => socket.emit("data", Buffer.from("220 ready\\r\\n"))); return socket; }
+    connect: value => { options = value; queueMicrotask(() => socket.emit("data", Buffer.from("220 ready\r\n"))); return socket; }
   });
   const result = await adapter.send({ id: "12345678-1234-1234-1234-123456789abc", recipient_email: "family@example.net" });
   assert.equal(result.status, "delivered");
