@@ -9,6 +9,14 @@ const wrap = fn => async (req,res,next) => { try { const data=await withTenantTr
 async function scopedActivity(c,a,id,lock=false) {
  return one(c,`SELECT * FROM school_activities WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3) ${lock?"FOR UPDATE":""}`,[id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);
 }
+async function requirePupilLink(c,a,schoolId) {
+ const student=await one(c,`SELECT s.id,s.grade_level FROM student_user_links l
+  JOIN students s ON s.id=l.student_id AND s.district_id=l.district_id
+  WHERE l.district_id=$1 AND l.user_id=$2 AND l.relationship='pupil' AND l.status='active' AND s.school_id=$3
+  LIMIT 1`,[a.districtId,a.userId,schoolId]);
+ if(!student)throw new HttpError(403,"active_student_link_required");
+ return student;
+}
 async function canManage(c,a,id) {
  if(LEAD(a.role))return true;
  if(a.role!=="teacher")return false;
@@ -69,9 +77,8 @@ export function registerClubsSportsRoutes(app) {
   const a=req.actor;if(a.role!=="pupil")return res.status(403).json({error:"student_membership_only"});if(!validId(req.params.id))return res.status(400).json({error:"invalid_activity_id"});
   try{const data=await withTenantTransaction(a,async c=>{
    const activity=await scopedActivity(c,a,req.params.id);if(!activity||activity.status!=="published")throw new HttpError(404,"activity_not_found");
-   const grade=await one(c,`SELECT s.grade_level FROM student_user_links l JOIN students s ON s.id=l.student_id AND s.district_id=l.district_id
-    WHERE l.district_id=$1 AND l.user_id=$2 AND l.relationship='pupil' AND l.status='active' AND s.school_id=$3 LIMIT 1`,[a.districtId,a.userId,a.schoolId]);
-   if(activity.grade_min!==null||activity.grade_max!==null){const g=Number(grade?.grade_level);if(!Number.isFinite(g)||(activity.grade_min!==null&&g<activity.grade_min)||(activity.grade_max!==null&&g>activity.grade_max))throw new HttpError(403,"grade_eligibility_not_met");}
+   const grade=await requirePupilLink(c,a,activity.school_id);
+   if(activity.grade_min!==null||activity.grade_max!==null){const g=Number(grade.grade_level);if(!Number.isFinite(g)||(activity.grade_min!==null&&g<activity.grade_min)||(activity.grade_max!==null&&g>activity.grade_max))throw new HttpError(403,"grade_eligibility_not_met");}
    const r=await one(c,`INSERT INTO activity_memberships(district_id,school_id,activity_id,user_id,status) VALUES($1,$2,$3,$4,'active')
     ON CONFLICT(district_id,activity_id,user_id) DO UPDATE SET status='active',joined_at=now() RETURNING id,status,joined_at`,[a.districtId,activity.school_id,activity.id,a.userId]);
    await audit(c,req,"join","activity_membership",r.id,`activity=${activity.id}`);return r;
@@ -184,7 +191,10 @@ export function registerClubsSportsRoutes(app) {
        WHERE l.district_id=$1 AND l.user_id=$2 AND l.status='active' AND l.relationship IN ('parent','guardian') AND s.school_id=$3 LIMIT 1`,
        [a.districtId,a.userId,prior.school_id]);
      if(!linked)throw new HttpError(403,"guardian_school_link_required");
-    }else if(a.schoolId!==prior.school_id)throw new HttpError(403,"event_school_scope_denied");
+    }else{
+     if(a.schoolId!==prior.school_id)throw new HttpError(403,"event_school_scope_denied");
+     await requirePupilLink(c,a,prior.school_id);
+    }
     const tickets=await rows(c,"SELECT id,status FROM event_tickets WHERE order_id=$1 FOR UPDATE",[prior.id]);
     const replayTickets=[];
     for(const ticket of tickets){
@@ -203,7 +213,10 @@ export function registerClubsSportsRoutes(app) {
     const linked=await one(c,`SELECT 1 FROM student_user_links l JOIN students s ON s.id=l.student_id AND s.district_id=l.district_id
       WHERE l.district_id=$1 AND l.user_id=$2 AND l.status='active' AND l.relationship IN ('parent','guardian') AND s.school_id=$3 LIMIT 1`,[a.districtId,a.userId,event.school_id]);
     if(!linked)throw new HttpError(403,"guardian_school_link_required");
-   } else if(a.schoolId!==event.school_id)throw new HttpError(403,"event_school_scope_denied");
+   } else {
+    if(a.schoolId!==event.school_id)throw new HttpError(403,"event_school_scope_denied");
+    await requirePupilLink(c,a,event.school_id);
+   }
    const type=await one(c,"SELECT * FROM event_ticket_types WHERE id=$1 AND event_id=$2 AND district_id=$3 AND sales_open FOR UPDATE",[b.ticketTypeId,event.id,a.districtId]);
    if(!type)throw new HttpError(404,"ticket_type_not_available");
    if(type.price_cents>0)throw new HttpError(503,"paid_ticketing_not_configured",{checkoutEnabled:false,reason:"district_payment_provider_not_connected"});
