@@ -166,7 +166,7 @@ export function registerClubsSportsRoutes(app) {
   });res.status(201).json({data});}catch(e){sendError(res,next,e)}
  });
  app.post("/api/events/:id/tickets",requireSession,requireCsrf,async(req,res,next)=>{
-  const a=req.actor,b=req.body||{},quantity=Number(b.quantity||1),key=b.idempotencyKey;
+  const a=req.actor,b=req.body||{},quantity=b.quantity===undefined?1:b.quantity,key=b.idempotencyKey;
   if(!["pupil","parent"].includes(a.role))return res.status(403).json({error:"ticket_buyer_role_required"});
   if(!validId(req.params.id)||!validId(b.ticketTypeId)||!Number.isInteger(quantity)||quantity<1||quantity>10||typeof key!=="string"||key.length<16||key.length>120)return res.status(400).json({error:"invalid_ticket_order"});
   try{const data=await withTenantTransaction(a,async c=>{
