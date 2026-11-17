@@ -54,3 +54,10 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - Read-URL creation no longer accepts caller-supplied consent or moderation statuses. A configured authorization adapter must execute the PostgreSQL-backed `createPostgresMediaAuthorization` gate, which locks the asset, every participant row and every guardian decision, checks all participants and denials/withdrawals, and mints the signed URL before the tenant transaction releases its locks.
 - The database authorization adapter restricts delivery to principals/superintendents in scope and assigned activity teachers. The pipeline remains disabled unless storage, scanning, image processing and authorization adapters are all configured.
 - These changes harden the provider contract; no production storage, scanner or image processor is connected, and the API does not expose upload or delivery routes. The process-local storage-key registry remains a production blocker until replaced by a durable tenant-scoped registry.
+
+ 
+## Durable private media registry (37.9.3)
+- Replaced the process-local storage-key map with `private_media_objects`, a PostgreSQL registry keyed by media asset ID and scoped by district and school. It is protected by forced district RLS.
+- Migration `054_private_media_object_registry.sql` is registered in `src/migrate.js`; the runtime role receives only SELECT/INSERT/UPDATE, with DELETE/TRUNCATE revoked.
+- The pipeline now requires a registry adapter and authenticated tenant actor for upload-intent persistence, object verification and delivery. Storage keys remain server-side and are not included in public pipeline results.
+- This removes the restart/multi-instance loss caused by the in-memory map. Production uploads remain disabled until the district-approved storage, scanner and image-processing adapters and authenticated upload routes are configured.
