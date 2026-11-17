@@ -19,6 +19,14 @@ on:
         description: 'Version tag'
         required: false
         default: '0.2.0'
+      enrollment_version:
+        description: 'Enrollment image version tag'
+        required: false
+        default: '0.2.1'
+      health_version:
+        description: 'Health image version tag'
+        required: false
+        default: '2.0.0'
       arch:
         description: 'Architecture'
         required: false
@@ -29,6 +37,8 @@ on:
 env:
   VERSION: ${{ github.event.inputs.version || '0.2.0' }}
   ARCH: ${{ github.event.inputs.arch || 'x86_64' }}
+  ENROLLMENT_VERSION: ${{ github.event.inputs.enrollment_version || '0.2.1' }}
+  HEALTH_VERSION: ${{ github.event.inputs.health_version || '2.0.0' }}
 
 jobs:
   generate:
@@ -122,11 +132,11 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Build EduOS containers
         run: |
-          make containers VERSION=${{ env.VERSION }} || true
+          make containers ENROLLMENT_VERSION=${{ env.ENROLLMENT_VERSION }} HEALTH_VERSION=${{ env.HEALTH_VERSION }} || true
       - name: Upload container images (as tar)
         uses: actions/upload-artifact@v4
         with:
-          name: eduos-containers-${{ env.VERSION }}
+          name: eduos-containers-enrollment-${{ env.ENROLLMENT_VERSION }}-health-${{ env.HEALTH_VERSION }}
           path: containers/*.tar
           retention-days: 7
 
