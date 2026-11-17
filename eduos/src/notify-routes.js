@@ -151,7 +151,7 @@ export function registerNotificationRoutes(app) {
     if (config.notifyPushAdapter !== "fcm") return res.status(503).json({ error: "push_registration_unavailable" });
     const token = req.body?.token, platform = req.body?.platform;
     if (typeof token !== "string" || token.length < 20 || token.length > 4096 || /\s/.test(token) ||
-        !["ios", "android", "web"].includes(platform))
+        !["ios", "android"].includes(platform))
       return res.status(400).json({ error: "invalid_push_device" });
     try {
       const tokenHash = hashPushToken(token), tokenCiphertext = encryptPushToken(token);
