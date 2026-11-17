@@ -220,19 +220,38 @@ export function parseRetryAfter(value, now = Date.now()) {
   return Math.max(0, Math.min(3600, seconds));
 }
 
-/** One POST to the vetted address. Never follows redirects; body is discarded. */
-export function deliverOnce({ url, address, family, headers, body, timeoutMs = WEBHOOK_TIMEOUT_MS }) {
+/**
+ * One POST to the vetted address. Never follows redirects; body is discarded.
+ *
+ * timeoutMs is an ABSOLUTE deadline for the whole exchange (connect, send,
+ * headers and body), not an idle timer: a receiver that trickles a byte at a
+ * time can't keep the socket open past it (2026-11-17 audit, finding 1). An
+ * AbortSignal (the outbox's job deadline) destroys the socket the same way.
+ * The promise settles only after the request has been destroyed.
+ */
+export function deliverOnce({ url, address, family, headers, body, timeoutMs = WEBHOOK_TIMEOUT_MS, signal = null }) {
   return new Promise(resolve => {
     const started = Date.now();
-    let settled = false;
-    const finish = result => { if (!settled) { settled = true; resolve({ ...result, durationMs: Date.now() - started }); } };
+    let settled = false, request = null, deadline = null;
+    const onAbort = () => { finish({ outcome: "timeout", statusCode: null, reason: "job_deadline" }); };
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      signal?.removeEventListener?.("abort", onAbort);
+      // Tear the connection down before reporting, so a slot freed by this
+      // result never coexists with a still-open socket.
+      if (result.outcome !== "delivered" && result.outcome !== "http_error") request?.destroy();
+      resolve({ ...result, durationMs: Date.now() - started });
+    };
+    if (signal?.aborted) return finish({ outcome: "timeout", statusCode: null, reason: "job_deadline" });
     const transport = url.protocol === "https:" ? https : http;
     const pinned = (_hostname, opts, callback) => {
       const cb = typeof opts === "function" ? opts : callback;
       if (opts && opts.all) cb(null, [{ address, family }]); else cb(null, address, family);
     };
     const host = bareHost(url.hostname);
-    const request = transport.request({
+    request = transport.request({
       protocol: url.protocol, hostname: host, port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: url.pathname + url.search, method: "POST", agent: false, lookup: pinned,
       servername: net.isIP(host) ? undefined : host,
@@ -261,7 +280,9 @@ export function deliverOnce({ url, address, family, headers, body, timeoutMs = W
       });
       response.on("error", () => finish({ outcome: "network_error", statusCode: null }));
     });
-    request.setTimeout(timeoutMs, () => { finish({ outcome: "timeout", statusCode: null }); request.destroy(); });
+    request.setTimeout(timeoutMs, () => finish({ outcome: "timeout", statusCode: null }));
+    deadline = setTimeout(() => finish({ outcome: "timeout", statusCode: null }), timeoutMs);
+    signal?.addEventListener?.("abort", onAbort, { once: true });
     request.on("error", () => finish({ outcome: "network_error", statusCode: null }));
     request.end(body);
   });
@@ -295,7 +316,10 @@ export async function deliverWebhook({ subscription, secret, secrets, eventType,
   const checked = validateWebhookUrl(subscription.url, options);
   if (!checked.ok) return [{ attempt: 1, outcome: "blocked", statusCode: null, durationMs: 0, reason: checked.reason }];
 
+  const signal = options.signal || null;
+  const cutOff = attempt => ({ attempt, outcome: "timeout", statusCode: null, durationMs: 0, reason: "job_deadline" });
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (signal?.aborted) { attempts.push(cutOff(attempt)); break; }
     // Re-resolve on every attempt: a destination that starts resolving to a
     // private address is blocked even if it was public when it was registered.
     const target = await resolveWebhookTarget(checked.url, options);
@@ -316,8 +340,10 @@ export async function deliverWebhook({ subscription, secret, secrets, eventType,
       await sleep(backoff[Math.min(attempt - 1, backoff.length - 1)]);
       continue;
     }
+    if (signal?.aborted) { attempts.push(cutOff(attempt)); break; }
     const timestamp = Math.floor((options.now ? options.now() : Date.now()) / 1000);
     const result = await send({
+      signal,
       url: checked.url, address: target.address, family: target.family, body,
       timeoutMs: options.timeoutMs || WEBHOOK_TIMEOUT_MS,
       headers: {
@@ -330,6 +356,7 @@ export async function deliverWebhook({ subscription, secret, secrets, eventType,
       }
     });
     attempts.push({ attempt, outcome: result.outcome, statusCode: result.statusCode ?? null, durationMs: result.durationMs ?? 0,
+      ...(result.reason ? { reason: result.reason } : {}),
       ...(Number.isFinite(result.retryAfterSeconds) ? { retryAfterSeconds: result.retryAfterSeconds } : {}) });
     if (!retryable(result) || attempt === maxAttempts) break;
     const wait = Math.max(backoff[Math.min(attempt - 1, backoff.length - 1)], (result.retryAfterSeconds ?? 0) * 1000);
