@@ -293,7 +293,7 @@ intIn("TWILIO_TIMEOUT_MS", config.twilioTimeoutMs, 1000, 30000);
 if (!["off", "log", "fcm"].includes(config.notifyPushAdapter)) throw new Error("NOTIFY_PUSH_ADAPTER must be off, log or fcm");
 if (config.notifyPushAdapter === "fcm") {
   if (!/^[a-z][a-z0-9-]{4,62}$/.test(config.fcmProjectId)) throw new Error("FCM_PROJECT_ID is required for FCM");
-  if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(config.fcmClientEmail)) throw new Error("FCM_CLIENT_EMAIL must be a service-account email");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(config.fcmClientEmail)) throw new Error("FCM_CLIENT_EMAIL must be a service-account email");
   if (!config.fcmPrivateKey.includes("BEGIN PRIVATE KEY")) throw new Error("FCM_PRIVATE_KEY must be a PKCS8 service-account private key");
   if (Buffer.from(config.fcmTokenEncryptionKey, "base64").length !== 32) throw new Error("FCM_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
 }
