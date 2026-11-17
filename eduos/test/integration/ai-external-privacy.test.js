@@ -66,6 +66,20 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
   });
   after(async () => { await server?.stop(); await admin?.end(); await provider?.close(); await idp?.close(); await db?.drop(); });
 
+  it("privacy migration defaults every district to deny and enforces acknowledgement in the database", async () => {
+    const inserted = await admin.query(`INSERT INTO ai_district_policy(district_id, enabled_usecases, daily_token_cap, user_daily_token_cap)
+      VALUES ($1, ARRAY[]::text[], 1000, 1000)
+      RETURNING external_provider_enabled, external_provider_acknowledged_at, external_provider_acknowledged_by`, [ID.d2]);
+    assert.deepEqual(inserted.rows[0], {
+      external_provider_enabled: false,
+      external_provider_acknowledged_at: null,
+      external_provider_acknowledged_by: null
+    });
+    await assert.rejects(
+      admin.query("UPDATE ai_district_policy SET external_provider_enabled=true WHERE district_id=$1", [ID.d2]),
+      /ai_external_provider_ack_required/
+    );
+  });
   it("district external-provider opt-in is default-deny and blocks egress until acknowledged", async () => {
     const disabled = await as("supt1")("PUT", "/api/ai/policy", { enabledUsecases: ["lesson_draft"], dailyTokenCap: 1000000, userDailyTokenCap: 1000000, externalProviderEnabled: false });
     assert.equal(disabled.status, 200, JSON.stringify(disabled.body));
