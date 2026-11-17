@@ -115,9 +115,18 @@ test("private media pipeline uses a durable registry and gates tenant-scoped del
      deliveryState.deniedParticipantCount!==0) throw Object.assign(new Error("media_not_approved"),{code:"media_not_approved",status:403});
   return issueReadUrl();
  }};
- const pipeline=(await import("../src/media-pipeline.js")).createMediaPipeline({storage,scanner,processor,authorization,registry});
+ const pipeline=(await import("../src/media-pipeline.js")).createMediaPipeline({
+  storage,scanner,processor,authorization,registry,
+  allowedUploadHosts:["upload.example.invalid"],allowedReadHosts:["read.example.invalid"]
+ });
  const intent=await pipeline.beginUpload({actor,districtId:"district-id",schoolId:"school-id",input:{kind:"image",mimeType:"image/png",byteSize:100}});
  assert.ok(intent.assetId);
+ const rejectedHost=(await import("../src/media-pipeline.js")).createMediaPipeline({
+  storage,scanner,processor,authorization,registry,
+  allowedUploadHosts:["other.example.invalid"],allowedReadHosts:["read.example.invalid"]
+ });
+ await assert.rejects(()=>rejectedHost.beginUpload({actor,districtId:"district-id",schoolId:"school-id",input:{kind:"image",mimeType:"image/png",byteSize:100}}),
+  e=>e.code==="invalid_private_storage_response");
  assert.equal(calls[0].assetId,intent.assetId);
  assert.equal(Object.hasOwn(calls[0],"storageKey"),false);
  assert.equal(Object.hasOwn(intent,"storageKey"),false);
