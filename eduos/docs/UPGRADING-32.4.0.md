@@ -33,7 +33,10 @@ Keep `Permissions-Policy: geolocation=()`.
 | `TRANSPORT_CHECKIN_RATE_LIMIT_PER_MIN` | `300` | per-client check-ins |
 | `NOTIFY_EMAIL_ADAPTER` | `off` | `off`, `log` (dry run), or `smtp` (implicit TLS, port 465). SMTP requires the variables below. |
 | `NOTIFY_SMS_ADAPTER` | `off` | `off`, `log`, or `twilio`. Twilio requires verified phone enrollment and explicit user consent. |
-| `NOTIFY_PUSH_ADAPTER` | `off` | `off` or `log`; FCM is not enabled yet. |
+| `NOTIFY_PUSH_ADAPTER` | `off` | `off`, `log`, or `fcm`. FCM requires explicit user consent and registered device tokens. |
+| `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, `FCM_PRIVATE_KEY` | empty | Firebase project and service-account credentials for FCM HTTP v1. Enable the Firebase Cloud Messaging API and grant the service account permission to send messages. |
+| `FCM_TOKEN_ENCRYPTION_KEY` | empty | Base64-encoded 32-byte AES-256-GCM key used to encrypt device tokens at rest. Rotate only with planned device re-registration. |
+| `FCM_TIMEOUT_MS` | `10000` | FCM OAuth/send request timeout (1–30 seconds). |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | empty | Required for Twilio Verify and SMS. Store the auth token in the deployment secret manager. |
 | `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM_NUMBER` | empty | Configure a Messaging Service SID or a verified E.164 sender number. |
 | `TWILIO_TIMEOUT_MS` | `10000` | Twilio HTTP request timeout (1–30 seconds). |
@@ -46,7 +49,7 @@ it. Only redacted text from the current question, plus approved lesson
 content, is sent.
 
 ## 5. Notification job and email consent
-Run `051_notification_email_consent.sql`, `052_notification_sms_verification.sql`, and `053_notification_provider_acceptance.sql` through the normal migration runner.
+Run `051_notification_email_consent.sql`, `052_notification_sms_verification.sql`, `053_notification_provider_acceptance.sql`, and `054_notification_fcm_devices.sql` through the normal migration runner.
 All existing users are opted out. Users can review and change their own setting
 through `GET/PUT /api/me/notification-preferences`; the PUT requires the normal
 CSRF token and writes an audit event. Email outbox rows are skipped unless the
@@ -70,7 +73,7 @@ not carrier delivery confirmation. SMS messages are generic and contain no
 student or incident details. Twilio Messaging API sends do not offer a general
 idempotency guarantee, so an ambiguous timeout can result in a duplicate.
 
-Push remains disabled pending FCM device registration and revocation work.
+For FCM, set the service-account variables and `NOTIFY_PUSH_ADAPTER=fcm`. Users first enable `pushEnabled` through the notification-preferences endpoint after granting OS/browser notification permission. The app then registers its FCM token with `POST /api/me/push-devices` and platform `ios` or `android`. Web push is not enabled by this server integration. Tokens are AES-256-GCM encrypted at rest; only SHA-256 hashes are used for lookup. Users can list active devices with `GET /api/me/push-devices` and revoke one with `DELETE /api/me/push-devices/:deviceId`; turning `pushEnabled` off revokes every device in that district. Registration is limited to 20 active devices per user and every change is audited. The dispatcher rechecks current consent and active devices before sending, and revokes FCM tokens reported as `UNREGISTERED`. FCM acceptance is not proof that a device displayed the notification. Messages contain only generic text and an opaque notification ID. If a send to multiple devices is partially accepted, the outbox row is terminal to avoid duplicating messages to devices that accepted; devices with transient failures may miss that individual notification.
 
 ## 6. Known limits
 - Transport "today" uses the database `current_date`. Set the database

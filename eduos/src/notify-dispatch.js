@@ -2,7 +2,7 @@
 // adapters. Run as the migration OWNER role, like the retention job:
 //   DATABASE_URL=<owner url> node src/notify-dispatch.js
 //   docker compose --profile ops run --rm notify
-// SMTP email and Twilio SMS require channel-specific verified recipient consent; push remains off/log.
+// SMTP email and Twilio SMS require channel-specific consent; FCM push requires explicit consent and an active device token.
 //
 // Outcomes: delivered_at is set only when an adapter confirms delivery;
 // "skipped" (dry run, channel off) is not a delivery. A temporary failure waits
@@ -63,17 +63,25 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
             `UPDATE notification_outbox SET lease_expires_at=now()+make_interval(secs => $3::float8)
               WHERE id=$1 AND lease_token=$2 AND lease_expires_at>now() AND status='pending' RETURNING id`,
             [row.id, token, leaseSeconds]);
-          if (!lease.rowCount || !((row.channel === "email" && adapter.name === "smtp") || (row.channel === "sms" && adapter.name === "twilio"))) return lease;
+          if (!lease.rowCount || !((row.channel === "email" && adapter.name === "smtp") || (row.channel === "sms" && adapter.name === "twilio") || (row.channel === "push" && adapter.name === "fcm"))) return lease;
           const contact = await c.query(
             `SELECT u.email,p.phone_e164,
                     coalesce(p.email_notifications_enabled,false) AS email_opted_in,
                     coalesce(p.sms_notifications_enabled,false) AS sms_opted_in,
+                    coalesce(p.push_notifications_enabled,false) AS push_opted_in,
                     p.phone_verified_at
                FROM users u LEFT JOIN user_preferences p ON p.user_id=u.id AND p.district_id=$2
               WHERE u.id=$1`, [row.recipient_user_id, d.id]);
           const person = contact.rows[0] || {};
+          let pushTokens = [];
+          if (row.channel === "push" && adapter.name === "fcm" && person.push_opted_in) {
+            const devices = await c.query("SELECT token_ciphertext FROM user_push_devices WHERE user_id=$1 AND district_id=$2 AND revoked_at IS NULL ORDER BY last_seen_at DESC LIMIT 20",
+              [row.recipient_user_id, d.id]);
+            pushTokens = devices.rows.map(device => device.token_ciphertext);
+          }
           return { ...lease, recipientEmail: person.email || null, emailOptedIn: Boolean(person.email_opted_in),
-            recipientPhone: person.phone_verified_at ? person.phone_e164 : null, smsOptedIn: Boolean(person.sms_opted_in) };
+            recipientPhone: person.phone_verified_at ? person.phone_e164 : null, smsOptedIn: Boolean(person.sms_opted_in),
+            pushOptedIn: Boolean(person.push_opted_in), recipientPushTokens: pushTokens };
         });
         if (!renewed.rowCount) { done++; tally.lostLease++; continue; }
         let result, timer;
@@ -82,24 +90,33 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
             result = { status: "skipped", note: "recipient has not opted in to email notifications" };
           } else if (row.channel === "sms" && adapter.name === "twilio" && !renewed.smsOptedIn) {
             result = { status: "skipped", note: "recipient has not opted in to SMS notifications" };
+          } else if (row.channel === "push" && adapter.name === "fcm" && !renewed.pushOptedIn) {
+            result = { status: "skipped", note: "recipient has not opted in to push notifications" };
           } else {
             result = await Promise.race([
               adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id,
                 recipient_email: row.channel === "email" ? renewed.recipientEmail : undefined,
-                recipient_phone: row.channel === "sms" ? renewed.recipientPhone : undefined }, log),
+                recipient_phone: row.channel === "sms" ? renewed.recipientPhone : undefined,
+                recipient_push_tokens: row.channel === "push" ? renewed.recipientPushTokens : undefined }, log),
               new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
             ]);
           }
         } catch (e) { result = { status: "pending", note: String(e?.message || e).slice(0, 300) }; }
         finally { clearTimeout(timer); }
         const out = attemptOutcome(result, row.attempts);
-        const settled = await inTx(db, d.id, c => c.query(
-          `UPDATE notification_outbox SET status=$2, attempts=$3, last_error=$4, last_attempt_at=now(),
-                  delivered_at=CASE WHEN $2='delivered' THEN now() END,
-                  next_attempt_at=CASE WHEN $5::int IS NULL THEN NULL ELSE now()+make_interval(secs => $5::int) END,
-                  lease_token=NULL, lease_expires_at=NULL
-            WHERE id=$1 AND lease_token=$6`,
-          [row.id, out.status, out.attempts, out.status === "delivered" ? null : out.note, out.retryInSeconds, token]));
+        const invalidHashes = Array.isArray(result?.invalidTokenHashes) ? result.invalidTokenHashes.filter(x => /^[0-9a-f]{64}$/.test(x)) : [];
+        const settled = await inTx(db, d.id, async c => {
+          if (invalidHashes.length) await c.query(
+            "UPDATE user_push_devices SET revoked_at=coalesce(revoked_at,now()) WHERE district_id=$1 AND user_id=$2 AND token_hash=ANY($3::text[]) AND revoked_at IS NULL",
+            [d.id, row.recipient_user_id, invalidHashes]);
+          return c.query(
+            `UPDATE notification_outbox SET status=$2, attempts=$3, last_error=$4, last_attempt_at=now(),
+                    delivered_at=CASE WHEN $2='delivered' THEN now() END,
+                    next_attempt_at=CASE WHEN $5::int IS NULL THEN NULL ELSE now()+make_interval(secs => $5::int) END,
+                    lease_token=NULL, lease_expires_at=NULL
+              WHERE id=$1 AND lease_token=$6`,
+            [row.id, out.status, out.attempts, out.status === "delivered" ? null : out.note, out.retryInSeconds, token]);
+        });
         done++;
         if (!settled.rowCount) { tally.lostLease++; continue; }
         tally.handled++;

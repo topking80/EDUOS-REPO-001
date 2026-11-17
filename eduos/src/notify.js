@@ -12,10 +12,11 @@
 //    SMTP adapter receives a recipient address only after the user opts in.
 // src/notify-dispatch.js (owner role, like the retention job) hands pending
 // rows to the adapter. Email may use implicit-TLS SMTP after recipient opt-in;
-// Twilio SMS requires a verified phone and explicit consent; push remains off/log.
+// Twilio SMS requires a verified phone and explicit consent; FCM push requires explicit consent and a registered device.
 import { config } from "./config.js";
 import { createSmtpAdapter } from "./notify-smtp.js";
 import { createTwilioSmsAdapter } from "./notify-twilio.js";
+import { createFcmPushAdapter } from "./notify-fcm.js";
 
 export const KINDS = ["announcement", "message", "transport", "christie", "moderation", "safety", "pickup"];
 export const EXTERNAL_TEXT = "You have a new EduOS notification. Open the EduOS app to read it.";
@@ -69,11 +70,13 @@ export async function enqueueNotifications(client, input, cfg = config) {
 // Anything else is treated as failed, so an adapter bug can't look like a delivery.
 const smtpAdapter = createSmtpAdapter({ config });
 const twilioSmsAdapter = createTwilioSmsAdapter();
+const fcmPushAdapter = createFcmPushAdapter();
 
 export const ADAPTERS = Object.freeze({
   off: Object.freeze({ name: "off", async send() { return { status: "skipped", note: "adapter off" }; } }),
   smtp: smtpAdapter,
   twilio: twilioSmsAdapter,
+  fcm: fcmPushAdapter,
   log: Object.freeze({ name: "log", async send(row, log = console.log) {
     // Dry run: record that a send would happen. Nothing leaves the server, and
     // only opaque ids are logged.
