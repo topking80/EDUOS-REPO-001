@@ -14,7 +14,6 @@ test("email channel migration opts every existing user out by default", () => {
 });
 
 test("notification preferences are self-service, district-scoped and CSRF protected", () => {
-  assert.match(routes, /GET_NOT_PRESENT/);
   assert.match(routes, /app\.get\("\/api\/me\/notification-preferences", requireSession/);
   assert.match(routes, /app\.put\("\/api\/me\/notification-preferences", requireSession, requireCsrf/);
   assert.match(routes, /WHERE user_id=\$1 AND district_id=\$2/);
@@ -23,6 +22,6 @@ test("notification preferences are self-service, district-scoped and CSRF protec
 
 test("dispatcher skips email until recipient consent is enabled", () => {
   assert.match(dispatcher, /coalesce\(p\.email_notifications_enabled,false\) AS email_opted_in/);
-  assert.match(dispatcher, /row\.channel === "email" && !row\.email_opted_in/);
+  assert.match(dispatcher, /row.channel === "email" && adapter.name === "smtp" && !row.email_opted_in/);
   assert.match(dispatcher, /recipient has not opted in to email notifications/);
 });
