@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_scope.dart';
 import '../../core/api_client.dart';
@@ -8,11 +9,14 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
 
-/// 37.7.0 commerce, SANDBOX ONLY. School event tickets for families
+/// 37.7.0 commerce. School event tickets for families
 /// (GET /api/commerce/shop, POST /api/events/:id/tickets) and, for parents,
-/// sandbox payment (POST /api/commerce/payments/:id/confirm) and receipts
+/// payment (POST /api/commerce/payments/:id/confirm) and receipts
 /// (GET /api/commerce/my). Students can get free tickets; only a parent or
-/// guardian can pay. No card is taken and no real money moves.
+/// guardian can pay. 37.7.1: the district picks its payment options; with more
+/// than one, families choose ("Pay with"). The sandbox confirms pretend
+/// payments here; PayPal, Square and BTCPay open the processor's own page in
+/// the browser, then "I've paid" asks EduOS to check. The app never takes a card.
 class TicketsScreen extends StatelessWidget {
   const TicketsScreen({super.key});
 
@@ -24,14 +28,27 @@ class TicketsScreen extends StatelessWidget {
 }
 
 class TicketsData {
-  const TicketsData({required this.status, required this.events, required this.tickets, required this.payments});
+  TicketsData({required this.status, required this.events, required this.tickets, required this.payments})
+      : method = ValueNotifier<String?>(str(status['defaultMethod']).isEmpty ? null : str(status['defaultMethod']));
   final Json status;
   final List<Json> events;
   final List<Json> tickets;
   final List<Json> payments;
+
+  /// The family's "Pay with" choice (the district's default to start).
+  final ValueNotifier<String?> method;
   bool get enabled => boolean(status['enabled']);
   bool get canPay => boolean(status['canPay']);
+  List<Json> get methods => objs(status['methods']);
+  String get banner {
+    final note = str(status['note']);
+    if (!enabled) return 'Paid tickets are off. No payment is collected here.';
+    if (note.isNotEmpty) return note;
+    return 'Sandbox payments: no real money moves and no card is charged.';
+  }
 }
+
+const processorLabels = {'sandbox': 'Sandbox', 'paypal': 'PayPal', 'square': 'Square', 'btcpay': 'BTCPay Server'};
 
 String money(Object? cents, [String currency = 'USD']) {
   final c = integer(cents), a = c.abs();
@@ -45,6 +62,9 @@ String ticketError(ApiException e) => switch (e.error) {
       'ticket_capacity_exceeded' => 'Not enough tickets left.',
       'guardian_school_link_required' => 'Tickets are for families of this school.',
       'ticket_type_not_available' || 'event_not_available' => 'These tickets are no longer on sale.',
+      'payment_method_not_available' => 'That payment option isn\'t offered. Pick another.',
+      'payment_adapter_not_available' => 'That payment option isn\'t available in the app yet.',
+      'live_payments_disabled' => 'Live payments are switched off for now.',
       _ when e.isOffline => 'You\'re offline. Connect to get tickets.',
       _ => 'Could not get tickets. Please try again.',
     };
@@ -76,10 +96,9 @@ class TicketsBody extends StatelessWidget {
       builder: (context, d, reload) => ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Notice(d.enabled
-              ? 'Sandbox payments: no real money moves and no card is charged.'
-              : 'Paid tickets are off. No payment is collected here.'),
+          Notice(d.banner),
           if (!parent) const Notice('Students can get free tickets. A parent or guardian buys paid ones.'),
+          if (parent && d.enabled && d.methods.length > 1) _MethodPicker(data: d),
           if (d.events.isEmpty)
             const SectionCard(title: 'On sale', children: [EmptyState('No tickets on sale right now.')])
           else
@@ -120,6 +139,31 @@ class TicketsBody extends StatelessWidget {
   }
 }
 
+class _MethodPicker extends StatelessWidget {
+  const _MethodPicker({required this.data});
+  final TicketsData data;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<String?>(
+        valueListenable: data.method,
+        builder: (context, value, _) => Row(children: [
+          const Text('Pay with'),
+          const SizedBox(width: 12),
+          DropdownButton<String>(
+            value: data.methods.any((m) => str(m['method']) == value) ? value : str(data.methods.first['method']),
+            items: [
+              for (final m in data.methods)
+                DropdownMenuItem(
+                  value: str(m['method']),
+                  child: Text('${str(m['label'])}${str(m['processor']) != 'sandbox' && str(m['mode']) == 'test' ? ' (test)' : ''}'),
+                ),
+            ],
+            onChanged: (v) => data.method.value = v,
+          ),
+        ]),
+      );
+}
+
 class _TicketTypeRow extends StatefulWidget {
   const _TicketTypeRow({required this.event, required this.type, required this.data, required this.onChanged});
   final Json event;
@@ -142,13 +186,18 @@ class _TicketTypeRowState extends State<_TicketTypeRow> {
     setState(() => _busy = true);
     final api = AppScope.read(context).api;
     try {
-      final r = await api.post('/api/events/${str(widget.event['id'])}/tickets',
-          {'ticketTypeId': str(widget.type['id']), 'quantity': _qty, 'idempotencyKey': _key()});
+      final paid = integer(widget.type['priceCents']) > 0, method = widget.data.method.value;
+      final r = await api.post('/api/events/${str(widget.event['id'])}/tickets', {
+        'ticketTypeId': str(widget.type['id']),
+        'quantity': _qty,
+        'idempotencyKey': _key(),
+        if (paid && method != null) 'paymentMethod': method,
+      });
       if (!mounted) return;
       final d = obj(r.data);
       final payment = obj(d['payment']);
       if (payment.isNotEmpty) {
-        await showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (_) => SandboxPaySheet(payment: payment, api: api));
+        await showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (_) => PaySheet(payment: payment, api: api));
       } else {
         await showTickets(context, objs(d['tickets']));
       }
@@ -208,37 +257,54 @@ Future<void> showTickets(BuildContext context, List<Json> tickets) => Navigator.
       ),
     ));
 
-/// Confirms a SANDBOX payment: pay or simulate a decline. Nothing is charged.
-class SandboxPaySheet extends StatefulWidget {
-  const SandboxPaySheet({super.key, required this.payment, required this.api});
+/// Pays for a held order. Sandbox: pick success or decline, nothing is
+/// charged. A processor (PayPal, Square, BTCPay): open its page in the
+/// browser, then "I've paid" asks EduOS to check with the processor.
+class PaySheet extends StatefulWidget {
+  const PaySheet({super.key, required this.payment, required this.api});
   final Json payment;
   final ApiClient api;
 
   @override
-  State<SandboxPaySheet> createState() => _SandboxPaySheetState();
+  State<PaySheet> createState() => _PaySheetState();
 }
 
-class _SandboxPaySheetState extends State<SandboxPaySheet> {
+class _PaySheetState extends State<PaySheet> {
   bool _busy = false;
+  bool _done = false;
   String? _result;
 
-  Future<void> _confirm(String outcome) async {
+  String get _provider => str(widget.payment['provider'], 'sandbox');
+  bool get _sandbox => _provider == 'sandbox';
+
+  Future<void> _confirm([String? outcome]) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final r = obj((await widget.api.post('/api/commerce/payments/${str(widget.payment['id'])}/confirm', {'testOutcome': outcome})).data);
+      final r = obj((await widget.api.post('/api/commerce/payments/${str(widget.payment['id'])}/confirm', {if (outcome != null) 'testOutcome': outcome})).data);
       if (!mounted) return;
       switch (str(r['status'])) {
         case 'succeeded':
           final receipt = obj(r['receipt']);
           final navigator = Navigator.of(context);
           navigator.pop();
-          toast(navigator.context, 'Paid (sandbox). Receipt ${str(receipt['number'])}.');
+          toast(navigator.context, '${_sandbox ? 'Paid (sandbox)' : 'Paid'}. Receipt ${str(receipt['number'])}.');
           await showTickets(navigator.context, objs(r['tickets']));
         case 'declined':
-          setState(() => _result = 'Declined (sandbox). Nothing was charged and your seats were released.');
+          setState(() {
+            _done = true;
+            _result = '${_sandbox ? 'Declined (sandbox)' : 'Declined'}. Nothing was charged and your seats were released.';
+          });
+        case 'pending':
+          setState(() => _result = 'The payment isn\'t finished yet. If you completed it, wait a moment and check again.');
         default:
-          setState(() => _result = str(r['reason'], 'The hold ran out. Start again.'));
+          setState(() {
+            _done = true;
+            _result = [
+              str(r['reason'], 'The hold ran out. Start again.'),
+              if (boolean(r['paidAfterHold'])) 'Your payment arrived after the hold ended. The district will refund it.',
+            ].join(' ');
+          });
       }
     } on ApiException catch (e) {
       if (mounted) setState(() => _result = e.isOffline ? 'You\'re offline. Connect to pay.' : 'Could not confirm the payment.');
@@ -247,10 +313,18 @@ class _SandboxPaySheetState extends State<SandboxPaySheet> {
     }
   }
 
+  Future<void> _open() async {
+    final uri = Uri.tryParse(str(widget.payment['redirectUrl']));
+    if (uri == null || uri.scheme != 'https' || !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) setState(() => _result = 'Could not open the payment page.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = widget.payment;
     final held = date(p['holdExpiresAt']);
+    final where = processorLabels[_provider] ?? 'the payment page';
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -258,15 +332,24 @@ class _SandboxPaySheetState extends State<SandboxPaySheet> {
           Text('Pay ${money(p['amountCents'], str(p['currency'], 'USD'))}', style: Theme.of(context).textTheme.titleLarge),
           if (held != null) Text('Seats are held until ${fmtTime(held)}.'),
           const SizedBox(height: 8),
-          const Notice('Sandbox: pick an outcome. No card, no real money.'),
+          Notice(_sandbox
+              ? 'Sandbox: pick an outcome. No card, no real money.'
+              : boolean(p['test'])
+                  ? 'Test mode: $where\'s test system. No real money moves.'
+                  : 'You\'ll pay on $where\'s secure page. EduOS never sees your card or login.'),
           if (_result != null) ...[const SizedBox(height: 8), Text(_result!)],
           const SizedBox(height: 12),
-          if (_result == null) ...[
+          if (_done)
+            OutlinedButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))
+          else if (_sandbox) ...[
             FilledButton(onPressed: _busy ? null : () => _confirm('sandbox_success'), child: const Text('Pay (sandbox)')),
             const SizedBox(height: 8),
             OutlinedButton(onPressed: _busy ? null : () => _confirm('sandbox_decline'), child: const Text('Simulate a decline')),
-          ] else
-            OutlinedButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
+          ] else ...[
+            if (str(p['redirectUrl']).isNotEmpty) FilledButton(onPressed: _busy ? null : _open, child: Text('Continue to $where')),
+            const SizedBox(height: 8),
+            OutlinedButton(onPressed: _busy ? null : () => _confirm(), child: const Text('I\'ve paid: check status')),
+          ],
         ]),
       ),
     );

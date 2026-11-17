@@ -1,5 +1,6 @@
 // 37.7.0 commerce (sandbox): the native tickets screen. Guardians pay with
 // the sandbox adapter and get their codes once; learners can't pay.
+// 37.7.1: the district's payment options ("Pay with") and processor checkout.
 import 'dart:convert';
 
 import 'package:eduos_mobile_branding/app/app_controller.dart';
@@ -97,5 +98,55 @@ void main() {
     expect(find.text('Paid tickets are off. No payment is collected here.'), findsOneWidget);
     expect(find.text('Paid tickets are off'), findsOneWidget);
     expect(find.text('Buy'), findsNothing);
+  });
+
+  testWidgets('37.7.1: a guardian picks the district\'s payment option and finishes on the processor\'s page', (tester) async {
+    var confirms = 0;
+    final fake = await pumpTickets(tester, 'parent', {
+      'GET /api/commerce/status': (_) => {'data': {'provider': 'paypal', 'enabled': true, 'live': false, 'sandbox': false, 'canPay': true,
+        'note': 'Test mode: payments go to the processor\'s test system. No real money moves.', 'defaultMethod': 'paypal',
+        'methods': [
+          {'method': 'paypal', 'label': 'PayPal', 'processor': 'paypal', 'mode': 'test', 'default': true},
+          {'method': 'cash_app', 'label': 'Cash App', 'processor': 'square', 'mode': 'test', 'default': false},
+        ]}},
+      'POST /api/events/e1/tickets': (_) => {'data': {'order': {'id': 'o1'}, 'tickets': [],
+        'payment': {'id': 'p9', 'status': 'requires_confirmation', 'amountCents': 1000, 'currency': 'USD', 'provider': 'square', 'method': 'cash_app',
+          'mode': 'test', 'test': true, 'redirectUrl': 'https://sandbox.square.link/u/abc'}}},
+      'POST /api/commerce/payments/p9/confirm': (_) => (++confirms == 1)
+          ? {'data': {'status': 'pending', 'payment': {'id': 'p9'}}}
+          : {'data': {'status': 'succeeded', 'receipt': {'id': 'r9', 'number': 'R-20261117-0000000009'}, 'tickets': [{'id': 't9', 'code': 'CODE-NINE-abcdefghijklmnopqrstuvwx'}]}},
+    }, enabled: true);
+    expect(find.text('Test mode: payments go to the processor\'s test system. No real money moves.'), findsOneWidget);
+    expect(find.text('Pay with'), findsOneWidget);
+    await tester.tap(find.text('PayPal (test)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cash App (test)').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Buy'));
+    await tester.pumpAndSettle();
+    final order = jsonDecode(fake.sent('POST', '/api/events/e1/tickets').single.body) as Map<String, Object?>;
+    expect(order['paymentMethod'], 'cash_app');
+    expect(find.text('Test mode: Square\'s test system. No real money moves.'), findsOneWidget);
+    expect(find.text('Continue to Square'), findsOneWidget);
+    expect(find.text('Pay (sandbox)'), findsNothing, reason: 'no sandbox outcome buttons for a processor payment');
+    await tester.tap(find.text('I\'ve paid: check status'));
+    await tester.pumpAndSettle();
+    expect(jsonDecode(fake.sent('POST', '/api/commerce/payments/p9/confirm').first.body), <String, Object?>{}, reason: 'no testOutcome for a processor');
+    expect(find.textContaining('isn\'t finished yet'), findsOneWidget);
+    await tester.tap(find.text('I\'ve paid: check status'));
+    await tester.pumpAndSettle();
+    expect(find.text('CODE-NINE-abcdefghijklmnopqrstuvwx'), findsOneWidget);
+  });
+
+  testWidgets('37.7.1: with one payment option there is no picker and the server default is used', (tester) async {
+    final fake = await pumpTickets(tester, 'parent', {
+      'POST /api/events/e1/tickets': (_) => {'data': {'order': {'id': 'o1'}, 'tickets': [], 'payment': {'id': 'p1', 'amountCents': 1000, 'currency': 'USD', 'provider': 'sandbox'}}},
+    }, enabled: true);
+    expect(find.text('Pay with'), findsNothing);
+    await tester.tap(find.text('Buy'));
+    await tester.pumpAndSettle();
+    final order = jsonDecode(fake.sent('POST', '/api/events/e1/tickets').single.body) as Map<String, Object?>;
+    expect(order.containsKey('paymentMethod'), isFalse);
+    expect(find.text('Pay (sandbox)'), findsOneWidget);
   });
 }
