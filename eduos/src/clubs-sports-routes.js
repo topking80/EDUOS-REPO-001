@@ -328,6 +328,10 @@ export function registerClubsSportsRoutes(app) {
      DO UPDATE SET status=EXCLUDED.status,decided_at=now()`,
      [a.districtId,asset.school_id,asset.id,b.studentId,a.userId,action==="grant"?"approved":"denied"]);
    }
+   await c.query(`INSERT INTO activity_media_consent_history
+    (district_id,school_id,media_asset_id,student_id,guardian_user_id,decision)
+    VALUES($1,$2,$3,$4,$5,$6)`,
+    [a.districtId,asset.school_id,asset.id,b.studentId,a.userId,action==="grant"?"approved":action==="deny"?"denied":"withdrawn"]);
    const guardianDecision=await one(c,`SELECT count(*) FILTER(WHERE status='approved')::int AS approvals,
      count(*) FILTER(WHERE status IN ('denied','withdrawn'))::int AS denials FROM activity_media_consents
      WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3`,[a.districtId,asset.id,b.studentId]);
