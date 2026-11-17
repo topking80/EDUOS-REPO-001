@@ -13,6 +13,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { CHROME, startChrome, Page } from "./cdp.js";
+import { METHODS, PROCESSORS } from "../../src/commerce/catalog.js";
 
 const APP_DIR = new URL("../../public/app/", import.meta.url);
 const ui = fs.readFileSync(new URL("app.js", APP_DIR), "utf8");
@@ -69,7 +70,9 @@ function mockApi(role, pathname) {
     // 37.7.0 commerce (sandbox) screens.
     case "/api/events": return { data: [{ id: "e1", activity_id: "a1", school_id: "s1", title: "Friday Night Football", starts_at: new Date(Date.now() + 864e5).toISOString(),
       ends_at: new Date(Date.now() + 9e7).toISOString(), venue: "Main field", status: "published", school_name: "Maple" }] };
-    case "/api/commerce/status": return { data: { provider: "sandbox", enabled: true, live: false, sandbox: true, canPay: ["parent", "superintendent"].includes(role),
+    case "/api/commerce/status": return { data: { provider: "sandbox", enabled: true, live: false, sandbox: false, canPay: ["parent", "superintendent"].includes(role),
+      canManageProviders: ["superintendent", "it_admin"].includes(role), note: "Test mode: payments go to the processor's test system. No real money moves.", defaultMethod: "paypal",
+      methods: [{ method: "paypal", label: "PayPal", processor: "paypal", mode: "test", default: true }, { method: "sandbox", label: "Sandbox (test checkout)", processor: "sandbox", mode: "test", default: false }],
       settings: { enabled: true, networkFeeBps: 300, salesTaxBps: 0, split: { schoolBps: 8500, districtBps: 1000, stateBps: 500 }, stateFundLabel: "State education fund",
         marketplaceFeeBps: 500, holdMinutes: 10, updatedAt: now } } };
     case "/api/commerce/shop": return { data: { events: [{ id: "e1", title: "Friday Night Football", startsAt: now, venue: "Main field", school: "Maple",
@@ -83,6 +86,16 @@ function mockApi(role, pathname) {
     case "/api/commerce/marketplace": return { data: { marketplaceFeeBps: 500, licenses: [
       { feeEventId: "f1", approvedAt: now, listingId: "l1", name: "Math Garden", vendor: "MathCo", unitPriceCents: 1250, priceUnit: "seat", seatLimit: 30, purchase: null },
       { feeEventId: "f2", approvedAt: now, listingId: "l2", name: "Read Along", vendor: "ReadCo", unitPriceCents: null, priceUnit: "flat", seatLimit: null, purchase: { id: "m1", status: "paid", total_cents: 5000, quantity: 1 } }] } };
+    // 37.7.1 district payment setup, built from the real catalog.
+    case "/api/commerce/providers": return { data: { liveSwitch: false, secretsKeyConfigured: true, btcpayAllowedHosts: [],
+      setup: { enabledMethods: ["paypal", "sandbox"], defaultMethod: "paypal", cardProcessor: "square", updatedAt: now },
+      processors: Object.fromEntries(["paypal", "square", "btcpay"].map(p => { const spec = PROCESSORS[p], plain = spec.fields.filter(f => !f.secret), sec = spec.fields.filter(f => f.secret);
+        return [p, { processor: p, label: spec.label, description: spec.description, fields: spec.fields, enabled: p === "paypal", mode: "test", status: p === "paypal" ? "test" : "not_set_up",
+          config: Object.fromEntries(plain.map(f => [f.key, p === "paypal" && f.key === "clientId" ? "AbcDef1234567890" : null])),
+          secretsSet: Object.fromEntries(sec.map(f => [f.key, p === "paypal"])), missing: [], fee: spec.defaultFee,
+          lastTest: p === "paypal" ? { at: now, ok: true, detail: "token_ok" } : null, updatedAt: now }]; })),
+      methods: Object.values(METHODS).map(m => ({ id: m.id, label: m.label, description: m.description, processors: m.processors, setupProcessor: m.setupProcessor, checkout: !m.methodless,
+        signup: m.signup || null, developer: m.developer || null, docs: m.docs || [], notes: m.notes || [], otherLinks: m.otherLinks || [], adapter: m.adapter, comingReason: m.comingReason || null })) } };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
       return { data: [] };
@@ -124,8 +137,9 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
     assert.doesNotMatch(text, /^Loading/, "/app/ never got past Loading");
   }
   const failures = [];
-  // 37.7.0: commerce screens opened from Clubs & Sports (not tabs of their own).
-  const SUBVIEWS = { parent: ["tickets"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce"] };
+  // 37.7.0: commerce screens opened from Clubs & Sports (not tabs of their own);
+  // 37.7.1: district payment setup from Ticketing & revenue or Data links.
+  const SUBVIEWS = { parent: ["tickets"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
   for (const [role, roleTabList] of Object.entries(roleTabs)) {
     for (const tab of [...roleTabList, ...(SUBVIEWS[role] || [])]) {
       state.role = role;

@@ -224,7 +224,7 @@ export function registerClubsSportsRoutes(app) {
    }
    const type=await one(c,"SELECT * FROM event_ticket_types WHERE id=$1 AND event_id=$2 AND district_id=$3 AND sales_open FOR UPDATE",[b.ticketTypeId,event.id,a.districtId]);
    if(!type)throw new HttpError(404,"ticket_type_not_available");
-   // 37.7.0: priced tickets go through sandbox commerce (guardians only; 503 while commerce is off).
+   // 37.7.0: priced tickets go through commerce (guardians only; 503 while commerce is off). 37.7.1: through the district's chosen processor.
    if(type.price_cents>0)return await startTicketCheckout(c,req,{event,type,quantity,key});
    if(type.sold_count+quantity>type.capacity)throw new HttpError(409,"ticket_capacity_exceeded");
    await c.query("UPDATE event_ticket_types SET sold_count=sold_count+$2 WHERE id=$1",[type.id,quantity]);

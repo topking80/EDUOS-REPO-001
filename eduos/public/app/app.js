@@ -559,7 +559,7 @@ async function activitiesLiveView() {
     detail,
     h("section", { class: "card" }, h("h3", {}, "Upcoming events"),
       upcoming.length ? h("ul", { class: "list" }, upcoming.map(e => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, e.title), h("p", { class: "small muted" }, `${new Date(e.starts_at).toLocaleString()}${e.venue ? ` · ${e.venue}` : ""}`))))) : h("p", { class: "muted" }, "No upcoming events."),
-      h("p", { class: "notice" }, commerce?.data?.enabled ? "Paid tickets use sandbox payments: no real money moves. Live video is not enabled."
+      h("p", { class: "notice" }, commerce?.data?.enabled ? `${commerce.data.note || "Paid tickets are on."} Live video is not enabled.`
         : "Paid tickets and live video are not enabled. No payment is collected here."),
       family ? h("button", { class: "btn block", type: "button", onclick: () => go("tickets") }, "Tickets & receipts") : null,
       ["principal", "superintendent"].includes(role) ? h("button", { class: "btn block", type: "button", onclick: () => go("commerce") }, "Ticketing & revenue") : null),
@@ -1916,7 +1916,10 @@ VIEWS.integrations = async () => {
   const { enabled, connectors = [], schools = [] } = r.data;
   const reload = () => go(state.tab, { push: false });
   const out = [h("h2", {}, "Data links"),
-    h("p", { class: "muted" }, "Bring student rosters in from your SIS or state system (OneRoster 1.2 or Ed-Fi). EduOS only reads from them, never sends student data out, and keeps working without them.")];
+    h("p", { class: "muted" }, "Bring student rosters in from your SIS or state system (OneRoster 1.2 or Ed-Fi). EduOS only reads from them, never sends student data out, and keeps working without them."),
+    staffDistrict() ? h("section", { class: "card", "aria-label": "Payment options" }, h("h2", {}, "Payment options"),
+      h("p", { class: "small muted" }, "Connect the district's PayPal, Square or BTCPay Server account for ticket and marketplace payments."),
+      h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Open payment setup")) : null];
   if (!enabled) return [...out, h("p", { class: "notice" }, "Data links are off on this server. District IT turns them on by setting INTEGRATIONS_KEY.")];
   const results = new Map(); // connector id -> last preview/apply result (this page view)
   const resultCard = (c, res) => {
@@ -2526,9 +2529,11 @@ for (const view of ["children", "overview"]) {
     : ["principal", "superintendent"].includes(state.me.role) ? h("section", { class: "card", "aria-label": "Enrollment" }, h("h2", {}, "Enrollment"), h("p", { class: "small muted" }, "Applications, seats and the waitlist."), h("button", { class: "btn", type: "button", onclick: () => go("enrollboard") }, "Open enrollment board")) : null];
 }
 
-// ----- 37.7.0 Commerce, SANDBOX ONLY: tickets, receipts, revenue, refunds, marketplace -----
-// No real processor exists: "Pay" confirms a sandbox payment and nothing is charged.
-SUBVIEWS.push("tickets", "receipt", "commerce");
+// ----- 37.7.0 Commerce: tickets, receipts, revenue, refunds, marketplace -----
+// 37.7.1: each district picks its own payment options (VIEWS.payments). The
+// sandbox confirms pretend payments; PayPal, Square and BTCPay send the payer
+// to the processor's own page and back here (?commerce_return=<payment id>).
+SUBVIEWS.push("tickets", "receipt", "commerce", "payments");
 const money = (c, cur = "USD") => `${c < 0 ? "-" : ""}${cur === "USD" ? "$" : cur + " "}${(Math.abs(Number(c)) / 100).toFixed(2)}`;
 const CM_LINE = { gross: "Paid", processing_fee: "Payment processing", sales_tax: "Sales tax", network_fee: "EduOS network fee", school_share: "School",
   district_share: "District", state_share: "State fund", marketplace_fee: "Marketplace fee", vendor_payable: "Vendor" };
@@ -2537,13 +2542,68 @@ const CM_ERR = { paid_ticketing_not_configured: "Paid tickets aren't turned on f
   ticket_already_used: "A ticket on this order was already scanned at the gate.", payment_not_refundable: "This payment can't be refunded.",
   split_must_total_100_percent: "The split must add up to 100%.", invalid_rate: "Check the rates.", listing_not_priced: "Set a price for this listing first.",
   already_purchased: "This license is already paid for.", invalid_quantity: "Say how many seats to pay for.", ticket_not_found: "That code isn't a ticket for this event.",
-  ticket_not_checkin_eligible: "That ticket was already used or refunded.", invalid_ticket_type: "Check the name, price and capacity.", commerce_not_enabled: "Commerce is off." };
+  ticket_not_checkin_eligible: "That ticket was already used or refunded.", invalid_ticket_type: "Check the name, price and capacity.", commerce_not_enabled: "Commerce is off.",
+  payment_method_not_available: "That payment option isn't offered. Pick another.", card_processor_not_chosen: "The district hasn't chosen who processes cards.",
+  payment_adapter_not_available: "That payment option isn't available in EduOS yet.", live_payments_disabled: "Live payments are switched off on this server.",
+  commerce_secrets_key_missing: "District IT must set COMMERCE_SECRETS_KEY on the server first.", provider_credentials_missing: "This payment account is missing credentials.",
+  provider_credentials_unreadable: "Saved credentials can't be read. Enter them again.", provider_incomplete: "Fill in the required fields before turning this on.",
+  live_requires_credentials: "Live mode needs every required credential.", invalid_field: "Check the highlighted field's format.", btcpay_host_not_allowed: "Ask district IT to allow your BTCPay Server's host.",
+  default_method_not_enabled: "The default has to be one of the options you offer.", invalid_payment_methods: "Check the payment options.", invalid_card_processor: "Pick Square or PayPal for cards.",
+  provider_auth_failed: "The processor rejected these credentials.", provider_unreachable: "Couldn't reach the processor. Try again.", provider_http_error: "The processor returned an error.",
+  provider_host_not_allowed: "That processor address isn't allowed.", provider_amount_mismatch: "The processor's amount didn't match. Nothing was issued; contact the district.",
+  provider_bad_response: "The processor sent an unexpected reply.", provider_refund_failed: "The processor didn't accept the refund.", currency_not_supported: "Only US dollars are supported.",
+  order_not_awaiting_payment: "This order isn't waiting for payment any more.", purchase_not_awaiting_payment: "This purchase isn't waiting for payment any more." };
 const cmErr = (e, fallback = "Couldn't do that.") => toast(CM_ERR[e?.body?.error] || fallback);
 const cmKey = () => [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, "0")).join("");
 const pct = bps => `${(bps / 100).toFixed(bps % 100 ? 2 : 0)}%`;
+const PROC_LABEL = { sandbox: "Sandbox", paypal: "PayPal", square: "Square", btcpay: "BTCPay Server" };
 function cmBanner(st) {
-  return h("p", { class: "notice" }, st?.enabled ? "Sandbox payments: no real money moves and no card is charged."
-    : st?.provider === "none" || !st ? "Paid tickets are off: no payment provider is connected. No payment is collected here." : "Paid tickets are off until the district turns them on.");
+  return h("p", { class: "notice" }, st?.enabled ? (st.note || (st.live ? "Payments are live: real money moves." : "Test payments: no real money moves."))
+    : !st || !(st.methods || []).length ? "Paid tickets are off: the district hasn't connected a payment option yet. No payment is collected here."
+    : "Paid tickets are off until the district turns them on.");
+}
+// "Pay with" picker, shown only when the district offers more than one ready option.
+function methodPick(st, id) {
+  const ms = st?.methods || [];
+  if (ms.length < 2) return null;
+  const sel = h("select", { id, "aria-label": "Pay with" }, ms.map(m => h("option", { value: m.method, selected: m.method === st.defaultMethod },
+    `${m.label}${m.processor !== "sandbox" && m.mode === "test" ? " (test)" : ""}`)));
+  return h("div", { class: "row wrap" }, h("label", { for: id }, "Pay with"), sel);
+}
+const pickedMethod = (wrap, st) => wrap?.querySelector("select")?.value || (st?.methods?.length === 1 ? st.methods[0].method : undefined);
+// Show a confirm result in `out`; returns true when nothing is left to do.
+function cmShowResult(out, r, pay, onDone, retry) {
+  const sandbox = (r.payment?.provider || pay?.provider) === "sandbox";
+  if (r.status === "succeeded") {
+    toast(sandbox ? "Paid (sandbox)" : "Paid");
+    out.replaceChildren(r.tickets ? issuedTickets(r.tickets) : h("p", {}, "Paid."),
+      r.receipt ? h("button", { class: "btn", type: "button", onclick: () => { state.receiptId = r.receipt.id; go("receipt"); } }, `Receipt ${r.receipt.number}`) : null);
+  } else if (r.status === "declined") { toast("Payment declined. Your seats were released."); out.replaceChildren(h("p", { class: "muted" }, sandbox ? "Declined (sandbox). Nothing was charged." : "Declined. Nothing was charged.")); }
+  else if (r.status === "pending") {
+    out.replaceChildren(h("p", { class: "muted", role: "status" }, "The payment isn't finished yet. If you completed it, give it a moment and check again."),
+      retry ? h("button", { class: "btn", type: "button", onclick: retry }, "Check again") : null);
+    return false;
+  } else {
+    toast("The hold ran out. Start again.");
+    out.replaceChildren(h("p", { class: "muted" }, r.reason || "The hold expired."), r.paidAfterHold ? h("p", { class: "notice" }, "Your payment arrived after the hold ended. The district will refund it.") : null);
+  }
+  onDone?.(r);
+  return true;
+}
+// Back from a processor's page (?commerce_return=<id>): confirm once on arrival.
+function cmResume(onDone) {
+  const ret = state.cmReturn;
+  if (!ret) return null;
+  state.cmReturn = null;
+  const out = h("div", { class: "stack", role: "status" }, h("p", { class: "muted" }, ret.cancelled ? "" : "Checking your payment…"));
+  const check = async () => {
+    try { cmShowResult(out, (await api.post(`/api/commerce/payments/${ret.id}/confirm`, {})).data, null, onDone, check); }
+    catch (e) { out.replaceChildren(h("p", { class: "muted" }, CM_ERR[e?.body?.error] || "Couldn't check the payment.")); }
+  };
+  if (ret.cancelled) out.replaceChildren(h("p", { class: "muted" }, "You left the payment page. Nothing was charged; held seats are released when the hold ends."),
+    h("button", { class: "btn", type: "button", onclick: check }, "I did pay: check again"));
+  else check();
+  return h("section", { class: "card", "aria-label": "Payment result" }, h("h3", {}, "Your payment"), out);
 }
 function issuedTickets(tickets, title) {
   return h("section", { class: "card pass", "aria-label": "Your tickets" }, h("h2", {}, title || "Your tickets"),
@@ -2553,23 +2613,25 @@ function issuedTickets(tickets, title) {
 function payPanel(pay, { onDone } = {}) {
   const out = h("div", { class: "stack" });
   const confirmPay = async outcome => {
-    try {
-      const r = (await api.post(`/api/commerce/payments/${pay.id}/confirm`, { testOutcome: outcome })).data;
-      if (r.status === "succeeded") {
-        toast("Paid (sandbox)");
-        out.replaceChildren(r.tickets ? issuedTickets(r.tickets) : h("p", {}, "Paid."),
-          h("button", { class: "btn", type: "button", onclick: () => { state.receiptId = r.receipt.id; go("receipt"); } }, `Receipt ${r.receipt.number}`));
-      } else if (r.status === "declined") { toast("Payment declined. Your seats were released."); out.replaceChildren(h("p", { class: "muted" }, "Declined (sandbox). Nothing was charged.")); }
-      else { toast("The hold ran out. Start again."); out.replaceChildren(h("p", { class: "muted" }, r.reason || "The hold expired.")); }
-      onDone?.(r);
-    } catch (e) { cmErr(e, "Couldn't confirm the payment."); }
+    try { cmShowResult(out, (await api.post(`/api/commerce/payments/${pay.id}/confirm`, outcome ? { testOutcome: outcome } : {})).data, pay, onDone, () => confirmPay()); }
+    catch (e) { cmErr(e, "Couldn't confirm the payment."); }
   };
-  return h("section", { class: "card", "aria-label": "Pay" }, h("h3", {}, `Pay ${money(pay.amountCents, pay.currency)}`),
-    pay.holdExpiresAt ? h("p", { class: "small muted" }, `Seats are held until ${fmtTime(pay.holdExpiresAt)}.`) : null,
-    h("p", { class: "notice" }, "Sandbox: pick an outcome. No card, no real money."),
+  const head = [h("h3", {}, `Pay ${money(pay.amountCents, pay.currency)}`),
+    pay.holdExpiresAt ? h("p", { class: "small muted" }, `Seats are held until ${fmtTime(pay.holdExpiresAt)}.`) : null];
+  if (pay.provider === "sandbox") {
+    return h("section", { class: "card", "aria-label": "Pay" }, head,
+      h("p", { class: "notice" }, "Sandbox: pick an outcome. No card, no real money."),
+      h("div", { class: "row wrap" },
+        h("button", { class: "btn primary", type: "button", onclick: () => confirmPay("sandbox_success") }, "Pay (sandbox)"),
+        h("button", { class: "btn", type: "button", onclick: () => confirmPay("sandbox_decline") }, "Simulate a decline")), out);
+  }
+  const where = PROC_LABEL[pay.provider] || "the payment page";
+  return h("section", { class: "card", "aria-label": "Pay" }, head,
+    h("p", { class: "notice" }, pay.test ? `Test mode: ${where}'s test system. No real money moves.` : `You'll pay on ${where}'s secure page. EduOS never sees your card or login.`),
+    pay.provider === "btcpay" ? h("p", { class: "small muted" }, "Bitcoin refunds are paid back in dollars at the price you paid.") : null,
     h("div", { class: "row wrap" },
-      h("button", { class: "btn primary", type: "button", onclick: () => confirmPay("sandbox_success") }, "Pay (sandbox)"),
-      h("button", { class: "btn", type: "button", onclick: () => confirmPay("sandbox_decline") }, "Simulate a decline")), out);
+      pay.redirectUrl ? h("a", { class: "btn primary", href: pay.redirectUrl, rel: "noopener noreferrer" }, `Continue to ${where}`) : null,
+      h("button", { class: "btn", type: "button", onclick: () => confirmPay() }, "I've paid: check status")), out);
 }
 
 // Families: tickets on sale, checkout, my tickets and receipts.
@@ -2577,10 +2639,13 @@ VIEWS.tickets = async () => {
   const role = state.me.role, parent = role === "parent";
   const [st, shop, mine, my] = await Promise.all([safe(api.get("/api/commerce/status")), safe(api.get("/api/commerce/shop"), { data: { events: [] } }),
     parent ? safe(api.get("/api/commerce/my"), { data: { payments: [] } }) : null, safe(api.get("/api/my/tickets"), { data: [] })]);
-  const s = st?.data, area = h("div", { class: "stack", id: "ticket-checkout" });
+  const s = st?.data, area = h("div", { class: "stack", id: "ticket-checkout" }), pick = parent && s?.enabled ? methodPick(s, "tk-method") : null;
+  const resumed = cmResume(() => setTimeout(() => go("tickets", { push: false }), 2500));
+  if (resumed) area.append(resumed);
   const buy = async (ev, t, qty) => {
     try {
-      const r = (await api.post(`/api/events/${ev.id}/tickets`, { ticketTypeId: t.id, quantity: qty, idempotencyKey: cmKey() })).data;
+      const r = (await api.post(`/api/events/${ev.id}/tickets`, { ticketTypeId: t.id, quantity: qty, idempotencyKey: cmKey(),
+        paymentMethod: t.priceCents > 0 ? pickedMethod(pick, s) : undefined })).data;
       area.replaceChildren(r.payment ? payPanel(r.payment) : issuedTickets(r.tickets, "Your free tickets"));
       area.scrollIntoView?.({ behavior: "smooth" });
     } catch (e) { cmErr(e, "Couldn't get tickets."); }
@@ -2596,6 +2661,7 @@ VIEWS.tickets = async () => {
   const events = shop?.data?.events || [];
   return [back("activities", "Clubs & Sports"), h("h2", {}, "Tickets"), cmBanner(s),
     !parent ? h("p", { class: "small muted" }, "Students can get free tickets. A parent or guardian buys paid ones.") : null,
+    pick,
     events.length ? events.map(ev => h("section", { class: "card", "aria-label": ev.title }, h("h3", {}, ev.title),
       h("p", { class: "small muted" }, `${fmtDay(ev.startsAt)} ${fmtTime(ev.startsAt)}${ev.venue ? ` · ${ev.venue}` : ""} · ${ev.school}`),
       h("ul", { class: "list" }, ev.ticketTypes.map(t => typeRow(ev, t))))) : h("section", { class: "card" }, empty("No tickets on sale right now.")),
@@ -2635,6 +2701,11 @@ VIEWS.commerce = async () => {
   const upcoming = (evs?.data || []).filter(e => new Date(e.ends_at || e.starts_at) >= new Date());
   const evPick = id => h("select", { id, "aria-label": "Event" }, upcoming.map(e => h("option", { value: e.id }, `${e.title} · ${fmtDay(e.starts_at)}`)));
   const out = [back("activities", "Clubs & Sports"), h("h2", {}, "Ticketing & revenue"), cmBanner(s)];
+  const resumed = cmResume(() => setTimeout(reload, 2500));
+  if (resumed) out.push(resumed);
+  if (s.canManageProviders) out.push(h("section", { class: "card", "aria-label": "Payment options" }, h("h2", {}, "Payment options"),
+    h("p", { class: "small muted" }, (s.methods || []).length ? `Families can pay with: ${s.methods.map(m => m.label).join(", ")}.` : "No payment option is set up yet."),
+    h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Set up PayPal, cards, Square, Bitcoin, Venmo or Cash App")));
 
   if (supt) {
     const num = (id, v, step = "0.01") => h("input", { id, type: "number", step, min: 0, value: v });
@@ -2649,13 +2720,13 @@ VIEWS.commerce = async () => {
         try { await api.put("/api/commerce/settings", { enabled: en.checked, networkFeeBps: bps(nf), salesTaxBps: bps(tx), split: { schoolBps: bps(sc), districtBps: bps(di), stateBps: bps(stt) },
           stateFundLabel: lbl.value, marketplaceFeeBps: bps(mf), holdMinutes: Number(hold.value) }); toast("Saved"); reload(); } catch (err) { cmErr(err, "Couldn't save."); }
       } },
-        h("label", { class: "row" }, en, h("span", {}, s.provider === "none" ? "Turn on paid tickets (needs the sandbox provider on the server)" : "Turn on paid tickets (sandbox)")),
+        h("label", { class: "row" }, en, h("span", {}, (s.methods || []).length ? "Turn on paid tickets" : "Turn on paid tickets (set up a payment option first)")),
         h("label", { for: "cm-nf" }, "Network fee (%)"), nf, h("label", { for: "cm-tx" }, "Sales tax (%)"), tx,
         h("label", { for: "cm-sc" }, "School share of net (%)"), sc, h("label", { for: "cm-di" }, "District share of net (%)"), di, h("label", { for: "cm-st" }, "State fund share of net (%)"), stt,
         h("label", { for: "cm-lbl" }, "State fund name"), lbl, h("label", { for: "cm-mf" }, "Marketplace fee (%)"), mf, h("label", { for: "cm-hold" }, "Hold seats at checkout (minutes)"), hold,
         h("button", { class: "btn primary", type: "submit" }, "Save settings"))));
   } else {
-    out.push(h("section", { class: "card" }, h("ul", { class: "list" }, kv("Paid tickets", s.enabled ? "On (sandbox)" : "Off"), kv("Network fee", pct(set.networkFeeBps)),
+    out.push(h("section", { class: "card" }, h("ul", { class: "list" }, kv("Paid tickets", s.enabled ? (s.live ? "On (live)" : s.sandbox ? "On (sandbox)" : "On (test)") : "Off"), kv("Network fee", pct(set.networkFeeBps)),
       kv("School share of net", pct(set.split.schoolBps)), kv("District share of net", pct(set.split.districtBps)), kv(`${set.stateFundLabel} share of net`, pct(set.split.stateBps)))));
   }
 
@@ -2672,7 +2743,9 @@ VIEWS.commerce = async () => {
         chip(p.status === "succeeded" ? "present" : "expected", p.status),
         p.refundable ? h("button", { class: "btn", type: "button", onclick: async () => {
           if (!(await ask({ title: "Refund this payment?", text: `Refund ${money(p.amountCents, p.currency)} to ${p.payer}? Their tickets stop working.`, confirm: "Refund", danger: true }))) return;
-          try { await api.post(`/api/commerce/payments/${p.id}/refund`, {}); toast("Refunded (sandbox)"); reload(); } catch (e) { cmErr(e, "Couldn't refund."); }
+          try { const rr = (await api.post(`/api/commerce/payments/${p.id}/refund`, {})).data;
+            if (rr?.manual) await ask({ title: "Send the refund yourself", text: rr.note || "Bitcoin refunds are paid in dollars outside EduOS. The refund is recorded.", confirm: "OK" });
+            else toast(p.provider === "sandbox" || s.sandbox ? "Refunded (sandbox)" : "Refunded"); reload(); } catch (e) { cmErr(e, "Couldn't refund."); }
         } }, "Refund") : null))) : empty("No payments yet.")));
   }
 
@@ -2696,12 +2769,12 @@ VIEWS.commerce = async () => {
           toast("Tickets added"); reload(); } catch (err) { cmErr(err, "Couldn't add tickets."); }
       } }, h("label", { for: "cm-tt-ev" }, "Event"), ev2, h("label", { for: "cm-tt-name" }, "Ticket name"), name, h("label", { for: "cm-tt-price" }, "Price ($, 0 for free)"), price,
         h("label", { for: "cm-tt-cap" }, "How many"), cap, h("label", { class: "row" }, open, h("span", {}, "On sale now")),
-        h("p", { class: "small muted" }, s.enabled ? "Families pay in the sandbox. Students can only get free tickets." : "Paid tickets can't be sold until commerce is on; free tickets work now."),
+        h("p", { class: "small muted" }, s.enabled ? `Families pay with ${(s.methods || []).map(m => m.label).join(", ")}. Students can only get free tickets.` : "Paid tickets can't be sold until commerce is on; free tickets work now."),
         h("button", { class: "btn primary", type: "submit" }, "Add tickets"))));
   }
 
   if (supt && mkt?.data) {
-    const area = h("div", { class: "stack" });
+    const area = h("div", { class: "stack" }), mpick = s.enabled ? methodPick(s, "mk-method") : null;
     out.push(h("section", { class: "card", "aria-label": "Marketplace purchases" }, h("h2", {}, "Marketplace purchases"),
       h("p", { class: "small muted" }, `Approved marketplace licenses. The vendor is paid the price less processing and the ${pct(mkt.data.marketplaceFeeBps)} marketplace fee.`),
       mkt.data.licenses.length ? h("ul", { class: "list" }, mkt.data.licenses.map(l => {
@@ -2713,12 +2786,105 @@ VIEWS.commerce = async () => {
           l.purchase?.status === "paid" ? null : h("div", { class: "row wrap" }, pr, unit,
             h("button", { class: "btn", type: "button", onclick: async () => { try { await api.post(`/api/commerce/marketplace/listings/${l.listingId}/price`, { unitPriceCents: Math.round(Number(pr.value) * 100), priceUnit: unit.value }); toast("Price saved"); reload(); } catch (e) { cmErr(e, "Couldn't save the price."); } } }, "Save price"),
             seats, l.unitPriceCents && s.enabled ? h("button", { class: "btn primary", type: "button", onclick: async () => {
-              try { const r = (await api.post(`/api/commerce/marketplace/fee-events/${l.feeEventId}/checkout`, { idempotencyKey: cmKey(), quantity: seats ? Number(seats.value) : undefined })).data;
+              try { const r = (await api.post(`/api/commerce/marketplace/fee-events/${l.feeEventId}/checkout`, { idempotencyKey: cmKey(), quantity: seats ? Number(seats.value) : undefined, paymentMethod: pickedMethod(mpick, s) })).data;
                 area.replaceChildren(payPanel(r.payment, { onDone: () => setTimeout(reload, 1500) })); } catch (e) { cmErr(e, "Couldn't start the purchase."); }
-            } }, "Buy (sandbox)") : null));
-      })) : empty("No approved marketplace licenses yet."), area));
+            } }, s.sandbox ? "Buy (sandbox)" : "Buy") : null));
+      })) : empty("No approved marketplace licenses yet."), mpick, area));
   }
   return out;
+};
+
+// 37.7.1 District payment setup (superintendent and district IT): quick-setup
+// cards for PayPal, Visa/Mastercard, Square, Bitcoin, Venmo and Cash App.
+// Credentials are write-only: saved secrets are never sent back, only whether
+// each one is set. Live mode also needs the server's live switch.
+const CM_STATUS = { not_set_up: ["absent", "Not set up"], test: ["expected", "Test"], live: ["present", "Live"], live_blocked: ["absent", "Live, switched off on server"] };
+VIEWS.payments = async () => {
+  const r = (await api.get("/api/commerce/providers")).data;
+  const reload = () => go("payments", { push: false });
+  const acct = p => r.processors[p];
+  const stat = p => { const a = acct(p), [k, t] = CM_STATUS[a.status] || CM_STATUS.not_set_up; return chip(a.status === "not_set_up" ? k : a.enabled ? k : "absent", a.status !== "not_set_up" && !a.enabled ? `${t} · off` : t); };
+  const linkList = m => {
+    const ls = [m.signup, m.developer, ...m.docs, ...m.otherLinks].filter(Boolean);
+    return ls.length ? h("ul", { class: "list small" }, ls.map(l => h("li", {}, h("a", { href: l.url, target: "_blank", rel: "noopener noreferrer" }, l.label)))) : null;
+  };
+  const procForm = p => {
+    const a = acct(p), fid = k => `pv-${p}-${k}`;
+    const inputs = a.fields.map(fd => ({ fd, inp: h("input", { id: fid(fd.key), type: fd.secret ? "password" : "text", autocomplete: fd.secret ? "new-password" : "off", spellcheck: "false", maxlength: fd.max,
+      placeholder: fd.secret ? (a.secretsSet[fd.key] ? "Saved. Leave blank to keep it." : "Not saved") : fd.placeholder || "", value: fd.secret ? "" : a.config[fd.key] || "" }) }));
+    const en = h("input", { id: fid("en"), type: "checkbox", class: "check", checked: a.enabled });
+    const mode = h("select", { id: fid("mode") }, h("option", { value: "test", selected: a.mode === "test" }, "Test (the processor's sandbox, no real money)"),
+      h("option", { value: "live", selected: a.mode === "live" }, "Live (real money)"));
+    const fee = h("input", { id: fid("fee"), type: "number", min: 0, max: 15, step: "0.01", value: a.fee.bps / 100 }),
+      fix = h("input", { id: fid("fix"), type: "number", min: 0, max: 10, step: "0.01", value: (a.fee.fixedCents / 100).toFixed(2) });
+    const res = h("p", { class: "small", role: "status" }, a.lastTest ? `Last test ${fmtDay(a.lastTest.at)} ${fmtTime(a.lastTest.at)}: ${a.lastTest.ok ? "connected" : `failed (${String(a.lastTest.detail || "error").replace(/_/g, " ")})`}` : "Not tested yet.");
+    const save = async e => {
+      e.preventDefault();
+      if (mode.value === "live" && a.mode !== "live" && !(await ask({ title: `Switch ${a.label} to live?`, text: "Families will be charged real money once paid tickets are on. Make sure these are your live credentials.", confirm: "Go live", danger: true }))) return;
+      try {
+        await api.put(`/api/commerce/providers/${p}`, { enabled: en.checked, mode: mode.value, feeBps: Math.round(Number(fee.value) * 100), feeFixedCents: Math.round(Number(fix.value) * 100),
+          config: Object.fromEntries(inputs.filter(x => !x.fd.secret).map(x => [x.fd.key, x.inp.value.trim()])),
+          secrets: Object.fromEntries(inputs.filter(x => x.fd.secret && x.inp.value.trim()).map(x => [x.fd.key, x.inp.value.trim()])) });
+        inputs.forEach(x => { if (x.fd.secret) x.inp.value = ""; });
+        toast(`${a.label} saved`); reload();
+      } catch (err) { inputs.forEach(x => { if (x.fd.secret) x.inp.value = ""; }); cmErr(err, "Couldn't save."); }
+    };
+    return h("form", { class: "stack", "aria-label": `${a.label} account`, onsubmit: save },
+      h("h3", {}, `${a.label} account`), h("p", { class: "small muted" }, a.description),
+      inputs.map(({ fd, inp }) => [h("label", { for: inp.id }, fd.label, fd.secret ? h("span", { class: "small muted" }, " · write-only") : null), inp]),
+      p === "btcpay" ? h("p", { class: "small muted" }, r.btcpayAllowedHosts.length ? `Allowed BTCPay hosts on this server: ${r.btcpayAllowedHosts.join(", ")}.` : "District IT must add your BTCPay Server's host to COMMERCE_ALLOWED_HOSTS first.") : null,
+      h("label", { for: fid("mode") }, "Mode"), mode,
+      h("label", { for: fid("fee") }, "Processing fee estimate (%)"), fee, h("label", { for: fid("fix") }, "Plus per payment ($)"), fix,
+      h("p", { class: "small muted" }, "The fee is your estimate from the processor's pricing; it shows on receipts. Check your actual rate in your processor account."),
+      h("label", { class: "row" }, en, h("span", {}, "Use this account")),
+      h("div", { class: "row wrap" }, h("button", { class: "btn primary", type: "submit" }, "Save"),
+        h("button", { class: "btn", type: "button", onclick: async () => {
+          res.textContent = "Testing…";
+          try { const t = (await api.post(`/api/commerce/providers/${p}/test`, {})).data; res.textContent = t.ok ? `Connected (${t.mode} mode).` : `Didn't connect: ${String(t.detail || "error").replace(/_/g, " ")}.`; }
+          catch (err) { res.textContent = CM_ERR[err?.body?.error] || "Couldn't run the test."; }
+        } }, "Test connection"),
+        Object.values(a.secretsSet).some(Boolean) ? h("button", { class: "btn", type: "button", onclick: async () => {
+          if (!(await ask({ title: `Remove saved ${a.label} credentials?`, text: "Checkout through this account stops until new credentials are saved.", confirm: "Remove", danger: true }))) return;
+          try { await api.put(`/api/commerce/providers/${p}`, { clearSecrets: true, enabled: false }); toast("Removed"); reload(); } catch (err) { cmErr(err, "Couldn't remove."); }
+        } }, "Remove credentials") : null),
+      res);
+  };
+  const tile = m => {
+    const via = m.processors.filter(p => p !== "sandbox" && acct(p));
+    const coming = m.adapter === "coming" || (m.id === "card" && r.setup.cardProcessor === "paypal") ? m.comingReason : null;
+    return h("section", { class: "card", id: `pay-${m.id}`, "aria-label": `${m.label} setup` },
+      h("div", { class: "row wrap" }, h("h2", { class: "grow" }, m.label),
+        m.setupProcessor ? stat(m.setupProcessor) : m.id === "sandbox" ? chip("expected", "Test only") : null,
+        coming ? chip("absent", "Adapter coming") : null,
+        m.checkout && r.setup.enabledMethods.includes(m.id) ? chip("present", "Offered") : null),
+      h("p", {}, m.description),
+      !m.setupProcessor && via.length ? h("p", { class: "small" }, "Runs through: ", via.map((p, i) => [i ? ", " : "", h("a", { href: `#pay-${p === "btcpay" ? "bitcoin" : p}`, onclick: e => { e.preventDefault(); document.getElementById(`pay-${p === "btcpay" ? "bitcoin" : p}`)?.scrollIntoView({ behavior: "smooth" }); } }, PROC_LABEL[p]), ` (${(CM_STATUS[acct(p).status] || CM_STATUS.not_set_up)[1].toLowerCase()})`])) : null,
+      coming ? h("p", { class: "notice" }, coming) : null,
+      m.notes.length ? h("ul", { class: "small" }, m.notes.map(n => h("li", {}, n))) : null,
+      linkList(m),
+      m.setupProcessor ? procForm(m.setupProcessor) : null);
+  };
+  const offered = r.methods.filter(m => m.checkout);
+  const boxes = offered.map(m => ({ m, box: h("input", { id: `pm-${m.id}`, type: "checkbox", class: "check", value: m.id, checked: r.setup.enabledMethods.includes(m.id) }) }));
+  const def = h("select", { id: "pm-default" }, h("option", { value: "" }, "No default"), offered.map(m => h("option", { value: m.id, selected: r.setup.defaultMethod === m.id }, m.label)));
+  const cardSel = h("select", { id: "pm-card" }, h("option", { value: "" }, "Not chosen"),
+    ["square", "paypal"].map(p => h("option", { value: p, selected: r.setup.cardProcessor === p }, `${PROC_LABEL[p]}${p === "paypal" ? " (adapter coming)" : ""}`)));
+  return [state.me.role === "superintendent" ? back("commerce", "Ticketing & revenue") : back("integrations", "Data links"),
+    h("h2", {}, "Payment options"),
+    h("p", { class: "muted" }, "Your district chooses how families pay. Connect an account below, test it, then pick which options families see. Nothing is charged until an account is in live mode and paid tickets are on."),
+    h("p", { class: "notice" }, r.liveSwitch ? "Live payments are allowed on this server." : "Live payments are switched off on this server (COMMERCE_LIVE_PAYMENTS_ENABLED). Test mode and the sandbox work."),
+    r.secretsKeyConfigured ? null : h("p", { class: "notice" }, "Credentials can't be saved until district IT sets COMMERCE_SECRETS_KEY on the server."),
+    h("section", { class: "card", "aria-label": "What families can use" }, h("h2", {}, "What families can use"),
+      h("form", { class: "stack", onsubmit: async e => {
+        e.preventDefault();
+        try { await api.put("/api/commerce/payment-methods", { enabledMethods: boxes.filter(b => b.box.checked).map(b => b.m.id), defaultMethod: def.value || null, cardProcessor: cardSel.value || null });
+          toast("Payment options saved"); reload(); } catch (err) { cmErr(err, "Couldn't save."); }
+      } },
+        boxes.map(({ m, box }) => h("label", { class: "row" }, box, h("span", {}, m.label))),
+        h("label", { for: "pm-card" }, "Who processes Visa / Mastercard"), cardSel,
+        h("label", { for: "pm-default" }, "Shown first at checkout"), def,
+        h("button", { class: "btn primary", type: "submit" }, "Save options"))),
+    r.methods.map(tile)];
 };
 
 async function boot() {
@@ -2741,6 +2907,10 @@ async function boot() {
   clearInterval(state.safetyTimer);
   state.safetyTimer = setInterval(() => { if (document.visibilityState === "visible") checkSafety(); }, 15000);
   const want = location.hash.replace(/^#\//, "");
+  // Back from a processor's checkout page: remember the payment, tidy the URL.
+  const qs = new URLSearchParams(location.search), ret = qs.get("commerce_return");
+  if (ret && /^[0-9a-f-]{36}$/i.test(ret)) state.cmReturn = { id: ret, cancelled: qs.get("commerce_cancel") === "1" };
+  if (ret) history.replaceState(history.state, "", location.pathname + location.hash);
   if (liveIncidents().length) return go("safety", { push: false }); // opening the app during an alert always shows it first
   go(tabsFor().some(t => t[0] === want) || ["me", "sos", "safety", "pickup", ...SUBVIEWS].includes(want) ? want : tabsFor()[0][0], { push: false });
 }
