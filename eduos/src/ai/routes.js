@@ -138,7 +138,7 @@ export function registerAiRoutes(app, { provider = createProvider(config) } = {}
         // Same lock as budget reservations: a change and a request never overlap.
         await lockDistrictAi(c, a.districtId);
         const r = (await c.query(`INSERT INTO ai_district_policy(district_id, enabled_usecases, daily_token_cap, user_daily_token_cap, external_provider_enabled, external_provider_acknowledged_at, external_provider_acknowledged_by, updated_by, updated_at)
-            VALUES ($1,$2,$3,$4,$5,CASE WHEN $5 THEN now() ELSE NULL END,CASE WHEN $5 THEN $6 ELSE NULL END,$6,now())
+            VALUES ($1,$2,$3,$4,$5,CASE WHEN $5 THEN now() ELSE NULL END,CASE WHEN $5 THEN $6::uuid ELSE NULL::uuid END,$6,now())
             ON CONFLICT (district_id) DO UPDATE SET enabled_usecases=EXCLUDED.enabled_usecases,
               daily_token_cap=EXCLUDED.daily_token_cap, user_daily_token_cap=EXCLUDED.user_daily_token_cap,
               external_provider_enabled=EXCLUDED.external_provider_enabled,
