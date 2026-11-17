@@ -3,6 +3,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { requireSession, requireCsrf } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
+import { startTicketCheckout, pendingCheckout } from "./commerce/service.js";
 const DISTRICT = role => ["superintendent","it_admin"].includes(role);
 const LEAD = role => ["superintendent","principal"].includes(role);
 const wrap = fn => async (req,res,next) => { try { const data=await withTenantTransaction(req.actor,c=>fn(c,req)); res.setHeader("Cache-Control","no-store"); res.json({data}); } catch(e) { sendError(res,next,e); } };
@@ -197,6 +198,8 @@ export function registerClubsSportsRoutes(app) {
      if(a.schoolId!==prior.school_id)throw new HttpError(403,"event_school_scope_denied");
      await requirePupilLink(c,a,prior.school_id);
     }
+    // 37.7.0: a checkout still waiting for payment replays its payment, not codes.
+    if(prior.status==="payment_pending")return {order:{id:prior.id,status:prior.status,total_cents:prior.total_cents,currency:prior.currency},replayed:true,tickets:[],payment:await pendingCheckout(c,prior.id)};
     const tickets=await rows(c,"SELECT id,status FROM event_tickets WHERE order_id=$1 FOR UPDATE",[prior.id]);
     const replayTickets=[];
     for(const ticket of tickets){
@@ -221,7 +224,8 @@ export function registerClubsSportsRoutes(app) {
    }
    const type=await one(c,"SELECT * FROM event_ticket_types WHERE id=$1 AND event_id=$2 AND district_id=$3 AND sales_open FOR UPDATE",[b.ticketTypeId,event.id,a.districtId]);
    if(!type)throw new HttpError(404,"ticket_type_not_available");
-   if(type.price_cents>0)throw new HttpError(503,"paid_ticketing_not_configured",{checkoutEnabled:false,reason:"district_payment_provider_not_connected"});
+   // 37.7.0: priced tickets go through sandbox commerce (guardians only; 503 while commerce is off).
+   if(type.price_cents>0)return await startTicketCheckout(c,req,{event,type,quantity,key});
    if(type.sold_count+quantity>type.capacity)throw new HttpError(409,"ticket_capacity_exceeded");
    await c.query("UPDATE event_ticket_types SET sold_count=sold_count+$2 WHERE id=$1",[type.id,quantity]);
    const order=await one(c,`INSERT INTO event_ticket_orders(district_id,school_id,event_id,buyer_user_id,ticket_type_id,quantity,total_cents,currency,status,idempotency_key)
