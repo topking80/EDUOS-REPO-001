@@ -95,10 +95,13 @@ test("private media pipeline uses a durable registry and gates tenant-scoped del
  const actor={userId:"principal",role:"principal",districtId:"district-id",schoolId:"school-id"};
  const storage={
   async createPrivateUpload(v){calls.push(v);return {uploadUrl:"https://upload.example.invalid/one-use",storageKey:"private/district/object",expiresAt:new Date(Date.now()+30000).toISOString()};},
-  async headPrivateObject(v){assert.equal(v.storageKey,"private/district/object");return {byteSize:100,mimeType:"image/png",checksum:"sha256:abc"};},
+  async headPrivateObject(v){
+   if(v.storageKey==="private/district/object-clean")return {byteSize:90,mimeType:"image/png",checksum:"sha256:def"};
+   assert.equal(v.storageKey,"private/district/object");return {byteSize:100,mimeType:"image/png",checksum:"sha256:abc"};
+  },
   async createPrivateReadUrl(v){assert.equal(v.expiresInSeconds,60);assert.equal(v.storageKey,"private/district/object-clean");return {url:"https://read.example.invalid/short",expiresAt:new Date(Date.now()+30000).toISOString()};}
  };
- const scanner={async scanPrivateObject(v){assert.equal(v.storageKey,"private/district/object");return {verdict:"clean"};}};
+ const scanner={async scanPrivateObject(v){assert.ok(["private/district/object","private/district/object-clean"].includes(v.storageKey));return {verdict:"clean"};}};
  const processor={async processImage(v){return {storageKey:v.storageKey+"-clean",mimeType:"image/png",byteSize:90,metadataStripped:true,reencoded:true,checksum:"sha256:def"};}};
  const registry={
   async createPrivateObject(v){objects.set(v.assetId,{...v,scanStatus:"pending",processingStatus:"pending"});},
