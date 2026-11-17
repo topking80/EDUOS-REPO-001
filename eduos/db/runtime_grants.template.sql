@@ -143,6 +143,17 @@ GRANT EXECUTE ON FUNCTION eduos_school_today(uuid), eduos_safety_find_student(uu
   eduos_pickup_today(), eduos_pickup_early_today(), eduos_school_leads(), eduos_pickup_guardians(uuid),
   eduos_safety_delivery(uuid) TO eduos_app;
 REVOKE ALL ON FUNCTION eduos_purge_student_324(uuid), eduos_retention_purge_role_apps(jsonb) FROM eduos_app;
+-- 37.6.0 enrollment funnel. History is append-only; documents can only be
+-- reviewed (status and note), never edited or deleted by the runtime role.
+GRANT SELECT, INSERT, UPDATE ON enrollment_capacity, enrollment_applications TO eduos_app;
+GRANT SELECT, INSERT ON enrollment_documents, enrollment_events TO eduos_app;
+GRANT UPDATE (status, review_note, reviewed_by, reviewed_at) ON enrollment_documents TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON enrollment_events FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON enrollment_capacity, enrollment_applications, enrollment_documents FROM eduos_app;
+GRANT USAGE ON SEQUENCE enrollment_waitlist_seq TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_my_application(uuid), eduos_leads_application(uuid), eduos_enrollment_transition_ok(text, text, boolean),
+  eduos_enrollment_seats(uuid, text, text), eduos_enrollment_complete(uuid, text) TO eduos_app;
+REVOKE ALL ON FUNCTION eduos_purge_student_pre_enrollment(uuid), eduos_retention_feature_enrollment(jsonb) FROM eduos_app;
 -- 035 (audit 37.4.0 item 6): replay-receipt purge is owner-only, like the other retention functions.
 REVOKE ALL ON FUNCTION eduos_retention_purge_offline_replays(int) FROM eduos_app;
 -- 32.6.0 learning core and EDAL. Evidence, final grades and the ledger are
