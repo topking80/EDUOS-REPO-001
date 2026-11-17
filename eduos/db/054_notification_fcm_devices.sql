@@ -30,6 +30,3 @@ CREATE POLICY tenant_isolation ON user_push_devices
 CREATE POLICY own_user ON user_push_devices AS RESTRICTIVE
   USING (user_id = eduos_ctx_user() OR eduos_is_table_owner())
   WITH CHECK (user_id = eduos_ctx_user() OR eduos_is_table_owner());
-
-GRANT SELECT, INSERT, UPDATE ON user_push_devices TO eduos_app;
-REVOKE DELETE, TRUNCATE ON user_push_devices FROM eduos_app;
