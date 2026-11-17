@@ -250,9 +250,10 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
            b.coppaCompliant === true, b.ferpaSchoolOfficial === true, req.actor.userId]);
         const a = created.rows[0];
         await audit(client, req, "create", "app", a.id, { name: a.name, ownerSchoolId: owner, integrationType: a.integration_type, dataSharingScope: a.data_sharing_scope, dpaStatus: a.dpa_status }, owner);
-        return { status: 201, data: appOut(a, req.actor) };
+        const data = appOut(a, req.actor);
+        await emitServerFlow(req, "app.registered", data.id, data.ownerSchoolId, null, client);
+        return { status: 201, data };
       });
-      if (r.status === 201) emitServerFlow(req, "app.registered", r.data.id, r.data.ownerSchoolId);
       send(res, r.error ? { ...r, extra: r.limit ? { limit: r.limit } : {} } : r);
     } catch (e) { if (e.code === "23505") return res.status(409).json({ error: "app_name_exists" }); next(e); }
   });
@@ -280,9 +281,10 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (b.integrationConfig !== undefined) { vals.push(JSON.stringify(b.integrationConfig)); sets.push(`integration_config=$${vals.length}::jsonb`); }
         const updated = await client.query(`UPDATE apps SET ${sets.join(",")},updated_at=now() WHERE id=$1 RETURNING *`, vals);
         await audit(client, req, b.status === "retired" ? "retire" : "update", "app", cur.id, { fields: Object.keys(b) }, cur.owner_school_id);
-        return { status: 200, data: appOut(updated.rows[0], req.actor), retired: b.status === "retired" && cur.status !== "retired" };
+        const data = appOut(updated.rows[0], req.actor);
+        if (b.status === "retired" && cur.status !== "retired") await emitServerFlow(req, "app.retired", data.id, data.ownerSchoolId, null, client);
+        return { status: 200, data };
       });
-      if (r.retired) emitServerFlow(req, "app.retired", r.data.id, r.data.ownerSchoolId);
       send(res, r);
     } catch (e) { if (e.code === "23505") return res.status(409).json({ error: "app_name_exists" }); next(e); }
   });
@@ -307,9 +309,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           [req.actor.districtId, req.params.appId, purchaser, seatLimit, startsOn ?? null, endsOn, note, req.actor.userId]);
         const l = lic.rows[0];
         await audit(client, req, "create", "app_license", l.id, { appId: req.params.appId, seatLimit, startsOn: l.starts_on, endsOn }, purchaser);
+        await emitServerFlow(req, "app.licensed", req.params.appId, l.purchased_by_school_id, null, client);
         return { status: 201, data: { id: l.id, seatLimit: l.seat_limit, startsOn: l.starts_on, endsOn: l.ends_on, status: l.status, purchasedBySchoolId: l.purchased_by_school_id, note: l.note } };
       });
-      if (r.status === 201) emitServerFlow(req, "app.licensed", req.params.appId, r.data.purchasedBySchoolId);
       send(res, r);
     } catch (e) { next(e); }
   });
@@ -366,9 +368,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!ins.rowCount) return fail(409, "assignment_exists");
         await audit(client, req, sharedBy ? "share" : "assign", "app_assignment", ins.rows[0].id,
           { appId: a.id, scope, schoolId, gradeLevels, roles, sharedBySchoolId: sharedBy, dataSharingScope: a.data_sharing_scope }, schoolId);
+        await emitServerFlow(req, "app.assigned", req.params.appId, schoolId, null, client);
         return { status: 201, data: { id: ins.rows[0].id, appId: a.id, scope, schoolId, gradeLevels, roles, sharedBySchoolId: sharedBy } };
       });
-      if (r.status === 201) emitServerFlow(req, "app.assigned", req.params.appId, r.data.schoolId);
       send(res, r);
     } catch (e) { next(e); }
   });
@@ -384,9 +386,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!isDistrictRole(req.actor.role) && !(managesApp(req.actor, x) && x.scope === "school")) return fail(403, "cannot_assign_app");
         await client.query("UPDATE app_assignments SET revoked_at=now(),revoked_by=$2 WHERE id=$1", [x.id, req.actor.userId]);
         await audit(client, req, "unassign", "app_assignment", x.id, { appId: req.params.appId, scope: x.scope, schoolId: x.school_id }, x.school_id);
+        await emitServerFlow(req, "app.unassigned", req.params.appId, x.school_id, null, client);
         return { status: 200, data: { id: x.id, revoked: true }, schoolId: x.school_id };
       });
-      if (r.status === 200) emitServerFlow(req, "app.unassigned", req.params.appId, r.schoolId);
       send(res, r);
     } catch (e) { next(e); }
   });
@@ -548,9 +550,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
            VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,status,created_at`,
           [req.actor.districtId, req.actor.schoolId, req.actor.userId, appId, name?.trim() ?? null, vendor?.trim() || null, url, reason.trim()]);
         await audit(client, req, "request", "app_request", ins.rows[0].id, { appId, name: name?.trim() ?? null }, req.actor.schoolId);
+        await emitServerFlow(req, "app.requested", ins.rows[0].id, req.actor.schoolId, null, client);
         return { status: 201, data: { id: ins.rows[0].id, status: "pending", createdAt: ins.rows[0].created_at } };
       });
-      if (r.status === 201) emitServerFlow(req, "app.requested", r.data.id, req.actor.schoolId);
       send(res, r);
     } catch (e) { next(e); }
   });
@@ -584,12 +586,10 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         }
         await client.query("UPDATE app_requests SET status=$2,decided_by=$3,decided_at=now(),decision_note=$4 WHERE id=$1", [q.id, decision, req.actor.userId, note]);
         await audit(client, req, decision === "approved" ? "approve" : "deny", "app_request", q.id, { appId: q.app_id, assignmentId }, q.school_id);
+        await emitServerFlow(req, "app.request.decided", q.id, q.school_id, null, client);
+        if (assignmentId) await emitServerFlow(req, "app.assigned", q.app_id, q.school_id, null, client);
         return { status: 200, data: { id: q.id, status: decision, assignmentId, nextStep: decision === "approved" && !q.app_id ? "register_and_license_the_app" : null }, schoolId: q.school_id, appId: q.app_id };
       });
-      if (r.status === 200 && r.data.status !== "withdrawn") {
-        emitServerFlow(req, "app.request.decided", r.data.id, r.schoolId);
-        if (r.data.assignmentId) emitServerFlow(req, "app.assigned", r.appId, r.schoolId);
-      }
       send(res, r);
     } catch (e) { next(e); }
   });
