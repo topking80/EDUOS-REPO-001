@@ -11,6 +11,8 @@ const startLimiter = rateLimit({ windowMs: 60 * 60_000, limit: 3, standardHeader
   keyGenerator: req => req.actor.userId });
 const checkLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 5, standardHeaders: true, legacyHeaders: false,
   keyGenerator: req => req.actor.userId });
+const pushDeviceLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: req => req.actor.userId });
 
 const twilioReady = () => Boolean(config.twilioAccountSid && config.twilioAuthToken && config.twilioVerifyServiceSid);
 
@@ -132,7 +134,7 @@ export function registerNotificationRoutes(app) {
     }
   });
 
-  app.post("/api/me/push-devices", requireSession, requireCsrf, async (req, res, next) => {
+  app.post("/api/me/push-devices", requireSession, requireCsrf, pushDeviceLimiter, async (req, res, next) => {
     if (config.notifyPushAdapter !== "fcm") return res.status(503).json({ error: "push_registration_unavailable" });
     const token = req.body?.token, platform = req.body?.platform;
     if (typeof token !== "string" || token.length < 20 || token.length > 4096 || /\s/.test(token) ||
