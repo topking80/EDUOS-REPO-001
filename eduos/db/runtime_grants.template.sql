@@ -385,6 +385,10 @@ REVOKE ALL ON FUNCTION eduos_retention_feature_commerce(jsonb), eduos_ticket_ord
 GRANT SELECT, INSERT, UPDATE ON commerce_provider_accounts, commerce_payment_setup TO eduos_app;
 REVOKE DELETE, TRUNCATE ON commerce_provider_accounts, commerce_payment_setup FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_commerce_checkout_account(text) TO eduos_app;
+-- Two-phase processor calls: confirm stretches a seat hold while the processor
+-- captures; a refund in flight blocks check-in. The sweep lists stale calls.
+GRANT UPDATE (hold_expires_at, refund_pending) ON event_ticket_orders TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_commerce_stale_payments(integer) TO eduos_app;
 
 
 -- 37.7.0 Sports roster and result records.
