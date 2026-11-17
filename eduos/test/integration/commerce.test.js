@@ -4,14 +4,11 @@
 // marketplace purchase on the 37.6 fee hook, and the fail-closed defaults.
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 import { entryHash } from "../../src/edal.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
-const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const ALL = { dpa_signed: true, coppa: true, ferpa_school_official: true, data_minimized: true, no_ads_or_profiling: true, no_tracking_or_biometrics: true, deletion_on_request: true, security_reviewed: true };
 const key = tag => `commerce-test-${tag}-${"x".repeat(8)}`;
 const future = h => new Date(Date.now() + h * 3600_000).toISOString();
@@ -31,8 +28,13 @@ describe("37.7.0 commerce (sandbox) against real PostgreSQL", { skip }, () => {
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
-    server = await startServer({ ...env, DATABASE_URL: db.appUrl, COMMERCE_PAYMENT_PROVIDER: "sandbox" });
+    server = await startServer({ ...env, DATABASE_URL: db.appUrl });
     for (const name of ["supt1", "supt2", "p1", "p2", "t1", "pa", "pb", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
+    // 37.7.1: the processor is a district choice; this suite uses the built-in sandbox.
+    const none = await as("pa")("GET", "/api/commerce/status");
+    assert.deepEqual([none.body.data.provider, none.body.data.enabled, none.body.data.methods], ["none", false, []], "nothing is offered by default");
+    const pick = await as("supt1")("PUT", "/api/commerce/payment-methods", { enabledMethods: ["sandbox"], defaultMethod: "sandbox" });
+    assert.equal(pick.status, 200, JSON.stringify(pick.body));
     const act = await as("p1")("POST", "/api/activities", { kind: "sport", title: "Falcons Football", status: "published" });
     assert.equal(act.status, 201, JSON.stringify(act.body));
     const ev = await as("p1")("POST", `/api/activities/${act.body.data.id}/events`, { title: "Friday Night Football", startsAt: future(48), endsAt: future(51), venue: "Main field", publish: true });
@@ -248,20 +250,14 @@ describe("37.7.0 commerce (sandbox) against real PostgreSQL", { skip }, () => {
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_ledger_entries")).rows[0].n, before);
   });
 
-  it("with no provider configured paid checkout stays off, and a real processor name stops the server", async () => {
-    await server.stop(); server = null;
-    const none = await startServer({ ...env, DATABASE_URL: db.appUrl });
-    try {
-      const sess = await login(none.base, idp, "pa", { email_verified: true });
-      const st = await client(none.base, sess)("GET", "/api/commerce/status");
-      assert.deepEqual([st.body.data.provider, st.body.data.enabled], ["none", false], "settings say enabled, but there is no provider");
-      const r = await client(none.base, sess)("POST", `/api/events/${eventId}/tickets`, { ticketTypeId: adultId, quantity: 1, idempotencyKey: key("none") });
-      assert.equal(r.status, 503); assert.equal(r.body.reason, "district_payment_provider_not_connected");
-    } finally { await none.stop(); }
-    const child = spawn(process.execPath, ["src/server.js"], { cwd: ROOT, env: { ...env, DATABASE_URL: db.appUrl, PORT: "0", COMMERCE_PAYMENT_PROVIDER: "stripe" } });
-    let out = ""; child.stderr.on("data", d => out += d); child.stdout.on("data", d => out += d);
-    const code = await new Promise(res => { const t = setTimeout(() => { child.kill("SIGKILL"); res("timeout"); }, 20_000); child.on("exit", c => { clearTimeout(t); res(c); }); });
-    assert.notEqual(code, 0); assert.notEqual(code, "timeout");
-    assert.match(out, /only "sandbox" exists/);
+  it("when the district offers no payment method, paid checkout stays off (37.7.1: no server-wide provider)", async () => {
+    const off = await as("supt1")("PUT", "/api/commerce/payment-methods", { enabledMethods: [], defaultMethod: null });
+    assert.equal(off.status, 200, JSON.stringify(off.body));
+    const st = await as("pa")("GET", "/api/commerce/status");
+    assert.deepEqual([st.body.data.provider, st.body.data.enabled], ["none", false], "settings say enabled, but nothing is offered");
+    const r = await as("pa")("POST", `/api/events/${eventId}/tickets`, { ticketTypeId: adultId, quantity: 1, idempotencyKey: key("none") });
+    assert.equal(r.status, 503); assert.equal(r.body.reason, "district_payment_provider_not_connected");
+    const asked = await as("pa")("POST", `/api/events/${eventId}/tickets`, { ticketTypeId: adultId, quantity: 1, idempotencyKey: key("none2"), paymentMethod: "sandbox" });
+    assert.equal(asked.status, 409); assert.equal(asked.body.error, "payment_method_not_available");
   });
 });
