@@ -31,16 +31,32 @@ Keep `Permissions-Policy: geolocation=()`.
 | `CHRISTIE_RATE_LIMIT_PER_MIN` | `60` | per-client Christie writes |
 | `COMMS_RATE_LIMIT_PER_MIN` | `60` | per-client Comms writes |
 | `TRANSPORT_CHECKIN_RATE_LIMIT_PER_MIN` | `300` | per-client check-ins |
-| `NOTIFY_EMAIL_ADAPTER`, `NOTIFY_SMS_ADAPTER`, `NOTIFY_PUSH_ADAPTER` | `off` | `off` or `log` (dry run). No real sender ships. |
+| `NOTIFY_EMAIL_ADAPTER` | `off` | `off`, `log` (dry run), or `smtp` (implicit TLS, port 465). SMTP requires the variables below. |
+| `NOTIFY_SMS_ADAPTER`, `NOTIFY_PUSH_ADAPTER` | `off` | `off` or `log`; Twilio and FCM are not enabled yet. |
+| `NOTIFY_SMTP_HOST`, `NOTIFY_SMTP_USERNAME`, `NOTIFY_SMTP_PASSWORD`, `NOTIFY_SMTP_FROM` | empty | Required when email adapter is `smtp`. |
+| `NOTIFY_SMTP_PORT` | `465` | Only implicit TLS on port 465 is supported. |
+| `NOTIFY_SMTP_EHLO`, `NOTIFY_SMTP_TIMEOUT_MS` | `eduos.local`, `15000` | SMTP greeting identity and connection timeout. |
 
 Before you turn on an external Christie provider, confirm that a DPA covers
 it. Only redacted text from the current question, plus approved lesson
 content, is sent.
 
-## 5. Notification job
-If any external adapter is enabled, schedule `node src/notify-dispatch.js`
-with the owner role (like `db:retention`). In dev, run `make notify`. With
-every adapter `off`, nothing is queued and the job is not needed.
+## 5. Notification job and email consent
+Run `051_notification_email_consent.sql` through the normal migration runner.
+All existing users are opted out. Users can review and change their own setting
+through `GET/PUT /api/me/notification-preferences`; the PUT requires the normal
+CSRF token and writes an audit event. Email outbox rows are skipped unless the
+recipient has explicitly enabled email notifications.
+
+To enable SMTP, configure the SMTP variables above and set
+`NOTIFY_EMAIL_ADAPTER=smtp`. EduOS connects using implicit TLS only (port 465),
+uses SMTP AUTH PLAIN, and sends a generic message with no student or incident
+details. The SMTP server's acceptance is recorded as accepted by the relay; it
+does not prove final mailbox delivery. Never place credentials in source control.
+
+Schedule `node src/notify-dispatch.js` with the owner role (like `db:retention`).
+SMS and push remain disabled pending their separate phone-consent and device
+registration work.
 
 ## 6. Known limits
 - Transport "today" uses the database `current_date`. Set the database
