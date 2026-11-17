@@ -42,13 +42,20 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
     for (let done = 0; done < limit;) {
       const token = crypto.randomUUID();
       const claimed = await inTx(db, d.id, c => c.query(
-        `UPDATE notification_outbox o SET lease_token=$2, lease_expires_at=now()+make_interval(secs => $3::float8)
-          WHERE o.id IN (SELECT id FROM notification_outbox
-                          WHERE district_id=$1 AND status='pending' AND channel<>'in_app'
-                            AND (next_attempt_at IS NULL OR next_attempt_at<=now())
-                            AND (lease_expires_at IS NULL OR lease_expires_at<=now())
-                          ORDER BY created_at,id LIMIT $4 FOR UPDATE SKIP LOCKED)
-          RETURNING o.id,o.channel,o.recipient_user_id,o.attempts,o.created_at`,
+        `WITH due AS (
+          SELECT o.id,u.email AS recipient_email,
+                 coalesce(p.email_notifications_enabled,false) AS email_opted_in
+            FROM notification_outbox o
+            LEFT JOIN users u ON u.id=o.recipient_user_id
+            LEFT JOIN user_preferences p ON p.district_id=o.district_id AND p.user_id=o.recipient_user_id
+           WHERE o.district_id=$1 AND o.status='pending' AND o.channel<>'in_app'
+             AND (o.next_attempt_at IS NULL OR o.next_attempt_at<=now())
+             AND (o.lease_expires_at IS NULL OR o.lease_expires_at<=now())
+           ORDER BY o.created_at,o.id LIMIT $4 FOR UPDATE OF o SKIP LOCKED
+        )
+        UPDATE notification_outbox o SET lease_token=$2, lease_expires_at=now()+make_interval(secs => $3::float8)
+          FROM due WHERE o.id=due.id
+          RETURNING o.id,o.channel,o.recipient_user_id,o.attempts,o.created_at,due.recipient_email,due.email_opted_in`,
         [d.id, token, leaseSeconds, Math.min(batch, limit - done)]));
       const rows = claimed.rows.sort((a, b) => a.created_at - b.created_at || String(a.id).localeCompare(String(b.id)));
       if (!rows.length) break;
@@ -61,10 +68,14 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
         if (!renewed.rowCount) { done++; tally.lostLease++; continue; }
         let result, timer;
         try {
-          result = await Promise.race([
-            adapters(row.channel).send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id }, log),
-            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
-          ]);
+          if (row.channel === "email" && !row.email_opted_in) {
+            result = { status: "skipped", note: "recipient has not opted in to email notifications" };
+          } else {
+            result = await Promise.race([
+              adapters(row.channel).send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id, recipient_email: row.recipient_email }, log),
+              new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
+            ]);
+          }
         } catch (e) { result = { status: "pending", note: String(e?.message || e).slice(0, 300) }; }
         finally { clearTimeout(timer); }
         const out = attemptOutcome(result, row.attempts);
