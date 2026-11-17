@@ -97,6 +97,7 @@ GRANT EXECUTE ON FUNCTION eduos_claim_seat(uuid), eduos_app_usage(uuid) TO eduos
 GRANT SELECT, INSERT ON branding_uploads, branding_assets TO eduos_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON branding_profiles TO eduos_app;
 GRANT SELECT, INSERT, UPDATE ON user_preferences TO eduos_app;
+GRANT SELECT, INSERT, UPDATE ON user_push_devices TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON branding_uploads, branding_assets FROM eduos_app;
 REVOKE TRUNCATE ON branding_profiles FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON user_preferences FROM eduos_app;
