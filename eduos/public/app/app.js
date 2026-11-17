@@ -439,43 +439,129 @@ VIEWS.news = async () => {
     h("p", { class: "notice" }, "Students can read school and class news here. Messaging is between families and staff.")];
 };
  
-// Clubs & Sports Hub preview. Ticket checkout and live video remain disabled
-// until district-approved payment and streaming services are configured.
-const ACTIVITY_SAMPLE = [
-  { kind: "CLUB", name: "Robotics & Engineering", detail: "Build, program and compete · Advisor-led", when: "Wednesdays · 3:30 PM", icon: "🤖" },
-  { kind: "CLUB", name: "Art & Creative Media", detail: "Photography, design and student showcases", when: "Thursdays · 3:15 PM", icon: "🎨" },
-  { kind: "SPORT", name: "Falcons Basketball", detail: "Varsity · Home game", when: "Friday · 6:00 PM", icon: "🏀" },
-  { kind: "SPORT", name: "Falcons Soccer", detail: "Junior varsity · Away game", when: "Saturday · 10:00 AM", icon: "⚽" }
-];
-VIEWS.activities = async () => {
-  const staff = ["teacher", "principal", "superintendent", "it_admin"].includes(state.me.role);
-  const cards = ACTIVITY_SAMPLE.map(item => h("article", { class: "card", "aria-label": item.name },
-    h("div", { class: "row" }, h("span", { class: "grow" }, h("span", { class: "small muted" }, item.kind), h("h3", {}, item.name)), h("span", { "aria-hidden": "true" }, item.icon)),
-    h("p", { class: "muted small" }, item.detail), h("p", {}, "📅 ", item.when),
-    h("button", { class: "btn block", type: "button", onclick: () => toast("Registration will open when the activities service is connected.") }, item.kind === "CLUB" ? "View club details" : "View team details")));
-  const events = [
-    ["🎭", "Spring Arts Showcase", "May 8 · 6:30 PM", "Ticketing planned"],
-    ["🏀", "Falcons vs. Central", "May 12 · 7:00 PM", "Ticketing planned"],
-    ["🎓", "Senior Celebration", "May 20 · 5:00 PM", "School event"]
-  ];
-  return [
-    h("div", { class: "row" }, h("div", { class: "grow" }, h("h2", {}, "Clubs & Sports"), h("p", { class: "muted small" }, "Discover activities, follow teams and watch approved school events.")),
-      staff ? h("button", { class: "btn primary", type: "button", onclick: () => toast("Coach and club advisor publishing tools are planned for the next implementation phase.") }, "Advisor tools") : null),
-    h("section", { class: "card" }, h("h3", {}, "Explore clubs and teams"), h("p", { class: "muted small" }, "Sample activities for the interface preview. Live rosters and schedules are not connected yet.")),
-    h("div", { class: "grid" }, cards),
-    h("section", { class: "card" }, h("h3", {}, "Upcoming events & tickets"),
-      h("ul", { class: "list" }, events.map(e => h("li", { class: "row" }, h("span", {}, e[0]), h("span", { class: "grow" }, h("b", {}, e[1]), h("p", { class: "small muted" }, e[2])), h("span", { class: "small muted" }, e[3])))),
-      h("p", { class: "notice" }, "Ticket sales are not enabled in this preview. No payment is collected and no ticket is issued."),
-      h("button", { class: "btn block", type: "button", onclick: () => toast("Ticket checkout requires a district-approved payment provider.") }, "Ticketing setup status")),
-    h("section", { class: "card" }, h("h3", {}, "Live streams & highlights"),
-      h("div", { class: "row" }, h("span", {}, "🔴"), h("span", { class: "grow" }, h("b", {}, "School events live"), h("p", { class: "small muted" }, "Approved event streams and recorded highlights will appear here."))),
-      h("p", { class: "notice" }, "Live streaming is not connected. This preview does not capture video, audio or student images."),
-      h("button", { class: "btn block", type: "button", onclick: () => toast("Live streaming requires an approved provider and school event permissions.") }, "Streaming setup status")),
-    staff ? h("section", { class: "card" }, h("h3", {}, "Coach & club advisor workspace"),
-      h("p", { class: "muted small" }, "Planned tools: publish club updates, manage team calendars, submit media for review and prepare event pages. Access will be limited to assigned clubs and teams; principals retain school-level oversight."),
-      h("button", { class: "btn block", type: "button", onclick: () => toast("Publishing and moderation workflows are planned for the next implementation phase.") }, "Open publishing preview")) : null
-  ];
+// 37.6.0 Clubs & Sports on the live API (#47 / db/051-060). Ticket checkout
+// and live video stay disabled until district-approved providers exist.
+// Eligibility shows only to the team's coach and the school's athletic
+// director, as pass/fail by named district rule; there is no score. Guardians
+// e-sign permission slips against the exact text they read.
+const ACT_ERRORS = {
+  activity_not_found: "That activity isn't available.", grade_eligibility_not_met: "This activity is for other grades.",
+  active_student_link_required: "Your account isn't linked to a learner at this school.", permission_slip_closed: "This slip is closed.",
+  permission_slip_text_changed: "The slip changed. Reload and read it again.", invalid_signature: "Type your full name and tick the box.",
+  invalid_permission_slip: "Add a title, the details (10+ characters) and a due date.", due_date_in_past: "The due date has passed.",
+  activity_assignment_required: "Only this activity's staff can do that.", athletic_director_must_be_school_staff: "Choose a staff member of this school.",
+  already_athletic_director: "Already an athletic director."
 };
+const actErr = (e, fallback) => toast(ACT_ERRORS[e?.body?.error] || fallback);
+const actList = v => Array.isArray(v) ? v : [];
+const ELIG_LABEL = { eligible: "Eligible", not_eligible: "Not eligible", not_enough_records: "Not enough records" };
+function slipDecision(d) { return { granted: "✅ Permission given", declined: "❌ Declined", pending: "⏳ Waiting for a guardian" }[d] || d; }
+
+function eligibilityPanel(activity) {
+  const box = h("div", { class: "stack" }, h("p", { class: "muted small" }, "Loading eligibility…"));
+  api.get(`/api/activities/${activity.id}/eligibility`).then(r => {
+    const d = r.data || {}; const pol = d.policy || {};
+    box.replaceChildren(
+      h("p", { class: "small muted" }, `District rules: at least ${pol.minCoursePercent}% in every active course and ${pol.minAttendancePercent}% attendance over the last ${pol.windowDays} days. Computed now, not stored, not a score.`),
+      actList(d.students).length ? h("ul", { class: "list" }, actList(d.students).map(s => h("li", {},
+        h("div", { class: "row" }, h("span", { class: "grow" }, h("b", {}, s.name), s.jersey != null ? h("span", { class: "small muted" }, ` · #${s.jersey}`) : null),
+          h("span", { class: "small" }, ELIG_LABEL[s.status] || s.status)),
+        actList(s.reasons).map(x => h("p", { class: "small muted" }, x.text))))) : h("p", { class: "muted" }, "No one is on the active roster yet."));
+  }).catch(() => box.replaceChildren(h("p", { class: "muted small" }, "Eligibility is visible to the team's coach and the athletic director only.")));
+  return h("section", { class: "card" }, h("h3", {}, `Eligibility · ${activity.title}`), box);
+}
+
+function staffSlipsPanel(activity) {
+  const box = h("div", { class: "stack" }, h("p", { class: "muted small" }, "Loading permission slips…"));
+  const load = () => api.get(`/api/activities/${activity.id}/permission-slips`).then(r => {
+    const slips = actList(r.data);
+    box.replaceChildren(slips.length ? h("ul", { class: "list" }, slips.map(s => h("li", {},
+      h("div", { class: "row" }, h("span", { class: "grow" }, h("b", {}, s.title), h("p", { class: "small muted" }, `Due ${s.dueOn} · ${s.status}`)),
+        s.status === "open" ? h("button", { class: "btn", type: "button", onclick: async () => { try { await api.post(`/api/permission-slips/${s.id}/close`); toast("Slip closed."); load(); } catch (e) { actErr(e, "Could not close the slip."); } } }, "Close") : null),
+      h("p", { class: "small" }, `${s.summary?.granted || 0} given · ${s.summary?.declined || 0} declined · ${s.summary?.pending || 0} waiting`),
+      h("details", {}, h("summary", { class: "small" }, "By learner"), h("ul", { class: "list" }, actList(s.learners).map(l => h("li", { class: "small" }, `${l.name}: ${slipDecision(l.decision)}`))))))) : h("p", { class: "muted" }, "No slips sent yet."));
+  }).catch(() => box.replaceChildren(h("p", { class: "muted small" }, "Permission slips are for this activity's staff.")));
+  load();
+  const title = h("input", { required: true, maxlength: 120, placeholder: "e.g. Away game at Central" });
+  const body = h("textarea", { required: true, maxlength: 4000, rows: 3, placeholder: "Where, when, transport and return time" });
+  const due = h("input", { type: "date", required: true });
+  const form = h("form", { class: "stack", onsubmit: async e => {
+    e.preventDefault();
+    try { await api.post(`/api/activities/${activity.id}/permission-slips`, { title: title.value, body: body.value, dueOn: due.value }); toast("Slip sent to families."); form.reset(); load(); }
+    catch (err) { actErr(err, "Could not send the slip."); }
+  } }, h("label", {}, h("span", {}, "Title"), title), h("label", {}, h("span", {}, "Details guardians will sign"), body), h("label", {}, h("span", {}, "Due"), due),
+    h("p", { class: "small muted" }, "The text is fixed once sent. Each signature is bound to it."), h("button", { class: "btn primary", type: "submit" }, "Send permission slip"));
+  return h("section", { class: "card" }, h("h3", {}, `Permission slips · ${activity.title}`), box, h("details", {}, h("summary", {}, "New slip"), form));
+}
+
+function familySlipsCard(slips, canSign) {
+  if (!slips.length) return h("section", { class: "card" }, h("h3", {}, "Permission slips"), h("p", { class: "muted" }, "No permission slips right now."));
+  return h("section", { class: "card" }, h("h3", {}, "Permission slips"), h("ul", { class: "list" }, slips.map(s => {
+    const name = h("input", { maxlength: 120, autocomplete: "name", placeholder: "Your full name" });
+    const ok = h("input", { type: "checkbox" });
+    const sign = async decision => {
+      try { await api.post(`/api/permission-slips/${s.id}/sign`, { studentId: s.studentId, decision, signedName: name.value, consent: ok.checked, bodySha256: s.bodySha256 }); toast(decision === "granted" ? "Permission given." : "Declined."); go("activities", { push: false }); }
+      catch (e) { actErr(e, "Could not save your answer."); }
+    };
+    return h("li", { class: "stack" },
+      h("div", { class: "row" }, h("span", { class: "grow" }, h("b", {}, s.title), h("p", { class: "small muted" }, `${s.activityTitle} · ${s.studentName} · due ${s.dueOn}`)), h("span", { class: "small" }, slipDecision(s.decision))),
+      h("p", {}, s.body),
+      canSign && s.canSign ? h("div", { class: "stack" },
+        h("label", {}, h("span", {}, "Type your full name to sign"), name),
+        h("label", { class: "row" }, ok, h("span", {}, "I have read this slip and I am this learner's parent or guardian.")),
+        h("div", { class: "row" }, h("button", { class: "btn primary", type: "button", onclick: () => sign("granted") }, "Give permission"), h("button", { class: "btn", type: "button", onclick: () => sign("declined") }, "Decline"))) : null);
+  })));
+}
+
+async function athleticDirectorsCard(schoolId) {
+  const r = await safe(api.get(`/api/schools/${schoolId}/athletic-directors`));
+  const d = r?.data; if (!d || !Array.isArray(d.directors)) return null;
+  const pick = h("select", {}, h("option", { value: "" }, "Choose a staff member"), actList(d.candidates).filter(c => !d.directors.some(x => x.userId === c.userId)).map(c => h("option", { value: c.userId }, `${c.name} (${c.role.replaceAll("_", " ")})`)));
+  return h("section", { class: "card" }, h("h3", {}, "Athletic directors"),
+    h("p", { class: "small muted" }, "Athletic directors manage this school's teams and, with each team's coach, are the only people who see eligibility."),
+    d.directors.length ? h("ul", { class: "list" }, d.directors.map(x => h("li", { class: "row" }, h("span", { class: "grow" }, x.name),
+      h("button", { class: "btn", type: "button", onclick: async () => { try { await api.post(`/api/athletic-directors/${x.id}/revoke`); toast("Removed."); go("activities", { push: false }); } catch (e) { actErr(e, "Could not remove."); } } }, "Remove")))) : h("p", { class: "muted" }, "None named yet."),
+    h("div", { class: "row" }, pick, h("button", { class: "btn primary", type: "button", onclick: async () => {
+      if (!pick.value) return toast("Choose a staff member first.");
+      try { await api.post(`/api/schools/${schoolId}/athletic-directors`, { userId: pick.value }); toast("Athletic director named."); go("activities", { push: false }); } catch (e) { actErr(e, "Could not name them."); }
+    } }, "Name athletic director")));
+}
+
+async function activitiesLiveView() {
+  const role = state.me.role, family = ["parent", "pupil"].includes(role);
+  const staff = ["teacher", "principal", "vice_principal", "superintendent", "it_admin"].includes(role);
+  const [acts, events, roles, slips] = await Promise.all([
+    safe(api.get("/api/activities"), { data: [] }), safe(api.get("/api/events"), { data: [] }),
+    staff ? safe(api.get("/api/sports/my-roles"), { data: {} }) : null, family ? safe(api.get("/api/my/permission-slips"), { data: [] }) : null]);
+  const activities = actList(acts?.data), upcoming = actList(events?.data).filter(e => new Date(e.ends_at || e.starts_at) >= new Date()).slice(0, 10);
+  const my = roles?.data && !Array.isArray(roles.data) ? roles.data : {};
+  const coachOf = new Set(actList(my.coachOf));
+  const canSeeEligibility = a => a.kind === "sport" && (coachOf.has(a.id) || my.athleticDirector);
+  const canRunSlips = a => role === "principal" || role === "superintendent" || coachOf.has(a.id) || (my.athleticDirector && a.kind === "sport");
+  const detail = h("div", { class: "stack", id: "activity-detail" });
+  const open = (a, what) => detail.replaceChildren(what === "eligibility" ? eligibilityPanel(a) : staffSlipsPanel(a));
+  const card = a => h("article", { class: "card", "aria-label": a.title },
+    h("div", { class: "row" }, h("span", { class: "grow" }, h("span", { class: "small muted" }, a.kind === "sport" ? "SPORT" : "CLUB"), h("h3", {}, a.title)), h("span", { "aria-hidden": "true" }, a.kind === "sport" ? "🏅" : "🎨")),
+    a.description ? h("p", { class: "muted small" }, a.description) : null,
+    a.meetingDetails ? h("p", {}, "📅 ", a.meetingDetails) : null,
+    h("p", { class: "small muted" }, `${a.memberCount ?? 0} members${a.status !== "published" ? ` · ${a.status}` : ""}`),
+    role === "pupil" && a.status === "published" ? h("button", { class: "btn block", type: "button", onclick: async () => { try { await api.post(`/api/activities/${a.id}/join`); toast("You've joined. Staff confirm the roster."); } catch (e) { actErr(e, "Could not join."); } } }, "Join") : null,
+    canSeeEligibility(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "eligibility") }, "Eligibility") : null,
+    staff && canRunSlips(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "slips") }, "Permission slips") : null);
+  const adCard = role === "principal" && state.me.schoolId ? await athleticDirectorsCard(state.me.schoolId) : null;
+  return [
+    h("div", { class: "row" }, h("div", { class: "grow" }, h("h2", {}, "Clubs & Sports"), h("p", { class: "muted small" }, "Clubs, teams and school events."))),
+    my.athleticDirector ? h("p", { class: "notice" }, "You're this school's athletic director.") : null,
+    family ? familySlipsCard(actList(slips?.data), role === "parent") : null,
+    activities.length ? h("div", { class: "grid" }, activities.map(card)) : h("section", { class: "card" }, h("p", { class: "muted" }, "No clubs or teams are published yet.")),
+    detail,
+    h("section", { class: "card" }, h("h3", {}, "Upcoming events"),
+      upcoming.length ? h("ul", { class: "list" }, upcoming.map(e => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, e.title), h("p", { class: "small muted" }, `${new Date(e.starts_at).toLocaleString()}${e.venue ? ` · ${e.venue}` : ""}`))))) : h("p", { class: "muted" }, "No upcoming events."),
+      h("p", { class: "notice" }, "Paid tickets and live video are not enabled. No payment is collected here.")),
+    adCard
+  ];
+}
+VIEWS.activities = activitiesLiveView;
 
 // ---------------- teacher ----------------
 VIEWS.classes = async () => {
