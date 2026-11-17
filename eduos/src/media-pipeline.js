@@ -29,9 +29,10 @@ export function validateMediaIntent(input = {}) {
 
 const has = (value, method) => Boolean(value && typeof value[method] === "function");
 
-export function createMediaPipeline({ storage = null, scanner = null, processor = null } = {}) {
+export function createMediaPipeline({ storage = null, scanner = null, processor = null, authorization = null } = {}) {
   const configured = has(storage, "createPrivateUpload") && has(storage, "headPrivateObject") &&
-    has(storage, "createPrivateReadUrl") && has(scanner, "scanPrivateObject") && has(processor, "processImage");
+    has(storage, "createPrivateReadUrl") && has(scanner, "scanPrivateObject") && has(processor, "processImage") &&
+    has(authorization, "withAuthorizedMediaDelivery");
   // Never return or accept storage keys at the public pipeline boundary.
   // The key map is intentionally private and fails closed after process restart.
   const privateObjects = new Map();
@@ -102,23 +103,29 @@ export function createMediaPipeline({ storage = null, scanner = null, processor 
       // Video delivery remains unavailable until a video transcode/sanitization adapter exists.
       throw new MediaPipelineError("video_processing_adapter_not_configured");
     },
-    async createReadUrl({ assetId, districtId, schoolId, consentStatus, moderationStatus }) {
+    async createReadUrl({ assetId, districtId, schoolId }) {
       requireReady();
-      if (consentStatus !== "approved" || moderationStatus !== "approved")
-        throw new MediaPipelineError("media_not_approved", 403);
       const record = getPrivateObject({ assetId, districtId, schoolId });
       if (record.scanStatus !== "clean" || record.processingStatus !== "processed")
         throw new MediaPipelineError("media_not_security_processed", 403);
-      const result = await storage.createPrivateReadUrl({
-        storageKey: record.storageKey, expiresInSeconds: MEDIA_LIMITS.signedUrlSeconds
+      // The authorization adapter must hold DB row locks while checking the asset,
+      // every participant, and every guardian decision, then invoke issueReadUrl.
+      // Caller-supplied consent/moderation values are deliberately not accepted.
+      return authorization.withAuthorizedMediaDelivery({
+        assetId, districtId, schoolId,
+        issueReadUrl: async () => {
+          const result = await storage.createPrivateReadUrl({
+            storageKey: record.storageKey, expiresInSeconds: MEDIA_LIMITS.signedUrlSeconds
+          });
+          let readUrl;
+          try { readUrl = new URL(result?.url); } catch { throw new MediaPipelineError("invalid_private_storage_response"); }
+          const readExpiry = Date.parse(result?.expiresAt);
+          if (readUrl.protocol !== "https:" || !readUrl.hostname || !Number.isFinite(readExpiry) ||
+              readExpiry <= Date.now() || readExpiry - Date.now() > MEDIA_LIMITS.signedUrlSeconds * 1000 + 5000)
+            throw new MediaPipelineError("private_url_ttl_exceeded");
+          return Object.freeze({ url: result.url, expiresAt: result.expiresAt });
+        }
       });
-      let readUrl;
-      try { readUrl = new URL(result?.url); } catch { throw new MediaPipelineError("invalid_private_storage_response"); }
-      const readExpiry = Date.parse(result?.expiresAt);
-      if (readUrl.protocol !== "https:" || !readUrl.hostname || !Number.isFinite(readExpiry) ||
-          readExpiry <= Date.now() || readExpiry - Date.now() > MEDIA_LIMITS.signedUrlSeconds * 1000 + 5000)
-        throw new MediaPipelineError("private_url_ttl_exceeded");
-      return Object.freeze({ url: result.url, expiresAt: result.expiresAt });
     }
   });
 }
