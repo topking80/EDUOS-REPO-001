@@ -39,3 +39,10 @@ Before paid sales: configure district-approved hosted checkout, signature-verifi
 - The pipeline requires storage, scanning and image-processing adapters; it is disabled by default and returns `private_media_pipeline_not_configured` when adapters are absent. No upload endpoint or public URL is enabled by this change.
 - Delivery requires all three states: guardian consent approved, moderation approved and security scan clean. Read URLs are capped at 60 seconds.
 - Video processing is explicitly blocked until a video transcode/sanitization adapter is implemented.
+
+## Server-side storage-key boundary (37.9.1)
+- The media pipeline now returns only the asset ID, one-use upload URL and expiry to its caller. It never returns the private object-storage key or processed-object key.
+- Follow-up verification and read-URL operations accept the asset ID plus district/school scope; the pipeline resolves the private key internally and rejects cross-tenant references.
+- Read-URL creation additionally requires successful malware scanning and image processing, as well as approved guardian consent and moderation. The returned read URL and expiry are the only storage-delivery fields exposed.
+- The current private key registry is process-local and intentionally fails closed after restart. It is a security boundary for the adapter contract, not a durable production registry. Before enabling uploads in production or across multiple app instances, replace it with a durable, tenant-scoped server-side asset registry (for example, a protected database table with forced RLS), and add authenticated upload/verification routes that never serialize storage keys.
+- Do not log adapter responses, storage keys, signed URLs or upload URLs. Keep provider credentials in server-only secret configuration.
