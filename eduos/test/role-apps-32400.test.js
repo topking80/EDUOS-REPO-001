@@ -78,7 +78,7 @@ test("external provider is off by default, gated by env, and falls back locally 
   const boot = env => spawnSync(process.execPath, ["-e", "import('./src/config.js').then(()=>console.log('ok'))"], { env: { PATH: process.env.PATH, ...ENV, ...env }, encoding: "utf8" });
   assert.match(boot({ CHRISTIE_PROVIDER: "openai_compatible", CHRISTIE_PROVIDER_URL: "https://llm.example", CHRISTIE_PROVIDER_MODEL: "m" }).stderr, /CHRISTIE_ALLOW_EXTERNAL_PROVIDER/);
   assert.match(boot({ CHRISTIE_PROVIDER: "openai_compatible", CHRISTIE_ALLOW_EXTERNAL_PROVIDER: "true", CHRISTIE_PROVIDER_URL: "http://llm.example", CHRISTIE_PROVIDER_MODEL: "m" }).stderr, /https/i);
-  assert.match(boot({ NOTIFY_SMS_ADAPTER: "twilio" }).stderr, /NOTIFY_SMS_ADAPTER/);
+  assert.match(boot({ NOTIFY_SMS_ADAPTER: "twilio" }).stderr, /TWILIO_ACCOUNT_SID/);
   assert.equal(boot({}).stdout.trim(), "ok");
 });
 
