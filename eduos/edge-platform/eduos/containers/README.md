@@ -5,12 +5,19 @@ them from `edge-platform/eduos` (CI builds and vulnerability-scans all three
 on every change). Bootstrap and update run on the host, not in images:
 
 ```bash
-podman build -f containers/Containerfile.enrollment -t quay.io/eduos/eduos-enrollment:latest .
+podman build -f containers/Containerfile.enrollment -t quay.io/eduos/eduos-enrollment:0.2.1 .
 podman build -f containers/Containerfile.health     -t quay.io/eduos/eduos-health:2.0.0 .
+
+# Or use the Makefile, which preserves each service's independent release version:
+make containers                         # enrollment 0.2.1; health 2.0.0
+make containers ENROLLMENT_VERSION=0.2.2 HEALTH_VERSION=2.0.1
 ```
 
 For air-gapped or district-internal use, push to your own registry or
-save/load the images as tarballs (`make containers`).
+save/load the images as tarballs (`make containers`). The two images have
+independent version streams: the enrollment Quadlet pins `0.2.1` and the
+health Quadlet pins `2.0.0`. Override `ENROLLMENT_VERSION` and
+`HEALTH_VERSION` independently when building or publishing new releases.
 
 ## Design notes
 

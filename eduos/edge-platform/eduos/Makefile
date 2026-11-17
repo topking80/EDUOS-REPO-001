@@ -2,6 +2,8 @@
 # See docs/BUILD.md for full documentation
 
 VERSION      ?= 0.2.0
+ENROLLMENT_VERSION ?= 0.2.1
+HEALTH_VERSION ?= 2.0.0
 ARCH         ?= x86_64
 ISO          ?= boot/eduos-universal-$(VERSION).iso
 DEVICE       ?=
@@ -100,15 +102,15 @@ iso-universal: teacher.ign student.ign admin.ign edge.ign
 containers:
 	@mkdir -p containers
 	# eduos-update and eduos-bootstrap run on the host (they configure the node), so they have no image.
-	podman build -f containers/Containerfile.enrollment -t quay.io/eduos/eduos-enrollment:$(VERSION) .
-	podman build -f containers/Containerfile.health -t quay.io/eduos/eduos-health:$(VERSION) .
-	podman save -o containers/eduos-enrollment-$(VERSION).tar quay.io/eduos/eduos-enrollment:$(VERSION)
-	podman save -o containers/eduos-health-$(VERSION).tar quay.io/eduos/eduos-health:$(VERSION)
+	podman build -f containers/Containerfile.enrollment -t quay.io/eduos/eduos-enrollment:$(ENROLLMENT_VERSION) .
+	podman build -f containers/Containerfile.health -t quay.io/eduos/eduos-health:$(HEALTH_VERSION) .
+	podman save -o containers/eduos-enrollment-$(ENROLLMENT_VERSION).tar quay.io/eduos/eduos-enrollment:$(ENROLLMENT_VERSION)
+	podman save -o containers/eduos-health-$(HEALTH_VERSION).tar quay.io/eduos/eduos-health:$(HEALTH_VERSION)
 	@echo "Container images built and saved in containers/"
 
 push-containers:
-	podman push quay.io/eduos/eduos-enrollment:$(VERSION)
-	podman push quay.io/eduos/eduos-health:$(VERSION)
+	podman push quay.io/eduos/eduos-enrollment:$(ENROLLMENT_VERSION)
+	podman push quay.io/eduos/eduos-health:$(HEALTH_VERSION)
 
 # ============================================================
 # USB Boot Drive Creation
