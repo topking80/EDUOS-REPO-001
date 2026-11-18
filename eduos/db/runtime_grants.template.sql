@@ -428,3 +428,8 @@ GRANT EXECUTE ON FUNCTION eduos_is_athletic_director(uuid), eduos_is_activity_st
 GRANT SELECT, INSERT, UPDATE ON commerce_webhook_events TO eduos_app;
 REVOKE DELETE, TRUNCATE ON commerce_webhook_events FROM eduos_app;
 REVOKE ALL ON FUNCTION eduos_commerce_webhook_event_guard() FROM eduos_app;
+-- 37.8.0 opaque endpoint tokens: tenant-scoped provisioning/revocation; the
+-- public resolver accepts only a SHA-256 token digest and returns sealed secrets.
+GRANT SELECT, INSERT, UPDATE ON commerce_webhook_endpoints TO eduos_app;
+REVOKE DELETE, TRUNCATE ON commerce_webhook_endpoints FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_commerce_webhook_account(text) TO eduos_app;
