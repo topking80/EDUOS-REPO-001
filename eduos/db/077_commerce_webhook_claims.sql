@@ -49,6 +49,15 @@ BEGIN
   RETURN NEW;
 END $$;
 
+CREATE INDEX commerce_webhook_events_claim_lease
+  ON commerce_webhook_events(claimed_at, id) WHERE state='processing';
+
+-- Earlier inbox rows created before provider_ref was retained cannot be
+-- safely settled; close them as legacy records instead of guessing a ref.
+UPDATE commerce_webhook_events
+   SET state='ignored', last_error_code='legacy_event_missing_reference'
+ WHERE provider_ref IS NULL AND state IN ('received','failed','processing');
+
 CREATE OR REPLACE FUNCTION eduos_commerce_receive_webhook(
   p_token_sha256 text, p_processor text, p_provider_event_id text, p_event_type text,
   p_payload_sha256 text, p_provider_ref text, p_capture_ref text,
@@ -115,7 +124,7 @@ BEGIN
       FROM public.commerce_webhook_events e
       JOIN public.commerce_payments p
         ON p.district_id=e.district_id AND p.id=e.payment_id
-     WHERE p.payer_actor IS NOT NULL
+     WHERE p.payer_actor IS NOT NULL AND e.provider_ref IS NOT NULL
        AND e.attempts < 20
        AND (
          e.state IN ('received','failed')
