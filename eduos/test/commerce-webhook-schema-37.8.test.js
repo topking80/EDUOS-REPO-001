@@ -112,3 +112,16 @@ test("late verified captures are recorded for manual-refund handling, never issu
   assert.match(commerceService, /manual_refund_required/);
   assert.match(commerceService, /UPDATE commerce_payments SET status='expired'/);
 });
+
+const lateRefundMigration = await readFile(new URL("../db/081_commerce_webhook_refund_cases.sql", import.meta.url), "utf8");
+
+test("late captures create a tenant-scoped operator refund case without weakening runtime grants", () => {
+  assert.match(lateRefundMigration, /FOREIGN KEY \(district_id,payment_id\) REFERENCES commerce_payments\(district_id,id\)/);
+  assert.match(lateRefundMigration, /FOREIGN KEY \(district_id,webhook_event_id\) REFERENCES commerce_webhook_events\(district_id,id\)/);
+  assert.match(lateRefundMigration, /UNIQUE \(payment_id,provider_capture_ref\)/);
+  assert.match(lateRefundMigration, /ALTER TABLE commerce_webhook_refund_cases FORCE ROW LEVEL SECURITY/);
+  assert.match(runtimeGrants, /GRANT SELECT, INSERT ON commerce_webhook_refund_cases TO eduos_app/);
+  assert.match(runtimeGrants, /GRANT UPDATE \(last_seen_at, status, resolved_at, resolved_by, resolution_note\)/);
+  assert.match(commerceService, /recordLateCaptureRefundCase/);
+  assert.match(commerceRoutes, /webhook-refund-cases/);
+});
