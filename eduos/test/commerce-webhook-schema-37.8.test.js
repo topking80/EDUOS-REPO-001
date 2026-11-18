@@ -79,3 +79,28 @@ test("checkout preserves the authenticated payer actor separately from transient
   assert.match(commerceService, /\$13::jsonb,\$13::jsonb/);
   assert.match(commerceService, /\$11::jsonb,\$11::jsonb/);
 });
+
+
+const claimMigration = await readFile(new URL("../db/077_commerce_webhook_claims.sql", import.meta.url), "utf8");
+const webhookWorker = await readFile(new URL("../src/commerce/webhook-worker.js", import.meta.url), "utf8");
+const commerceRoutes = await readFile(new URL("../src/commerce-routes.js", import.meta.url), "utf8");
+const runtimeGrants = await readFile(new URL("../db/runtime_grants.template.sql", import.meta.url), "utf8");
+
+test("webhook claims are leased, recoverable, bounded, and concurrency-safe", () => {
+  assert.match(claimMigration, /ADD COLUMN claimed_at timestamptz/);
+  assert.match(claimMigration, /interval '5 minutes'/);
+  assert.match(claimMigration, /FOR UPDATE OF e SKIP LOCKED/);
+  assert.match(claimMigration, /e\.attempts < 20/);
+  assert.match(claimMigration, /eduos_commerce_claim_webhook/);
+  assert.match(claimMigration, /provider_ref text/);
+  assert.match(runtimeGrants, /GRANT EXECUTE ON FUNCTION eduos_commerce_claim_webhook\(\) TO eduos_app/);
+});
+
+test("webhook worker uses saved payer context and existing atomic settlement service", () => {
+  assert.match(webhookWorker, /withTenantTransaction\(actor/);
+  assert.match(webhookWorker, /applyVerifiedWebhook\(c, req/);
+  assert.match(webhookWorker, /state='failed'/);
+  assert.match(webhookWorker, /state=\$2/);
+  assert.match(commerceRoutes, /processCommerceWebhookEvents\(\)/);
+  assert.match(commerceRoutes, /Promise\.allSettled/);
+});
