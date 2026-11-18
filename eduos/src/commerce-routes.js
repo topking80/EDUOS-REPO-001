@@ -224,6 +224,38 @@ export function registerCommerceRoutes(app) {
   app.get("/api/commerce/providers", requireSession, requirePermission("commerce", "providers"), wrap(async (c, req) => providersOverview(c, req.actor.districtId)));
   // Provider administrators can inspect terminal webhook failures without
   // exposing callback payloads, endpoint tokens, or payer identity.
+  app.get("/api/commerce/providers/webhook-refund-cases", requireSession, requirePermission("commerce", "providers"), wrap(async c => {
+    const cases = await rows(c, `
+      SELECT id,payment_id,webhook_event_id,processor,provider_capture_ref,amount_cents,
+             currency,reason_code,status,opened_at,last_seen_at,resolved_at,resolution_note
+        FROM commerce_webhook_refund_cases
+       WHERE status='open'
+       ORDER BY opened_at ASC,id ASC
+       LIMIT 100
+    `);
+    return { refundCases: cases.map(x => ({
+      id:x.id,paymentId:x.payment_id,webhookEventId:x.webhook_event_id,
+      processor:x.processor,captureRef:x.provider_capture_ref,amountCents:x.amount_cents,
+      currency:x.currency,reasonCode:x.reason_code,status:x.status,
+      openedAt:x.opened_at,lastSeenAt:x.last_seen_at
+    })) };
+  }));
+  app.post("/api/commerce/providers/webhook-refund-cases/:id/resolve", ...provAdmin, wrap(async (c, req) => {
+    need(validId(req.params.id), 400, "invalid_refund_case_id");
+    const note = req.body?.resolutionNote;
+    need(typeof note === "string" && note.trim().length >= 10 && note.trim().length <= 1000,
+      400, "resolution_note_required");
+    const resolved = await one(c, `
+      UPDATE commerce_webhook_refund_cases
+         SET status='resolved',resolved_at=now(),resolved_by=$2,resolution_note=$3
+       WHERE id=$1 AND status='open'
+       RETURNING id,payment_id
+    `, [req.params.id, req.actor.userId, note.trim()]);
+    need(resolved, 404, "refund_case_not_found");
+    await audit(c, req, "late_capture_refund_resolved", "commerce_webhook_refund_case",
+      resolved.id, `payment=${resolved.payment_id};resolution=${note.trim().slice(0,500)}`);
+    return { id: resolved.id, status: "resolved" };
+  }));
   app.get("/api/commerce/providers/webhook-dead-letters", requireSession, requirePermission("commerce", "providers"), wrap(async c => {
     const events = await rows(c, `
       SELECT e.id, e.payment_id, e.processor, e.provider_event_id, e.event_type,
