@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
-import { run, createDatabase } from "./harness.js";
+import { baseEnv, run, createDatabase } from "./harness.js";
 
 const PG_URL = process.env.EDUOS_TEST_PG_URL || "";
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
@@ -10,10 +10,7 @@ test("webhook SECURITY DEFINER entry points work while runtime remains RLS-scope
   const db = await createDatabase();
   let admin, app;
   try {
-    const env = {
-      PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: "development",
-      EDUOS_APP_ROLE: db.names.app
-    };
+    const env = baseEnv({ EDUOS_APP_ROLE: db.names.app });
     const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
     assert.equal(migrated.code, 0, migrated.out);
     admin = new pg.Client(db.adminUrl); await admin.connect();
