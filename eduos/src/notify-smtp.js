@@ -92,7 +92,6 @@ export function createSmtpAdapter({ config, connect = tls.connect }) {
         // inactivity timeout. A peer that trickles bytes must not keep a
         // delivery socket alive after the dispatcher has given up.
         deadline = setTimeout(() => socket.destroy(new Error("SMTP request deadline exceeded")), config.notifySmtpTimeoutMs);
-        deadline.unref?.();
         socket.setTimeout(config.notifySmtpTimeoutMs, () => socket.destroy(new Error("SMTP connection timed out")));
         const session = new SmtpSession(socket);
         const greeting = await session.response();
