@@ -24,6 +24,7 @@ CREATE TABLE commerce_webhook_events (
   last_error_code text CHECK(last_error_code IS NULL OR last_error_code ~ '^[a-z_]{1,80}$'),
   received_at timestamptz NOT NULL DEFAULT now(),
   processed_at timestamptz,
+  CHECK ((state IN ('applied','ignored','failed')) = (processed_at IS NOT NULL)),
   FOREIGN KEY(district_id, payment_id) REFERENCES commerce_payments(district_id, id),
   UNIQUE(processor, provider_event_id),
   UNIQUE(district_id, id)
@@ -59,8 +60,20 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'webhook event cannot go from % to %', OLD.state, NEW.state USING ERRCODE='23514';
   END IF;
-  IF NEW.attempts<OLD.attempts OR NEW.attempts>OLD.attempts+1 THEN
-    RAISE EXCEPTION 'webhook attempts must advance by one' USING ERRCODE='23514';
+  IF NEW.state='processing' AND OLD.state<>'processing' THEN
+    IF NEW.attempts<>OLD.attempts+1 THEN
+      RAISE EXCEPTION 'claiming a webhook event must increment attempts' USING ERRCODE='23514';
+    END IF;
+    NEW.processed_at := NULL;
+  ELSIF NEW.state IN ('applied','ignored','failed') AND OLD.state='processing' THEN
+    IF NEW.attempts<>OLD.attempts THEN
+      RAISE EXCEPTION 'webhook attempts change only when claimed' USING ERRCODE='23514';
+    END IF;
+    NEW.processed_at := coalesce(NEW.processed_at, now());
+  ELSE
+    IF NEW.attempts<>OLD.attempts OR NEW.processed_at IS DISTINCT FROM OLD.processed_at THEN
+      RAISE EXCEPTION 'webhook processing metadata changed outside a state transition' USING ERRCODE='23514';
+    END IF;
   END IF;
   RETURN NEW;
 END $$;
