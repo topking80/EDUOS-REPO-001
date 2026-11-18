@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { createHash } from "node:crypto";
 import pg from "pg";
+import { applyVerifiedWebhook } from "../../src/commerce/service.js";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
@@ -474,6 +475,79 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(event.claimed_at, null);
     assert.equal((await payment(pid)).status, "requires_confirmation", "no payment settlement occurred");
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid])).rows[0].n, 0);
+  });
+
+  it("distinct verified notifications for one capture settle tickets and ledger only once", async () => {
+    const checkout = await buy("pa", "webhook-settlement-idempotency", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.payer_actor?.userId);
+
+    const captureRef = "CAPTURE_IDEMPOTENT_001";
+    const eventIds = [
+      "evt_settlement_idempotency_0001",
+      "evt_settlement_idempotency_0002"
+    ];
+    for (let i = 0; i < eventIds.length; i++) {
+      await admin.query(`
+        INSERT INTO commerce_webhook_events
+          (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+           provider_ref,provider_capture_ref,amount_cents,currency,state)
+        VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,$6,$7,'USD','received')
+      `, [ID.d1, pid, eventIds[i], String(i + 1).repeat(64), p.provider_ref,
+        captureRef, p.amount_cents]);
+    }
+
+    const actor = { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null };
+    const req = { actor, requestId: "webhook-idempotency-integration", reconciled: true };
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    const outcomes = [];
+    try {
+      for (const eventId of eventIds) {
+        await runtime.query("BEGIN");
+        try {
+          await runtime.query(
+            "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+            [actor.districtId, actor.userId, actor.role]
+          );
+          const applied = await applyVerifiedWebhook(runtime, req, {
+            paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+            captureRef, amountCents: p.amount_cents, currency: "USD"
+          });
+          const state = applied.outcome === "applied" ? "applied" : "ignored";
+          await runtime.query(
+            "UPDATE commerce_webhook_events SET state=$2,last_error_code=$3 WHERE provider_event_id=$1",
+            [eventId, state, state === "ignored" ? "payment_not_awaiting_confirmation" : null]
+          );
+          outcomes.push(applied.outcome);
+          await runtime.query("COMMIT");
+        } catch (error) {
+          await runtime.query("ROLLBACK");
+          throw error;
+        }
+      }
+    } finally { await runtime.end(); }
+
+    assert.deepEqual(outcomes, ["applied", "ignored"]);
+    assert.equal((await payment(pid)).status, "succeeded");
+    const ticketCount = (await admin.query(
+      "SELECT count(*)::int AS n FROM event_tickets t JOIN event_ticket_orders o ON o.id=t.order_id WHERE o.id=(SELECT ticket_order_id FROM commerce_payments WHERE id=$1)",
+      [pid]
+    )).rows[0].n;
+    assert.equal(ticketCount, 1, "the duplicate notification did not issue a second ticket");
+    const settlements = await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'",
+      [pid]
+    );
+    assert.equal(settlements.rows[0].n, 1, "the ledger has one settlement");
+    const events = await admin.query(
+      "SELECT state FROM commerce_webhook_events WHERE provider_event_id=ANY($1::text[]) ORDER BY provider_event_id",
+      [eventIds]
+    );
+    assert.deepEqual(events.rows.map(row => row.state), ["applied", "ignored"]);
   });
 
   it("provider retries are idempotent and conflicting event IDs are rejected", async () => {
