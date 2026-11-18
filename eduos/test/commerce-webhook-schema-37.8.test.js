@@ -99,7 +99,7 @@ test("webhook claims are leased, recoverable, bounded, and concurrency-safe", ()
 test("webhook worker uses saved payer context and existing atomic settlement service", () => {
   assert.match(webhookWorker, /withTenantTransaction\(actor/);
   assert.match(webhookWorker, /applyVerifiedWebhook\(c, req/);
-  assert.match(webhookWorker, /state='failed'/);
+  assert.match(webhookWorker, /state=CASE WHEN attempts >= 20 THEN 'dead_letter' ELSE 'failed' END/);
   assert.match(webhookWorker, /state=\$2/);
   assert.match(commerceRoutes, /processCommerceWebhookEvents\(\)/);
   assert.match(commerceRoutes, /Promise\.allSettled/);
