@@ -18,6 +18,7 @@ import { SANDBOX_OUTCOMES } from "./commerce/payments.js";
 import { summarize, DEFAULT_RATES } from "./commerce/split.js";
 import { commerceStatus, loadSettings, settingsOut, confirmPayment, refundPayment, startMarketplaceCheckout, paymentOut, reconcileCommercePayments } from "./commerce/service.js";
 import { providersOverview, saveAccount, testAccount, saveSetup, issueWebhookEndpoint, revokeWebhookEndpoint } from "./commerce/setup.js";
+import { processCommerceWebhookEvents } from "./commerce/webhook-worker.js";
 
 const intIn = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 const canPay = (req, res, next) => (canPerform(req.actor, "commerce", "pay") || canPerform(req.actor, "commerce", "purchase"))
@@ -53,7 +54,11 @@ export function startCommerceReconcile() {
   const timer = setInterval(() => {
     if (reconcileRunning) return;
     reconcileRunning = true;
-    reconcileCommercePayments().catch(e => console.error("Commerce reconcile failed", { message: e.message })).finally(() => { reconcileRunning = false; });
+    Promise.allSettled([reconcileCommercePayments(), processCommerceWebhookEvents()])
+      .then(results => {
+        if (results[0].status === "rejected") console.error("Commerce reconcile failed", { message: results[0].reason?.message });
+        if (results[1].status === "rejected") console.error("Commerce webhook worker failed", { message: results[1].reason?.message });
+      }).finally(() => { reconcileRunning = false; });
   }, config.commerceReconcileIntervalSeconds * 1000);
   timer.unref?.();
   return timer;
