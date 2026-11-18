@@ -529,6 +529,9 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
     const pid = checkout.body.data.payment.id;
     const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.provider_ref, "late-capture fixture has a provider order reference");
+    assert.ok(p.payer_actor?.userId, "late-capture fixture persists the authenticated payer");
     const providerEventId = "evt_late_capture_refund_0001";
     await admin.query(
       "UPDATE event_ticket_orders SET hold_expires_at=now()-interval '1 minute' WHERE id=$1",
@@ -558,12 +561,26 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       }
     }
 
+    const eligibility = (await admin.query(
+      `SELECT e.state,e.attempts,e.provider_ref,
+              (p.payer_actor IS NOT NULL) AS has_payer_actor,
+              (p.payer_actor->>'userId') AS payer_user_id
+         FROM commerce_webhook_events e
+         JOIN commerce_payments p ON p.id=e.payment_id
+        WHERE e.provider_event_id=$1`, [providerEventId]
+    )).rows[0];
+    assert.deepEqual(
+      [eligibility.state, eligibility.attempts, Boolean(eligibility.provider_ref), eligibility.has_payer_actor],
+      ["received", 0, true, true],
+      "late-capture fixture satisfies every inbox-claim predicate"
+    );
+
     const runtime = new pg.Client(db.appUrl);
     await runtime.connect();
     let caseId;
     try {
       const claim = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
-      assert.ok(claim, "late capture event is claimed");
+      assert.ok(claim, `late capture event is claimed (eligibility: ${JSON.stringify(eligibility)})`);
       assert.equal(claim.providerEventId, providerEventId);
       await runtime.query("BEGIN");
       await runtime.query(
@@ -822,10 +839,19 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       assert.equal(retryHold.rowCount, 1, "retry payment still resolves to one ticket order");
       assert.deepEqual([retryHold.rows[0].status, retryHold.rows[0].hold_is_live], ["payment_pending", true]);
       assert.equal((await payment(pid)).status, "requires_confirmation", "crash rollback leaves the payment awaiting confirmation");
-      await admin.query(
-        "UPDATE commerce_webhook_events SET claimed_at=now()-interval '6 minutes' WHERE provider_event_id=$1",
-        [providerEventId]
-      );
+      // Expire the lease as a database fixture. The production guard
+      // intentionally forbids arbitrary lease-metadata edits; disable only
+      // this trigger for the single timestamp setup, then restore it before
+      // the real claim/retry path is exercised.
+      await admin.query("ALTER TABLE commerce_webhook_events DISABLE TRIGGER commerce_webhook_event_guard");
+      try {
+        await admin.query(
+          "UPDATE commerce_webhook_events SET claimed_at=now()-interval '6 minutes' WHERE provider_event_id=$1",
+          [providerEventId]
+        );
+      } finally {
+        await admin.query("ALTER TABLE commerce_webhook_events ENABLE TRIGGER commerce_webhook_event_guard");
+      }
       const retry = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
       assert.equal(retry.id, first.id);
       assert.equal(retry.attempts, 2, "expired lease recovery fences the crashed attempt");
