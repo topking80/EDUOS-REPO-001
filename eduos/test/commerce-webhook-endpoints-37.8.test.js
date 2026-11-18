@@ -46,9 +46,9 @@ test("district endpoint issuance uses high-entropy one-time tokens and persists 
 });
 
 test("webhook endpoint lifecycle is restricted to provider administrators and responses are not cached", () => {
-  assert.match(routes, /POST.*api\/commerce\/providers\/:processor\/webhook-endpoint/);
-  assert.match(routes, /POST.*api\/commerce\/providers\/:processor\/webhook-endpoint\/rotate/);
-  assert.match(routes, /DELETE.*api\/commerce\/providers\/:processor\/webhook-endpoint/);
+  assert.match(routes, /app\.post\(["\`]\/api\/commerce\/providers\/:processor\/webhook-endpoint/i);
+  assert.match(routes, /app\.post\(["\`]\/api\/commerce\/providers\/:processor\/webhook-endpoint\/rotate/i);
+  assert.match(routes, /app\.delete\(["\`]\/api\/commerce\/providers\/:processor\/webhook-endpoint/i);
   assert.match(routes, /const provAdmin = \[limiter, requireSession, requireCsrf, requirePermission\("commerce", "providers"\)\]/);
   assert.match(helpers, /Cache-Control", "no-store"/);
 });
