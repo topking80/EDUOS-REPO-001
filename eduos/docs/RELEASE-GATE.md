@@ -81,7 +81,7 @@ seconds from `eduos_queue_backlog()` (totals across all districts):
 - `eduos_queue_oldest_ready_seconds{queue=...}`: how long the oldest due job
   has waited. Suggested alerts: above 300 for webhooks or 120 for
   notifications for 10 minutes (the dispatcher is down or too slow), or any
-  increase in `dead_letter` / `failed`.
+  increase in `dead_letter` / `failed`; review `accepted` separately as provider handoff, not delivery confirmation.
 - `eduos_queue_backlog_up`: 0 when the backlog could not be read; alert on it
   rather than reading a missing series as an empty queue.
 
