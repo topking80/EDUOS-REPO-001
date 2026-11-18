@@ -7,7 +7,6 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { createHash } from "node:crypto";
 import pg from "pg";
-import { applyVerifiedWebhook } from "../../src/commerce/service.js";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
@@ -634,6 +633,26 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
 
     const actor = { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null };
     const req = { actor, requestId: "webhook-idempotency-integration", reconciled: true };
+    // Load the application service only in the PostgreSQL integration path;
+    // its config module intentionally requires deployment environment values.
+    const configKeys = ["DATABASE_URL","PUBLIC_ORIGIN","OIDC_ISSUER","OIDC_CLIENT_ID","OIDC_CLIENT_SECRET","OIDC_REDIRECT_URI"];
+    const priorConfig = Object.fromEntries(configKeys.map(k => [k, process.env[k]]));
+    Object.assign(process.env, {
+      DATABASE_URL: db.appUrl,
+      PUBLIC_ORIGIN: server.base,
+      OIDC_ISSUER: idp.issuer,
+      OIDC_CLIENT_ID: "eduos-integration-test",
+      OIDC_CLIENT_SECRET: "eduos-integration-test-secret",
+      OIDC_REDIRECT_URI: `${server.base}/auth/callback`
+    });
+    let applyVerifiedWebhook;
+    try { ({ applyVerifiedWebhook } = await import("../../src/commerce/service.js")); }
+    finally {
+      for (const k of configKeys) {
+        if (priorConfig[k] === undefined) delete process.env[k];
+        else process.env[k] = priorConfig[k];
+      }
+    }
     const runtime = new pg.Client(db.appUrl);
     await runtime.connect();
     const outcomes = [];
