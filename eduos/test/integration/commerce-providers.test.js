@@ -5,6 +5,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { createHash } from "node:crypto";
 import pg from "pg";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
@@ -473,6 +474,52 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(event.claimed_at, null);
     assert.equal((await payment(pid)).status, "requires_confirmation", "no payment settlement occurred");
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid])).rows[0].n, 0);
+  });
+
+  it("provider retries are idempotent and conflicting event IDs are rejected", async () => {
+    const checkout = await buy("pa", "webhook-provider-retry", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.provider_ref);
+
+    // The raw endpoint credential is never stored; only its digest is.
+    const token = "a".repeat(64);
+    const tokenHash = createHash("sha256").update(token, "utf8").digest("hex");
+    await admin.query(
+      "UPDATE commerce_provider_accounts SET enabled=true,mode='test' WHERE district_id=$1 AND processor='paypal'",
+      [ID.d1]
+    );
+    await admin.query(
+      "INSERT INTO commerce_webhook_endpoints(district_id,processor,token_sha256,created_by) VALUES($1,'paypal',$2,$3)",
+      [ID.d1, tokenHash, "a0000000-0000-4000-8000-0000000000f1"]
+    );
+
+    const providerEventId = "evt_provider_retry_integration_0001";
+    const payloadHash = "d".repeat(64);
+    const args = [tokenHash, "paypal", providerEventId, "PAYMENT.CAPTURE.COMPLETED",
+      payloadHash, p.provider_ref, "CAPTURE_RETRY_0001", p.amount_cents, "USD"];
+    const receive = () => admin.query(
+      "SELECT eduos_commerce_receive_webhook($1,$2,$3,$4,$5,$6,$7,$8,$9) AS outcome", args
+    );
+    assert.equal((await receive()).rows[0].outcome, "received");
+    assert.equal((await receive()).rows[0].outcome, "duplicate",
+      "an identical provider retry is acknowledged without another inbox row");
+
+    const conflict = await admin.query(
+      "SELECT eduos_commerce_receive_webhook($1,$2,$3,$4,$5,$6,$7,$8,$9) AS outcome",
+      [...args.slice(0, 4), "e".repeat(64), ...args.slice(5)]
+    );
+    assert.equal(conflict.rows[0].outcome, "event_id_conflict",
+      "reusing an event ID with a different payload is not silently accepted");
+    const saved = await admin.query(
+      "SELECT count(*)::int AS n,state,payload_sha256 FROM commerce_webhook_events WHERE processor='paypal' AND provider_event_id=$1 GROUP BY state,payload_sha256",
+      [providerEventId]
+    );
+    assert.equal(saved.rows.length, 1);
+    assert.deepEqual([saved.rows[0].n, saved.rows[0].state, saved.rows[0].payload_sha256], [1, "received", payloadHash]);
+    assert.equal((await payment(pid)).status, "requires_confirmation", "intake never settles a payment");
   });
 
   it("no database transaction is open while any processor is called (pg_stat_activity)", async () => {
