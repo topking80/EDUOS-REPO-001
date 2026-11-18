@@ -122,8 +122,8 @@ BEGIN
          OR (e.state='processing' AND e.claimed_at < now() - interval '5 minutes')
        )
      ORDER BY e.received_at, e.id
-     FOR UPDATE OF e SKIP LOCKED
      LIMIT 1
+     FOR UPDATE OF e SKIP LOCKED
   )
   UPDATE public.commerce_webhook_events e
      SET state='processing', attempts=e.attempts+1, claimed_at=now(),
