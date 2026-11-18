@@ -802,9 +802,16 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       assert.equal((await admin.query(
         "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
       )).rows[0].n, 0);
-      assert.equal((await admin.query(
-        "SELECT count(*)::int AS n FROM event_ticket_orders o JOIN commerce_payments p ON p.ticket_order_id=o.id WHERE p.id=$1", [pid]
-      )).rows[0].n, 0);
+      const rolledBackOrder = await admin.query(
+        `SELECT o.status,
+                (SELECT count(*)::int FROM event_tickets t WHERE t.order_id=o.id) AS ticket_count
+           FROM event_ticket_orders o
+           JOIN commerce_payments p ON p.ticket_order_id=o.id
+          WHERE p.id=$1`, [pid]
+      );
+      assert.equal(rolledBackOrder.rowCount, 1, "the pre-existing checkout order remains after settlement rollback");
+      assert.equal(rolledBackOrder.rows[0].status, "payment_pending", "the order payment transition rolled back");
+      assert.equal(rolledBackOrder.rows[0].ticket_count, 0, "ticket issuance rolled back with settlement");
 
       const retryHold = await admin.query(`
         UPDATE event_ticket_orders
@@ -961,10 +968,16 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     )).rows[0].n;
     assert.equal(ticketCount, 1, "the duplicate notification did not issue a second ticket");
     const settlements = await admin.query(
-      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'",
-      [pid]
+      `SELECT count(*)::int AS line_count,
+              count(DISTINCT edal_entry_id)::int AS settlement_count
+         FROM commerce_ledger_entries
+        WHERE payment_id=$1 AND entry_kind='settlement'`, [pid]
     );
-    assert.equal(settlements.rows[0].n, 1, "the ledger has one settlement");
+    assert.ok(settlements.rows[0].line_count > 0, "the settlement records its ledger lines");
+    assert.equal(settlements.rows[0].settlement_count, 1, "all ledger lines belong to one EDAL settlement entry");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_receipts WHERE payment_id=$1 AND kind='payment'", [pid]
+    )).rows[0].n, 1, "the payment has one receipt");
     const events = await admin.query(
       "SELECT state FROM commerce_webhook_events WHERE provider_event_id=ANY($1::text[]) ORDER BY provider_event_id",
       [eventIds]
