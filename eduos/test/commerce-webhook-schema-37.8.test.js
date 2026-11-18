@@ -64,3 +64,18 @@ test("public receiver verifies signatures before persisting and never settles pa
   assert.doesNotMatch(intake, /eduos_commerce_record|UPDATE commerce_payments|UPDATE event_ticket_orders/);
   assert.match(server, /app\.post\(["\`]\/api\/commerce\/webhooks\/:processor\/:token/);
 });
+
+
+const payerActorMigration = await readFile(new URL("../db/076_commerce_webhook_payer_actor.sql", import.meta.url), "utf8");
+const commerceService = await readFile(new URL("../src/commerce/service.js", import.meta.url), "utf8");
+
+test("checkout preserves the authenticated payer actor separately from transient pending state", () => {
+  assert.match(payerActorMigration, /ADD COLUMN payer_actor jsonb/);
+  assert.match(payerActorMigration, /payer_actor IS NULL OR/);
+  assert.match(payerActorMigration, /payer_actor->>'userId'/);
+  assert.match(payerActorMigration, /payer_actor->>'role'/);
+  assert.match(commerceService, /pending_since,pending_actor,payer_actor/);
+  assert.equal((commerceService.match(/pending_since,pending_actor,payer_actor/g) || []).length, 2);
+  assert.match(commerceService, /\$13::jsonb,\$13::jsonb/);
+  assert.match(commerceService, /\$11::jsonb,\$11::jsonb/);
+});
