@@ -138,6 +138,26 @@ describe("upgrade from an older release on a populated database", { skip }, () =
       "commerce_webhook_endpoints", "commerce_webhook_events",
       "district_users", "memberships", "native_login_handoffs", "sessions"
     ], "only sign-in tables and the four scoped commerce definer tables may omit FORCE RLS");
+    const webhookStateCheck = await admin.query(`
+      SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+       WHERE conrelid='public.commerce_webhook_events'::regclass
+         AND conname='commerce_webhook_events_state_check'`);
+    assert.match(webhookStateCheck.rows[0].definition, /dead_letter/,
+      "retry exhaustion has an explicit terminal inbox state");
+    const webhookTerminalCheck = await admin.query(`
+      SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+       WHERE conrelid='public.commerce_webhook_events'::regclass
+         AND conname='commerce_webhook_events_terminal_timestamp_check'`);
+    assert.match(webhookTerminalCheck.rows[0].definition, /dead_letter/,
+      "dead letters carry a terminal processed timestamp");
+    const webhookGuard = await admin.query(
+      "SELECT pg_get_functiondef('public.eduos_commerce_webhook_event_guard()'::regprocedure) AS definition");
+    assert.match(webhookGuard.rows[0].definition, /dead_letter/,
+      "the event guard permits only the explicit terminal transition");
+    const webhookClaim = await admin.query(
+      "SELECT pg_get_functiondef('public.eduos_commerce_claim_webhook()'::regprocedure) AS definition");
+    assert.match(webhookClaim.rows[0].definition, /attempts < 20/,
+      "dead-lettered events cannot be claimed again");
     const publicDefiner = await admin.query(`
       SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
        WHERE n.nspname='public' AND p.prosecdef
