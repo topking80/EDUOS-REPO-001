@@ -200,19 +200,68 @@ comes back with `redirectUrl`; the processor returns the payer to
 `POST /api/commerce/payments/:id/confirm` (no `testOutcome`), which asks the
 processor and settles, declines, or answers `pending`.
 
-## Not done yet
+## Payment-provider webhooks (37.8.0)
 
-- **Webhooks.** Signature checks are written and unit-tested (PayPal's verify
-  API, Square's HMAC including its documented example, BTCPay's `BTCPay-Sig`),
-  but there is no public webhook endpoint yet; confirmation happens when the
-  payer returns or presses "I've paid".
-- **Venmo, and cards through PayPal**: need PayPal's JavaScript SDK buttons
+The public callback endpoint is now available:
+
+`POST /api/commerce/webhooks/:processor/:token`
+
+District provider administrators create it from **Payment options**. The API
+returns a full provider URL containing a 256-bit random bearer token exactly
+once; only its SHA-256 digest is stored. Creating or rotating an endpoint
+revokes every prior active endpoint for that district and processor. Treat
+the returned URL as a password: copy it directly into the provider dashboard,
+do not put it in tickets, logs, source control or analytics. If it is exposed,
+rotate it immediately. Revocation disables all active URLs for that provider.
+
+Provider setup requirements:
+
+- **PayPal:** register the generated URL as a webhook in the PayPal app and
+  configure the resulting webhook ID in the district's protected provider
+  credentials. Subscribe to `PAYMENT.CAPTURE.COMPLETED`.
+- **Square:** register the exact generated URL in the Square developer
+  dashboard and save the matching webhook signature key and notification URL
+  in the district's protected credentials. Subscribe to `payment.updated`;
+  only `COMPLETED` payments are settlement candidates.
+- **BTCPay:** register the URL in the store's webhook settings and save its
+  webhook secret. Subscribe to `InvoiceSettled`. The BTCPay server URL must
+  be HTTPS and its hostname must be listed in `COMMERCE_ALLOWED_HOSTS`.
+
+All three providers are signature-verified before persistence. The application
+uses the exact bounded raw request body for verification. A valid callback
+only writes a matched event to the durable inbox; it does not settle a payment,
+issue tickets, or write the ledger in the HTTP request. The background
+commerce worker rechecks payment/order state, provider reference, capture
+reference, amount and currency under the payer's saved tenant actor before
+using the existing settlement path.
+
+`COMMERCE_RECONCILE_INTERVAL_SECONDS` (default 60; set to 0 to disable)
+controls both the payment reconciler and webhook worker. Webhook claims use a
+five-minute lease and a maximum of 20 attempts. Exhausted events become
+operator-visible dead letters; transient failures are retried. A capture
+arriving after its ticket hold expires is not settled and does not issue
+tickets: it creates an operator refund case instead. Operators must perform
+the refund in the provider dashboard and record the resolution in EduOS.
+
+Useful operator routes (provider administrator permission):
+
+- `GET /api/commerce/providers/webhook-refund-cases`
+- `POST /api/commerce/providers/webhook-refund-cases/:id/resolve`
+- `GET /api/commerce/providers/webhook-dead-letters`
+- `POST /api/commerce/providers/:processor/webhook-endpoint` (issue/rotate)
+- `POST /api/commerce/providers/:processor/webhook-endpoint/rotate`
+- `DELETE /api/commerce/providers/:processor/webhook-endpoint` (revoke)
+
+## Remaining work / launch gates
+
+- **Venmo, and cards through PayPal:** need PayPal's JavaScript SDK buttons
   and card fields embedded in the page.
-- **Never run against the real providers.** All adapter tests use mocks (CI
-  makes no network calls). Before going live, a district should run one
-  test-mode payment end to end with its own sandbox account.
-- Payouts to schools, vendors and the state fund; reconciliation; partial
-  refunds; disputes; sales tax by jurisdiction; legal review of fees charged
-  to families (see `COMMERCE-SANDBOX.md`).
+- **Live provider validation:** CI uses mocked provider transports and does
+  not move real money. Before launch, each district must complete provider
+  sandbox checkout, callback delivery, duplicate/replay, refund and late
+  capture exercises using its own accounts.
+- Payouts to schools, vendors and the state fund; partial refunds, disputes,
+  chargebacks, sales tax by jurisdiction; legal and finance review of fees
+  charged to families (see `COMMERCE-SANDBOX.md`).
 - Flutter has the "Pay with" picker and processor checkout for families; the
-  Payment options screen is web only.
+  Payment options and operator refund/dead-letter screens are web only.
