@@ -17,7 +17,7 @@ import { runAfterCommit } from "./commerce/phases.js";
 import { SANDBOX_OUTCOMES } from "./commerce/payments.js";
 import { summarize, DEFAULT_RATES } from "./commerce/split.js";
 import { commerceStatus, loadSettings, settingsOut, confirmPayment, refundPayment, startMarketplaceCheckout, paymentOut, reconcileCommercePayments } from "./commerce/service.js";
-import { providersOverview, saveAccount, testAccount, saveSetup } from "./commerce/setup.js";
+import { providersOverview, saveAccount, testAccount, saveSetup, issueWebhookEndpoint, revokeWebhookEndpoint } from "./commerce/setup.js";
 
 const intIn = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 const canPay = (req, res, next) => (canPerform(req.actor, "commerce", "pay") || canPerform(req.actor, "commerce", "purchase"))
@@ -219,5 +219,12 @@ export function registerCommerceRoutes(app) {
   app.get("/api/commerce/providers", requireSession, requirePermission("commerce", "providers"), wrap(async (c, req) => providersOverview(c, req.actor.districtId)));
   app.put("/api/commerce/providers/:processor", ...provAdmin, wrap(async (c, req) => saveAccount(c, req, req.params.processor, req.body || {})));
   app.post("/api/commerce/providers/:processor/test", ...provAdmin, phased(async (c, req) => testAccount(c, req, req.params.processor)));
+  // Endpoint URLs contain one-time bearer tokens; wrap() applies Cache-Control: no-store.
+  app.post("/api/commerce/providers/:processor/webhook-endpoint", ...provAdmin,
+    wrap(async (c, req) => created(await issueWebhookEndpoint(c, req, req.params.processor))));
+  app.post("/api/commerce/providers/:processor/webhook-endpoint/rotate", ...provAdmin,
+    wrap(async (c, req) => issueWebhookEndpoint(c, req, req.params.processor)));
+  app.delete("/api/commerce/providers/:processor/webhook-endpoint", ...provAdmin,
+    wrap(async (c, req) => revokeWebhookEndpoint(c, req, req.params.processor)));
   app.put("/api/commerce/payment-methods", ...provAdmin, wrap(async (c, req) => saveSetup(c, req, req.body || {})));
 }
