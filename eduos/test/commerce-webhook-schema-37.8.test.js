@@ -23,7 +23,7 @@ test("provider event identity is unique and immutable", () => {
 test("webhook event state machine rejects terminal-state regression", () => {
   assert.match(migration, /OLD\.state='processing' AND NEW\.state IN \('applied','ignored','failed'\)/);
   assert.match(migration, /webhook event cannot go from % to %/);
-  assert.match(migration, /NEW\.attempts<OLD\.attempts OR NEW\.attempts>OLD\.attempts\+1/);
+  assert.match(migration, /NEW\.attempts<>OLD\.attempts\+1/);
 });
 
 test("runtime role gets no delete or truncate access to the event ledger", () => {
