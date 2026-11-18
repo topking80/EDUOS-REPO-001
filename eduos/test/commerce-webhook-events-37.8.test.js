@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { normalizeVerifiedPaymentEvent as normalize } from "../src/commerce/webhook-events.js";
 
 test("PayPal: only completed capture events become settlement candidates", () => {
@@ -46,4 +47,12 @@ test("malformed identities, amounts, currencies and unknown processors fail clos
   assert.equal(normalize("btcpay", { deliveryId: "BTCPAY-EVENT-123", type: "InvoiceSettled", invoiceId: "INV-12345", amount: "0", currency: "USD" }), null);
   assert.equal(normalize("other", { id: "EVENT-1234", type: "ok" }), null);
   assert.equal(normalize("paypal", null), null);
+});
+
+
+const server = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+test("commerce webhook JSON parsing preserves the exact bounded raw request bytes", () => {
+  assert.match(server, /express\.json\(\{ limit: config\.jsonBodyLimit, strict: true, verify:/);
+  assert.match(server, /req\.path\.startsWith\("\/api\/commerce\/webhooks\/"\)\) req\.rawBody = Buffer\.from\(buf\)/);
 });
