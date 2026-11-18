@@ -606,6 +606,13 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const visible = await as("supt1")("GET", "/api/commerce/providers/webhook-refund-cases");
     assert.equal(visible.status, 200, JSON.stringify(visible.body));
     assert.ok(visible.body.data.refundCases.some(x => x.id === caseId));
+    assert.equal(Object.hasOwn(visible.body.data.refundCases.find(x => x.id === caseId), "payerUserId"), false,
+      "operator queue does not expose payer identity");
+    assert.equal((await as("p1")("GET", "/api/commerce/providers/webhook-refund-cases")).status, 403,
+      "ordinary parents cannot inspect the refund queue");
+    assert.equal((await as("p1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
+      resolutionNote: "Attempted unauthorized refund resolution."
+    })).status, 403, "ordinary parents cannot resolve a refund case");
     const resolved = await as("supt1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
       resolutionNote: "Refund confirmed in the PayPal merchant console."
     });
@@ -613,6 +620,11 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await admin.query(
       "SELECT status FROM commerce_webhook_refund_cases WHERE id=$1", [caseId]
     )).rows[0].status, "resolved");
+    assert.equal((await as("supt1")("GET", "/api/commerce/providers/webhook-refund-cases")).body.data.refundCases
+      .some(x => x.id === caseId), false, "resolved cases leave the open queue");
+    assert.equal((await as("supt1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
+      resolutionNote: "Duplicate resolution must not overwrite the original."
+    })).status, 404, "a resolved case cannot be resolved a second time");
   });
 
   it("moves the twentieth failed webhook attempt to a terminal dead letter", async () => {
