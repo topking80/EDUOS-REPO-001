@@ -32,6 +32,8 @@ Keep `Permissions-Policy: geolocation=()`.
 | `COMMS_RATE_LIMIT_PER_MIN` | `60` | per-client Comms writes |
 | `TRANSPORT_CHECKIN_RATE_LIMIT_PER_MIN` | `300` | per-client check-ins |
 | `NOTIFY_EMAIL_ADAPTER` | `off` | `off`, `log` (dry run), or `smtp` (SMTP over implicit TLS, port 465). |
+| `NOTIFY_SMS_ADAPTER` | `off` | `off`, `log` (dry run), or `twilio` (verified SMS). |
+| `NOTIFY_PUSH_ADAPTER` | `off` | `off` or `log` (dry run); no external push provider is enabled. |
 
 Before you turn on an external Christie provider, confirm that a DPA covers
 it. Only redacted text from the current question, plus approved lesson
@@ -45,7 +47,7 @@ an approved sender or Messaging Service SID. Keep credentials in the deployment
 secret manager. Both external channels send generic notification content only.
 
 If an external adapter is enabled, schedule `node src/notify-dispatch.js`
-with the documented worker database role. In development, run `make notify`.
+with the migration-owner database role, as documented in `src/notify-dispatch.js`. In development, run `make notify`.
 With all adapters `off`, nothing is sent externally.
 
 ## 6. Known limits
