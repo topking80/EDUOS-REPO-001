@@ -38,3 +38,29 @@ test("webhook attempts advance only on claims and terminal events get completion
   assert.match(migration, /NEW\.processed_at := coalesce\(NEW\.processed_at, now\(\)\)/);
   assert.match(migration, /webhook processing metadata changed outside a state transition/);
 });
+
+
+const receiveMigration = await readFile(new URL("../db/075_commerce_webhook_receive.sql", import.meta.url), "utf8");
+const intake = await readFile(new URL("../src/commerce/webhook-intake.js", import.meta.url), "utf8");
+const server = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+test("public webhook persistence is a narrow token-authenticated SECURITY DEFINER function", () => {
+  assert.match(receiveMigration, /SECURITY DEFINER/);
+  assert.match(receiveMigration, /SET search_path = pg_catalog, public/);
+  assert.match(receiveMigration, /e\.token_sha256=p_token_sha256 AND e\.processor=p_processor/);
+  assert.match(receiveMigration, /p\.status='requires_confirmation' AND p\.amount_cents=p_amount_cents/);
+  assert.match(receiveMigration, /p\.currency=p_currency/);
+  assert.match(receiveMigration, /INSERT INTO public\.commerce_webhook_events/);
+  assert.doesNotMatch(receiveMigration, /UPDATE public\.commerce_payments|UPDATE public\.event_ticket_orders|UPDATE public\.commerce_ledger_entries/);
+  assert.match(receiveMigration, /REVOKE ALL ON FUNCTION eduos_commerce_receive_webhook/);
+  assert.match(grants, /GRANT EXECUTE ON FUNCTION eduos_commerce_receive_webhook/);
+});
+
+test("public receiver verifies signatures before persisting and never settles payments", () => {
+  assert.match(intake, /adapter\.verifyWebhook\(\{ headers, rawBody \}\)/);
+  assert.ok(intake.indexOf("adapter.verifyWebhook") < intake.indexOf("eduos_commerce_receive_webhook"));
+  assert.match(intake, /normalizeVerifiedPaymentEvent\(processor, body\)/);
+  assert.match(intake, /eduos_commerce_receive_webhook\(\$1/);
+  assert.doesNotMatch(intake, /eduos_commerce_record|UPDATE commerce_payments|UPDATE event_ticket_orders/);
+  assert.match(server, /app\.post\(["\`]\/api\/commerce\/webhooks\/:processor\/:token/);
+});
