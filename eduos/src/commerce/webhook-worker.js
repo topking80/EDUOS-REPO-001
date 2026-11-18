@@ -57,8 +57,11 @@ export async function processCommerceWebhookEvents({ db = pool, limit = 25, log 
       const code = safeCode(error.code || error.message);
       try {
         await withTenantTransaction(actor, async c => {
+          // The twentieth failed claim is terminal. Keep the error visible to
+          // operators and stop retrying an event that has exhausted its budget.
           await c.query(`UPDATE commerce_webhook_events
-              SET state='failed',last_error_code=$2
+              SET state=CASE WHEN attempts >= 20 THEN 'dead_letter' ELSE 'failed' END,
+                  last_error_code=$2
             WHERE id=$1 AND state='processing' AND attempts=$3`,
             [event.id, code, event.attempts]);
         });
