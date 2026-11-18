@@ -27,7 +27,7 @@ async function providerAdapter(account) {
     const checked = validateWebhookUrl(String(cfg.serverUrl || ""), { allowedHosts: config.commerceAllowedHosts });
     if (!checked.ok || checked.url.protocol !== "https:" || !config.commerceAllowedHosts.length)
       throw fail(503, "webhook_verification_unavailable");
-    base = checked.url.origin + checked.url.pathname.replace(/\\/+$/, "");
+    base = checked.url.origin + checked.url.pathname.replace(/\/+$/, "");
     allowedHosts = config.commerceAllowedHosts;
   } else {
     const host = PROCESSORS[processor].hosts[mode];
