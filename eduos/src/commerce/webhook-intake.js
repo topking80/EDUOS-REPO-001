@@ -81,51 +81,19 @@ export async function receiveCommerceWebhook({ processor, token, headers, rawBod
   if (event.disposition === "ignored") return { outcome: "ignored" };
 
   const payloadHash = createHash("sha256").update(rawBody).digest("hex");
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query("SELECT set_config('app.district_id',$1,true)", [String(account.district_id)]);
-    const match = await client.query(
-      `SELECT id, amount_cents, currency, provider_capture_ref
-         FROM commerce_payments
-        WHERE district_id=$1 AND provider=$2 AND provider_ref=$3
-          AND status='requires_confirmation'
-        FOR UPDATE`,
-      [account.district_id, processor, event.providerRef]
-    );
-    const payment = match.rows[0];
-    if (!payment || payment.amount_cents !== event.amountCents || payment.currency !== event.currency
-      || (payment.provider_capture_ref && payment.provider_capture_ref !== event.captureRef)) {
-      await client.query("ROLLBACK");
-      return { outcome: "unmatched" };
-    }
-    const inserted = await client.query(
-      `INSERT INTO commerce_webhook_events
-        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
-         provider_capture_ref,amount_cents,currency,state)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'received')
-       ON CONFLICT(processor,provider_event_id) DO NOTHING
-       RETURNING id`,
-      [account.district_id, payment.id, processor, event.providerEventId, event.eventType,
-        payloadHash, event.captureRef, event.amountCents, event.currency]
-    );
-    if (!inserted.rowCount) {
-      const prior = await client.query(
-        "SELECT payload_sha256 FROM commerce_webhook_events WHERE processor=$1 AND provider_event_id=$2",
-        [processor, event.providerEventId]
-      );
-      await client.query("COMMIT");
-      return { outcome: prior.rows[0]?.payload_sha256 === payloadHash ? "duplicate" : "event_id_conflict" };
-    }
-    await client.query("COMMIT");
-    return { outcome: "received" };
-  } catch (e) {
-    try { await client.query("ROLLBACK"); } catch {}
-    if (e?.code === "23505") return { outcome: "duplicate" };
-    throw e;
-  } finally {
-    client.release();
-  }
+  // The payment table's ordinary RLS policy intentionally requires a payer or
+  // district administrator. Public callbacks have no user identity, so this
+  // narrow SECURITY DEFINER function performs the exact match + inbox insert.
+  const saved = await pool.query(
+    "SELECT eduos_commerce_receive_webhook($1,$2,$3,$4,$5,$6,$7,$8,$9) AS outcome",
+    [digest(token), processor, event.providerEventId, event.eventType, payloadHash,
+      event.providerRef, event.captureRef, event.amountCents, event.currency]
+  );
+  const outcome = saved.rows[0]?.outcome;
+  if (outcome === "endpoint_not_found") throw fail(404, "endpoint_not_found");
+  if (!["received", "unmatched", "duplicate", "event_id_conflict"].includes(outcome))
+    throw fail(503, "webhook_verification_unavailable");
+  return { outcome };
 }
 
 export function webhookHttpStatus(error) {
