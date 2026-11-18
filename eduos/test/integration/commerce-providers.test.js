@@ -884,9 +884,18 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await admin.query(
       "SELECT count(*)::int AS n FROM event_ticket_orders o JOIN commerce_payments p ON p.ticket_order_id=o.id WHERE p.id=$1", [pid]
     )).rows[0].n, 1);
+    const crashSettlement = await admin.query(
+      `SELECT count(*)::int AS line_count,
+              count(DISTINCT edal_entry_id)::int AS settlement_count
+         FROM commerce_ledger_entries
+        WHERE payment_id=$1 AND entry_kind='settlement'`, [pid]
+    );
+    assert.ok(crashSettlement.rows[0].line_count > 0, "retry records settlement ledger lines");
+    assert.equal(crashSettlement.rows[0].settlement_count, 1,
+      "retry creates exactly one EDAL settlement despite multiple ledger lines");
     assert.equal((await admin.query(
-      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
-    )).rows[0].n, 1);
+      "SELECT count(*)::int AS n FROM commerce_receipts WHERE payment_id=$1 AND kind='payment'", [pid]
+    )).rows[0].n, 1, "retry creates one payment receipt");
     const terminal = (await admin.query(
       "SELECT state,attempts,processed_at,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1",
       [providerEventId]
@@ -958,10 +967,26 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const outcomes = [];
     try {
       for (const eventId of eventIds) {
+        const eligible = await admin.query(
+          `SELECT e.id,e.state,e.attempts,e.provider_ref,e.claimed_at,
+                  p.status AS payment_status,
+                  (p.payer_actor IS NOT NULL) AS has_payer_actor
+             FROM commerce_webhook_events e
+             JOIN commerce_payments p ON p.id=e.payment_id
+            WHERE e.provider_event_id=$1`, [eventId]
+        );
+        assert.equal(eligible.rowCount, 1, `event fixture exists: ${eventId}`);
+        assert.deepEqual(
+          [eligible.rows[0].state, eligible.rows[0].attempts,
+            Boolean(eligible.rows[0].provider_ref), eligible.rows[0].has_payer_actor],
+          ["received", 0, true, true],
+          `event is claimable before worker call: ${JSON.stringify(eligible.rows[0])}`
+        );
         const claim = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
-        assert.equal(claim.rows[0].event?.id, (await admin.query(
-          "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [eventId]
-        )).rows[0].id, "the worker claim function leases this event before settlement");
+        assert.ok(claim.rows[0].event,
+          `claim function returned no event for ${eventId}; fixture=${JSON.stringify(eligible.rows[0])}`);
+        assert.equal(claim.rows[0].event.id, eligible.rows[0].id,
+          `worker leases the oldest eligible event; claimed=${JSON.stringify(claim.rows[0].event)} expected=${JSON.stringify(eligible.rows[0])}`);
         await runtime.query("BEGIN");
         try {
           await runtime.query(
