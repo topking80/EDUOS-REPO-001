@@ -192,7 +192,6 @@ export async function pendingCheckout(c, orderId) {
  */
 export async function applyVerifiedWebhook(c, req, event) {
   const a = req.actor;
-  await c.query("SELECT eduos_commerce_expire_holds()");
   const p = await one(c, "SELECT * FROM commerce_payments WHERE id=$1 FOR UPDATE", [event.paymentId]);
   if (!p || p.district_id !== a.districtId || p.payer_user_id !== a.userId)
     throw new HttpError(404, "webhook_payment_not_found");
@@ -200,10 +199,25 @@ export async function applyVerifiedWebhook(c, req, event) {
       || p.amount_cents !== event.amountCents || p.currency !== event.currency
       || (p.provider_capture_ref && p.provider_capture_ref !== event.captureRef))
     throw new HttpError(409, "webhook_payment_mismatch");
+  if (p.status === "expired") {
+    await audit(c, req, "payment_after_hold", "commerce_payment", p.id,
+      "verified_provider_capture_after_checkout_expired;manual_refund_required", "failure");
+    return { outcome: "ignored", reason: "payment_after_hold_refund_required" };
+  }
   if (p.status !== "requires_confirmation")
     return { outcome: "ignored", reason: "payment_not_awaiting_confirmation" };
   if (!(await loadSettings(c, a.districtId)).enabled)
     return { outcome: "ignored", reason: "commerce_disabled" };
+  if (p.purpose === "event_tickets") {
+    const order = await one(c, "SELECT id,status,hold_expires_at < now() AS hold_expired FROM event_ticket_orders WHERE id=$1 FOR UPDATE", [p.ticket_order_id]);
+    if (!order || order.status !== "payment_pending" || order.hold_expired) {
+      await c.query("SELECT eduos_commerce_expire_holds()");
+      await c.query("UPDATE commerce_payments SET status='expired',confirmed_at=now(),pending_since=NULL,pending_actor=NULL WHERE id=$1 AND status='requires_confirmation'", [p.id]);
+      await audit(c, req, "payment_after_hold", "commerce_payment", p.id,
+        "verified_provider_capture_after_ticket_hold_release;manual_refund_required", "failure");
+      return { outcome: "ignored", reason: "payment_after_hold_refund_required" };
+    }
+  }
   const result = { status: "succeeded", captureRef: event.captureRef };
   const settled = p.purpose === "event_tickets"
     ? await recordTickets(c, req, p, result)
