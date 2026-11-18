@@ -31,3 +31,10 @@ test("runtime role gets no delete or truncate access to the event ledger", () =>
   assert.match(grants, /REVOKE DELETE, TRUNCATE ON commerce_webhook_events FROM eduos_app/);
   assert.match(grants, /REVOKE ALL ON FUNCTION eduos_commerce_webhook_event_guard\(\) FROM eduos_app/);
 });
+
+test("webhook attempts advance only on claims and terminal events get completion timestamps", () => {
+  assert.match(migration, /CHECK \(\(state IN \('applied','ignored','failed'\)\) = \(processed_at IS NOT NULL\)\)/);
+  assert.match(migration, /claiming a webhook event must increment attempts/);
+  assert.match(migration, /NEW\.processed_at := coalesce\(NEW\.processed_at, now\(\)\)/);
+  assert.match(migration, /webhook processing metadata changed outside a state transition/);
+});
