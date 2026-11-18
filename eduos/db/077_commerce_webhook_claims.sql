@@ -82,7 +82,7 @@ BEGIN
   SELECT p.id INTO payment
     FROM public.commerce_payments p
    WHERE p.district_id=d AND p.provider=p_processor AND p.provider_ref=p_provider_ref
-     AND p.status='requires_confirmation' AND p.amount_cents=p_amount_cents
+     AND p.status IN ('requires_confirmation','expired','succeeded') AND p.amount_cents=p_amount_cents
      AND p.currency=p_currency
      AND (p.provider_capture_ref IS NULL OR p.provider_capture_ref=p_capture_ref)
    LIMIT 1 FOR UPDATE;
