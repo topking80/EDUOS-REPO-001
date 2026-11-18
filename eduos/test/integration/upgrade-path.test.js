@@ -127,10 +127,17 @@ describe("upgrade from an older release on a populated database", { skip }, () =
        WHERE n.nspname='public' AND c.relkind='r'
          AND EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='district_id' AND NOT a.attisdropped)
          AND NOT (c.relrowsecurity AND c.relforcerowsecurity) ORDER BY 1`);
-    // Sign-in tables, read before any district is known (the server resolves
-    // the session, then sets the tenant). Any other table is a regression.
-    assert.deepEqual(unprotected.rows.map(r => r.relname), ["district_users", "memberships", "native_login_handoffs", "sessions"],
-      "every other district table has forced row-level security");
+    // Sign-in tables are read before any district is known. The four commerce
+    // tables also intentionally have ENABLED (but not FORCE) RLS: only the
+    // migration-owned, narrowly scoped SECURITY DEFINER webhook functions may
+    // bypass tenant policies. The runtime role remains a non-owner and is
+    // therefore still subject to those policies. Any additional exception is
+    // a regression.
+    assert.deepEqual(unprotected.rows.map(r => r.relname), [
+      "commerce_payments", "commerce_provider_accounts",
+      "commerce_webhook_endpoints", "commerce_webhook_events",
+      "district_users", "memberships", "native_login_handoffs", "sessions"
+    ], "only sign-in tables and the four scoped commerce definer tables may omit FORCE RLS");
     const publicDefiner = await admin.query(`
       SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
        WHERE n.nspname='public' AND p.prosecdef
