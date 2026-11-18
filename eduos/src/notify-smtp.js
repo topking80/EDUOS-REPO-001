@@ -81,13 +81,17 @@ export function buildNotificationMessage({ id, from, to, domain }) {
 export function createSmtpAdapter({ config, connect = tls.connect }) {
   return Object.freeze({
     name: "smtp",
-    async send(row) {
+    async send(row, _log, { signal } = {}) {
       const from = config.notifySmtpFrom;
       const to = row.recipient_email;
       if (!validAddress(to)) return { status: "failed", note: "recipient email address is missing or invalid" };
       let socket, deadline;
+      const abort = () => socket?.destroy(new Error("SMTP request aborted"));
       try {
+        if (signal?.aborted) return { status: "pending", note: "SMTP request aborted" };
         socket = connect({ host: config.notifySmtpHost, port: config.notifySmtpPort, servername: config.notifySmtpHost, rejectUnauthorized: true });
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
         // Enforce an absolute wall-clock deadline as well as the socket's
         // inactivity timeout. A peer that trickles bytes must not keep a
         // delivery socket alive after the dispatcher has given up.
@@ -112,6 +116,7 @@ export function createSmtpAdapter({ config, connect = tls.connect }) {
         return { status: transient ? "pending" : "failed", note: transient ? "SMTP temporary failure" : "SMTP permanent rejection (" + error.smtpCode + ")" };
       } finally {
         clearTimeout(deadline);
+        signal?.removeEventListener("abort", abort);
         socket?.end();
       }
     }

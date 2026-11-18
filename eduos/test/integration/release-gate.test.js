@@ -275,8 +275,12 @@ describe("release gate against real PostgreSQL", { skip }, () => {
     it("a send with no answer is cut off inside the lease and retried later, not marked delivered", async () => {
       const row = (await admin.query("SELECT id FROM notification_outbox WHERE ref_id=$1 AND channel='email' LIMIT 1", [incident])).rows[0].id;
       await admin.query("UPDATE notification_outbox SET status='pending',attempts=0,delivered_at=NULL,next_attempt_at=NULL,lease_token=NULL,lease_expires_at=NULL WHERE id=$1", [row]);
-      const t = await dispatchPending({ db: ownerPool, leaseSeconds: 2, sendTimeoutSeconds: 0.3, log: () => {}, adapters: () => ({ send: () => new Promise(() => {}) }) });
+      let providerAborted = false;
+      const t = await dispatchPending({ db: ownerPool, leaseSeconds: 2, sendTimeoutSeconds: 0.3, log: () => {}, adapters: () => ({ send: (_row, _log, { signal } = {}) => new Promise(() => {
+        signal?.addEventListener("abort", () => { providerAborted = true; }, { once: true });
+      }) }) });
       assert.equal(t.retrying, 1);
+      assert.equal(providerAborted, true, "the provider request receives cancellation before its lease is released");
       const r = (await admin.query("SELECT status,delivered_at,last_error,lease_token FROM notification_outbox WHERE id=$1", [row])).rows[0];
       assert.deepEqual([r.status, r.delivered_at, r.lease_token], ["pending", null, null]);
       assert.match(r.last_error, /no answer within 0.3 s/);

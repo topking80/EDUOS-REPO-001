@@ -107,3 +107,25 @@ test("SMTP adapter destroys a socket when the absolute request deadline expires"
   assert.equal(result.status, "pending");
   assert.equal(socket.destroyed, true);
 });
+
+test("SMTP adapter destroys its socket when the dispatcher aborts the send", async () => {
+  class HangingSocket extends EventEmitter {
+    destroyed = false;
+    setTimeout() {}
+    write() { return true; }
+    end() {}
+    destroy(error) { this.destroyed = true; if (error) this.emit("error", error); }
+  }
+  const socket = new HangingSocket();
+  const controller = new AbortController();
+  const adapter = createSmtpAdapter({
+    config: { notifySmtpHost: "smtp.example.edu", notifySmtpPort: 465, notifySmtpFrom: "alerts@example.edu",
+      notifySmtpUsername: "user", notifySmtpPassword: "secret", notifySmtpTimeoutMs: 5000 },
+    connect: () => socket
+  });
+  const pending = adapter.send({ id: "12345678-1234-1234-1234-123456789abc", recipient_email: "family@example.net" }, null, { signal: controller.signal });
+  controller.abort(new Error("worker deadline"));
+  const result = await pending;
+  assert.equal(result.status, "pending");
+  assert.equal(socket.destroyed, true);
+});
