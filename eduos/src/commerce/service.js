@@ -185,6 +185,29 @@ export async function pendingCheckout(c, orderId) {
 }
 
 /**
+ * A provider can capture after the ticket hold has been released. Persist a
+ * durable operator case, but never create tickets or a settlement ledger row.
+ * The capture reference is retained so an administrator can reconcile the
+ * external refund against the exact provider transaction.
+ */
+async function recordLateCaptureRefundCase(c, req, p, event, reasonCode) {
+  if (!event.webhookEventId) throw new HttpError(409, "webhook_event_reference_required");
+  await c.query(`UPDATE commerce_payments
+      SET provider_capture_ref=coalesce(provider_capture_ref,$2),
+          confirmed_at=coalesce(confirmed_at,now()), pending_since=NULL, pending_actor=NULL
+    WHERE id=$1`, [p.id, event.captureRef]);
+  await c.query(`INSERT INTO commerce_webhook_refund_cases
+      (district_id,payment_id,webhook_event_id,processor,provider_capture_ref,amount_cents,currency,reason_code)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT(payment_id,provider_capture_ref)
+    DO UPDATE SET last_seen_at=now()`,
+    [p.district_id, p.id, event.webhookEventId, event.processor, event.captureRef,
+      event.amountCents, event.currency, reasonCode]);
+  await audit(c, req, "payment_after_hold", "commerce_payment", p.id,
+    `verified_provider_capture_after_${reasonCode};manual_refund_required`, "failure");
+}
+
+/**
  * Apply a signature-verified provider event inside the authenticated payer's
  * tenant transaction. This deliberately reuses the exact settlement path used
  * by interactive confirmation: payment transition, tickets/license, EDAL,
@@ -200,8 +223,7 @@ export async function applyVerifiedWebhook(c, req, event) {
       || (p.provider_capture_ref && p.provider_capture_ref !== event.captureRef))
     throw new HttpError(409, "webhook_payment_mismatch");
   if (p.status === "expired") {
-    await audit(c, req, "payment_after_hold", "commerce_payment", p.id,
-      "verified_provider_capture_after_checkout_expired;manual_refund_required", "failure");
+    await recordLateCaptureRefundCase(c, req, p, event, "payment_after_checkout_expired");
     return { outcome: "ignored", reason: "payment_after_hold_refund_required" };
   }
   if (p.status !== "requires_confirmation")
@@ -213,8 +235,7 @@ export async function applyVerifiedWebhook(c, req, event) {
     if (!order || order.status !== "payment_pending" || order.hold_expired) {
       await c.query("SELECT eduos_commerce_expire_holds()");
       await c.query("UPDATE commerce_payments SET status='expired',confirmed_at=now(),pending_since=NULL,pending_actor=NULL WHERE id=$1 AND status='requires_confirmation'", [p.id]);
-      await audit(c, req, "payment_after_hold", "commerce_payment", p.id,
-        "verified_provider_capture_after_ticket_hold_release;manual_refund_required", "failure");
+      await recordLateCaptureRefundCase(c, req, p, event, "ticket_hold_expired");
       return { outcome: "ignored", reason: "payment_after_hold_refund_required" };
     }
   }
