@@ -104,3 +104,11 @@ test("webhook worker uses saved payer context and existing atomic settlement ser
   assert.match(commerceRoutes, /processCommerceWebhookEvents\(\)/);
   assert.match(commerceRoutes, /Promise\.allSettled/);
 });
+
+
+test("late verified captures are recorded for manual-refund handling, never issued as tickets", () => {
+  assert.match(claimMigration, /p\.status IN \('requires_confirmation','expired','succeeded'\)/);
+  assert.match(commerceService, /payment_after_hold_refund_required/);
+  assert.match(commerceService, /manual_refund_required/);
+  assert.match(commerceService, /UPDATE commerce_payments SET status='expired'/);
+});
