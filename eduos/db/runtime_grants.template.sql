@@ -436,3 +436,6 @@ GRANT EXECUTE ON FUNCTION eduos_commerce_webhook_account(text) TO eduos_app;
 
 -- 37.8.0: public verified webhook intake can persist only a matched inbox event.
 GRANT EXECUTE ON FUNCTION eduos_commerce_receive_webhook(text,text,text,text,text,text,text,integer,text) TO eduos_app;
+
+-- 37.8.0: worker may claim one event at a time through the narrow definer.
+GRANT EXECUTE ON FUNCTION eduos_commerce_claim_webhook() TO eduos_app;
