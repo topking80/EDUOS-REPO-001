@@ -929,17 +929,6 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       "evt_settlement_idempotency_0001",
       "evt_settlement_idempotency_0002"
     ];
-    for (let i = 0; i < eventIds.length; i++) {
-      await admin.query(`
-        INSERT INTO commerce_webhook_events
-          (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
-           provider_ref,provider_capture_ref,amount_cents,currency,state,received_at)
-        VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,$6,$7,'USD','received',
-                now() - interval '1 minute' + ($8 * interval '1 second'))
-      `, [ID.d1, pid, eventIds[i], String(i + 1).repeat(64), p.provider_ref,
-        captureRef, p.amount_cents, i]);
-    }
-
     const actor = { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null };
     const req = { actor, requestId: "webhook-idempotency-integration", reconciled: true };
     // Load the application service only in the PostgreSQL integration path;
@@ -966,7 +955,18 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     await runtime.connect();
     const outcomes = [];
     try {
-      for (const eventId of eventIds) {
+      for (let i = 0; i < eventIds.length; i++) {
+        const eventId = eventIds[i];
+        // Insert one notification at a time. A concurrently scheduled worker
+        // must not consume the second duplicate while this test is asserting
+        // the first notification's claim and settlement behavior.
+        await admin.query(`
+          INSERT INTO commerce_webhook_events
+            (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+             provider_ref,provider_capture_ref,amount_cents,currency,state,received_at)
+          VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,$6,$7,'USD','received',now())
+        `, [ID.d1, pid, eventId, String(i + 1).repeat(64), p.provider_ref,
+          captureRef, p.amount_cents]);
         const eligible = await admin.query(
           `SELECT e.id,e.state,e.attempts,e.provider_ref,e.claimed_at,
                   p.status AS payment_status,
