@@ -523,6 +523,92 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid])).rows[0].n, 0);
   });
 
+  it("rolls back settlement on worker crash and safely retries after lease expiry", async () => {
+    const checkout = await buy("pa", "webhook-crash-rollback", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    const providerEventId = "evt_crash_rollback_integration_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURECRASH001',
+              $6,'USD','received')
+    `, [ID.d1, pid, providerEventId, "f".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const actor = { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null };
+    const req = { actor, requestId: "webhook-crash-rollback-integration", reconciled: true };
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      const first = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.equal(first.attempts, 1);
+      await runtime.query("BEGIN");
+      await runtime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [actor.districtId, actor.userId, actor.role]
+      );
+      const appliedBeforeCrash = await applyVerifiedWebhook(runtime, req, {
+        paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        captureRef: "CAPTURECRASH001", amountCents: p.amount_cents, currency: "USD"
+      });
+      assert.equal(appliedBeforeCrash.outcome, "applied");
+      // Simulate process death after business writes but before the inbox ack:
+      // PostgreSQL rolls back payment, ticket, EDAL and ledger together.
+      await runtime.query("ROLLBACK");
+
+      assert.equal((await payment(pid)).status, "requires_confirmation");
+      assert.equal((await admin.query(
+        "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
+      )).rows[0].n, 0);
+      assert.equal((await admin.query(
+        "SELECT count(*)::int AS n FROM event_ticket_orders WHERE payment_id=$1", [pid]
+      )).rows[0].n, 0);
+
+      await admin.query(
+        "UPDATE commerce_webhook_events SET claimed_at=now()-interval '6 minutes' WHERE provider_event_id=$1",
+        [providerEventId]
+      );
+      const retry = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.equal(retry.id, first.id);
+      assert.equal(retry.attempts, 2, "expired lease recovery fences the crashed attempt");
+
+      await runtime.query("BEGIN");
+      await runtime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [actor.districtId, actor.userId, actor.role]
+      );
+      const appliedAfterRetry = await applyVerifiedWebhook(runtime, req, {
+        paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        captureRef: "CAPTURECRASH001", amountCents: p.amount_cents, currency: "USD"
+      });
+      assert.equal(appliedAfterRetry.outcome, "applied");
+      await runtime.query(
+        "UPDATE commerce_webhook_events SET state='applied',last_error_code=NULL WHERE id=$1 AND state='processing' AND attempts=$2",
+        [retry.id, retry.attempts]
+      );
+      await runtime.query("COMMIT");
+    } finally {
+      await runtime.end();
+    }
+
+    assert.equal((await payment(pid)).status, "succeeded");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM event_ticket_orders WHERE payment_id=$1", [pid]
+    )).rows[0].n, 1);
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
+    )).rows[0].n, 1);
+    const terminal = (await admin.query(
+      "SELECT state,attempts,processed_at,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1",
+      [providerEventId]
+    )).rows[0];
+    assert.deepEqual([terminal.state, terminal.attempts], ["applied", 2]);
+    assert.ok(terminal.processed_at);
+    assert.equal(terminal.claimed_at, null);
+  });
+
   it("distinct verified notifications for one capture settle tickets and ledger only once", async () => {
     const checkout = await buy("pa", "webhook-settlement-idempotency", "paypal");
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
