@@ -804,10 +804,11 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       await admin.query(`
         INSERT INTO commerce_webhook_events
           (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
-           provider_ref,provider_capture_ref,amount_cents,currency,state)
-        VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,$6,$7,'USD','received')
+           provider_ref,provider_capture_ref,amount_cents,currency,state,received_at)
+        VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,$6,$7,'USD','received',
+                now() + ($8 * interval '1 second'))
       `, [ID.d1, pid, eventIds[i], String(i + 1).repeat(64), p.provider_ref,
-        captureRef, p.amount_cents]);
+        captureRef, p.amount_cents, i]);
     }
 
     const actor = { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null };
