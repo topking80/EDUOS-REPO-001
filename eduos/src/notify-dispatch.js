@@ -77,6 +77,7 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
         });
         if (!renewed.rowCount) { done++; tally.lostLease++; continue; }
         let result, timer;
+        const sendController = new AbortController();
         try {
           if (row.channel === "email" && adapter.name === "smtp" && !renewed.emailOptedIn) {
             result = { status: "skipped", note: "recipient has not opted in to email notifications" };
@@ -86,8 +87,16 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
             result = await Promise.race([
               adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id,
                 recipient_email: row.channel === "email" ? renewed.recipientEmail : undefined,
-                recipient_phone: row.channel === "sms" ? renewed.recipientPhone : undefined }, log),
-              new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
+                recipient_phone: row.channel === "sms" ? renewed.recipientPhone : undefined }, log, { signal: sendController.signal }),
+              new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                  const error = new Error("no answer within " + sendTimeoutSeconds + " s");
+                  // Stop the provider request before releasing its row lease.
+                  sendController.abort(error);
+                  reject(error);
+                }, sendTimeoutSeconds * 1000);
+                timer.unref?.();
+              })
             ]);
           }
         } catch (e) { result = { status: "pending", note: String(e?.message || e).slice(0, 300) }; }
