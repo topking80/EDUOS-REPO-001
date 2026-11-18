@@ -138,6 +138,15 @@ describe("upgrade from an older release on a populated database", { skip }, () =
       "commerce_webhook_endpoints", "commerce_webhook_events",
       "district_users", "memberships", "native_login_handoffs", "sessions"
     ], "only sign-in tables and the four scoped commerce definer tables may omit FORCE RLS");
+    const lateRefundRls = await admin.query(`
+      SELECT c.relrowsecurity,c.relforcerowsecurity
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+       WHERE n.nspname='public' AND c.relname='commerce_webhook_refund_cases'`);
+    assert.deepEqual(
+      [lateRefundRls.rows[0]?.relrowsecurity, lateRefundRls.rows[0]?.relforcerowsecurity],
+      [true, true],
+      "late-capture refund cases remain tenant-scoped under the runtime role"
+    );
     const webhookStateCheck = await admin.query(`
       SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
        WHERE conrelid='public.commerce_webhook_events'::regclass
