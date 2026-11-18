@@ -603,6 +603,46 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     )).rows[0];
     assert.deepEqual([refundCase.status, refundCase.reason_code], ["open", "ticket_hold_expired"]);
     caseId = refundCase.id;
+
+    // A second provider event ID for the same capture must refresh the case,
+    // not create another manual-refund obligation.
+    const duplicateEventId = "evt_late_capture_refund_duplicate_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURELATE001',
+              $6,'USD','received')
+    `, [ID.d1, pid, duplicateEventId, "b".repeat(64), p.provider_ref, p.amount_cents]);
+    const duplicateRuntime = new pg.Client(db.appUrl);
+    await duplicateRuntime.connect();
+    try {
+      await duplicateRuntime.query("BEGIN");
+      await duplicateRuntime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [ID.d1, USERS.pa[0], "parent"]
+      );
+      const duplicate = await applyVerifiedWebhook(duplicateRuntime, {
+        actor: { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null },
+        requestId: "webhook-late-capture-refund-duplicate", reconciled: true
+      }, {
+        webhookEventId: (await duplicateRuntime.query(
+          "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [duplicateEventId]
+        )).rows[0].id,
+        paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        captureRef: "CAPTURELATE001", amountCents: p.amount_cents, currency: "USD"
+      });
+      assert.deepEqual([duplicate.outcome, duplicate.reason], ["ignored", "payment_after_hold_refund_required"]);
+      await duplicateRuntime.query("COMMIT");
+    } catch (error) {
+      await duplicateRuntime.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally { await duplicateRuntime.end(); }
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_webhook_refund_cases WHERE payment_id=$1 AND provider_capture_ref=$2",
+      [pid, "CAPTURELATE001"]
+    )).rows[0].n, 1, "one provider capture creates exactly one refund case");
+
     const visible = await as("supt1")("GET", "/api/commerce/providers/webhook-refund-cases");
     assert.equal(visible.status, 200, JSON.stringify(visible.body));
     assert.ok(visible.body.data.refundCases.some(x => x.id === caseId));
