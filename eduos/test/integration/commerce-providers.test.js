@@ -562,7 +562,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
         "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
       )).rows[0].n, 0);
       assert.equal((await admin.query(
-        "SELECT count(*)::int AS n FROM event_ticket_orders WHERE payment_id=$1", [pid]
+        "SELECT count(*)::int AS n FROM event_ticket_orders o JOIN commerce_payments p ON p.ticket_order_id=o.id WHERE p.id=$1", [pid]
       )).rows[0].n, 0);
 
       await admin.query(
@@ -594,7 +594,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
 
     assert.equal((await payment(pid)).status, "succeeded");
     assert.equal((await admin.query(
-      "SELECT count(*)::int AS n FROM event_ticket_orders WHERE payment_id=$1", [pid]
+      "SELECT count(*)::int AS n FROM event_ticket_orders o JOIN commerce_payments p ON p.ticket_order_id=o.id WHERE p.id=$1", [pid]
     )).rows[0].n, 1);
     assert.equal((await admin.query(
       "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
