@@ -31,3 +31,24 @@ test("runtime can manage tenant endpoints and call only the resolver function", 
   assert.match(grants, /REVOKE DELETE, TRUNCATE ON commerce_webhook_endpoints FROM eduos_app/);
   assert.match(grants, /GRANT EXECUTE ON FUNCTION eduos_commerce_webhook_account\(text\) TO eduos_app/);
 });
+
+
+const setup = await readFile(new URL("../src/commerce/setup.js", import.meta.url), "utf8");
+const routes = await readFile(new URL("../src/commerce-routes.js", import.meta.url), "utf8");
+const helpers = await readFile(new URL("../src/route-helpers.js", import.meta.url), "utf8");
+
+test("district endpoint issuance uses high-entropy one-time tokens and persists only digests", () => {
+  assert.match(setup, /randomBytes\(32\)\.toString\("hex"\)/);
+  assert.match(setup, /createHash\("sha256"\)\.update\(token, "utf8"\)\.digest\("hex"\)/);
+  assert.match(setup, /token_sha256,created_by/);
+  assert.doesNotMatch(setup, /INSERT INTO commerce_webhook_endpoints[^;]*\btoken\b/i);
+  assert.match(setup, /UPDATE commerce_webhook_endpoints SET active=false, revoked_at=now\(\)/);
+});
+
+test("webhook endpoint lifecycle is restricted to provider administrators and responses are not cached", () => {
+  assert.match(routes, /POST.*api\/commerce\/providers\/:processor\/webhook-endpoint/);
+  assert.match(routes, /POST.*api\/commerce\/providers\/:processor\/webhook-endpoint\/rotate/);
+  assert.match(routes, /DELETE.*api\/commerce\/providers\/:processor\/webhook-endpoint/);
+  assert.match(routes, /const provAdmin = \[limiter, requireSession, requireCsrf, requirePermission\("commerce", "providers"\)\]/);
+  assert.match(helpers, /Cache-Control", "no-store"/);
+});
