@@ -392,6 +392,46 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await as("p1")("POST", `/api/events/${eventId}/check-in`, { ticketCode: paid.body.data.tickets[0].code })).status, 200);
   });
 
+  it("webhooks with no persisted payer actor are closed without a settlement claim", async () => {
+    const checkout = await buy("pa", "webhook-missing-actor", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.provider_ref);
+    assert.ok(p.payer_actor?.userId, "normal checkout persists the authenticated payer");
+
+    // Simulate a legacy or damaged row: a provider callback cannot invent the
+    // authenticated user needed by the existing settlement/audit path.
+    await admin.query("UPDATE commerce_payments SET payer_actor=NULL WHERE id=$1", [pid]);
+    const eventId = "evt_missing_actor_integration_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTUREMISS001',
+              $6,'USD','received')
+    `, [ID.d1, pid, eventId, "a".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      const claimed = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+      assert.equal(claimed.rows[0].event, null, "missing-actor event is never handed to the worker");
+    } finally { await runtime.end(); }
+
+    const event = (await admin.query(
+      "SELECT state,last_error_code,processed_at,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1",
+      [eventId]
+    )).rows[0];
+    assert.equal(event.state, "ignored");
+    assert.equal(event.last_error_code, "missing_payer_actor");
+    assert.ok(event.processed_at, "ignored event is terminally timestamped");
+    assert.equal(event.claimed_at, null);
+    assert.equal((await payment(pid)).status, "requires_confirmation", "no payment settlement occurred");
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid])).rows[0].n, 0);
+  });
+
   it("no database transaction is open while any processor is called (pg_stat_activity)", async () => {
     // Every flow above went through the mock (create, confirm/capture, refund,
     // test connection, the sweep's retries); add BTCPay's connection test.
