@@ -184,6 +184,35 @@ export async function pendingCheckout(c, orderId) {
   return p ? paymentOut(p, { holdExpiresAt: o?.hold_expires_at || null }) : null;
 }
 
+/**
+ * Apply a signature-verified provider event inside the authenticated payer's
+ * tenant transaction. This deliberately reuses the exact settlement path used
+ * by interactive confirmation: payment transition, tickets/license, EDAL,
+ * ledger, receipt and audit all commit or roll back together.
+ */
+export async function applyVerifiedWebhook(c, req, event) {
+  const a = req.actor;
+  await c.query("SELECT eduos_commerce_expire_holds()");
+  const p = await one(c, "SELECT * FROM commerce_payments WHERE id=$1 FOR UPDATE", [event.paymentId]);
+  if (!p || p.district_id !== a.districtId || p.payer_user_id !== a.userId)
+    throw new HttpError(404, "webhook_payment_not_found");
+  if (p.provider !== event.processor || p.provider_ref !== event.providerRef
+      || p.amount_cents !== event.amountCents || p.currency !== event.currency
+      || (p.provider_capture_ref && p.provider_capture_ref !== event.captureRef))
+    throw new HttpError(409, "webhook_payment_mismatch");
+  if (p.status !== "requires_confirmation")
+    return { outcome: "ignored", reason: "payment_not_awaiting_confirmation" };
+  if (!(await loadSettings(c, a.districtId)).enabled)
+    return { outcome: "ignored", reason: "commerce_disabled" };
+  const result = { status: "succeeded", captureRef: event.captureRef };
+  const settled = p.purpose === "event_tickets"
+    ? await recordTickets(c, req, p, result)
+    : await recordMarketplace(c, req, p, result);
+  if (settled.status !== "succeeded")
+    throw new HttpError(409, "webhook_settlement_not_completed");
+  return { outcome: "applied", paymentId: p.id, receipt: settled.receipt?.number || null };
+}
+
 /** Record a ticket payment's outcome (phase 2 of confirm; the order is locked here). */
 async function recordTickets(c, req, p, result) {
   const a = req.actor;
