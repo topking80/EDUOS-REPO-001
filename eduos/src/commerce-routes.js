@@ -222,6 +222,24 @@ export function registerCommerceRoutes(app) {
   // their values.
   const provAdmin = [limiter, requireSession, requireCsrf, requirePermission("commerce", "providers")];
   app.get("/api/commerce/providers", requireSession, requirePermission("commerce", "providers"), wrap(async (c, req) => providersOverview(c, req.actor.districtId)));
+  // Provider administrators can inspect terminal webhook failures without
+  // exposing callback payloads, endpoint tokens, or payer identity.
+  app.get("/api/commerce/providers/webhook-dead-letters", requireSession, requirePermission("commerce", "providers"), wrap(async c => {
+    const events = await rows(c, `
+      SELECT e.id, e.payment_id, e.processor, e.provider_event_id, e.event_type,
+             e.attempts, e.last_error_code, e.received_at, e.processed_at
+        FROM commerce_webhook_events e
+       WHERE e.state='dead_letter'
+       ORDER BY e.processed_at DESC, e.id DESC
+       LIMIT 100
+    `);
+    return { deadLetters: events.map(e => ({
+      id: e.id, paymentId: e.payment_id, processor: e.processor,
+      providerEventId: e.provider_event_id, eventType: e.event_type,
+      attempts: e.attempts, errorCode: e.last_error_code,
+      receivedAt: e.received_at, processedAt: e.processed_at
+    })) };
+  }));
   app.put("/api/commerce/providers/:processor", ...provAdmin, wrap(async (c, req) => saveAccount(c, req, req.params.processor, req.body || {})));
   app.post("/api/commerce/providers/:processor/test", ...provAdmin, phased(async (c, req) => testAccount(c, req, req.params.processor)));
   // Endpoint URLs contain one-time bearer tokens; wrap() applies Cache-Control: no-store.
