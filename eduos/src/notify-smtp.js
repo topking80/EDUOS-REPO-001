@@ -104,7 +104,9 @@ export function createSmtpAdapter({ config, connect = tls.connect }) {
         await session.command("RCPT TO:<" + to + ">", [250, 251]);
         await session.command("DATA", [354]);
         await session.data(buildNotificationMessage({ id: row.id, from, to, domain: config.notifySmtpEhlo }));
-        await session.command("QUIT", [221]);
+        // DATA/250 is the relay acceptance boundary. QUIT is cleanup only:
+        // a failed QUIT must never turn an accepted message into a retry.
+        try { await session.command("QUIT", [221]); } catch {}
         return { status: "accepted", note: "accepted by SMTP relay; mailbox delivery is not confirmed" };
       } catch (error) {
         const transient = !error.smtpCode || (error.smtpCode >= 400 && error.smtpCode < 500);
