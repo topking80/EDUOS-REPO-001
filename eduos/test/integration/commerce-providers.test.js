@@ -814,6 +814,11 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
         "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
         [actor.districtId, actor.userId, actor.role]
       );
+      const retryOrder = (await admin.query(
+        "SELECT status,hold_expires_at > now() AS hold_is_live FROM event_ticket_orders WHERE id=$1", [p.ticket_order_id]
+      )).rows[0];
+      assert.deepEqual([retryOrder.status, retryOrder.hold_is_live], ["payment_pending", true],
+        "retry fixture still owns a live ticket hold");
       const appliedAfterRetry = await applyVerifiedWebhook(runtime, req, {
         webhookEventId: retry.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
         captureRef: "CAPTURECRASH001", amountCents: p.amount_cents, currency: "USD"
@@ -867,7 +872,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
           (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
            provider_ref,provider_capture_ref,amount_cents,currency,state,received_at)
         VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,$6,$7,'USD','received',
-                now() + ($8 * interval '1 second'))
+                now() - interval '1 minute' + ($8 * interval '1 second'))
       `, [ID.d1, pid, eventIds[i], String(i + 1).repeat(64), p.provider_ref,
         captureRef, p.amount_cents, i]);
     }
