@@ -13,6 +13,7 @@
 //   no COMMERCE_SECRETS_KEY to open credentials-> 503 commerce_secrets_key_missing
 //   a required credential missing              -> 503 provider_credentials_missing
 import { config } from "../config.js";
+import { createHash, randomBytes } from "node:crypto";
 import { request } from "../integrations/http.js";
 import { validateWebhookUrl } from "../webhooks.js";
 import { PROCESSORS, METHODS, CHECKOUT_METHODS, MODES, processorFor, adapterState } from "./catalog.js";
@@ -138,10 +139,12 @@ export async function resolveCheckout(c, districtId, requested) {
 // ---------------- district administration ----------------
 
 export async function providersOverview(c, districtId) {
+  const endpointRows = (await c.query("SELECT processor, active, created_at, revoked_at FROM commerce_webhook_endpoints WHERE district_id=$1 ORDER BY processor, created_at DESC", [districtId])).rows;
+  const webhookEndpoints = Object.fromEntries(Object.keys(PROCESSORS).filter(isProcessor).map(p => [p, endpointRows.filter(r => r.processor === p).map(r => ({ active: r.active, createdAt: r.created_at, revokedAt: r.revoked_at }))]));
   const accounts = new Map((await c.query("SELECT * FROM commerce_provider_accounts WHERE district_id=$1", [districtId])).rows.map(r => [r.processor, r]));
   const setup = await loadSetup(c, districtId);
   return {
-    liveSwitch: liveAllowed(), secretsKeyConfigured: Boolean(config.commerceSecretsKey), btcpayAllowedHosts: config.commerceAllowedHosts,
+    webhookEndpoints, liveSwitch: liveAllowed(), secretsKeyConfigured: Boolean(config.commerceSecretsKey), btcpayAllowedHosts: config.commerceAllowedHosts,
     setup: { enabledMethods: setup.enabled_methods, defaultMethod: setup.default_method, cardProcessor: setup.card_processor, updatedAt: setup.updated_at },
     processors: Object.fromEntries(Object.keys(PROCESSORS).filter(isProcessor).map(p => [p, { ...accountOut(p, accounts.get(p)),
       fields: PROCESSORS[p].fields, description: PROCESSORS[p].description }])),
@@ -152,6 +155,38 @@ export async function providersOverview(c, districtId) {
 }
 
 const str = (v, max) => typeof v === "string" && v.trim() && v.length <= max && !/[\u0000-\u001f]/.test(v);
+const endpointTokenDigest = token => createHash("sha256").update(token, "utf8").digest("hex");
+
+/**
+ * Issue a district-scoped public webhook URL. The bearer token is returned
+ * exactly once; only its SHA-256 digest is persisted. Issuing a replacement
+ * revokes all prior active endpoints for this district/provider atomically.
+ */
+export async function issueWebhookEndpoint(c, req, processor) {
+  if (!isProcessor(processor)) fail(404, "unknown_processor");
+  const districtId = req.actor.districtId;
+  const token = randomBytes(32).toString("hex");
+  const digest = endpointTokenDigest(token);
+  await c.query("UPDATE commerce_webhook_endpoints SET active=false, revoked_at=now() WHERE district_id=$1 AND processor=$2 AND active=true", [districtId, processor]);
+  const inserted = await one(c, `INSERT INTO commerce_webhook_endpoints(district_id,processor,token_sha256,created_by)
+    VALUES($1,$2,$3,$4) RETURNING id,created_at`, [districtId, processor, digest, req.actor.userId]);
+  await audit(c, req, "provider_webhook_endpoint_issued", "commerce_webhook_endpoint", inserted.id,
+    `processor=${processor};rotation=true`);
+  const origin = String(config.publicOrigin).replace(/\/+$/, "");
+  return { processor, webhookUrl: `${origin}/api/commerce/webhooks/${processor}/${token}`, token, createdAt: inserted.created_at,
+    notice: "Copy this URL now. The token is shown only once; rotating it immediately invalidates the previous URL." };
+}
+
+/** Revoke all active public webhook URLs for this district/provider. */
+export async function revokeWebhookEndpoint(c, req, processor) {
+  if (!isProcessor(processor)) fail(404, "unknown_processor");
+  const result = await c.query("UPDATE commerce_webhook_endpoints SET active=false, revoked_at=now() WHERE district_id=$1 AND processor=$2 AND active=true RETURNING id",
+    [req.actor.districtId, processor]);
+  if (result.rowCount) await audit(c, req, "provider_webhook_endpoint_revoked", "commerce_webhook_endpoint", null,
+    `processor=${processor};count=${result.rowCount}`);
+  return { processor, revoked: result.rowCount, active: false };
+}
+
 export async function saveAccount(c, req, processor, b = {}) {
   if (!isProcessor(processor)) fail(404, "unknown_processor");
   const d = req.actor.districtId, spec = PROCESSORS[processor];
