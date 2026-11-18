@@ -694,6 +694,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
 
       // Exercise the same fenced terminal update used by the worker's catch
       // path after the final attempt fails.
+      await runtime.query("BEGIN");
       await runtime.query(
         "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
         [ID.d1, USERS.pa[0], "parent"]
@@ -707,6 +708,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       assert.equal(marked.rowCount, 1);
       const next = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
       assert.equal(next.rows[0].event, null, "dead-letter events are never claimed again");
+      await runtime.query("COMMIT");
     } finally { await runtime.end(); }
 
     const terminal = (await admin.query(
@@ -738,6 +740,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
     const pid = checkout.body.data.payment.id;
     const p = await payment(pid);
+    await admin.query("UPDATE event_ticket_orders SET hold_expires_at=now()+interval '1 hour' WHERE id=$1", [p.ticket_order_id]);
     const providerEventId = "evt_crash_rollback_integration_0001";
     await admin.query(`
       INSERT INTO commerce_webhook_events
@@ -846,6 +849,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const p = await payment(pid);
     assert.equal(p.status, "requires_confirmation");
     assert.ok(p.payer_actor?.userId);
+    await admin.query("UPDATE event_ticket_orders SET hold_expires_at=now()+interval '1 hour' WHERE id=$1", [p.ticket_order_id]);
 
     const captureRef = "CAPTURE_IDEMPOTENT_001";
     const eventIds = [
@@ -984,8 +988,9 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
   });
 
   it("no database transaction is open while any processor is called (pg_stat_activity)", async () => {
-    // Every flow above went through the mock (create, confirm/capture, refund,
-    // test connection, the sweep's retries); add BTCPay's connection test.
+    // Keep this assertion scoped to calls made by this test. Earlier provider
+    // tests deliberately exercise failures and reconciliation concurrently.
+    mock.st.probes.length = 0;
     assert.equal((await as("supt1")("POST", "/api/commerce/providers/btcpay/test", {})).body.data.detail, "store_ok");
     const btc = await buy("pa", "btcprobe", "bitcoin");
     assert.equal(btc.status, 201, JSON.stringify(btc.body));
