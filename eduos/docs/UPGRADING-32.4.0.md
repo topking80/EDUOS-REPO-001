@@ -31,38 +31,25 @@ Keep `Permissions-Policy: geolocation=()`.
 | `CHRISTIE_RATE_LIMIT_PER_MIN` | `60` | per-client Christie writes |
 | `COMMS_RATE_LIMIT_PER_MIN` | `60` | per-client Comms writes |
 | `TRANSPORT_CHECKIN_RATE_LIMIT_PER_MIN` | `300` | per-client check-ins |
-| `NOTIFY_EMAIL_ADAPTER`, `NOTIFY_SMS_ADAPTER`, `NOTIFY_PUSH_ADAPTER` | `off` | `off` or `log` (dry run). No real sender ships. |
+| `NOTIFY_EMAIL_ADAPTER` | `off` | `off`, `log` (dry run), or `smtp` (SMTP over implicit TLS, port 465). |
 
 Before you turn on an external Christie provider, confirm that a DPA covers
 it. Only redacted text from the current question, plus approved lesson
 content, is sent.
 
-## 5. Notification job
-If any external adapter is enabled, schedule `node src/notify-dispatch.js`
-with the owner role (like `db:retention`). In dev, run `make notify`. With
-every adapter `off`, nothing is queued and the job is not needed.
+## 5. Notification job and providers
+Email uses `NOTIFY_EMAIL_ADAPTER=off|log|smtp`; SMS uses
+`NOTIFY_SMS_ADAPTER=off|log|twilio`; push remains `off|log` only. SMTP uses
+implicit TLS on port 465. Twilio requires Verify and Messaging credentials and
+an approved sender or Messaging Service SID. Keep credentials in the deployment
+secret manager. Both external channels send generic notification content only.
+
+If an external adapter is enabled, schedule `node src/notify-dispatch.js`
+with the documented worker database role. In development, run `make notify`.
+With all adapters `off`, nothing is sent externally.
 
 ## 6. Known limits
 - Transport "today" uses the database `current_date`. Set the database
   timezone to the district's if runs cross midnight UTC.
 - `db:retention` does not yet prune the new tables. Plan manual retention if
   your policy requires it.
-
-
-## 7. Opt-in email and verified SMS (37.7.2)
-Migrations 068–071 add district-scoped email consent, verified phone enrollment,
-a terminal provider-accepted state, and a separate accepted count in queue metrics. The current migration runner discovers
-numbered migrations after 050 automatically; do not add these to the fixed list.
-Existing users remain opted out and unverified.
-
-Users manage their own email/SMS preferences at
-`GET/PUT /api/me/notification-preferences`. The update requires CSRF and writes
-an audit event. SMS consent is unavailable until the user verifies an E.164
-phone number through the Twilio Verify start/check endpoints. Verification and
-preference routes are session-protected and rate-limited.
-
-SMTP uses implicit TLS on port 465 only. Twilio sends SMS only after phone
-verification and explicit consent. Both channels send generic notification
-content without student or incident details. Provider acceptance is recorded
-as `accepted`, not `delivered`; final mailbox/carrier delivery is not confirmed.
-Keep provider credentials in the deployment secret manager, never source control.
