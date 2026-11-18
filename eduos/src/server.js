@@ -77,7 +77,11 @@ app.use(compression());
 // JSON_BODY_LIMIT (default 256kb) everywhere except the SIS import routes, which
 // parse up to SIS_IMPORT_MAX_MB (default 50) only AFTER the session is verified.
 const BULK_PATHS = new Set(["/api/integrations/sis/import-csv", "/api/integrations/sis/import"]);
-const smallJson = express.json({ limit: config.jsonBodyLimit, strict: true, verify: (req, _res, buf) => {\n  // Provider signatures cover the exact bytes, not re-serialized JSON. Keep a\n  // bounded raw Buffer for public commerce webhook routes before JSON parsing.\n  if (req.path.startsWith("/api/commerce/webhooks/")) req.rawBody = Buffer.from(buf);\n} });
+const smallJson = express.json({ limit: config.jsonBodyLimit, strict: true, verify: (req, _res, buf) => {
+  // Provider signatures cover the exact bytes, not re-serialized JSON. Keep a
+  // bounded raw Buffer for public commerce webhook routes before JSON parsing.
+  if (req.path.startsWith("/api/commerce/webhooks/")) req.rawBody = Buffer.from(buf);
+} });
 const bulkJson = express.json({ limit: config.sisImportMaxBytes, strict: true });
 // 32.7.0: node-to-hub EDEN requests are signed over the exact body bytes, so
 // that parser keeps the raw text (and allows the larger sealed DECN packages).
