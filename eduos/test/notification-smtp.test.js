@@ -58,3 +58,22 @@ test("SMTP adapter completes a TLS-authenticated SMTP conversation", async () =>
   assert.ok(socket.writes.some(value => value.includes("You have a new EduOS notification.")));
   assert.ok(!socket.writes.some(value => value.includes("secret") && !value.startsWith("AUTH PLAIN ")));
 });
+
+test("SMTP adapter destroys a socket when the absolute request deadline expires", async () => {
+  class HangingSocket extends EventEmitter {
+    destroyed = false;
+    setTimeout() {}
+    write() { return true; }
+    end() {}
+    destroy(error) { this.destroyed = true; if (error) this.emit("error", error); }
+  }
+  const socket = new HangingSocket();
+  const adapter = createSmtpAdapter({
+    config: { notifySmtpHost: "smtp.example.edu", notifySmtpPort: 465, notifySmtpFrom: "alerts@example.edu",
+      notifySmtpUsername: "user", notifySmtpPassword: "secret", notifySmtpTimeoutMs: 20 },
+    connect: () => socket
+  });
+  const result = await adapter.send({ id: "12345678-1234-1234-1234-123456789abc", recipient_email: "family@example.net" });
+  assert.equal(result.status, "pending");
+  assert.equal(socket.destroyed, true);
+});
