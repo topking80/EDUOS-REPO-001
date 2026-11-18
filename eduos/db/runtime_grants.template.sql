@@ -433,3 +433,6 @@ REVOKE ALL ON FUNCTION eduos_commerce_webhook_event_guard() FROM eduos_app;
 GRANT SELECT, INSERT, UPDATE ON commerce_webhook_endpoints TO eduos_app;
 REVOKE DELETE, TRUNCATE ON commerce_webhook_endpoints FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_commerce_webhook_account(text) TO eduos_app;
+
+-- 37.8.0: public verified webhook intake can persist only a matched inbox event.
+GRANT EXECUTE ON FUNCTION eduos_commerce_receive_webhook(text,text,text,text,text,text,text,integer,text) TO eduos_app;
