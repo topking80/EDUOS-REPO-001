@@ -742,7 +742,14 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const p = await payment(pid);
     assert.ok(p.payer_actor?.userId, "crash-recovery checkout persists its payer actor");
     assert.ok(p.provider_ref, "crash-recovery checkout has a provider order reference");
-    await admin.query("UPDATE event_ticket_orders SET hold_expires_at=now()+interval '1 day' WHERE id=$1", [p.ticket_order_id]);
+    const extendCrashHold = await admin.query(`
+      UPDATE event_ticket_orders
+         SET hold_expires_at=clock_timestamp()+interval '1 day'
+       WHERE id=(SELECT ticket_order_id FROM commerce_payments WHERE id=$1)
+       RETURNING id,status,hold_expires_at > clock_timestamp() AS hold_is_live
+    `, [pid]);
+    assert.equal(extendCrashHold.rowCount, 1, "crash-recovery payment resolves to exactly one ticket order");
+    assert.deepEqual([extendCrashHold.rows[0].status, extendCrashHold.rows[0].hold_is_live], ["payment_pending", true]);
     const providerEventId = "evt_crash_rollback_integration_0001";
     await admin.query(`
       INSERT INTO commerce_webhook_events
@@ -786,7 +793,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
         webhookEventId: first.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
         captureRef: "CAPTURECRASH001", amountCents: p.amount_cents, currency: "USD"
       });
-      assert.equal(appliedBeforeCrash.outcome, "applied");
+      assert.equal(appliedBeforeCrash.outcome, "applied", appliedBeforeCrash.reason || "first attempt should settle the payment");
       // Simulate process death after business writes but before the inbox ack:
       // PostgreSQL rolls back payment, ticket, EDAL and ledger together.
       await runtime.query("ROLLBACK");
@@ -799,7 +806,14 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
         "SELECT count(*)::int AS n FROM event_ticket_orders o JOIN commerce_payments p ON p.ticket_order_id=o.id WHERE p.id=$1", [pid]
       )).rows[0].n, 0);
 
-      await admin.query("UPDATE event_ticket_orders SET hold_expires_at=now()+interval '1 day' WHERE id=$1", [p.ticket_order_id]);
+      const retryHold = await admin.query(`
+        UPDATE event_ticket_orders
+           SET hold_expires_at=clock_timestamp()+interval '1 day'
+         WHERE id=(SELECT ticket_order_id FROM commerce_payments WHERE id=$1)
+         RETURNING status,hold_expires_at > clock_timestamp() AS hold_is_live
+      `, [pid]);
+      assert.equal(retryHold.rowCount, 1, "retry payment still resolves to one ticket order");
+      assert.deepEqual([retryHold.rows[0].status, retryHold.rows[0].hold_is_live], ["payment_pending", true]);
       assert.equal((await payment(pid)).status, "requires_confirmation", "crash rollback leaves the payment awaiting confirmation");
       await admin.query(
         "UPDATE commerce_webhook_events SET claimed_at=now()-interval '6 minutes' WHERE provider_event_id=$1",
@@ -859,7 +873,14 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(p.status, "requires_confirmation");
     assert.ok(p.payer_actor?.userId);
     assert.ok(p.provider_ref, "idempotency checkout has a provider order reference");
-    await admin.query("UPDATE event_ticket_orders SET hold_expires_at=now()+interval '1 day' WHERE id=$1", [p.ticket_order_id]);
+    const extendDuplicateHold = await admin.query(`
+      UPDATE event_ticket_orders
+         SET hold_expires_at=clock_timestamp()+interval '1 day'
+       WHERE id=(SELECT ticket_order_id FROM commerce_payments WHERE id=$1)
+       RETURNING id,status,hold_expires_at > clock_timestamp() AS hold_is_live
+    `, [pid]);
+    assert.equal(extendDuplicateHold.rowCount, 1, "duplicate-capture payment resolves to exactly one ticket order");
+    assert.deepEqual([extendDuplicateHold.rows[0].status, extendDuplicateHold.rows[0].hold_is_live], ["payment_pending", true]);
 
     const captureRef = "CAPTURE_IDEMPOTENT_001";
     const eventIds = [
