@@ -73,7 +73,7 @@ function paypalMock(state = {}) {
     [/^POST .*\/v2\/checkout\/orders$/, () => [201, { id: "ORDER123", status: "PAYER_ACTION_REQUIRED", links: [{ rel: "payer-action", href: "https://www.sandbox.paypal.com/checkoutnow?token=ORDER123" }] }]],
     [/^GET .*\/v2\/checkout\/orders\/ORDER123$/, () => [200, { id: "ORDER123", status: state.status || "PAYER_ACTION_REQUIRED" }]],
     [/^POST .*\/v2\/checkout\/orders\/ORDER123\/capture$/, () => state.decline ? [422, { details: [{ issue: "INSTRUMENT_DECLINED" }] }]
-      : [201, { id: "ORDER123", status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "CAP1", status: "COMPLETED", amount: { value: state.value || "12.34", currency_code: "USD" } }] } }] }]],
+      : [201, { id: "ORDER123", status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "CAP1", status: state.captureStatus || "COMPLETED", amount: { value: state.value || "12.34", currency_code: "USD" } }] } }] }]],
     [/^POST .*\/v2\/payments\/captures\/CAP1\/refund$/, () => [201, { id: "REF1", status: "COMPLETED" }]],
     [/^POST .*\/v1\/notifications\/verify-webhook-signature$/, (_m, o) => [200, { verification_status: JSON.parse(o.body).transmission_sig === "good" ? "SUCCESS" : "FAILURE" }]]
   ]);
@@ -94,6 +94,10 @@ test("PayPal adapter: Orders v2 create (hosted approval), capture on return, ref
   assert.deepEqual(create.allowedHosts, ["api-m.sandbox.paypal.com"]);
   assert.deepEqual(await a.confirmPayment("ORDER123", { amountCents: 1234, currency: "USD" }), { status: "pending" });
   state.status = "APPROVED";
+  state.captureStatus = "PENDING";
+  assert.deepEqual(await a.confirmPayment("ORDER123", { amountCents: 1234, currency: "USD" }), { status: "pending" },
+    "an order marked COMPLETED must not settle while its capture is still PENDING");
+  state.captureStatus = "COMPLETED";
   assert.deepEqual(await a.confirmPayment("ORDER123", { amountCents: 1234, currency: "USD" }), { status: "succeeded", captureRef: "CAP1" });
   state.value = "99.00";
   await assert.rejects(a.confirmPayment("ORDER123", { amountCents: 1234, currency: "USD" }), e => e.code === "provider_amount_mismatch");
