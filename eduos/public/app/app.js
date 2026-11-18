@@ -2890,11 +2890,14 @@ VIEWS.payments = async () => {
 // 37.8.0: district webhook operations. The endpoint URL is a bearer credential:
 // retain it only in this view, reveal it once, and never persist it locally.
 async function webhookOperations() {
-  const [refundResult, deadResult] = await Promise.all([
-    safe(api.get("/api/commerce/providers/webhook-refund-cases"), { data: { refundCases: [] } }),
-    safe(api.get("/api/commerce/providers/webhook-dead-letters"), { data: { deadLetters: [] } })
+  const [refundLoad, deadLoad] = await Promise.allSettled([
+    api.get("/api/commerce/providers/webhook-refund-cases"),
+    api.get("/api/commerce/providers/webhook-dead-letters")
   ]);
-  let revealed = null;
+  const refundCases = refundLoad.status === "fulfilled" && Array.isArray(refundLoad.value?.data?.refundCases)
+    ? refundLoad.value.data.refundCases : null;
+  const deadLetters = deadLoad.status === "fulfilled" && Array.isArray(deadLoad.value?.data?.deadLetters)
+    ? deadLoad.value.data.deadLetters : null;
   const out = h("section", { class: "card", "aria-label": "Webhook operations" },
     h("h2", {}, "Payment webhook operations"),
     h("p", { class: "small muted" }, "Manage provider callback URLs and review payment events that need an administrator. Endpoint URLs contain a secret: copy them into the provider dashboard immediately. EduOS shows a newly issued URL only once."),
@@ -2934,7 +2937,8 @@ async function webhookOperations() {
     })),
     h("h3", {}, "Late payment captures needing a refund"),
     h("p", { class: "small muted" }, "These payments arrived after the ticket hold expired. Tickets were not issued. Refund the payer in the provider dashboard first, then record the resolution here."),
-    (refundResult?.data?.refundCases || []).length ? h("ul", { class: "list" }, refundResult.data.refundCases.map(item => {
+    refundCases === null ? h("p", { class: "notice", role: "alert" }, "Refund cases couldn't be loaded. Check your connection and reload this page before taking action.")
+      : refundCases.length ? h("ul", { class: "list" }, refundCases.map(item => {
       const note = h("textarea", { rows: 2, minlength: 10, maxlength: 1000, placeholder: "Record when and how the refund was sent (10–1000 characters).", "aria-label": `Refund resolution for ${item.processor} capture ${item.captureRef}` });
       const meta = h("p", { class: "small muted" }, `${PROC_LABEL[item.processor] || item.processor} · ${item.captureRef} · ${money(item.amountCents, item.currency)} · ${String(item.reasonCode || "late_capture").replace(/_/g, " ")} · opened ${fmtDay(item.openedAt)}`);
       return h("li", { class: "stack" }, meta, note, h("button", { class: "btn", type: "button", onclick: async () => {
@@ -2946,7 +2950,8 @@ async function webhookOperations() {
       } }, "Record refund resolution"));
     })) : empty("No late-capture refund cases are open."),
     h("h3", {}, "Webhook events requiring investigation"),
-    (deadResult?.data?.deadLetters || []).length ? h("ul", { class: "list" }, deadResult.data.deadLetters.map(item =>
+    deadLetters === null ? h("p", { class: "notice", role: "alert" }, "Dead-letter events couldn't be loaded. Check your connection and reload this page before concluding there are no failed events.")
+      : deadLetters.length ? h("ul", { class: "list" }, deadLetters.map(item =>
       h("li", {}, h("p", {}, `${PROC_LABEL[item.processor] || item.processor} · ${item.eventType}`),
         h("p", { class: "small muted" }, `Event ${item.providerEventId} · ${item.attempts} attempts · ${item.errorCode || "unknown error"} · received ${fmtDay(item.receivedAt)}`)))) : empty("No webhook events are in the dead-letter queue."),
     h("p", { class: "small muted" }, "Dead-letter payloads and payer details are intentionally not displayed. Investigate the provider event using its ID and your provider's dashboard."));
