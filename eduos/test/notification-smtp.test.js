@@ -59,6 +59,36 @@ test("SMTP adapter completes a TLS-authenticated SMTP conversation", async () =>
   assert.ok(!socket.writes.some(value => value.includes("secret") && !value.startsWith("AUTH PLAIN ")));
 });
 
+test("SMTP acceptance remains terminal if the server closes before QUIT completes", async () => {
+  class ClosingAfterAcceptSocket extends EventEmitter {
+    writes = [];
+    setTimeout() {}
+    end() {}
+    destroy(error) { if (error) this.emit("error", error); }
+    write(value) {
+      this.writes.push(value);
+      let response = null;
+      if (value.startsWith("EHLO ")) response = "250-smtp.example.edu\\r\\n250 AUTH PLAIN\\r\\n";
+      else if (value.startsWith("AUTH PLAIN ")) response = "235 authenticated\\r\\n";
+      else if (value.startsWith("MAIL FROM:")) response = "250 sender ok\\r\\n";
+      else if (value.startsWith("RCPT TO:")) response = "250 recipient ok\\r\\n";
+      else if (value === "DATA\\r\\n") response = "354 send content\\r\\n";
+      else if (value.endsWith("\\r\\n.\\r\\n")) response = "250 queued\\r\\n";
+      else if (value === "QUIT\\r\\n") response = "500 quit unsupported\\r\\n";
+      if (response) queueMicrotask(() => this.emit("data", Buffer.from(response)));
+      return true;
+    }
+  }
+  const socket = new ClosingAfterAcceptSocket();
+  const adapter = createSmtpAdapter({
+    config: { notifySmtpHost: "smtp.example.edu", notifySmtpPort: 465, notifySmtpFrom: "alerts@example.edu",
+      notifySmtpEhlo: "eduos.example.edu", notifySmtpUsername: "user", notifySmtpPassword: "secret", notifySmtpTimeoutMs: 1000 },
+    connect: value => { queueMicrotask(() => socket.emit("data", Buffer.from("220 ready\\r\\n"))); return socket; }
+  });
+  const result = await adapter.send({ id: "12345678-1234-1234-1234-123456789abc", recipient_email: "family@example.net" });
+  assert.equal(result.status, "accepted");
+});
+
 test("SMTP adapter destroys a socket when the absolute request deadline expires", async () => {
   class HangingSocket extends EventEmitter {
     destroyed = false;
