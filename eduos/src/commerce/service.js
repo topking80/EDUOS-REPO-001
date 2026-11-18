@@ -230,6 +230,12 @@ export async function applyVerifiedWebhook(c, req, event) {
     return { outcome: "ignored", reason: "payment_not_awaiting_confirmation" };
   if (!(await loadSettings(c, a.districtId)).enabled)
     return { outcome: "ignored", reason: "commerce_disabled" };
+  // A guardian's payer identity may legitimately have no schoolId. Ticket
+  // orders are school-scoped by RLS, so derive this transaction's school
+  // context from the already-validated payment row before reading or settling
+  // its order. Never trust a school identifier supplied by the webhook.
+  if (p.purpose === "event_tickets" && p.school_id)
+    await c.query("SELECT set_config('app.school_id',$1,true)", [p.school_id]);
   if (p.purpose === "event_tickets") {
     const order = await one(c, "SELECT id,status,hold_expires_at < now() AS hold_expired FROM event_ticket_orders WHERE id=$1 FOR UPDATE", [p.ticket_order_id]);
     if (!order || order.status !== "payment_pending" || order.hold_expired) {
