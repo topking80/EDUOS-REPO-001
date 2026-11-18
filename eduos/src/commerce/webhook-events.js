@@ -47,7 +47,8 @@ export function normalizeVerifiedPaymentEvent(processor, event) {
   if (processor === "square") {
     if (eventType !== "payment.updated") return { processor, providerEventId, eventType, disposition: "ignored" };
     const payment = event.data?.object?.payment;
-    if (payment?.status !== "COMPLETED") return { processor, providerEventId, eventType, disposition: "ignored" };
+    if (!payment || typeof payment !== "object" || typeof payment.status !== "string") return null;
+    if (payment.status !== "COMPLETED") return { processor, providerEventId, eventType, disposition: "ignored" };
     const providerRef = id(payment.order_id);
     const captureRef = id(payment.id);
     // Square's amount is integer cents; avoid floating-point interpretation.
