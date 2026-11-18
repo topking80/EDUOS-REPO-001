@@ -522,6 +522,62 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid])).rows[0].n, 0);
   });
 
+  it("moves the twentieth failed webhook attempt to a terminal dead letter", async () => {
+    const checkout = await buy("pa", "webhook-dead-letter-exhaustion", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    const providerEventId = "evt_dead_letter_exhaustion_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state,attempts,claimed_at)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTUREDEADLETTER1',
+              $6,'USD','processing',19,now()-interval '6 minutes')
+    `, [ID.d1, pid, providerEventId, "9".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      const claim = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.equal(claim?.attempts, 20, "expired nineteenth lease is reclaimed as attempt twenty");
+      assert.equal(claim?.id, (await admin.query(
+        "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [providerEventId]
+      )).rows[0].id);
+
+      // Exercise the same fenced terminal update used by the worker's catch
+      // path after the final attempt fails.
+      await runtime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [ID.d1, USERS.pa[0], "parent"]
+      );
+      const marked = await runtime.query(`
+        UPDATE commerce_webhook_events
+           SET state=CASE WHEN attempts >= 20 THEN 'dead_letter' ELSE 'failed' END,
+               last_error_code='provider_timeout'
+         WHERE id=$1 AND state='processing' AND attempts=$2
+      `, [claim.id, claim.attempts]);
+      assert.equal(marked.rowCount, 1);
+      const next = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+      assert.equal(next.rows[0].event, null, "dead-letter events are never claimed again");
+    } finally { await runtime.end(); }
+
+    const terminal = (await admin.query(
+      "SELECT state,attempts,last_error_code,processed_at,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1",
+      [providerEventId]
+    )).rows[0];
+    assert.deepEqual(
+      [terminal.state, terminal.attempts, terminal.last_error_code],
+      ["dead_letter", 20, "provider_timeout"]
+    );
+    assert.ok(terminal.processed_at, "dead letter has a terminal timestamp");
+    assert.equal(terminal.claimed_at, null, "dead letter releases its lease");
+    assert.equal((await payment(pid)).status, "requires_confirmation", "failed provider processing never settles the payment");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
+    )).rows[0].n, 0);
+  });
+
   it("rolls back settlement on worker crash and safely retries after lease expiry", async () => {
     const checkout = await buy("pa", "webhook-crash-rollback", "paypal");
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
