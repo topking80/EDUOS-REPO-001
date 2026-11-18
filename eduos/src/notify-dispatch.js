@@ -2,7 +2,7 @@
 // adapters. Run as the migration OWNER role, like the retention job:
 //   DATABASE_URL=<owner url> node src/notify-dispatch.js
 //   docker compose --profile ops run --rm notify
-// No real sender ships yet: "log" records a dry run, "off" skips.
+// SMTP email and Twilio SMS require channel-specific verified recipient consent; push remains off/log.
 //
 // Outcomes: delivered_at is set only when an adapter confirms delivery;
 // "skipped" (dry run, channel off) is not a delivery. A temporary failure waits
@@ -18,8 +18,9 @@
 //      carries this lease (WHERE lease_token=$token), then clears the lease.
 // A dispatcher that dies mid-batch leaves leases that run out after
 // `leaseSeconds`; the next run claims those rows again. The adapter is handed
-// the row id, which a real sender passes on as its idempotency key, so a row
-// sent just before a crash isn't delivered twice by a provider that honours it.
+// the row id, which provider APIs can use as an idempotency key. SMTP has no
+// standard idempotency contract, so ambiguous relay acceptance can still
+// produce a duplicate if the dispatcher crashes before settling the row.
 //
 // Slow senders: a batch is claimed together but sent one row at a time, so a
 // row's claim could run out while earlier rows are still being sent, and a
@@ -37,7 +38,7 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
   log = console.log, adapters = adapterFor } = {}) {
   if (!(sendTimeoutSeconds > 0 && sendTimeoutSeconds < leaseSeconds)) throw new Error("sendTimeoutSeconds must be above 0 and below leaseSeconds");
   const districts = (await db.query("SELECT id FROM districts WHERE status='active'")).rows;
-  const tally = { handled: 0, delivered: 0, skipped: 0, retrying: 0, failed: 0, lostLease: 0 };
+  const tally = { handled: 0, accepted: 0, delivered: 0, skipped: 0, retrying: 0, failed: 0, lostLease: 0 };
   for (const d of districts) {
     for (let done = 0; done < limit;) {
       const token = crypto.randomUUID();
@@ -53,18 +54,42 @@ export async function dispatchPending({ db = pool, limit = 500, batch = 50, leas
       const rows = claimed.rows.sort((a, b) => a.created_at - b.created_at || String(a.id).localeCompare(String(b.id)));
       if (!rows.length) break;
       for (const row of rows) {
-        // Renew this row's lease for the length of its send; skip it if another
-        // dispatcher took it over while earlier rows were being sent.
-        const renewed = await inTx(db, d.id, c => c.query(
-          `UPDATE notification_outbox SET lease_expires_at=now()+make_interval(secs => $3::float8)
-            WHERE id=$1 AND lease_token=$2 AND lease_expires_at>now() AND status='pending'`, [row.id, token, leaseSeconds]));
+        const adapter = adapters(row.channel);
+        // Renew immediately before sending. For real SMTP, read the current
+        // address/number and consent in this same short transaction so stale batch
+        // claims cannot send after a contact change or an earlier opt-out.
+        const renewed = await inTx(db, d.id, async c => {
+          const lease = await c.query(
+            `UPDATE notification_outbox SET lease_expires_at=now()+make_interval(secs => $3::float8)
+              WHERE id=$1 AND lease_token=$2 AND lease_expires_at>now() AND status='pending' RETURNING id`,
+            [row.id, token, leaseSeconds]);
+          if (!lease.rowCount || !((row.channel === "email" && adapter.name === "smtp") || (row.channel === "sms" && adapter.name === "twilio"))) return lease;
+          const contact = await c.query(
+            `SELECT u.email,p.phone_e164,
+                    coalesce(p.email_notifications_enabled,false) AS email_opted_in,
+                    coalesce(p.sms_notifications_enabled,false) AS sms_opted_in,
+                    p.phone_verified_at
+               FROM users u LEFT JOIN user_preferences p ON p.user_id=u.id AND p.district_id=$2
+              WHERE u.id=$1`, [row.recipient_user_id, d.id]);
+          const person = contact.rows[0] || {};
+          return { ...lease, recipientEmail: person.email || null, emailOptedIn: Boolean(person.email_opted_in),
+            recipientPhone: person.phone_verified_at ? person.phone_e164 : null, smsOptedIn: Boolean(person.sms_opted_in) };
+        });
         if (!renewed.rowCount) { done++; tally.lostLease++; continue; }
         let result, timer;
         try {
-          result = await Promise.race([
-            adapters(row.channel).send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id }, log),
-            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
-          ]);
+          if (row.channel === "email" && adapter.name === "smtp" && !renewed.emailOptedIn) {
+            result = { status: "skipped", note: "recipient has not opted in to email notifications" };
+          } else if (row.channel === "sms" && adapter.name === "twilio" && !renewed.smsOptedIn) {
+            result = { status: "skipped", note: "recipient has not opted in to SMS notifications" };
+          } else {
+            result = await Promise.race([
+              adapter.send({ id: row.id, channel: row.channel, recipient_user_id: row.recipient_user_id,
+                recipient_email: row.channel === "email" ? renewed.recipientEmail : undefined,
+                recipient_phone: row.channel === "sms" ? renewed.recipientPhone : undefined }, log),
+              new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${sendTimeoutSeconds} s`)), sendTimeoutSeconds * 1000); timer.unref?.(); })
+            ]);
+          }
         } catch (e) { result = { status: "pending", note: String(e?.message || e).slice(0, 300) }; }
         finally { clearTimeout(timer); }
         const out = attemptOutcome(result, row.attempts);
@@ -98,6 +123,6 @@ async function inTx(db, districtId, fn) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  dispatchPending().then(t => { console.log(`notification dispatch: ${t.handled} handled (${t.delivered} delivered, ${t.skipped} skipped, ${t.retrying} to retry, ${t.failed} failed${t.lostLease ? `, ${t.lostLease} lease lost` : ""})`); return pool.end(); })
+  dispatchPending().then(t => { console.log(`notification dispatch: ${t.handled} handled (${t.accepted} provider-accepted, ${t.delivered} delivered, ${t.skipped} skipped, ${t.retrying} to retry, ${t.failed} failed${t.lostLease ? `, ${t.lostLease} lease lost` : ""})`); return pool.end(); })
     .catch(async e => { console.error(`notification dispatch failed: ${e.message}`); await pool.end(); process.exit(1); });
 }

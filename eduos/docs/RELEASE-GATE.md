@@ -45,6 +45,9 @@ stack behind Caddy (the CI `e2e` job).
 - `delivered`: an in-app notice (available in the recipient's app as soon as
   the alert commits), or an email/SMS/push a channel adapter confirmed.
   `delivered_at` is set only in this case.
+- `accepted`: an SMTP/Twilio provider accepted the message for processing. This is
+  terminal (not retried), but is not confirmed mailbox/carrier delivery; `delivered_at`
+  remains null.
 - `pending`: queued for `src/notify-dispatch.js`, or waiting for a retry
   (`next_attempt_at`, back-off from 30 seconds doubling to at most an hour).
 - `skipped`: nothing was sent on purpose (the channel is off, or the `log`
@@ -52,10 +55,11 @@ stack behind Caddy (the CI `e2e` job).
 - `failed`: the adapter gave up, answered with an unknown status, or five
   attempts failed. `last_error` says why.
 
-EduOS ships no real email/SMS/push sender, so in a default deployment alerts
-reach people through the EduOS app only, and the leads' board says so. EduOS
-never contacts 911 or other emergency services; a "first responders" entry in
-the incident log is a staff member's note.
+External adapters are off by default. SMTP email requires explicit recipient
+consent; Twilio SMS requires a verified phone and explicit SMS consent. Both
+send generic notification content only. Provider acceptance is not delivery
+confirmation. EduOS never contacts 911 or other emergency services; a "first
+responders" entry in the incident log is a staff member's note.
 
 ## Operations event stream sessions
 
@@ -77,7 +81,7 @@ seconds from `eduos_queue_backlog()` (totals across all districts):
 - `eduos_queue_oldest_ready_seconds{queue=...}`: how long the oldest due job
   has waited. Suggested alerts: above 300 for webhooks or 120 for
   notifications for 10 minutes (the dispatcher is down or too slow), or any
-  increase in `dead_letter` / `failed`.
+  increase in `dead_letter` / `failed`; review `accepted` separately as provider handoff, not delivery confirmation.
 - `eduos_queue_backlog_up`: 0 when the backlog could not be read; alert on it
   rather than reading a missing series as an empty queue.
 

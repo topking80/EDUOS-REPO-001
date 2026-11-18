@@ -179,6 +179,19 @@ export const config = {
   notifyEmailAdapter: (process.env.NOTIFY_EMAIL_ADAPTER || "off").trim(),
   notifySmsAdapter: (process.env.NOTIFY_SMS_ADAPTER || "off").trim(),
   notifyPushAdapter: (process.env.NOTIFY_PUSH_ADAPTER || "off").trim(),
+  notifySmtpHost: (process.env.NOTIFY_SMTP_HOST || "").trim(),
+  notifySmtpPort: Number(process.env.NOTIFY_SMTP_PORT || 465),
+  notifySmtpUsername: process.env.NOTIFY_SMTP_USERNAME || "",
+  notifySmtpPassword: process.env.NOTIFY_SMTP_PASSWORD || "",
+  notifySmtpFrom: (process.env.NOTIFY_SMTP_FROM || "").trim(),
+  notifySmtpEhlo: (process.env.NOTIFY_SMTP_EHLO || "eduos.local").trim(),
+  notifySmtpTimeoutMs: Number(process.env.NOTIFY_SMTP_TIMEOUT_MS || 15000),
+  twilioAccountSid: (process.env.TWILIO_ACCOUNT_SID || "").trim(),
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
+  twilioVerifyServiceSid: (process.env.TWILIO_VERIFY_SERVICE_SID || "").trim(),
+  twilioMessagingServiceSid: (process.env.TWILIO_MESSAGING_SERVICE_SID || "").trim(),
+  twilioFromNumber: (process.env.TWILIO_FROM_NUMBER || "").trim(),
+  twilioTimeoutMs: Number(process.env.TWILIO_TIMEOUT_MS || 10000),
   // 32.5.0 SafetyOS and car pick-up.
   safetyTeachersMayInitiate: process.env.SAFETY_TEACHERS_MAY_INITIATE !== "false",
   safetyRateLimit: Number(process.env.SAFETY_RATE_LIMIT_PER_MIN || 120),
@@ -287,8 +300,23 @@ intIn("CHRISTIE_PROVIDER_TIMEOUT_MS", config.christieProviderTimeoutMs, 500, 600
 intIn("CHRISTIE_RATE_LIMIT_PER_MIN", config.christieRateLimit, 1, 100000);
 intIn("COMMS_RATE_LIMIT_PER_MIN", config.commsRateLimit, 1, 100000);
 intIn("TRANSPORT_CHECKIN_RATE_LIMIT_PER_MIN", config.transportCheckinRateLimit, 1, 100000);
-for (const [name, value] of [["NOTIFY_EMAIL_ADAPTER", config.notifyEmailAdapter], ["NOTIFY_SMS_ADAPTER", config.notifySmsAdapter], ["NOTIFY_PUSH_ADAPTER", config.notifyPushAdapter]])
-  if (!["off", "log"].includes(value)) throw new Error(`${name} must be off or log (no real email/SMS/push sender ships with EduOS 32.7.0)`);
+if (!["off", "log", "smtp"].includes(config.notifyEmailAdapter)) throw new Error("NOTIFY_EMAIL_ADAPTER must be off, log or smtp");
+if (!["off", "log", "twilio"].includes(config.notifySmsAdapter)) throw new Error("NOTIFY_SMS_ADAPTER must be off, log or twilio");
+if (config.notifySmsAdapter === "twilio") {
+  if (!/^AC[0-9a-f]{32}$/i.test(config.twilioAccountSid) || !config.twilioAuthToken) throw new Error("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are required for Twilio");
+  if (!/^VA[0-9a-f]{32}$/i.test(config.twilioVerifyServiceSid)) throw new Error("TWILIO_VERIFY_SERVICE_SID is required for Twilio SMS verification");
+  if (config.twilioMessagingServiceSid && !/^MG[0-9a-f]{32}$/i.test(config.twilioMessagingServiceSid)) throw new Error("TWILIO_MESSAGING_SERVICE_SID must be a Twilio MG SID");
+  if (!config.twilioMessagingServiceSid && !/^\+[1-9]\d{7,14}$/.test(config.twilioFromNumber)) throw new Error("Configure TWILIO_MESSAGING_SERVICE_SID or a valid TWILIO_FROM_NUMBER");
+}
+if (!["off", "log"].includes(config.notifyPushAdapter)) throw new Error("NOTIFY_PUSH_ADAPTER must be off or log (FCM is not configured yet)");
+if (config.notifyEmailAdapter === "smtp") {
+  if (!/^[a-z0-9.-]+$/i.test(config.notifySmtpHost)) throw new Error("NOTIFY_SMTP_HOST is required when NOTIFY_EMAIL_ADAPTER=smtp");
+  if (config.notifySmtpPort !== 465) throw new Error("NOTIFY_SMTP_PORT must be 465 (implicit TLS only)");
+  if (!config.notifySmtpUsername || !config.notifySmtpPassword) throw new Error("NOTIFY_SMTP_USERNAME and NOTIFY_SMTP_PASSWORD are required for SMTP");
+  if (!/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$/.test(config.notifySmtpFrom)) throw new Error("NOTIFY_SMTP_FROM must be a valid email address");
+}
+intIn("TWILIO_TIMEOUT_MS", config.twilioTimeoutMs, 1000, 30000);
+intIn("NOTIFY_SMTP_TIMEOUT_MS", config.notifySmtpTimeoutMs, 1000, 60000);
 if (config.metricsToken && config.metricsToken.length < 16) {
   throw new Error("METRICS_TOKEN must be at least 16 characters");
 }
