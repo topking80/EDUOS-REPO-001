@@ -42,7 +42,7 @@ export async function processCommerceWebhookEvents({ db = pool, limit = 25, log 
             || current.amount_cents !== event.amountCents || current.currency !== event.currency)
           throw Object.assign(new Error("webhook_event_integrity_mismatch"), { code: "webhook_event_integrity_mismatch" });
         const applied = await applyVerifiedWebhook(c, req, {
-          paymentId: event.paymentId, processor: event.processor, providerRef: event.providerRef,
+          webhookEventId: event.id, paymentId: event.paymentId, processor: event.processor, providerRef: event.providerRef,
           captureRef: event.captureRef, amountCents: event.amountCents, currency: event.currency
         });
         const state = applied.outcome === "applied" ? "applied" : "ignored";
