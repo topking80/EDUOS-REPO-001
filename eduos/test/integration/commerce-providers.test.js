@@ -522,6 +522,99 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid])).rows[0].n, 0);
   });
 
+  it("routes a provider capture after ticket-hold expiry to the operator refund queue without issuing tickets", async () => {
+    await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
+      WHERE state IN ('received','failed','processing')`);
+    const checkout = await buy("pa", "webhook-late-capture-refund", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    const providerEventId = "evt_late_capture_refund_0001";
+    await admin.query(
+      "UPDATE event_ticket_orders SET hold_expires_at=now()-interval '1 minute' WHERE id=$1",
+      [p.ticket_order_id]
+    );
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURELATE001',
+              $6,'USD','received')
+    `, [ID.d1, pid, providerEventId, "a".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const configKeys = ["DATABASE_URL","PUBLIC_ORIGIN","OIDC_ISSUER","OIDC_CLIENT_ID","OIDC_CLIENT_SECRET","OIDC_REDIRECT_URI"];
+    const priorConfig = Object.fromEntries(configKeys.map(k => [k, process.env[k]]));
+    Object.assign(process.env, {
+      DATABASE_URL: db.appUrl, PUBLIC_ORIGIN: server.base, OIDC_ISSUER: idp.issuer,
+      OIDC_CLIENT_ID: "eduos-integration-test", OIDC_CLIENT_SECRET: "eduos-integration-test-secret",
+      OIDC_REDIRECT_URI: `${server.base}/auth/callback`
+    });
+    let applyVerifiedWebhook;
+    try { ({ applyVerifiedWebhook } = await import("../../src/commerce/service.js")); }
+    finally {
+      for (const k of configKeys) {
+        if (priorConfig[k] === undefined) delete process.env[k];
+        else process.env[k] = priorConfig[k];
+      }
+    }
+
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    let caseId;
+    try {
+      const claim = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.ok(claim, "late capture event is claimed");
+      assert.equal(claim.providerEventId, providerEventId);
+      await runtime.query("BEGIN");
+      await runtime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [ID.d1, USERS.pa[0], "parent"]
+      );
+      const applied = await applyVerifiedWebhook(runtime, {
+        actor: { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null },
+        requestId: "webhook-late-capture-refund", reconciled: true
+      }, {
+        webhookEventId: claim.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        captureRef: "CAPTURELATE001", amountCents: p.amount_cents, currency: "USD"
+      });
+      assert.deepEqual([applied.outcome, applied.reason], ["ignored", "payment_after_hold_refund_required"]);
+      await runtime.query(
+        "UPDATE commerce_webhook_events SET state='ignored',last_error_code=$2 WHERE id=$1 AND state='processing'",
+        [claim.id, applied.reason.replace(/[^a-z0-9_]/g, "_")]
+      );
+      await runtime.query("COMMIT");
+    } catch (error) {
+      await runtime.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally { await runtime.end(); }
+
+    const latePayment = await payment(pid);
+    assert.equal(latePayment.status, "expired");
+    assert.equal(latePayment.provider_capture_ref, "CAPTURELATE001");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM event_tickets WHERE order_id=$1", [p.ticket_order_id]
+    )).rows[0].n, 0, "a late capture never issues tickets");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
+    )).rows[0].n, 0, "a late capture never creates a ticket settlement");
+    const refundCase = (await admin.query(
+      "SELECT id,status,reason_code FROM commerce_webhook_refund_cases WHERE payment_id=$1 AND provider_capture_ref=$2",
+      [pid, "CAPTURELATE001"]
+    )).rows[0];
+    assert.deepEqual([refundCase.status, refundCase.reason_code], ["open", "ticket_hold_expired"]);
+    caseId = refundCase.id;
+    const visible = await as("supt1")("GET", "/api/commerce/providers/webhook-refund-cases");
+    assert.equal(visible.status, 200, JSON.stringify(visible.body));
+    assert.ok(visible.body.data.refundCases.some(x => x.id === caseId));
+    const resolved = await as("supt1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
+      resolutionNote: "Refund confirmed in the PayPal merchant console."
+    });
+    assert.equal(resolved.status, 200, JSON.stringify(resolved.body));
+    assert.equal((await admin.query(
+      "SELECT status FROM commerce_webhook_refund_cases WHERE id=$1", [caseId]
+    )).rows[0].status, "resolved");
+  });
+
   it("moves the twentieth failed webhook attempt to a terminal dead letter", async () => {
     await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
       WHERE state IN ('received','failed','processing')`);
