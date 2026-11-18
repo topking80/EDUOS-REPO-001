@@ -633,7 +633,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
         [actor.districtId, actor.userId, actor.role]
       );
       const appliedBeforeCrash = await applyVerifiedWebhook(runtime, req, {
-        paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        webhookEventId: first.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
         captureRef: "CAPTURECRASH001", amountCents: p.amount_cents, currency: "USD"
       });
       assert.equal(appliedBeforeCrash.outcome, "applied");
@@ -663,7 +663,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
         [actor.districtId, actor.userId, actor.role]
       );
       const appliedAfterRetry = await applyVerifiedWebhook(runtime, req, {
-        paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        webhookEventId: retry.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
         captureRef: "CAPTURECRASH001", amountCents: p.amount_cents, currency: "USD"
       });
       assert.equal(appliedAfterRetry.outcome, "applied");
@@ -755,7 +755,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
             [actor.districtId, actor.userId, actor.role]
           );
           const applied = await applyVerifiedWebhook(runtime, req, {
-            paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+            webhookEventId: claim.rows[0].event.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
             captureRef, amountCents: p.amount_cents, currency: "USD"
           });
           const state = applied.outcome === "applied" ? "applied" : "ignored";
