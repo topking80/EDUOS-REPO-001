@@ -2909,7 +2909,6 @@ async function webhookOperations() {
         if (!(await ask({ title: `Issue or rotate ${label} webhook URL?`, text: "The previous URL will stop working immediately. You must update the provider dashboard with the new URL.", confirm: "Issue URL", danger: true }))) return;
         try {
           const result = (await api.post(`/api/commerce/providers/${processor}/webhook-endpoint/rotate`, {})).data;
-          revealed = { processor, url: result.webhookUrl };
           const field = h("input", { type: "text", readonly: true, value: result.webhookUrl, "aria-label": `${label} one-time webhook URL`, autocomplete: "off" });
           const copy = h("button", { class: "btn", type: "button", onclick: async () => {
             try {
