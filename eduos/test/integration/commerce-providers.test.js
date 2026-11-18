@@ -437,6 +437,57 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     );
   });
 
+  it("recovers an expired webhook lease and fences the stale worker", async () => {
+    const checkout = await buy("pa", "webhook-lease-fencing", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    const eventId = "evt_lease_fencing_integration_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURELEASE001',
+              $6,'USD','received')
+    `, [ID.d1, pid, eventId, "b".repeat(64), p.provider_ref, p.amount_cents]);
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      const first = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.equal(first.providerEventId, eventId);
+      assert.equal(first.attempts, 1);
+
+      // Model a worker process dying after its claim. Move the lease beyond the
+      // five-minute recovery window without waiting in real time.
+      await admin.query(
+        "UPDATE commerce_webhook_events SET claimed_at=now()-interval '6 minutes' WHERE id=$1",
+        [first.id]
+      );
+      const second = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.equal(second.id, first.id);
+      assert.equal(second.attempts, 2, "recovery creates a new, higher fencing token");
+
+      // The stale worker's conditional terminal write must not match the new
+      // lease. The current claim remains processing and can still settle.
+      const stale = await runtime.query(
+        "UPDATE commerce_webhook_events SET state='ignored',last_error_code='stale_worker' WHERE id=$1 AND state='processing' AND attempts=$2",
+        [first.id, first.attempts]
+      );
+      assert.equal(stale.rowCount, 0, "the previous lease cannot finish the event");
+      const current = (await admin.query(
+        "SELECT state,attempts,claimed_at FROM commerce_webhook_events WHERE id=$1", [first.id]
+      )).rows[0];
+      assert.equal(current.state, "processing");
+      assert.equal(current.attempts, 2);
+      assert.ok(current.claimed_at);
+      await admin.query(
+        "UPDATE commerce_webhook_events SET state='ignored',last_error_code='integration_lease_test' WHERE id=$1",
+        [first.id]
+      );
+    } finally { await runtime.end(); }
+    assert.equal((await payment(pid)).status, "requires_confirmation", "lease recovery alone cannot settle payment");
+  });
+
   it("webhooks with no persisted payer actor are closed without a settlement claim", async () => {
     const checkout = await buy("pa", "webhook-missing-actor", "paypal");
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
