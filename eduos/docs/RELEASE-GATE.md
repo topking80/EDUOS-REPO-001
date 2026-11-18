@@ -35,7 +35,7 @@ stack behind Caddy (the CI `e2e` job).
 | Every helper function a row-level security policy calls is executable by the runtime role; no EduOS function is executable by PUBLIC | `upgrade-path.test.js` |
 | Text sent to an external AI provider (Christie questions, staff assistant input, lesson fields) loses student names and numbers, the learner's linked family and rostered teachers, names after a title, street addresses, labelled birth dates, phone numbers, email and web addresses | `test/redact-names.test.js`, `test/integration/ai-external-privacy.test.js` |
 | No edge container runs as root; bootstrap runs as a host unit with systemd limits | `test/edge-no-root-containers.test.js` |
-| Webhook and notification backlog is visible to monitoring without exposing any district, recipient or message: jobs due, being sent, waiting to retry and dead-lettered/failed, and the age of the oldest due job | `test/metrics.test.js`, `upgrade-path.test.js` (`/metrics` against the upgraded database) |
+| Webhook and notification backlog is visible to monitoring without exposing any district, recipient or message: jobs due, being sent, waiting to retry and dead-lettered/failed, and the age of the oldest due job; the non-owner runtime role can execute the backlog function after upgrade | `test/metrics.test.js`, `upgrade-path.test.js` (`/metrics` against the upgraded database and runtime-role function grants) |
 | The CSP works for every deployed frontend route | `test/csp-caddy-matches-app.test.js` (the Caddyfile matches `src/csp.js`), `dev/csp-smoke.mjs` in CI e2e (headers through the edge on every static page and script, then every role's screens in Chrome with nothing blocked) |
 
 ## What the notification outcomes mean
@@ -95,3 +95,8 @@ behind generated columns, grants), along with backup, rollback and recovery.
 Restore drills on production-sized data, webhook behaviour across a full restart, edge hardware,
 mobile release signing and production infrastructure need their own
 procedures; the gate covers the application.
+
+
+## 37.7.2 notification metrics permission
+
+Migration `072_notification_backlog_metrics_grant.sql` grants the dedicated non-owner runtime role `EXECUTE` on `eduos_queue_backlog()`. The same explicit grant is retained in `db/runtime_grants.template.sql`; the function is not executable by `PUBLIC`. This keeps the authenticated `/metrics` handler able to read aggregate queue health while preserving the database's least-privilege policy.
