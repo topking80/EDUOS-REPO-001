@@ -106,8 +106,12 @@ export function paypalAdapter({ mode, clientId, clientSecret, webhookId = null, 
       const cap = captureOf(order);
       if (!cap) return { status: "pending" };
       if (cap.status === "DECLINED" || cap.status === "FAILED") return { status: "declined", declineCode: "paypal_capture_declined" };
-      if (cap.status !== "COMPLETED" && cap.status !== "PENDING") return { status: "pending" };
+      // A PayPal capture can remain PENDING after the order itself reports
+      // COMPLETED. Never settle EduOS while the underlying capture is pending.
+      if (cap.status === "PENDING") return { status: "pending" };
+      if (cap.status !== "COMPLETED") return { status: "pending" };
       if (amountCents !== undefined && (toCents(cap.amount?.value) !== amountCents || cap.amount?.currency_code !== currency)) throw new ProviderError("provider_amount_mismatch", "paypal");
+      if (typeof cap.id !== "string" || !/^[A-Za-z0-9_-]{4,128}$/.test(cap.id)) throw new ProviderError("provider_bad_response", "paypal: invalid capture reference");
       return { status: "succeeded", captureRef: cap.id };
     },
     async refundPayment(ref, amountCents, { captureRef } = {}) {
