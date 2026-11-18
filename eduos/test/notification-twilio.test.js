@@ -70,3 +70,21 @@ test("Twilio transient failures retry and permanent rejections stop", async () =
   assert.equal((await transient.send({ id: "12345678-1234-1234-1234-123456789abc", recipient_phone: "+14155552671" })).status, "pending");
   assert.equal((await permanent.send({ id: "12345678-1234-1234-1234-123456789abc", recipient_phone: "+14155552671" })).status, "failed");
 });
+
+test("Twilio SMS adapter propagates dispatcher abort to the provider request", async () => {
+  const controller = new AbortController();
+  let requestSignal;
+  const client = createTwilioClient(config, async (_url, options) => {
+    requestSignal = options.signal;
+    return new Promise((resolve, reject) => {
+      if (options.signal.aborted) return reject(new Error("aborted"));
+      options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    });
+  });
+  const adapter = createTwilioSmsAdapter(client);
+  const pending = adapter.send({ id: "12345678-1234-1234-1234-123456789abc", recipient_phone: "+14155552671" }, null, { signal: controller.signal });
+  controller.abort(new Error("worker deadline"));
+  const result = await pending;
+  assert.equal(result.status, "pending");
+  assert.equal(requestSignal.aborted, true);
+});
