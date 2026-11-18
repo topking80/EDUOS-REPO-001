@@ -50,8 +50,8 @@ every adapter `off`, nothing is queued and the job is not needed.
 
 
 ## 7. Opt-in email and verified SMS (37.7.2)
-Migrations 068–070 add district-scoped email consent, verified phone enrollment,
-and a terminal provider-accepted state. The current migration runner discovers
+Migrations 068–071 add district-scoped email consent, verified phone enrollment,
+a terminal provider-accepted state, and a separate accepted count in queue metrics. The current migration runner discovers
 numbered migrations after 050 automatically; do not add these to the fixed list.
 Existing users remain opted out and unverified.
 
