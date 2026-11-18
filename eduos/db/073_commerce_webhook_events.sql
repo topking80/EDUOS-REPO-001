@@ -65,7 +65,7 @@ BEGIN
       RAISE EXCEPTION 'claiming a webhook event must increment attempts' USING ERRCODE='23514';
     END IF;
     NEW.processed_at := NULL;
-  ELSIF NEW.state IN ('applied','ignored','failed') AND OLD.state='processing' THEN
+  ELSIF NEW.state IN ('applied','ignored','failed') THEN
     IF NEW.attempts<>OLD.attempts THEN
       RAISE EXCEPTION 'webhook attempts change only when claimed' USING ERRCODE='23514';
     END IF;
