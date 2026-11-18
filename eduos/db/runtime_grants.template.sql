@@ -439,3 +439,8 @@ GRANT EXECUTE ON FUNCTION eduos_commerce_receive_webhook(text,text,text,text,tex
 
 -- 37.8.0: worker may claim one event at a time through the narrow definer.
 GRANT EXECUTE ON FUNCTION eduos_commerce_claim_webhook() TO eduos_app;
+-- Late provider captures are held for explicit operator refund reconciliation.
+GRANT SELECT, INSERT ON commerce_webhook_refund_cases TO eduos_app;
+GRANT UPDATE (last_seen_at, status, resolved_at, resolved_by, resolution_note)
+  ON commerce_webhook_refund_cases TO eduos_app;
+REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
