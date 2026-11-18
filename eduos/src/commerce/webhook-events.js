@@ -50,7 +50,6 @@ export function normalizeVerifiedPaymentEvent(processor, event) {
     if (payment?.status !== "COMPLETED") return { processor, providerEventId, eventType, disposition: "ignored" };
     const providerRef = id(payment.order_id);
     const captureRef = id(payment.id);
-    const m = money(payment.amount_money?.amount / 100, payment.amount_money?.currency);
     // Square's amount is integer cents; avoid floating-point interpretation.
     const amountCents = payment.amount_money?.amount;
     if (!providerRef || !captureRef || !Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100_000_000
