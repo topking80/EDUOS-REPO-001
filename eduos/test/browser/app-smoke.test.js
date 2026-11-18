@@ -86,6 +86,9 @@ function mockApi(role, pathname) {
     case "/api/commerce/marketplace": return { data: { marketplaceFeeBps: 500, licenses: [
       { feeEventId: "f1", approvedAt: now, listingId: "l1", name: "Math Garden", vendor: "MathCo", unitPriceCents: 1250, priceUnit: "seat", seatLimit: 30, purchase: null },
       { feeEventId: "f2", approvedAt: now, listingId: "l2", name: "Read Along", vendor: "ReadCo", unitPriceCents: null, priceUnit: "flat", seatLimit: null, purchase: { id: "m1", status: "paid", total_cents: 5000, quantity: 1 } }] } };
+    // 37.8.0 district webhook operations.
+    case "/api/commerce/providers/webhook-refund-cases": return { data: { refundCases: [{ id: "rf1", processor: "paypal", captureRef: "CAPTURE-123", amountCents: 1250, currency: "USD", reasonCode: "hold_expired", openedAt: now }] } };
+    case "/api/commerce/providers/webhook-dead-letters": return { data: { deadLetters: [{ id: "dl1", processor: "square", providerEventId: "evt-123", eventType: "payment.updated", attempts: 20, errorCode: "provider_unreachable", receivedAt: now }] } };
     // 37.7.1 district payment setup, built from the real catalog.
     case "/api/commerce/providers": return { data: { liveSwitch: false, secretsKeyConfigured: true, btcpayAllowedHosts: [],
       setup: { enabledMethods: ["paypal", "sandbox"], defaultMethod: "paypal", cardProcessor: "square", updatedAt: now },
@@ -154,6 +157,11 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           : !text ? "blank"
           : hash !== `#/${tab}` ? `was sent to ${hash}` : null;
         if (problem) failures.push(`${role} #/${tab}: ${problem}`);
+        if (["superintendent", "it_admin"].includes(role) && tab === "payments") {
+          if (!text.includes("Payment webhook operations") || !text.includes("Late payment captures needing a refund") || !text.includes("Webhook events requiring investigation"))
+            failures.push(`${role} #/payments: webhook operations panel is incomplete`);
+          if (!text.includes("CAPTURE-123") || !text.includes("evt-123")) failures.push(`${role} #/payments: webhook recovery records did not render`);
+        }
       } finally {
         page.close();
       }
