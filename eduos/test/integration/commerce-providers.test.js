@@ -392,6 +392,49 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await as("p1")("POST", `/api/events/${eventId}/check-in`, { ticketCode: paid.body.data.tickets[0].code })).status, 200);
   });
 
+  it("concurrent webhook workers cannot claim the same inbox event", async () => {
+    const checkout = await buy("pa", "webhook-concurrent-claim", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.payer_actor?.userId);
+    const eventId = "evt_concurrent_claim_integration_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURECONC001',
+              $6,'USD','received')
+    `, [ID.d1, pid, eventId, "c".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const workers = [new pg.Client(db.appUrl), new pg.Client(db.appUrl)];
+    await Promise.all(workers.map(c => c.connect()));
+    let claims;
+    try {
+      claims = await Promise.all(workers.map(c =>
+        c.query("SELECT eduos_commerce_claim_webhook() AS event")
+      ));
+    } finally {
+      await Promise.all(workers.map(c => c.end()));
+    }
+    const claimed = claims.map(r => r.rows[0].event).filter(Boolean);
+    assert.equal(claimed.length, 1, "exactly one concurrent worker receives the event");
+    assert.equal(claimed[0].id, (await admin.query(
+      "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [eventId]
+    )).rows[0].id);
+    const state = (await admin.query(
+      "SELECT state,attempts,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1", [eventId]
+    )).rows[0];
+    assert.equal(state.state, "processing");
+    assert.equal(state.attempts, 1, "the competing worker did not consume another attempt");
+    assert.ok(state.claimed_at);
+    await admin.query(
+      "UPDATE commerce_webhook_events SET state='ignored',last_error_code='integration_claim_test' WHERE provider_event_id=$1",
+      [eventId]
+    );
+  });
+
   it("webhooks with no persisted payer actor are closed without a settlement claim", async () => {
     const checkout = await buy("pa", "webhook-missing-actor", "paypal");
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
