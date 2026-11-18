@@ -159,8 +159,8 @@ export async function startTicketCheckout(c, req, { event, type, quantity, key }
     [a.districtId, event.school_id, event.id, a.userId, t.id, quantity, total, t.currency, key, holdMinutes]);
   // Reserve: the seats and a 'creating' payment commit before the processor is called.
   const p = await one(c, `INSERT INTO commerce_payments(id,district_id,school_id,purpose,ticket_order_id,payer_user_id,amount_cents,currency,processing_fee_cents,provider,payment_method,mode,
-        status,description,pending_since,pending_actor)
-      VALUES($1,$2,$3,'event_tickets',$4,$5,$6,$7,$8,$9,$10,$11,'creating',$12,now(),$13::jsonb) RETURNING id`,
+        status,description,pending_since,pending_actor,payer_actor)
+      VALUES($1,$2,$3,'event_tickets',$4,$5,$6,$7,$8,$9,$10,$11,'creating',$12,now(),$13::jsonb,$13::jsonb) RETURNING id`,
     [randomUUID(), a.districtId, event.school_id, order.id, a.userId, total, t.currency, fee, processor, method, mode,
       `${quantity} × ${t.name}, ${event.title}`.slice(0, 255), actorJson(a)]);
   await audit(c, req, "checkout", "event_ticket_order", order.id, `event=${event.id};quantity=${quantity};payment=${p.id};provider=${processor};method=${method};mode=${mode}`);
@@ -256,8 +256,8 @@ export async function startMarketplaceCheckout(c, req, feeEventId, b) {
   const m = await one(c, `INSERT INTO marketplace_purchases(district_id,fee_event_id,listing_id,vendor_id,license_id,quantity,unit_price_cents,total_cents,idempotency_key,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [a.districtId, fe.id, fe.listing_id, fe.vendor_id, fe.license_id, qty, fe.unit_price_cents, total, key, a.userId]);
   const p = await one(c, `INSERT INTO commerce_payments(id,district_id,school_id,purpose,marketplace_purchase_id,payer_user_id,amount_cents,currency,processing_fee_cents,provider,payment_method,mode,
-        status,description,pending_since,pending_actor)
-      VALUES($1,$2,NULL,'marketplace_license',$3,$4,$5,'USD',$6,$7,$8,$9,'creating',$10,now(),$11::jsonb) RETURNING id`,
+        status,description,pending_since,pending_actor,payer_actor)
+      VALUES($1,$2,NULL,'marketplace_license',$3,$4,$5,'USD',$6,$7,$8,$9,'creating',$10,now(),$11::jsonb,$11::jsonb) RETURNING id`,
     [randomUUID(), a.districtId, m.id, a.userId, total, fee, processor, method, mode, `${qty === 1 ? "License" : `${qty} seats`}: ${fe.name}`.slice(0, 255), actorJson(a)]);
   await audit(c, req, "checkout", "marketplace_purchase", m.id, `fee_event=${fe.id};listing=${fe.listing_id};seats=${qty};payment=${p.id};provider=${processor};method=${method};mode=${mode}`);
   return afterCommit(async () => ({ purchase: purchaseOut(m), payment: paymentOut(await createdPayment(req, p.id, adapter)), replayed: false }));
