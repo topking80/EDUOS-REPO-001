@@ -12,7 +12,7 @@ ALTER TABLE commerce_payments
       AND payer_actor ? 'userId'
       AND payer_actor ? 'role'
       AND (payer_actor->>'userId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-      AND payer_actor->>'role' IN ('parent','pupil','teacher','principal','superintendent','district_it','staff','bus_driver','librarian','coach','school_nurse','sro')
+      AND length(payer_actor->>'role') BETWEEN 1 AND 40
       AND (NOT (payer_actor ? 'schoolId') OR payer_actor->>'schoolId' IS NULL
            OR (payer_actor->>'schoolId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
     )
