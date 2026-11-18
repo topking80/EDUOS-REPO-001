@@ -133,6 +133,8 @@ GRANT SELECT, INSERT ON notification_outbox TO eduos_app;
 GRANT UPDATE (read_at) ON notification_outbox TO eduos_app;
 REVOKE DELETE, TRUNCATE ON notification_outbox FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_christie_item_for_session(uuid), eduos_christie_next_item(uuid,integer), eduos_christie_item_counts(uuid[]) TO eduos_app;
+-- 37.7.2 aggregate notification/webhook backlog metrics; no tenant or message data is exposed.
+GRANT EXECUTE ON FUNCTION eduos_queue_backlog() TO eduos_app;
 -- 32.5.0 SafetyOS and car pick-up. Logs (incident events, roll call, pick-up
 -- events) are insert-only; the rest change only through listed columns.
 GRANT UPDATE (timezone) ON schools TO eduos_app;
