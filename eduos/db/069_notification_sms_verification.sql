@@ -9,7 +9,7 @@ ALTER TABLE user_preferences
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='user_preferences'::regclass AND conname='user_preferences_phone_e164_check') THEN
     ALTER TABLE user_preferences ADD CONSTRAINT user_preferences_phone_e164_check
-      CHECK(phone_e164 IS NULL OR phone_e164 ~ '^\\+[1-9][0-9]{7,14}$');
+      CHECK(phone_e164 IS NULL OR phone_e164 ~ '^\+[1-9][0-9]{7,14}$');
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='user_preferences'::regclass AND conname='user_preferences_phone_verification_pair_check') THEN
     ALTER TABLE user_preferences ADD CONSTRAINT user_preferences_phone_verification_pair_check
