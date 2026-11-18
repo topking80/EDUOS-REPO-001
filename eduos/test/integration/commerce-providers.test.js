@@ -523,6 +523,8 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
   });
 
   it("moves the twentieth failed webhook attempt to a terminal dead letter", async () => {
+    await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
+      WHERE state IN ('received','failed','processing')`);
     const checkout = await buy("pa", "webhook-dead-letter-exhaustion", "paypal");
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
     const pid = checkout.body.data.payment.id;
@@ -585,6 +587,8 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
   });
 
   it("rolls back settlement on worker crash and safely retries after lease expiry", async () => {
+    await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
+      WHERE state IN ('received','failed','processing')`);
     const checkout = await buy("pa", "webhook-crash-rollback", "paypal");
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
     const pid = checkout.body.data.payment.id;
@@ -689,6 +693,8 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
   });
 
   it("distinct verified notifications for one capture settle tickets and ledger only once", async () => {
+    await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
+      WHERE state IN ('received','failed','processing')`);
     const checkout = await buy("pa", "webhook-settlement-idempotency", "paypal");
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
     const pid = checkout.body.data.payment.id;
