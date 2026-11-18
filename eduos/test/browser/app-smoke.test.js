@@ -31,7 +31,7 @@ const roleTabs = (() => {
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json" };
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-function mockApi(role, pathname) {
+function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   switch (pathname) {
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: "s1", memberships: [] };
@@ -87,8 +87,8 @@ function mockApi(role, pathname) {
       { feeEventId: "f1", approvedAt: now, listingId: "l1", name: "Math Garden", vendor: "MathCo", unitPriceCents: 1250, priceUnit: "seat", seatLimit: 30, purchase: null },
       { feeEventId: "f2", approvedAt: now, listingId: "l2", name: "Read Along", vendor: "ReadCo", unitPriceCents: null, priceUnit: "flat", seatLimit: null, purchase: { id: "m1", status: "paid", total_cents: 5000, quantity: 1 } }] } };
     // 37.8.0 district webhook operations.
-    case "/api/commerce/providers/webhook-refund-cases": return { data: { refundCases: [{ id: "rf1", processor: "paypal", captureRef: "CAPTURE-123", amountCents: 1250, currency: "USD", reasonCode: "hold_expired", openedAt: now }] } };
-    case "/api/commerce/providers/webhook-dead-letters": return { data: { deadLetters: [{ id: "dl1", processor: "square", providerEventId: "evt-123", eventType: "payment.updated", attempts: 20, errorCode: "provider_unreachable", receivedAt: now }] } };
+    case "/api/commerce/providers/webhook-refund-cases": if (failWebhookLoads) return null; return { data: { refundCases: [{ id: "rf1", processor: "paypal", captureRef: "CAPTURE-123", amountCents: 1250, currency: "USD", reasonCode: "hold_expired", openedAt: now }] } };
+    case "/api/commerce/providers/webhook-dead-letters": if (failWebhookLoads) return null; return { data: { deadLetters: [{ id: "dl1", processor: "square", providerEventId: "evt-123", eventType: "payment.updated", attempts: 20, errorCode: "provider_unreachable", receivedAt: now }] } };
     // 37.7.1 district payment setup, built from the real catalog.
     case "/api/commerce/providers": return { data: { liveSwitch: false, secretsKeyConfigured: true, btcpayAllowedHosts: [],
       setup: { enabledMethods: ["paypal", "sandbox"], defaultMethod: "paypal", cardProcessor: "square", updatedAt: now },
@@ -110,7 +110,7 @@ function startServer() {
   const server = http.createServer((req, res) => {
     const { pathname } = new URL(req.url, "http://x");
     if (pathname.startsWith("/api/")) {
-      const body = req.method === "GET" ? mockApi(state.role, pathname) : { data: {} };
+      const body = req.method === "GET" ? mockApi(state.role, pathname, state.failWebhookLoads) : { data: {} };
       res.writeHead(body ? (req.method === "GET" ? 200 : 201) : 404, { "content-type": "application/json", "cache-control": "no-store" });
       return res.end(JSON.stringify(body ?? { error: "not_found" }));
     }
@@ -166,6 +166,19 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         page.close();
       }
     }
+  }
+  // Failed queue requests must be visibly different from genuinely empty queues.
+  state.role = "superintendent";
+  state.failWebhookLoads = true;
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/payments` });
+      const text = await page.mainText();
+      if (!text.includes("Refund cases couldn't be loaded") || !text.includes("Dead-letter events couldn't be loaded"))
+        failures.push("superintendent #/payments: webhook API failures were presented as empty queues");
+      if (page.errors.length) failures.push(`superintendent #/payments failure state: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   assert.deepEqual(failures, []);
 });
