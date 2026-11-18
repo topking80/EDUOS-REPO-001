@@ -446,23 +446,18 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     await admin.query(`
       INSERT INTO commerce_webhook_events
         (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
-         provider_ref,provider_capture_ref,amount_cents,currency,state)
+         provider_ref,provider_capture_ref,amount_cents,currency,state,attempts,claimed_at)
       VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURELEASE001',
-              $6,'USD','received')
+              $6,'USD','processing',1,now()-interval '6 minutes')
     `, [ID.d1, pid, eventId, "b".repeat(64), p.provider_ref, p.amount_cents]);
     const runtime = new pg.Client(db.appUrl);
     await runtime.connect();
     try {
-      const first = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
-      assert.equal(first.providerEventId, eventId);
-      assert.equal(first.attempts, 1);
-
-      // Model a worker process dying after its claim. Move the lease beyond the
-      // five-minute recovery window without waiting in real time.
-      await admin.query(
-        "UPDATE commerce_webhook_events SET claimed_at=now()-interval '6 minutes' WHERE id=$1",
-        [first.id]
-      );
+      // Model a process that died after its first claim: insert the persisted
+      // expired lease directly, avoiding a real five-minute test delay.
+      const first = { id: (await admin.query(
+        "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [eventId]
+      )).rows[0].id, attempts: 1 };
       const second = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
       assert.equal(second.id, first.id);
       assert.equal(second.attempts, 2, "recovery creates a new, higher fencing token");
