@@ -158,6 +158,12 @@ describe("upgrade from an older release on a populated database", { skip }, () =
       "SELECT pg_get_functiondef('public.eduos_commerce_claim_webhook()'::regprocedure) AS definition");
     assert.match(webhookClaim.rows[0].definition, /attempts < 20/,
       "dead-lettered events cannot be claimed again");
+    assert.match(webhookClaim.rows[0].definition, /payer_actor IS NULL/,
+      "events without a saved payer actor are terminally closed, never settled as an invented user");
+    assert.match(webhookClaim.rows[0].definition, /missing_payer_actor/,
+      "missing payer identity is visible to operators");
+    assert.match(webhookClaim.rows[0].definition, /claimed_at IS NULL OR/,
+      "orphaned processing leases with no timestamp can be recovered safely");
     const publicDefiner = await admin.query(`
       SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
        WHERE n.nspname='public' AND p.prosecdef
