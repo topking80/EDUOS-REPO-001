@@ -507,6 +507,10 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const outcomes = [];
     try {
       for (const eventId of eventIds) {
+        const claim = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+        assert.equal(claim.rows[0].event?.id, (await admin.query(
+          "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [eventId]
+        )).rows[0].id, "the worker claim function leases this event before settlement");
         await runtime.query("BEGIN");
         try {
           await runtime.query(
@@ -519,8 +523,8 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
           });
           const state = applied.outcome === "applied" ? "applied" : "ignored";
           await runtime.query(
-            "UPDATE commerce_webhook_events SET state=$2,last_error_code=$3 WHERE provider_event_id=$1",
-            [eventId, state, state === "ignored" ? "payment_not_awaiting_confirmation" : null]
+            "UPDATE commerce_webhook_events SET state=$2,last_error_code=$3 WHERE id=$1",
+            [claim.rows[0].event.id, state, state === "ignored" ? "payment_not_awaiting_confirmation" : null]
           );
           outcomes.push(applied.outcome);
           await runtime.query("COMMIT");
