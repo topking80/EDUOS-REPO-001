@@ -576,6 +576,12 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await admin.query(
       "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
     )).rows[0].n, 0);
+    const visible = await as("supt1")("GET", "/api/commerce/providers/webhook-dead-letters");
+    assert.equal(visible.status, 200, JSON.stringify(visible.body));
+    const reported = visible.body.data.deadLetters.find(e => e.providerEventId === providerEventId);
+    assert.ok(reported, "authorized provider administrators can see exhausted events");
+    assert.deepEqual([reported.attempts, reported.errorCode], [20, "provider_timeout"]);
+    assert.equal(Object.hasOwn(reported, "payload"), false, "operator view never exposes provider payloads");
   });
 
   it("rolls back settlement on worker crash and safely retries after lease expiry", async () => {
