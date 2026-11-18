@@ -85,9 +85,14 @@ export function createSmtpAdapter({ config, connect = tls.connect }) {
       const from = config.notifySmtpFrom;
       const to = row.recipient_email;
       if (!validAddress(to)) return { status: "failed", note: "recipient email address is missing or invalid" };
-      let socket;
+      let socket, deadline;
       try {
         socket = connect({ host: config.notifySmtpHost, port: config.notifySmtpPort, servername: config.notifySmtpHost, rejectUnauthorized: true });
+        // Enforce an absolute wall-clock deadline as well as the socket's
+        // inactivity timeout. A peer that trickles bytes must not keep a
+        // delivery socket alive after the dispatcher has given up.
+        deadline = setTimeout(() => socket.destroy(new Error("SMTP request deadline exceeded")), config.notifySmtpTimeoutMs);
+        deadline.unref?.();
         socket.setTimeout(config.notifySmtpTimeoutMs, () => socket.destroy(new Error("SMTP connection timed out")));
         const session = new SmtpSession(socket);
         const greeting = await session.response();
@@ -105,6 +110,7 @@ export function createSmtpAdapter({ config, connect = tls.connect }) {
         const transient = !error.smtpCode || (error.smtpCode >= 400 && error.smtpCode < 500);
         return { status: transient ? "pending" : "failed", note: transient ? "SMTP temporary failure" : "SMTP permanent rejection (" + error.smtpCode + ")" };
       } finally {
+        clearTimeout(deadline);
         socket?.end();
       }
     }
