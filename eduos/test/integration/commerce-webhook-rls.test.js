@@ -42,6 +42,8 @@ test("webhook SECURITY DEFINER entry points work while runtime remains RLS-scope
     }
 
     // Runtime has no tenant GUC and is not the owner: ordinary reads stay empty.
+    const rls = await app.query("SELECT row_security_active('commerce_webhook_events') AS active");
+    assert.equal(rls.rows[0].active, true);
     const visible = await app.query("SELECT count(*)::int AS n FROM commerce_webhook_events");
     assert.equal(visible.rows[0].n, 0);
     // These narrow SECURITY DEFINER functions can now resolve safely without a
