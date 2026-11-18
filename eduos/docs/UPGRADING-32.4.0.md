@@ -53,3 +53,27 @@ With all adapters `off`, nothing is sent externally.
   timezone to the district's if runs cross midnight UTC.
 - `db:retention` does not yet prune the new tables. Plan manual retention if
   your policy requires it.
+
+## 7. Opt-in email and verified SMS (37.7.2)
+
+Migrations 068–072 add district-scoped email consent, verified phone enrollment,
+a terminal provider-accepted state, aggregate accepted-queue metrics, and the
+runtime-role permission needed to read queue metrics. The migration runner
+automatically discovers numbered migrations after 050; do not add these files
+to the fixed migration list. Existing users remain opted out and unverified.
+
+Users manage their own email/SMS preferences at
+`GET/PUT /api/me/notification-preferences`. Updates require CSRF and write an
+audit event. SMS consent is unavailable until the user verifies an E.164 phone
+number through the Twilio Verify start/check endpoints. Verification and
+preference routes are session-protected and rate-limited.
+
+SMTP uses implicit TLS on port 465 only. Twilio sends SMS only after phone
+verification and explicit consent. Both channels send generic notification
+content without student or incident details. Provider acceptance is recorded
+as `accepted`, not `delivered`; final mailbox/carrier delivery is not confirmed.
+Keep provider credentials in the deployment secret manager.
+
+Before enabling the external adapters, configure the matching credentials and
+sender settings in the deployment environment. Keep all adapters set to
+`off` until consent, provider credentials, and delivery operations are ready.
