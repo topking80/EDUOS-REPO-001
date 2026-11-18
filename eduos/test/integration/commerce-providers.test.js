@@ -531,9 +531,9 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     await admin.query(`
       INSERT INTO commerce_webhook_events
         (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
-         provider_ref,provider_capture_ref,amount_cents,currency,state,attempts,claimed_at)
+         provider_ref,provider_capture_ref,amount_cents,currency,state,attempts,claimed_at,received_at)
       VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTUREDEADLETTER1',
-              $6,'USD','processing',19,now()-interval '6 minutes')
+              $6,'USD','processing',19,now()-interval '6 minutes', '2000-01-01T00:00:00Z')
     `, [ID.d1, pid, providerEventId, "9".repeat(64), p.provider_ref, p.amount_cents]);
 
     const runtime = new pg.Client(db.appUrl);
@@ -598,6 +598,24 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
               $6,'USD','received')
     `, [ID.d1, pid, providerEventId, "f".repeat(64), p.provider_ref, p.amount_cents]);
 
+    const configKeys = ["DATABASE_URL","PUBLIC_ORIGIN","OIDC_ISSUER","OIDC_CLIENT_ID","OIDC_CLIENT_SECRET","OIDC_REDIRECT_URI"];
+    const priorConfig = Object.fromEntries(configKeys.map(k => [k, process.env[k]]));
+    Object.assign(process.env, {
+      DATABASE_URL: db.appUrl,
+      PUBLIC_ORIGIN: server.base,
+      OIDC_ISSUER: idp.issuer,
+      OIDC_CLIENT_ID: "eduos-integration-test",
+      OIDC_CLIENT_SECRET: "eduos-integration-test-secret",
+      OIDC_REDIRECT_URI: `${server.base}/auth/callback`
+    });
+    let applyVerifiedWebhook;
+    try { ({ applyVerifiedWebhook } = await import("../../src/commerce/service.js")); }
+    finally {
+      for (const k of configKeys) {
+        if (priorConfig[k] === undefined) delete process.env[k];
+        else process.env[k] = priorConfig[k];
+      }
+    }
     const actor = { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null };
     const req = { actor, requestId: "webhook-crash-rollback-integration", reconciled: true };
     const runtime = new pg.Client(db.appUrl);
@@ -739,7 +757,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
             "UPDATE commerce_webhook_events SET state=$2,last_error_code=$3 WHERE id=$1",
             [claim.rows[0].event.id, state, state === "ignored" ? "payment_not_awaiting_confirmation" : null]
           );
-          outcomes.push(applied.outcome);
+          outcomes.push(applied.outcome === "applied" ? applied.outcome : `${applied.outcome}:${applied.reason}`);
           await runtime.query("COMMIT");
         } catch (error) {
           await runtime.query("ROLLBACK");
@@ -748,7 +766,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       }
     } finally { await runtime.end(); }
 
-    assert.deepEqual(outcomes, ["applied", "ignored"]);
+    assert.deepEqual(outcomes, ["applied", "ignored:payment_not_awaiting_confirmation"]);
     assert.equal((await payment(pid)).status, "succeeded");
     const ticketCount = (await admin.query(
       "SELECT count(*)::int AS n FROM event_tickets t JOIN event_ticket_orders o ON o.id=t.order_id WHERE o.id=(SELECT ticket_order_id FROM commerce_payments WHERE id=$1)",
