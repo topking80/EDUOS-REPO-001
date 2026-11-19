@@ -562,7 +562,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     // LTI response_mode=form_post requires an URL-encoded form body. Do not
     // accept JSON or other parsers' output as an alternate OIDC transport.
     if (!req.is("application/x-www-form-urlencoded")) return res.status(415).type("text/plain").send("LTI launch refused: unsupported_content_type");
-    return expressRawUrlencoded(req, res, () => {
+    return expressRawUrlencoded(req, res, error => {
+      if (error) return next(error);
       // Parse only after the raw byte limit has been enforced. URLSearchParams
       // preserves repeated keys; retain them as arrays so OIDC scalar checks
       // reject parameter pollution instead of silently choosing one value.
