@@ -37,3 +37,8 @@ test("LTI app registration and updates reject unsupported roster, grade and atte
   assert.match(source, /\["none", "identity"\]\.includes\(nextScope\)/);
   assert.match(source, /unsupported_lti_data_scope/);
 });
+
+
+test("LTI authorization refuses legacy apps with unsupported data scopes", () => {
+  assert.match(source, /if \(!\["none", "identity"\]\.includes\(app\.data_sharing_scope\)\) return \{ error: "unsupported_lti_data_scope", status: 403 \}/);
+});
