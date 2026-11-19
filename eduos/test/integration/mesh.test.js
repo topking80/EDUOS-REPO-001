@@ -271,6 +271,25 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.equal(polluted.status, 400);
     assert.match(await polluted.text(), /duplicate_request_parameters/);
 
+    // OIDC response_mode=form_post must reject JSON even when the payload
+    // contains otherwise valid OIDC parameters.
+    const jsonPost = await fetch(`${server.base}/lti/authorize`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(pollutionForm))
+    });
+    assert.equal(jsonPost.status, 415);
+    assert.match(await jsonPost.text(), /unsupported_content_type/);
+
+    // Repeated URL-encoded protocol fields parse as arrays and must fail the
+    // scalar OIDC parameter validation rather than selecting one value.
+    const duplicateForm = new URLSearchParams(pollutionForm);
+    duplicateForm.append("scope", "openid");
+    const duplicated = await fetch(`${server.base}/lti/authorize`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: duplicateForm
+    });
+    assert.equal(duplicated.status, 400);
+    assert.match(await duplicated.text(), /invalid_request/);
+
     // Revocation-window regression tests: each scenario gets a fresh launch
     // hint, then changes authoritative PostgreSQL state before the callback.
     // Restore fixture state in finally so one assertion cannot poison later cases.
