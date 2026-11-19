@@ -459,7 +459,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         const cfg = a.integration_type === "lti13"
           ? (await client.query("SELECT integration_config FROM apps WHERE id=$1", [a.id])).rows[0].integration_config
           : null;
-        if (a.integration_type === "lti13" && !validLtiConfig(cfg)) return fail(409, "lti_configuration_invalid");
+        if (a.integration_type === "lti13" && !validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
         const seat = (await client.query("SELECT eduos_claim_seat($1) AS r", [a.license_id])).rows[0].r;
         if (seat === "exhausted") return fail(409, "no_seats_available");
         if (seat !== "ok") return fail(409, "license_inactive");
