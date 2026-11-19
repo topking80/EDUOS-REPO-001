@@ -270,8 +270,8 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
       assert.equal(initiation.status, 302);
       const callback = initiation.headers.get("location");
       assert.ok(callback, "tool login initiation must produce an authorization request");
-      await revoke({ launchUrl: freshLaunch.body.data.url });
       try {
+        await revoke({ launchUrl: freshLaunch.body.data.url });
         const denied = await fetch(callback);
         assert.equal(denied.status, 403, expected);
         const body = await denied.text();
