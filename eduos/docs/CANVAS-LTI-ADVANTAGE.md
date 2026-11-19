@@ -38,7 +38,8 @@ Canvas LMS is a supported educational-software integration through the district-
 
 ### Phase 1 — make the existing LTI 1.3 core operable
 - Register protocol routes and JWKS endpoint in the server with explicit feature flags.
-- Move one-time state/nonce/replay tracking from process memory to a durable, tenant-scoped store with atomic consumption.
+- [x] Add a tenant-scoped PostgreSQL replay ledger and atomic consume function; the runtime role can call only the function, not read or mutate the ledger directly. A production launch route must use this helper inside `withTenantTransaction` before the in-memory helper can be retired.
+- [ ] Wire all state/nonce/replay tracking to durable storage; add durable state and nonce validation alongside launch replay consumption.
 - Add strict OIDC request validation and key rotation.
 - Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
 - Add unit, route, multi-tenant, replay, and negative-security tests.
@@ -77,4 +78,4 @@ Canvas LMS is a supported educational-software integration through the district-
 
 ## Current limitations
 
-This PR records the required scope and audit findings. It does not claim NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+This PR records the required scope and audit findings and adds a durable replay-consumption primitive. It does not yet wire that primitive into a launch route, and it does not claim NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
