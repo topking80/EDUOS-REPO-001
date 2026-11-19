@@ -100,6 +100,17 @@ test("LTI tool configuration requires HTTPS endpoints and bounded redirect lists
   assert.equal(validLtiConfig({ ...valid, loginUrl: "javascript:alert(1)" }), false);
   assert.equal(validLtiConfig({ ...valid, targetLinkUri: undefined }), false);
   assert.equal(validLtiConfig({ ...valid, targetLinkUri: "http://tool.example/launch" }), false);
+  assert.equal(validLtiConfig({ ...valid, loginUrl: "http://localhost:3000/login" }), true);
+  assert.equal(validLtiConfig({ ...valid, loginUrl: "http://localhost:3000/login" }, { allowInsecureLoopback: false }), false);
+  assert.equal(validLtiConfig({ ...valid, targetLinkUri: "https://user:pass@tool.example/launch" }), false);
+  assert.equal(validLtiConfig({ ...valid, targetLinkUri: "https://tool.example/launch#fragment" }), false);
+  assert.equal(validLtiConfig({ ...valid, redirectUris: ["https://tool.example/callback#fragment"] }), false);
+  const weakPem = crypto.generateKeyPairSync("rsa", {
+    modulusLength: 1024,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" }
+  }).privateKey;
+  assert.throws(() => loadPlatformKey(weakPem), /at least 2048 bits/);
 });
 
 
