@@ -293,7 +293,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     // The route-specific URL-encoded parser has a 16KB ceiling. Oversized
     // callback bodies must fail closed before OIDC validation or token issue.
     const oversizedForm = new URLSearchParams(pollutionForm);
-    oversizedForm.set("padding", "x".repeat(17 * 1024));
+    oversizedForm.set("state", "x".repeat(17 * 1024));
     const oversized = await fetch(`${server.base}/lti/authorize`, {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: oversizedForm
     });
