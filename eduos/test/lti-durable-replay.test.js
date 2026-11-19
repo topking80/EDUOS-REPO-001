@@ -34,6 +34,6 @@ test("migration protects launch replay ledger behind a tenant-checked security-d
   assert.match(sql, /PRIMARY KEY \(district_id, launch_id\)/);
   assert.match(sql, /current_setting\('app\.district_id'/);
   assert.match(sql, /ON CONFLICT \(district_id, launch_id\) DO UPDATE/);
-  assert.match(sql, /WHERE lti_launch_replays\.expires_at <= now\(\)/);
+  assert.match(sql, /DELETE FROM lti_launch_replays\s+WHERE district_id = p_district_id AND expires_at <= now\(\)/);
   assert.match(sql, /REVOKE ALL ON lti_launch_replays FROM PUBLIC/);
 });
