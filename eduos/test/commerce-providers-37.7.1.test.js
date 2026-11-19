@@ -125,7 +125,7 @@ test("Square adapter: payment link (Cash App Pay opted in only for Cash App), or
     [/^GET https:\/\/connect\.squareupsandbox\.com\/v2\/locations\/L1234567$/, (_m, o) => o.headers["square-version"] === SQUARE_VERSION && o.headers.authorization === "Bearer tok" ? [200, { location: { status: "ACTIVE" } }] : [401, {}]],
     [/^POST .*\/v2\/online-checkout\/payment-links$/, () => [200, { payment_link: { id: "PL1", order_id: "SQO123456", url: "https://sandbox.square.link/u/x" } }]],
     [/^GET .*\/v2\/orders\/SQO123456$/, () => [200, { order }]],
-    [/^POST .*\/v2\/refunds$/, () => [200, { refund } }]
+    [/^POST .*\/v2\/refunds$/, () => [200, { refund }]]
   ]);
   const a = squareAdapter({ mode: "test", accessToken: "tok", locationId: "L1234567", fee: { bps: 290, fixedCents: 30 }, transport: t, base: "https://connect.squareupsandbox.com", allowedHosts: ["connect.squareupsandbox.com"] });
   assert.deepEqual(await a.testConnection(), { ok: true, detail: "location_active" });
