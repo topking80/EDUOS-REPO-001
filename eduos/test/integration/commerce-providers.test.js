@@ -370,6 +370,13 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const rawBody = JSON.stringify(event);
     const sign = body => createHmac("sha256", signatureKey).update(notificationUrl + body).digest("base64");
     const callback = (body, signature) => fetch(server.base + "/api/commerce/webhooks/square/" + token, { method: "POST", headers: { "content-type": "application/json", "x-square-hmacsha256-signature": signature }, body });
+    // An attacker-controlled or corrupted callback must fail before any inbox write.
+    const rejected = await callback(rawBody, "invalid-square-signature");
+    assert.equal(rejected.status, 401, await rejected.clone().text());
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_webhook_events WHERE processor=$1 AND provider_event_id=$2",
+      ["square", event.id]
+    )).rows[0].n, 0, "invalid signatures never create inbox rows");
     const accepted = await callback(rawBody, sign(rawBody));
     assert.equal(accepted.status, 200, await accepted.clone().text());
     assert.deepEqual(await accepted.json(), { received: true, outcome: "received" });
