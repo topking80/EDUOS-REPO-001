@@ -372,19 +372,19 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const callback = (body, signature) => fetch(server.base + "/api/commerce/webhooks/square/" + token, { method: "POST", headers: { "content-type": "application/json", "x-square-hmacsha256-signature": signature }, body });
     const accepted = await callback(rawBody, sign(rawBody));
     assert.equal(accepted.status, 200, await accepted.clone().text());
-    assert.deepEqual(await accepted.json(), { ok: true, data: { outcome: "received" } });
+    assert.deepEqual(await accepted.json(), { received: true, outcome: "received" });
     const stored = await admin.query("SELECT processor,provider_event_id,event_type,provider_ref,provider_capture_ref,amount_cents,currency,state FROM commerce_webhook_events WHERE provider_event_id=$1", [event.id]);
     assert.equal(stored.rowCount, 1);
     assert.deepEqual(Object.values(stored.rows[0]), ["square", event.id, "payment.updated", paymentRow.provider_ref, "SQCAPTURE_SIGNED_0001", paymentRow.amount_cents, paymentRow.currency, "received"]);
     assert.equal((await admin.query("SELECT status FROM commerce_payments WHERE id=$1", [paymentId])).rows[0].status, "requires_confirmation");
     const duplicate = await callback(rawBody, sign(rawBody));
     assert.equal(duplicate.status, 200, await duplicate.clone().text());
-    assert.deepEqual(await duplicate.json(), { ok: true, data: { outcome: "duplicate" } });
+    assert.deepEqual(await duplicate.json(), { received: true, outcome: "duplicate" });
     const altered = { ...event, metadata: { deliveryNote: "different signed body, same normalized payment" } };
     const alteredBody = JSON.stringify(altered);
     const conflict = await callback(alteredBody, sign(alteredBody));
     assert.equal(conflict.status, 200, await conflict.clone().text());
-    assert.deepEqual(await conflict.json(), { ok: true, data: { outcome: "event_id_conflict" } });
+    assert.deepEqual(await conflict.json(), { received: true, outcome: "event_id_conflict" });
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_webhook_events WHERE processor=$1 AND provider_event_id=$2", ["square", event.id])).rows[0].n, 1);
   });
 
