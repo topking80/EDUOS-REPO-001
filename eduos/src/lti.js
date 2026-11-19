@@ -36,7 +36,8 @@ export function loadPlatformKey(pem, previousPem = "", subjectSecret = "") {
   };
   const current = loadRsa(pem);
   const previous = previousPem ? loadRsa(previousPem) : null;
-  if (previous && previous.kid === current.kid) throw new Error("LTI previous signing key must differ from the active key");\n  if (previous && !subjectSecret) throw new Error("LTI_PLATFORM_SUBJECT_KEY is required during signing-key rotation");
+  if (previous && previous.kid === current.kid) throw new Error("LTI previous signing key must differ from the active key");
+  if (previous && !subjectSecret) throw new Error("LTI_PLATFORM_SUBJECT_KEY is required during signing-key rotation");
   if (subjectSecret && Buffer.byteLength(subjectSecret) < 32) throw new Error("LTI_PLATFORM_SUBJECT_KEY must contain at least 32 bytes");
   const hintKey = crypto.createHash("sha256").update("eduos-lti-hint\\0").update(current.privateKey.export({ type: "pkcs8", format: "der" })).digest();
   const subjectKey = subjectSecret ? crypto.createHash("sha256").update("eduos-lti-subject\\0").update(subjectSecret).digest() : hintKey;
