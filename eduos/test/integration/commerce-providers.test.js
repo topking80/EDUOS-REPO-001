@@ -1204,8 +1204,23 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
           `event is claimable before worker call: ${JSON.stringify(eligible.rows[0])}`
         );
         const claim = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
-        assert.ok(claim.rows[0].event,
-          `claim function returned no event for ${eventId}; fixture=${JSON.stringify(eligible.rows[0])}`);
+        if (!claim.rows[0].event) {
+          const queue = await admin.query(`
+            SELECT e.id,e.provider_event_id,e.state,e.attempts,e.claimed_at,e.processed_at,
+                   e.last_error_code,e.provider_ref,p.status AS payment_status,
+                   (p.payer_actor IS NOT NULL) AS has_payer_actor,
+                   (p.payer_actor IS NOT NULL AND e.provider_ref IS NOT NULL AND e.attempts < 20
+                     AND (e.state IN ('received','failed') OR
+                          (e.state='processing' AND (e.claimed_at IS NULL OR e.claimed_at < now()-interval '5 minutes'))))
+                     AS claimable
+              FROM commerce_webhook_events e
+              JOIN commerce_payments p ON p.district_id=e.district_id AND p.id=e.payment_id
+             WHERE e.state IN ('received','failed','processing','applied','ignored','dead_letter')
+             ORDER BY e.received_at,e.id
+             LIMIT 50
+          `);
+          assert.fail(`claim function returned no event for ${eventId}; fixture=${JSON.stringify(eligible.rows[0])}; queue=${JSON.stringify(queue.rows)}`);
+        }
         assert.equal(claim.rows[0].event.id, eligible.rows[0].id,
           `worker leases the oldest eligible event; claimed=${JSON.stringify(claim.rows[0].event)} expected=${JSON.stringify(eligible.rows[0])}`);
         await runtime.query("BEGIN");
@@ -1303,11 +1318,24 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(conflict.rows[0].outcome, "event_id_conflict",
       "reusing an event ID with a different payload is not silently accepted");
     const saved = await admin.query(
-      "SELECT count(*)::int AS n,state,payload_sha256 FROM commerce_webhook_events WHERE processor='paypal' AND provider_event_id=$1 GROUP BY state,payload_sha256",
+      "SELECT count(*)::int AS n,state,payload_sha256,claimed_at,processed_at,last_error_code FROM commerce_webhook_events WHERE processor='paypal' AND provider_event_id=$1 GROUP BY state,payload_sha256,claimed_at,processed_at,last_error_code",
       [providerEventId]
     );
-    assert.equal(saved.rows.length, 1);
-    assert.deepEqual([saved.rows[0].n, saved.rows[0].state, saved.rows[0].payload_sha256], [1, "received", payloadHash]);
+    assert.equal(saved.rows.length, 1, `one inbox row remains for the provider event: ${JSON.stringify(saved.rows)}`);
+    const activeQueue = await admin.query(`
+      SELECT e.provider_event_id,e.state,e.attempts,e.claimed_at,e.processed_at,e.last_error_code,
+             p.status AS payment_status
+        FROM commerce_webhook_events e
+        JOIN commerce_payments p ON p.district_id=e.district_id AND p.id=e.payment_id
+       WHERE e.state IN ('received','failed','processing','applied','ignored','dead_letter')
+       ORDER BY e.received_at,e.id
+       LIMIT 50
+    `);
+    assert.deepEqual(
+      [saved.rows[0].n, saved.rows[0].state, saved.rows[0].payload_sha256],
+      [1, "received", payloadHash],
+      `webhook intake must not run the worker; event=${JSON.stringify(saved.rows[0])}; queue=${JSON.stringify(activeQueue.rows)}`
+    );
     assert.equal((await payment(pid)).status, "requires_confirmation", "intake never settles a payment");
     } finally {
       server = await startServer(serverEnv);
