@@ -380,7 +380,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const duplicate = await callback(rawBody, sign(rawBody));
     assert.equal(duplicate.status, 200, await duplicate.clone().text());
     assert.deepEqual(await duplicate.json(), { ok: true, data: { outcome: "duplicate" } });
-    const altered = { ...event, data: { object: { payment: { ...event.data.object.payment, amount_money: { amount: paymentRow.amount_cents - 1, currency: paymentRow.currency } } } } };
+    const altered = { ...event, metadata: { deliveryNote: "different signed body, same normalized payment" } };
     const alteredBody = JSON.stringify(altered);
     const conflict = await callback(alteredBody, sign(alteredBody));
     assert.equal(conflict.status, 200, await conflict.clone().text());
