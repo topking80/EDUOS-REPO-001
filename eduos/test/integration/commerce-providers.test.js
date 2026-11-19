@@ -804,6 +804,30 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await as("supt1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
       resolutionNote: "Duplicate resolution must not overwrite the original."
     })).status, 404, "a resolved case cannot be resolved a second time");
+
+    // Database-level guard: even a privileged application connection cannot
+    // reopen a resolved obligation or rewrite its operator attestation.
+    const guardClient = new pg.Client(db.appUrl);
+    await guardClient.connect();
+    try {
+      await guardClient.query("BEGIN");
+      await guardClient.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [ID.d1, USERS.supt1[0], "superintendent"]
+      );
+      await assert.rejects(
+        guardClient.query("UPDATE commerce_webhook_refund_cases SET status='open',resolved_at=NULL,resolved_by=NULL,resolution_note=NULL WHERE id=$1", [caseId]),
+        error => error.code === "23514"
+      );
+      await assert.rejects(
+        guardClient.query("UPDATE commerce_webhook_refund_cases SET resolution_note='Altered refund attestation.' WHERE id=$1", [caseId]),
+        error => error.code === "23514"
+      );
+      await guardClient.query("ROLLBACK");
+    } catch (error) {
+      await guardClient.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally { await guardClient.end(); }
   });
 
   it("moves the twentieth failed webhook attempt to a terminal dead letter", async () => {
