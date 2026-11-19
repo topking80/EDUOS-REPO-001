@@ -15,7 +15,7 @@ import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startS
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 
 describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }, () => {
-  let db, idp, server, admin, appDb, sink, tool, s = {}, apps = {};
+  let db, idp, server, admin, appDb, sink, tool, previousPrivateKey, s = {}, apps = {};
   const hooks = [];
   const as = name => client(server.base, s[name]);
   before(async () => {
@@ -24,7 +24,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     sink = http.createServer((req, res) => { let b = ""; req.on("data", d => b += d); req.on("end", () => { try { hooks.push(JSON.parse(b)); } catch {} res.end("ok"); }); });
     await new Promise(r => sink.listen(0, "127.0.0.1", r));
     const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const { privateKey: previousPrivateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    ({ privateKey: previousPrivateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 }));
     const subjectSecret = "integration-test-stable-lti-subject-key-32-bytes";
     const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app,
       WEBHOOK_SIGNING_KEY: "w".repeat(40), WEBHOOK_ALLOW_INSECURE_LOOPBACK: "true",
