@@ -258,8 +258,6 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.equal((await fetch(evil)).status, 400);
     const forged = new URL(authorize); forged.searchParams.set("lti_message_hint", forged.searchParams.get("lti_message_hint").replace(/^(.{10})(.)/, (_, a, c) => a + (c === "A" ? "B" : "A")));
     assert.equal((await fetch(forged)).status, 400);
-  });
-
     // Revocation-window regression tests: each scenario gets a fresh launch
     // hint, then changes authoritative PostgreSQL state before the callback.
     // Restore fixture state in finally so one assertion cannot poison later cases.
@@ -326,6 +324,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
       revoke: () => admin.query("UPDATE schools SET status='disabled' WHERE id=$1", [ID.s1]),
       restore: () => admin.query("UPDATE schools SET status='active' WHERE id=$1", [ID.s1])
     });
+  });
 
   it("every role gets a home dashboard scoped like its list endpoints", async () => {
     for (const name of ["supt1", "it", "p1", "p2", "t1", "pa", "pu"]) {
