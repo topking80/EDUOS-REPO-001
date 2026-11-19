@@ -659,6 +659,11 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.ok(p.provider_ref, "late-capture fixture has a provider order reference");
     assert.ok(p.payer_actor?.userId, "late-capture fixture persists the authenticated payer");
     const providerEventId = "evt_late_capture_refund_0001";
+    // Freeze the independent worker while this test exercises a manually
+    // inserted inbox event; otherwise the worker can claim and ignore it
+    // between INSERT and the fixture eligibility assertion.
+    await server.stop();
+    server = null;
     await admin.query(
       "UPDATE event_ticket_orders SET hold_expires_at=now()-interval '1 minute' WHERE id=$1",
       [p.ticket_order_id]
@@ -730,6 +735,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       await runtime.query("ROLLBACK").catch(() => {});
       throw error;
     } finally { await runtime.end(); }
+    server = await startServer(serverEnv);
 
     const latePayment = await payment(pid);
     assert.equal(latePayment.status, "expired");
