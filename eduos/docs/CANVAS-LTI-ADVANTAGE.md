@@ -41,7 +41,7 @@ Canvas LMS is a supported educational-software integration through the district-
 - [x] Add a tenant-scoped PostgreSQL replay ledger and atomic consume function; the runtime role can call only the function, not read or mutate the ledger directly.
 - [x] Wire atomic replay consumption into the OIDC authorization transaction; reject duplicate launches across processes/restarts.
 - [ ] Persist and validate OIDC state/nonce across the complete browser round trip; the current authorization route requires non-empty values and signs the supplied nonce into the ID token, but does not yet provide durable pre-auth state/nonce correlation.
-- Add strict OIDC request validation and key rotation.
+- Add strict OIDC request validation and key rotation. Keep LTI deployment ID in the signed LTI claim; it is not a standard OIDC authorization-request parameter.
 - Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
 - Add unit, route, multi-tenant, replay, and negative-security tests.
 
@@ -79,4 +79,4 @@ Canvas LMS is a supported educational-software integration through the district-
 
 ## Current limitations
 
-This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, deployment, target-link, redirect, state, and nonce request checks. It still does not claim durable pre-auth state/nonce correlation, NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, target-link, exact redirect, state, and nonce request checks; the deployment ID is emitted in the signed LTI claim rather than incorrectly required as an OIDC authorization parameter. It still does not claim durable pre-auth state/nonce correlation, NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
