@@ -173,7 +173,7 @@ export async function issueWebhookEndpoint(c, req, processor) {
   await audit(c, req, "provider_webhook_endpoint_issued", "commerce_webhook_endpoint", inserted.id,
     `processor=${processor};rotation=true`);
   const origin = String(config.publicOrigin).replace(/\/+$/, "");
-  return { processor, webhookUrl: `${origin}/api/commerce/webhooks/${processor}/${token}`, token, createdAt: inserted.created_at,
+  return { processor, webhookUrl: `${origin}/api/commerce/webhooks/${processor}/${token}`, createdAt: inserted.created_at,
     notice: "Copy this URL now. The token is shown only once; rotating it immediately invalidates the previous URL." };
 }
 
