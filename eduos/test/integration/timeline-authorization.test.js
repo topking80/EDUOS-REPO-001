@@ -18,23 +18,26 @@ const ENTRY = {
 
 describe("37.10.0 Timeline authorization foundation / RLS", { skip }, () => {
   let db, idp, admin, app;
-  const context = async ({ district = ID.d1, role, user, school = ID.s1 }, sql, params = []) => {
+  const context = async ({ district = ID.d1, role, user, school = ID.s1 }, sql, params = [], commit = false) => {
     await app.query("BEGIN");
+    let committed = false;
     try {
       await app.query(
         "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id',$4,true)",
         [district, user, role, school ?? ""]
       );
-      return (await app.query(sql, params)).rows;
+      const rows = (await app.query(sql, params)).rows;
+      if (commit) { await app.query("COMMIT"); committed = true; }
+      return rows;
     } finally {
-      await app.query("ROLLBACK");
+      if (!committed) await app.query("ROLLBACK");
     }
   };
   const insert = async (actor, id, visibility, courseId = null) => context(actor,
     `INSERT INTO timeline_entries(id,district_id,school_id,student_id,course_id,created_by,entry_type,title,body,visibility,occurred_at)
      VALUES($1,$2,$3,$4,$5,$6,'reflection','A private timeline note','Test content not emitted in audit data',$7,now())
      RETURNING id`,
-    [id, ID.d1, ID.s1, ID.alice, courseId, actor.user, visibility]
+    [id, ID.d1, ID.s1, ID.alice, courseId, actor.user, visibility], true
   );
   const ids = async actor => (await context(actor,
     "SELECT id FROM timeline_entries ORDER BY id"
