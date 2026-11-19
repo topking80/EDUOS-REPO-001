@@ -116,7 +116,8 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     server = await startServer(serverEnv);
     // How many EduOS transactions are open while the mock answers a processor call.
     mock.st.probe = async () => (await admin.query(`SELECT count(*)::int AS n FROM pg_stat_activity
-       WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend' AND xact_start IS NOT NULL`)).rows[0].n;
+       WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'
+         AND xact_start IS NOT NULL AND usename=$1 AND application_name='eduos-api'`, [db.names.app])).rows[0].n;
     for (const name of ["supt1", "supt2", "p1", "t1", "pa", "pu", "it1"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     const act = await as("p1")("POST", "/api/activities", { kind: "sport", title: "Owls Basketball", status: "published" });
     const ev = await as("p1")("POST", `/api/activities/${act.body.data.id}/events`, { title: "Home opener", startsAt: future(48), endsAt: future(50), venue: "Gym", publish: true });
