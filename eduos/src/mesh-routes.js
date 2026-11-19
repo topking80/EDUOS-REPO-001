@@ -501,6 +501,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     if (!p || typeof p !== "object" || Array.isArray(p) ||
         Object.keys(p).some(name => !allowedParameters.has(name)) ||
         (p.prompt !== undefined && p.prompt !== "none") ||
+        typeof p.iss !== "string" || p.iss !== issuer ||
         p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" ||
         typeof p.nonce !== "string" || p.nonce.length < 1 || p.nonce.length > 256 ||
         typeof p.state !== "string" || p.state.length < 1 || p.state.length > 2048 ||
