@@ -84,7 +84,7 @@ export function consumeHint(launchId, now = Date.now()) {
 
 /** A stable per-app pseudonymous subject so tools cannot correlate users across apps. */
 export function pairwiseSub(key, appId, userId) {
-  return crypto.createHmac("sha256", key.hintKey).update(`sub\0${appId}\0${userId}`).digest("base64url").slice(0, 32);
+  return crypto.createHmac("sha256", key.subjectKey || key.hintKey).update(`sub\0${appId}\0${userId}`).digest("base64url").slice(0, 32);
 }
 
 // LTI Core currently supports only no identity or basic identity claims.
