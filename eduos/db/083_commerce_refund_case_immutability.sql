@@ -51,17 +51,18 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1
+  IF (
+    SELECT count(*)
       FROM public.audit_events a
      WHERE a.district_id = NEW.district_id
        AND a.actor_user_id = NEW.resolved_by
        AND a.action = 'late_capture_refund_resolved'
        AND a.resource_type = 'commerce_webhook_refund_case'
        AND a.resource_id = NEW.id::text
-       AND a.detail LIKE ('%payment=' || NEW.payment_id::text || ';resolution=%')
-  ) THEN
-    RAISE EXCEPTION 'refund_case_resolution_audit_required' USING ERRCODE = '23514';
+       AND a.outcome = 'success'
+       AND a.detail = ('payment=' || NEW.payment_id::text || ';resolution=' || left(NEW.resolution_note, 500))
+  ) <> 1 THEN
+    RAISE EXCEPTION 'refund_case_requires_exactly_one_matching_audit_event' USING ERRCODE = '23514';
   END IF;
   RETURN NULL;
 END;
