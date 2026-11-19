@@ -21,6 +21,22 @@ test("LTI platform key accepts RSA and publishes a matching RS256 JWKS key", () 
   assert.throws(() => loadPlatformKey("not a PEM key"));
 });
 
+
+test("LTI signing-key rotation publishes the prior public key and preserves pairwise subjects", () => {
+  const oldPem = privatePem();
+  const newPem = privatePem();
+  const subjectSecret = "stable-district-controlled-subject-secret-32+";
+  const oldKey = loadPlatformKey(oldPem, "", subjectSecret);
+  const rotated = loadPlatformKey(newPem, oldPem, subjectSecret);
+  assert.equal(rotated.jwks.keys.length, 2);
+  assert.equal(rotated.jwks.keys[0].kid, rotated.kid);
+  assert.equal(rotated.jwks.keys[1].kid, oldKey.kid);
+  assert.notEqual(rotated.kid, oldKey.kid);
+  assert.equal(pairwiseSub(oldKey, "tool-a", "user-1"), pairwiseSub(rotated, "tool-a", "user-1"));
+  assert.throws(() => loadPlatformKey(newPem, newPem, subjectSecret), /must differ/);
+  assert.throws(() => loadPlatformKey(newPem, "", "short"), /at least 32 bytes/);
+});
+
 test("launch hints are signed, expiring, bounded and tamper evident", () => {
   const key = loadPlatformKey(privatePem());
   const hint = makeHint(key, { launchId: "launch-1", districtId: "district-1" }, 1000);
