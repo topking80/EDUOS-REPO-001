@@ -29,7 +29,7 @@ async function startMock() {
     const send = (code, obj) => { if (!res.destroyed) { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); } };
     const u = new URL(req.url, "http://x"), p = u.pathname, auth = req.headers.authorization || "";
     st.calls.push({ method: req.method, path: p, query: u.search, auth: auth.split(" ")[0], body: raw, requestId: req.headers["paypal-request-id"] || null });
-    if (st.probe) st.probes.push({ method: req.method, path: p, open: await st.probe() });
+    if (st.probe) st.probes.push({ method: req.method, path: p, query: u.search, orderId: u.searchParams.get("orderId") || body?.metadata?.orderId || null, open: await st.probe() });
     if (st.gate && st.gate.re.test(`${req.method} ${p}`)) { const g = st.gate; st.gate = null; g.arrived(); await g.released; }
     if (st.failNext && st.failNext.test(`${req.method} ${p}`)) { st.failNext = null; return send(500, { name: "INTERNAL_SERVER_ERROR" }); }
     const id = pre => `${pre}${String(++st.n).padStart(8, "0")}`;
@@ -804,6 +804,34 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await as("supt1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
       resolutionNote: "Duplicate resolution must not overwrite the original."
     })).status, 404, "a resolved case cannot be resolved a second time");
+
+    // Database-level guard: even a privileged application connection cannot
+    // reopen a resolved obligation or rewrite its operator attestation.
+    const guardClient = new pg.Client(db.appUrl);
+    await guardClient.connect();
+    try {
+      await guardClient.query("BEGIN");
+      await guardClient.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [ID.d1, USERS.supt1[0], "superintendent"]
+      );
+      await guardClient.query("SAVEPOINT refund_reopen_guard");
+      await assert.rejects(
+        guardClient.query("UPDATE commerce_webhook_refund_cases SET status='open',resolved_at=NULL,resolved_by=NULL,resolution_note=NULL WHERE id=$1", [caseId]),
+        error => error.code === "23514"
+      );
+      await guardClient.query("ROLLBACK TO SAVEPOINT refund_reopen_guard");
+      await guardClient.query("SAVEPOINT refund_note_guard");
+      await assert.rejects(
+        guardClient.query("UPDATE commerce_webhook_refund_cases SET resolution_note='Altered refund attestation.' WHERE id=$1", [caseId]),
+        error => error.code === "23514"
+      );
+      await guardClient.query("ROLLBACK TO SAVEPOINT refund_note_guard");
+      await guardClient.query("ROLLBACK");
+    } catch (error) {
+      await guardClient.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally { await guardClient.end(); }
   });
 
   it("moves the twentieth failed webhook attempt to a terminal dead letter", async () => {
@@ -1248,11 +1276,15 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await as("supt1")("POST", "/api/commerce/providers/btcpay/test", {})).body.data.detail, "store_ok");
     const btc = await buy("pa", "btcprobe", "bitcoin");
     assert.equal(btc.status, 201, JSON.stringify(btc.body));
-    const open = mock.st.probes.filter(p => p.open > 0);
-    assert.deepEqual(open, [], "every processor call ran with no EduOS transaction open");
-    const seen = mock.st.probes.map(p => `${p.method} ${p.path.replace(/[A-Z]+\d{6,}/g, ":id").replace(/\/[A-Z0-9]{17,}\//g, "/:id/")}`);
-    for (const call of ["GET /btcpay/api/v1/stores/STORE12345", "GET /btcpay/api/v1/stores/STORE12345/invoices",
-      "POST /btcpay/api/v1/stores/STORE12345/invoices"]) {
+    const paymentId = btc.body.data.payment.id;
+    // The shared mock server also receives calls from concurrently running
+    // integration suites. Scope this assertion to this checkout's BTCPay
+    // orderId so another suite's unrelated open transaction cannot fail it.
+    const ownCalls = mock.st.probes.filter(p => p.orderId === paymentId);
+    const open = ownCalls.filter(p => p.open > 0);
+    assert.deepEqual(open, [], "this checkout's BTCPay calls ran with no EduOS transaction open");
+    const seen = ownCalls.map(p => `${p.method} ${p.path}`);
+    for (const call of ["GET /btcpay/api/v1/stores/STORE12345/invoices", "POST /btcpay/api/v1/stores/STORE12345/invoices"]) {
       assert.ok(seen.includes(call), `covered: ${call} (seen ${[...new Set(seen)].join(", ")})`);
     }
   });
