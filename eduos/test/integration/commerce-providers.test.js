@@ -1169,6 +1169,11 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     }
     const runtime = new pg.Client(db.appUrl);
     await runtime.connect();
+    // The server's periodic reconciler is an independent worker. Stop this
+    // test server while manually claiming inbox rows so the test owns the
+    // entire claim/settlement sequence; restart it in finally for later tests.
+    await server.stop();
+    server = null;
     const outcomes = [];
     try {
       for (let i = 0; i < eventIds.length; i++) {
@@ -1225,7 +1230,10 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
           throw error;
         }
       }
-    } finally { await runtime.end(); }
+    } finally {
+      await runtime.end();
+      server = await startServer(serverEnv);
+    }
 
     assert.deepEqual(outcomes, ["applied", "ignored:payment_not_awaiting_confirmation"]);
     assert.equal((await payment(pid)).status, "succeeded");
@@ -1260,6 +1268,11 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(p.status, "requires_confirmation");
     assert.ok(p.provider_ref);
 
+    // This test inspects an unclaimed inbox event; pause the independent
+    // periodic worker until its intake/idempotency assertions are complete.
+    await server.stop();
+    server = null;
+    try {
     // The raw endpoint credential is never stored; only its digest is.
     const token = "a".repeat(64);
     const tokenHash = createHash("sha256").update(token, "utf8").digest("hex");
@@ -1296,6 +1309,9 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(saved.rows.length, 1);
     assert.deepEqual([saved.rows[0].n, saved.rows[0].state, saved.rows[0].payload_sha256], [1, "received", payloadHash]);
     assert.equal((await payment(pid)).status, "requires_confirmation", "intake never settles a payment");
+    } finally {
+      server = await startServer(serverEnv);
+    }
   });
 
   it("no database transaction is open while any processor is called (pg_stat_activity)", async () => {
