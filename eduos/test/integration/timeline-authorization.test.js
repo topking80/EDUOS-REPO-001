@@ -166,7 +166,7 @@ describe("37.10.0 Timeline authorization foundation / RLS", { skip }, () => {
     assert.deepEqual(await ids({ role: "parent", user: USERS.pa[0] }), [],
       "revoked guardian cannot read even entries they originally authored");
     await admin.query(
-      "UPDATE memberships SET status='disabled' WHERE district_id=$1 AND user_id=$2 AND role='principal' AND school_id=$3",
+      "UPDATE memberships SET status='suspended' WHERE district_id=$1 AND user_id=$2 AND role='principal' AND school_id=$3",
       [ID.d1, USERS.p1[0], ID.s1]
     );
     assert.deepEqual(await ids({ role: "principal", user: USERS.p1[0] }), [],
