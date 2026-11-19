@@ -22,8 +22,8 @@ CREATE TABLE timeline_entries (
   FOREIGN KEY(district_id,school_id) REFERENCES schools(district_id,id),
   FOREIGN KEY(district_id,student_id) REFERENCES students(district_id,id),
   FOREIGN KEY(district_id,course_id) REFERENCES courses(district_id,id),
-  CHECK((visibility='classroom') = (course_id IS NOT NULL)),
- );
+  CHECK((visibility='classroom') = (course_id IS NOT NULL))
+);
 
 CREATE INDEX timeline_entries_student_time
   ON timeline_entries(district_id,school_id,student_id,occurred_at DESC,id DESC);
