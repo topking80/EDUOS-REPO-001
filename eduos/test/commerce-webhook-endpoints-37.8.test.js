@@ -41,6 +41,8 @@ test("district endpoint issuance uses high-entropy one-time tokens and persists 
   assert.match(setup, /randomBytes\(32\)\.toString\("hex"\)/);
   assert.match(setup, /createHash\("sha256"\)\.update\(token, "utf8"\)\.digest\("hex"\)/);
   assert.match(setup, /token_sha256,created_by/);
+  assert.match(setup, /return \{ processor, webhookUrl: `\$\{origin\}\/api\/commerce\/webhooks\/\$\{processor\}\/\$\{token\}`, createdAt:/);
+  assert.doesNotMatch(setup, /return \{[^\n]*\btoken\s*,/);
   assert.doesNotMatch(setup, /INSERT INTO commerce_webhook_endpoints[^;]*\btoken\b/i);
   assert.match(setup, /UPDATE commerce_webhook_endpoints SET active=false, revoked_at=now\(\)/);
 });
