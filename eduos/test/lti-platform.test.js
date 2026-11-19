@@ -34,6 +34,7 @@ test("LTI signing-key rotation publishes the prior public key and preserves pair
   assert.notEqual(rotated.kid, oldKey.kid);
   assert.equal(pairwiseSub(oldKey, "tool-a", "user-1"), pairwiseSub(rotated, "tool-a", "user-1"));
   assert.throws(() => loadPlatformKey(newPem, newPem, subjectSecret), /must differ/);
+  assert.throws(() => loadPlatformKey(newPem, oldPem), /SUBJECT_KEY is required/);
   assert.throws(() => loadPlatformKey(newPem, "", "short"), /at least 32 bytes/);
 });
 
