@@ -274,7 +274,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     // Prototype-sensitive and arbitrary form keys must be rejected before
     // request fields are materialized into an object.
     for (const key of ["__proto__", "constructor", "prototype", "unsupported_extension"]) {
-      const hostile = await fetch(authorize.replace(/^http/, "http"), {
+      const hostile = await fetch(authorize, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ [key]: "unexpected" }).toString()
