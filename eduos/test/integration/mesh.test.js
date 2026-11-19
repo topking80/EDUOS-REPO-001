@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { loadPlatformKey, signJwt } from "../../src/lti.js";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
@@ -23,9 +24,13 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     sink = http.createServer((req, res) => { let b = ""; req.on("data", d => b += d); req.on("end", () => { try { hooks.push(JSON.parse(b)); } catch {} res.end("ok"); }); });
     await new Promise(r => sink.listen(0, "127.0.0.1", r));
     const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const { privateKey: previousPrivateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const subjectSecret = "integration-test-stable-lti-subject-key-32-bytes";
     const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app,
       WEBHOOK_SIGNING_KEY: "w".repeat(40), WEBHOOK_ALLOW_INSECURE_LOOPBACK: "true",
-      LTI_PLATFORM_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }) });
+      LTI_PLATFORM_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }),
+      LTI_PLATFORM_PRIVATE_KEY_PREVIOUS: previousPrivateKey.export({ type: "pkcs8", format: "pem" }),
+      LTI_PLATFORM_SUBJECT_KEY: subjectSecret });
     const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
@@ -218,6 +223,14 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.match(page.headers.get("content-security-policy"), new RegExp(`form-action ${base.replace(/[.:/]/g, "\\$&")}`));
     const { payload, protectedHeader } = await jwtVerify(token, createRemoteJWKSet(new URL(`${server.base}/.well-known/jwks.json`)), { issuer: "http://localhost", audience: "tool-client" });
     assert.equal(protectedHeader.alg, "RS256"); assert.equal(payload.nonce, "n-1");
+    const jwksResponse = await fetch(`${server.base}/.well-known/jwks.json`);
+    const publishedJwks = await jwksResponse.json();
+    assert.equal(publishedJwks.keys.length, 2, "JWKS publishes active and previous verification keys");
+    assert.equal(protectedHeader.kid, publishedJwks.keys[0].kid, "new tokens use the active key");
+    const previousKey = loadPlatformKey(previousPrivateKey.export({ type: "pkcs8", format: "pem" }));
+    const previousToken = signJwt(previousKey, { iss: "http://localhost", aud: "tool-client", iat: 1000, exp: 2000, sub: "rotation-check" });
+    const previousVerified = await jwtVerify(previousToken, createRemoteJWKSet(new URL(`${server.base}/.well-known/jwks.json`)), { issuer: "http://localhost", audience: "tool-client", currentDate: new Date(1500 * 1000) });
+    assert.equal(previousVerified.payload.sub, "rotation-check", "relying parties can still verify a token signed by the previous key");
     assert.equal(payload["https://purl.imsglobal.org/spec/lti/claim/deployment_id"], "dep-1");
     assert.deepEqual(payload["https://purl.imsglobal.org/spec/lti/claim/roles"], ["http://purl.imsglobal.org/vocab/lis/v2/membership#Learner"]);
     assert.ok(!payload.name && !payload.email && !payload["https://purl.imsglobal.org/spec/lti/claim/context"], "scope 'none' sends no name, email or school");
