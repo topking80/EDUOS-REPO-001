@@ -480,8 +480,11 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     const p = { ...(req.query || {}), ...(typeof req.body === "object" && req.body ? req.body : {}) };
     const deny = (status, error) => res.status(status).type("text/plain").send(`LTI launch refused: ${error}`);
     if (!ltiKey) return deny(503, "lti_not_configured");
-    if (p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" || typeof p.nonce !== "string" || p.nonce.length > 256 ||
-        typeof p.redirect_uri !== "string" || typeof p.client_id !== "string" || (p.state !== undefined && (typeof p.state !== "string" || p.state.length > 2048)))
+    if (p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" ||
+        typeof p.nonce !== "string" || p.nonce.length < 1 || p.nonce.length > 256 ||
+        typeof p.state !== "string" || p.state.length < 1 || p.state.length > 2048 ||
+        typeof p.redirect_uri !== "string" || typeof p.client_id !== "string" ||
+        typeof p.lti_deployment_id !== "string" || typeof p.target_link_uri !== "string")
       return deny(400, "invalid_request");
     const hint = readHint(ltiKey, p.lti_message_hint);
     if (!hint || p.login_hint !== hint.l) return deny(400, "invalid_or_expired_launch");
@@ -500,6 +503,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!app || !launch || !user || user.status !== "active") return { error: "launch_not_found", status: 403 };
         const cfg = app.integration_config || {};
         if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
+        if (p.lti_deployment_id !== cfg.deploymentId) return { error: "deployment_mismatch", status: 400 };
+        if (p.target_link_uri !== (cfg.targetLinkUri || app.launch_url)) return { error: "target_link_mismatch", status: 400 };
         if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
         // Claim the launch atomically in the same tenant transaction as the
         // authorization checks. This prevents replay across processes/restarts.
