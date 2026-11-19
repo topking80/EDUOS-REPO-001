@@ -990,7 +990,22 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const runtime = new pg.Client(db.appUrl);
     await runtime.connect();
     try {
-      const first = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      const claimResult = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+      const first = claimResult.rows[0].event;
+      if (!first) {
+        const diagnostic = await admin.query(`
+          SELECT e.id,e.provider_event_id,e.state,e.attempts,e.claimed_at,e.provider_ref,
+                 p.status AS payment_status,(p.payer_actor IS NOT NULL) AS has_payer_actor,
+                 (p.payer_actor IS NOT NULL AND e.provider_ref IS NOT NULL AND e.attempts < 20
+                   AND (e.state IN ('received','failed')
+                     OR (e.state='processing' AND (e.claimed_at IS NULL OR e.claimed_at < now()-interval '5 minutes')))) AS claimable
+            FROM commerce_webhook_events e
+            JOIN commerce_payments p ON p.district_id=e.district_id AND p.id=e.payment_id
+           WHERE e.state IN ('received','failed','processing')
+           ORDER BY e.received_at,e.id
+        `);
+        assert.ok(first, `claim returned null; webhook queue at failure: ${JSON.stringify(diagnostic.rows)}`);
+      }
       assert.equal(first.attempts, 1);
       await runtime.query("BEGIN");
       await runtime.query(
