@@ -24,7 +24,7 @@ Canvas LMS is a supported educational-software integration through the district-
 1. Integrations are disabled by default. A superintendent or IT administrator may configure one; a different authorized district administrator must approve it.
 2. Every configuration, redirect URI, deployment ID, scope, course mapping, data-sharing setting, and credential change invalidates prior approval and requires re-approval.
 3. Enforce tenant and school isolation server-side on every launch, roster, grade, line-item, and deep-link operation. Never trust client-supplied district, school, course, role, or learner identifiers.
-4. Use least-privilege OAuth scopes. NRPS and AGS are independently disabled by default; identity-only launches must not silently grant roster or grade access.
+4. Use least-privilege OAuth scopes. The current LTI Core slice permits only `none` and `identity`; roster, grade, and attendance scopes are rejected until separately governed NRPS/AGS services exist. School IDs/names are not emitted as course context. NRPS and AGS remain independently disabled by default.
 5. Do not expose family, attendance, wellbeing, discipline, transportation, payment, or unrelated SIS data through LTI claims or services.
 6. Use pairwise pseudonymous subjects per tool; send only the identity attributes explicitly authorized by the district and allowed by the integration's approved scope.
 7. Encrypt secrets at rest; never log tokens, private keys, authorization codes, grade payloads, or student PII. Return `Cache-Control: no-store` for protocol responses.
@@ -42,6 +42,7 @@ Canvas LMS is a supported educational-software integration through the district-
 - [x] Wire atomic replay consumption into the OIDC authorization transaction; reject duplicate launches across processes/restarts.
 - [x] Preserve the tool-generated OIDC `state` in the authorization response and include the tool-generated `nonce` in the signed ID token. The tool (as the OIDC relying party) is responsible for checking its returned state and token nonce against the values it created; the platform must not invent a second state/nonce correlation record for this platform-side flow.
 - [x] Require the configured platform issuer and `prompt=none` on the OIDC authorization request, in addition to the existing response type/mode, scope, state, nonce, client, target-link, and redirect checks.
+- [x] Restrict LTI Core claims to `none` and `identity`; reject unsupported roster, grade, and attendance scopes and do not misrepresent a school as an LTI course context.
 - [ ] Complete remaining strict OIDC request validation and signing-key rotation. Keep LTI deployment ID in the signed LTI claim; it is not a standard OIDC authorization-request parameter.
 - Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
 - Add unit, route, multi-tenant, replay, and negative-security tests.
