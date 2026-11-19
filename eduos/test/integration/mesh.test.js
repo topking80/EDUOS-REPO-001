@@ -216,6 +216,24 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.equal(launch.status, 200, JSON.stringify(launch.body));
     const login1 = await fetch(launch.body.data.url, { redirect: "manual" });
     const authorize = login1.headers.get("location");
+    // Executable OIDC negative cases: reject malformed protocol parameters
+    // before consuming the valid one-time launch hint.
+    for (const [name, value] of [
+      ["scope", "openid profile"], ["response_type", "code"], ["response_mode", "query"],
+      ["prompt", "login"], ["client_id", "another-client"], ["nonce", ""], ["state", ""],
+      ["redirect_uri", "https://evil.example/callback"]
+    ]) {
+      const invalid = new URL(authorize);
+      invalid.searchParams.set(name, value);
+      const denied = await fetch(invalid);
+      assert.equal(denied.status, 400, `OIDC rejects ${name}=${value}`);
+      assert.match(await denied.text(), /LTI launch refused/);
+    }
+    for (const name of ["scope", "response_type", "response_mode", "nonce", "state", "redirect_uri", "client_id"]) {
+      const missing = new URL(authorize);
+      missing.searchParams.delete(name);
+      assert.equal((await fetch(missing)).status, 400, `OIDC requires ${name}`);
+    }
     const page = await fetch(authorize);
     assert.equal(page.status, 200);
     const html = await page.text();
