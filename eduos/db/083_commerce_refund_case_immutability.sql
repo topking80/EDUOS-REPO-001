@@ -58,7 +58,7 @@ BEGIN
        AND a.actor_user_id = NEW.resolved_by
        AND a.action = 'late_capture_refund_resolved'
        AND a.resource_type = 'commerce_webhook_refund_case'
-       AND a.resource_id = NEW.id
+       AND a.resource_id = NEW.id::text
        AND a.detail LIKE ('%payment=' || NEW.payment_id::text || ';resolution=%')
   ) THEN
     RAISE EXCEPTION 'refund_case_resolution_audit_required' USING ERRCODE = '23514';
