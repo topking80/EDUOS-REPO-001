@@ -88,6 +88,10 @@ describe("37.10.0 Timeline authorization foundation / RLS", { skip }, () => {
     assert.equal((await insert({ role: "teacher", user: USERS.t1[0] }, ENTRY.teacherEducators, "educators")).length, 1);
     assert.equal((await insert({ role: "teacher", user: USERS.t1[0] }, ENTRY.teacherClassroom, "classroom", COURSE)).length, 1);
     assert.equal((await insert({ role: "principal", user: USERS.p1[0] }, ENTRY.principalSchool, "school")).length, 1);
+    // Drafts remain visible only to their current author until a trusted
+    // publication transition is implemented by the service layer.
+    assert.deepEqual(await ids({ role: "principal", user: USERS.p1[0] }), [ENTRY.principalSchool]);
+    await admin.query("UPDATE timeline_entries SET status='published'");
     await assert.rejects(
       insert({ role: "teacher", user: USERS.t1[0] }, "f1000000-0000-4000-8000-000000000007", "educators"),
       /row-level security|policy/i
