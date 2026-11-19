@@ -44,7 +44,7 @@ Canvas LMS is a supported educational-software integration through the district-
 - [x] Put the platform issuer (`iss`) and `target_link_uri` on the third-party login-initiation request; require an explicitly configured HTTPS target URI and reject legacy/incomplete LTI configurations at launch. Validate the returned login hint, opaque message hint, client ID, and exact registered redirect URI on the OIDC authentication request. Accept omitted `prompt` or `prompt=none` (reject interactive prompts), and require a non-empty state and nonce for this platform flow.
 - [x] Revalidate the exact license whose seat was claimed, live district membership, active app assignment, DPA/learner eligibility, and school status at callback time; a replacement license cannot silently revive a revoked launch.
 - [x] Restrict LTI Core claims to `none` and `identity`; reject unsupported roster, grade, and attendance scopes and do not misrepresent a school as an LTI course context.
-- [ ] Complete remaining strict OIDC request validation and signing-key rotation. Keep LTI deployment ID in the signed LTI claim; it is not a standard OIDC authorization-request parameter.
+- [ ] Complete remaining strict OIDC request validation.\n- [x] Support overlapping active/previous RS256 verification keys through JWKS and preserve pairwise subjects with a stable independent subject HMAC secret. Keep LTI deployment ID in the signed LTI claim; it is not a standard OIDC authorization-request parameter.
 - Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
 - Add unit, route, multi-tenant, replay, and negative-security tests.
 
@@ -82,4 +82,14 @@ Canvas LMS is a supported educational-software integration through the district-
 
 ## Current limitations
 
-This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, target-link, exact redirect, state, and nonce request checks; the deployment ID is emitted in the signed LTI claim rather than incorrectly required as an OIDC authorization parameter. It still does not claim complete OIDC conformance, signing-key rotation, NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, target-link, exact redirect, state, and nonce request checks; the deployment ID is emitted in the signed LTI claim rather than incorrectly required as an OIDC authorization parameter. It still does not claim complete OIDC conformance, NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Signing-key overlap is implemented but must be configured and operationally exercised before production use. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+
+## Signing-key rotation procedure
+
+1. Generate a new RSA private key and set it as `LTI_PLATFORM_PRIVATE_KEY`.
+2. Move the former active PEM to `LTI_PLATFORM_PRIVATE_KEY_PREVIOUS` for the overlap period. EduOS signs with the new key and publishes both public keys in JWKS.
+3. Set `LTI_PLATFORM_SUBJECT_KEY` to a district-managed random secret of at least 32 bytes. Keep this value unchanged across signing-key rotations; it stabilizes pairwise `sub` values. Protect it like a credential and back it up securely.
+4. Allow relying parties to refresh JWKS and retain the previous key for at least the maximum ID-token lifetime plus the JWKS cache lifetime (currently 5 minutes each); verify relying-party key refresh behavior before removing the previous key.
+5. Remove `LTI_PLATFORM_PRIVATE_KEY_PREVIOUS` only after the overlap period. Never reuse a retired private key.
+
+Changing the active signing key invalidates outstanding launch hints because their MAC key is derived from the active private key; users must initiate a fresh launch. If no stable subject secret is configured, the implementation falls back to the active-key-derived secret for backward compatibility, so pairwise subjects change on rotation. Production deployments must set and preserve `LTI_PLATFORM_SUBJECT_KEY`.
