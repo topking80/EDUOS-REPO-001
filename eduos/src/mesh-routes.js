@@ -491,11 +491,21 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     if (req.method === "POST" && Object.keys(query).length) return deny(400, "duplicate_request_parameters");
     const p = req.method === "POST" ? body : query;
     if (!ltiKey) return deny(503, "lti_not_configured");
-    if ((p.prompt !== undefined && p.prompt !== "none") ||
+    // Accept only the LTI/OIDC parameters this endpoint implements. Silently
+    // ignoring extension or misspelled parameters can create divergent
+    // validation between the platform and relying party.
+    const allowedParameters = new Set([
+      "scope", "response_type", "response_mode", "prompt", "client_id",
+      "redirect_uri", "login_hint", "lti_message_hint", "state", "nonce"
+    ]);
+    if (!p || typeof p !== "object" || Array.isArray(p) ||
+        Object.keys(p).some(name => !allowedParameters.has(name)) ||
+        (p.prompt !== undefined && p.prompt !== "none") ||
         p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" ||
         typeof p.nonce !== "string" || p.nonce.length < 1 || p.nonce.length > 256 ||
         typeof p.state !== "string" || p.state.length < 1 || p.state.length > 2048 ||
-        typeof p.redirect_uri !== "string" || typeof p.client_id !== "string")
+        typeof p.redirect_uri !== "string" || typeof p.client_id !== "string" ||
+        typeof p.login_hint !== "string" || typeof p.lti_message_hint !== "string")
       return deny(400, "invalid_request");
     const hint = readHint(ltiKey, p.lti_message_hint);
     if (!hint || p.login_hint !== hint.l) return deny(400, "invalid_or_expired_launch");
