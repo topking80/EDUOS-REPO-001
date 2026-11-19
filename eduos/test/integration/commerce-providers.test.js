@@ -198,6 +198,16 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       await app.query("ROLLBACK");
     } finally { await app.end(); }
 
+    const unauthorizedRevoke = await as("p1")("DELETE", path, {});
+    assert.equal(unauthorizedRevoke.status, 403, "non-provider staff cannot revoke callback credentials");
+    const otherDistrictRevoke = await as("supt2")("DELETE", path, {});
+    assert.equal(otherDistrictRevoke.status, 200, JSON.stringify(otherDistrictRevoke.body));
+    assert.equal(otherDistrictRevoke.body.data.revoked, 0, "a district administrator cannot revoke another district's endpoint");
+    assert.equal((await admin.query(
+      "SELECT active FROM commerce_webhook_endpoints WHERE district_id=$1 AND processor='paypal' AND token_sha256=$2",
+      [ID.d1, firstDigest]
+    )).rows[0].active, true, "cross-district revoke leaves the owning district's credential active");
+
     const rotated = await as("it1")("POST", `${path}/rotate`, {});
     assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
     assert.equal(rotated.headers.get("cache-control"), "no-store");
