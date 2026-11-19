@@ -51,6 +51,7 @@ describe("37.10.0 Timeline authorization foundation / RLS", { skip }, () => {
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
+    await admin.query("SELECT set_config('app.district_id',$1,false)", [ID.d1]);
     await admin.query(
       "INSERT INTO teacher_student_rosters(district_id,school_id,teacher_user_id,student_id,created_by) VALUES($1,$2,$3,$4,$5)",
       [ID.d1, ID.s1, USERS.t1[0], ID.alice, USERS.p1[0]]
