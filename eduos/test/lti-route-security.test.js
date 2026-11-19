@@ -30,3 +30,10 @@ test("LTI authorization rejects an untrusted issuer and interactive prompt", () 
   assert.match(source, /p\.iss !== issuer/);
   assert.match(source, /p\.prompt !== "none"/);
 });
+
+
+test("LTI app registration and updates reject unsupported roster, grade and attendance scopes", () => {
+  assert.match(source, /\["none", "identity"\]\.includes\(b\.dataSharingScope \|\| "none"\)/);
+  assert.match(source, /\["none", "identity"\]\.includes\(nextScope\)/);
+  assert.match(source, /unsupported_lti_data_scope/);
+});
