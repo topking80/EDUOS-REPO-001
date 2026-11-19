@@ -31,7 +31,8 @@ BEGIN
   END IF;
 
   -- Bound ledger growth opportunistically; expired entries cannot block reuse.
-  DELETE FROM lti_launch_replays WHERE expires_at <= now();
+  DELETE FROM lti_launch_replays
+   WHERE district_id = p_district_id AND expires_at <= now();
 
   INSERT INTO lti_launch_replays(district_id, launch_id, expires_at)
   VALUES (p_district_id, p_launch_id, p_expires_at)
