@@ -508,7 +508,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const pid = r.body.data.payment.id;
     [...mock.st.paypal.values()].find(o => o.request.purchase_units[0].reference_id === pid).status = "APPROVED";
     const paid = await as("pa")("POST", `/api/commerce/payments/${pid}/confirm`, {});
-    mock.st.failNext = /\\/refund$/;
+    mock.st.failNext = /\/refund$/;
     const ref = await as("supt1")("POST", `/api/commerce/payments/${pid}/refund`, {});
     assert.equal(ref.status, 200, JSON.stringify(ref.body));
     assert.equal(ref.body.data.status, "pending");
