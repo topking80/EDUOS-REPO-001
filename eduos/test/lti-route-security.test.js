@@ -12,7 +12,7 @@ test("LTI launch validates configuration before claiming a license seat", () => 
 });
 
 test("LTI launch initiation rejects invalid configuration and uses only the configured target URI", () => {
-  assert.match(source, /validLtiConfig\(cfg\)/);
+  assert.match(source, /validLtiConfig\(cfg, \{ allowInsecureLoopback: config\.nodeEnv !== "production" \}\)/);
   assert.match(source, /target_link_uri/);
 });
 
