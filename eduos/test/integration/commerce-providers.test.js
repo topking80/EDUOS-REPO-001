@@ -5,7 +5,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import pg from "pg";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
@@ -351,6 +351,41 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const ref = await as("p1")("POST", `/api/commerce/payments/${card.body.data.payment.id}/refund`, {});
     assert.equal(ref.status, 200, JSON.stringify(ref.body));
     assert.ok(mock.st.calls.some(c => c.path === "/square/v2/refunds" && c.body.includes("SQPAYMENT0001")));
+  });
+
+  it("valid Square signatures enter the public webhook inbox and retries remain idempotent", async () => {
+    const notificationUrl = "https://square.example.org/webhooks/eduos-d1";
+    const signatureKey = "square-webhook-signature-key-integration";
+    const saved = await as("supt1")("PUT", "/api/commerce/providers/square", { enabled: true, config: { locationId: "LOC12345", webhookUrl: notificationUrl }, secrets: { accessToken: SECRETS.square, webhookSignatureKey: signatureKey } });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    const checkout = await buy("pa", "square-webhook-intake", "card");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const paymentId = checkout.body.data.payment.id;
+    const paymentRow = (await admin.query("SELECT provider_ref,amount_cents,currency,status FROM commerce_payments WHERE id=$1", [paymentId])).rows[0];
+    assert.equal(paymentRow.status, "requires_confirmation");
+    const endpoint = await as("it1")("POST", "/api/commerce/providers/square/webhook-endpoint", {});
+    assert.equal(endpoint.status, 201, JSON.stringify(endpoint.body));
+    const token = new URL(endpoint.body.data.webhookUrl).pathname.split("/").at(-1);
+    const event = { id: "sq_evt_signed_intake_0001", type: "payment.updated", event_type: "payment.updated", data: { object: { payment: { id: "SQCAPTURE_SIGNED_0001", order_id: paymentRow.provider_ref, status: "COMPLETED", amount_money: { amount: paymentRow.amount_cents, currency: paymentRow.currency } } } } };
+    const rawBody = JSON.stringify(event);
+    const sign = body => createHmac("sha256", signatureKey).update(notificationUrl + body).digest("base64");
+    const callback = (body, signature) => fetch(server.base + "/api/commerce/webhooks/square/" + token, { method: "POST", headers: { "content-type": "application/json", "x-square-hmacsha256-signature": signature }, body });
+    const accepted = await callback(rawBody, sign(rawBody));
+    assert.equal(accepted.status, 200, await accepted.clone().text());
+    assert.deepEqual(await accepted.json(), { ok: true, data: { outcome: "received" } });
+    const stored = await admin.query("SELECT processor,provider_event_id,event_type,provider_ref,provider_capture_ref,amount_cents,currency,state FROM commerce_webhook_events WHERE provider_event_id=$1", [event.id]);
+    assert.equal(stored.rowCount, 1);
+    assert.deepEqual(Object.values(stored.rows[0]), ["square", event.id, "payment.updated", paymentRow.provider_ref, "SQCAPTURE_SIGNED_0001", paymentRow.amount_cents, paymentRow.currency, "received"]);
+    assert.equal((await admin.query("SELECT status FROM commerce_payments WHERE id=$1", [paymentId])).rows[0].status, "requires_confirmation");
+    const duplicate = await callback(rawBody, sign(rawBody));
+    assert.equal(duplicate.status, 200, await duplicate.clone().text());
+    assert.deepEqual(await duplicate.json(), { ok: true, data: { outcome: "duplicate" } });
+    const altered = { ...event, data: { object: { payment: { ...event.data.object.payment, amount_money: { amount: paymentRow.amount_cents - 1, currency: paymentRow.currency } } } } };
+    const alteredBody = JSON.stringify(altered);
+    const conflict = await callback(alteredBody, sign(alteredBody));
+    assert.equal(conflict.status, 200, await conflict.clone().text());
+    assert.deepEqual(await conflict.json(), { ok: true, data: { outcome: "event_id_conflict" } });
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_webhook_events WHERE processor=$1 AND provider_event_id=$2", ["square", event.id])).rows[0].n, 1);
   });
 
   it("Bitcoin through BTCPay Server: invoice, settlement, and a refund recorded as paid in dollars", async () => {
