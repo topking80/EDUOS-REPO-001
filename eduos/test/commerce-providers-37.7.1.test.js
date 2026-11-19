@@ -120,11 +120,12 @@ test("PayPal webhooks: verified through PayPal's verify-webhook-signature API, n
 
 test("Square adapter: payment link (Cash App Pay opted in only for Cash App), order check, refund", async () => {
   const order = { state: "OPEN", total_money: { amount: 1000, currency: "USD" }, net_amount_due_money: { amount: 1000, currency: "USD" }, tenders: [] };
+  const refund = { id: "RF1", status: "COMPLETED" };
   const t = mockTransport([
     [/^GET https:\/\/connect\.squareupsandbox\.com\/v2\/locations\/L1234567$/, (_m, o) => o.headers["square-version"] === SQUARE_VERSION && o.headers.authorization === "Bearer tok" ? [200, { location: { status: "ACTIVE" } }] : [401, {}]],
     [/^POST .*\/v2\/online-checkout\/payment-links$/, () => [200, { payment_link: { id: "PL1", order_id: "SQO123456", url: "https://sandbox.square.link/u/x" } }]],
     [/^GET .*\/v2\/orders\/SQO123456$/, () => [200, { order }]],
-    [/^POST .*\/v2\/refunds$/, () => [200, { refund: { id: "RF1", status: "PENDING" } }]]
+    [/^POST .*\/v2\/refunds$/, () => [200, { refund } }]
   ]);
   const a = squareAdapter({ mode: "test", accessToken: "tok", locationId: "L1234567", fee: { bps: 290, fixedCents: 30 }, transport: t, base: "https://connect.squareupsandbox.com", allowedHosts: ["connect.squareupsandbox.com"] });
   assert.deepEqual(await a.testConnection(), { ok: true, detail: "location_active" });
@@ -140,7 +141,11 @@ test("Square adapter: payment link (Cash App Pay opted in only for Cash App), or
   await assert.rejects(a.confirmPayment("SQO123456", { amountCents: 999, currency: "USD" }), e => e.code === "provider_amount_mismatch");
   order.state = "CANCELED";
   assert.deepEqual(await a.confirmPayment("SQO123456", { amountCents: 1000, currency: "USD" }), { status: "declined", declineCode: "square_order_canceled" });
-  assert.deepEqual(await a.refundPayment("SQO123456", 1000, { captureRef: "PAY1" }), { status: "refunded", refundRef: "RF1" });
+  assert.deepEqual(await a.refundPayment("SQO123456", 1000, { captureRef: "PAY1" }), { status: "refunded", refundRef: "RF1" },
+    "only Square's COMPLETED state is a final refund");
+  refund.status = "PENDING";
+  assert.deepEqual(await a.refundPayment("SQO123456", 1000, { captureRef: "PAY1" }), { status: "pending", refundRef: "RF1" },
+    "Square's PENDING state must remain reconcilable");
   assert.deepEqual(JSON.parse(t.calls.at(-1).body).amount_money, { amount: 1000, currency: "USD" });
 });
 
