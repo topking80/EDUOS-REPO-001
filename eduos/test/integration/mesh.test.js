@@ -258,6 +258,19 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.equal((await fetch(evil)).status, 400);
     const forged = new URL(authorize); forged.searchParams.set("lti_message_hint", forged.searchParams.get("lti_message_hint").replace(/^(.{10})(.)/, (_, a, c) => a + (c === "A" ? "B" : "A")));
     assert.equal((await fetch(forged)).status, 400);
+
+    // Reject OIDC parameter pollution across query and form transports.
+    const pollutionLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    assert.equal(pollutionLaunch.status, 200);
+    const pollutionInit = await fetch(pollutionLaunch.body.data.url, { redirect: "manual" });
+    const pollutionAuthorize = new URL(pollutionInit.headers.get("location"));
+    const pollutionForm = new URLSearchParams(pollutionAuthorize.searchParams);
+    const polluted = await fetch(`${server.base}/lti/authorize?scope=openid`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: pollutionForm
+    });
+    assert.equal(polluted.status, 400);
+    assert.match(await polluted.text(), /duplicate_request_parameters/);
+
     // Revocation-window regression tests: each scenario gets a fresh launch
     // hint, then changes authoritative PostgreSQL state before the callback.
     // Restore fixture state in finally so one assertion cannot poison later cases.
