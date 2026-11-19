@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import {
-  loadPlatformKey, makeHint, readHint, consumeHint, pairwiseSub,
+  loadPlatformKey, assertPlatformRsaKey, makeHint, readHint, consumeHint, pairwiseSub,
   launchClaims, validLtiConfig
 } from "../src/lti.js";
 
@@ -11,6 +11,12 @@ const privatePem = () => crypto.generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" },
   privateKeyEncoding: { type: "pkcs8", format: "pem" }
 }).privateKey;
+
+test("LTI signing-key policy rejects non-RSA and sub-2048-bit key metadata", () => {
+  assert.throws(() => assertPlatformRsaKey({ asymmetricKeyType: "ec", asymmetricKeyDetails: {} }), /must be RSA/);
+  assert.throws(() => assertPlatformRsaKey({ asymmetricKeyType: "rsa", asymmetricKeyDetails: { modulusLength: 1024 } }), /at least 2048 bits/);
+  assert.doesNotThrow(() => assertPlatformRsaKey({ asymmetricKeyType: "rsa", asymmetricKeyDetails: { modulusLength: 2048 } }));
+});
 
 test("LTI platform key accepts RSA and publishes a matching RS256 JWKS key", () => {
   const key = loadPlatformKey(privatePem());
