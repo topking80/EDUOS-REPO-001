@@ -221,7 +221,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     for (const [name, value] of [
       ["scope", "openid profile"], ["response_type", "code"], ["response_mode", "query"],
       ["prompt", "login"], ["client_id", "another-client"], ["nonce", ""], ["state", ""],
-      ["redirect_uri", "https://evil.example/callback"]
+      ["redirect_uri", "https://evil.example/callback"], ["unsupported_extension", "unexpected"]
     ]) {
       const invalid = new URL(authorize);
       invalid.searchParams.set(name, value);
