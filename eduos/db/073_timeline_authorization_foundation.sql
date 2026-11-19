@@ -44,7 +44,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
     p_district = eduos_ctx_district()
     AND EXISTS (
       SELECT 1 FROM memberships m
-      JOIN schools sc ON sc.id=p_school AND sc.district_id=m.district_id AND sc.status='active'
+      JOIN schools sc ON sc.id=p_school AND sc.district_id=m.district_id
       WHERE m.district_id=p_district AND m.user_id=eduos_ctx_user()
         AND m.role=eduos_ctx_role() AND m.school_id IS NOT DISTINCT FROM eduos_ctx_school()
         AND m.status='active'
