@@ -558,7 +558,12 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     } catch (e) { next(e); }
   };
   app.get("/lti/authorize", ltiAuthorize);
-  app.post("/lti/authorize", (req, res, next) => (req.is("application/x-www-form-urlencoded") ? expressUrlencoded(req, res, () => ltiAuthorize(req, res, next)) : ltiAuthorize(req, res, next)));
+  app.post("/lti/authorize", (req, res, next) => {
+    // LTI response_mode=form_post requires an URL-encoded form body. Do not
+    // accept JSON or other parsers' output as an alternate OIDC transport.
+    if (!req.is("application/x-www-form-urlencoded")) return res.status(415).type("text/plain").send("LTI launch refused: unsupported_content_type");
+    return expressUrlencoded(req, res, () => ltiAuthorize(req, res, next));
+  });
   app.get("/.well-known/jwks.json", (_req, res) => { res.setHeader("Cache-Control", "public, max-age=300"); res.json(ltiKey ? ltiKey.jwks : { keys: [] }); });
 
   // ---- requests (principal/teacher -> district) ----
