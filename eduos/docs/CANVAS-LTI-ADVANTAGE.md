@@ -44,7 +44,7 @@ Canvas LMS is a supported educational-software integration through the district-
 - [x] Put the platform issuer (`iss`) and `target_link_uri` on the third-party login-initiation request; require an explicitly configured HTTPS target URI and reject legacy/incomplete LTI configurations at launch. Validate the returned login hint, opaque message hint, client ID, and exact registered redirect URI on the OIDC authentication request. Accept omitted `prompt` or `prompt=none` (reject interactive prompts), and require a non-empty state and nonce for this platform flow.
 - [x] Revalidate the exact license whose seat was claimed, live district membership, active app assignment, DPA/learner eligibility, and school status at callback time; a replacement license cannot silently revive a revoked launch.
 - [x] Restrict LTI Core claims to `none` and `identity`; reject unsupported roster, grade, and attendance scopes and do not misrepresent a school as an LTI course context.
-- [ ] Complete remaining strict OIDC request validation.\n- [x] Support overlapping active/previous RS256 verification keys through JWKS and preserve pairwise subjects with a stable independent subject HMAC secret. Keep LTI deployment ID in the signed LTI claim; it is not a standard OIDC authorization-request parameter.
+- [x] Complete strict OIDC request validation: require scalar protocol parameters, reject unknown parameters, enforce supported response/scope/prompt values, and bind the login hint, signed message hint, client ID, and exact redirect URI.
 - Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
 - Add unit, route, multi-tenant, replay, and negative-security tests.
 
