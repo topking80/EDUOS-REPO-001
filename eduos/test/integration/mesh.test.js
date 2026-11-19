@@ -260,6 +260,73 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.equal((await fetch(forged)).status, 400);
   });
 
+    // Revocation-window regression tests: each scenario gets a fresh launch
+    // hint, then changes authoritative PostgreSQL state before the callback.
+    // Restore fixture state in finally so one assertion cannot poison later cases.
+    const expectRevokedCallback = async ({ revoke, restore, expected }) => {
+      const freshLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+      assert.equal(freshLaunch.status, 200, JSON.stringify(freshLaunch.body));
+      const initiation = await fetch(freshLaunch.body.data.url, { redirect: "manual" });
+      assert.equal(initiation.status, 302);
+      const callback = initiation.headers.get("location");
+      assert.ok(callback, "tool login initiation must produce an authorization request");
+      await revoke({ launchUrl: freshLaunch.body.data.url });
+      try {
+        const denied = await fetch(callback);
+        assert.equal(denied.status, 403, expected);
+        const body = await denied.text();
+        assert.match(body, /LTI launch refused/);
+        assert.match(body, new RegExp(expected));
+        assert.doesNotMatch(body, /id_token/, "revoked authority must not produce an ID token");
+      } finally {
+        await restore({ launchUrl: freshLaunch.body.data.url });
+      }
+    };
+
+    await expectRevokedCallback({
+      expected: "membership_inactive",
+      revoke: () => admin.query("UPDATE memberships SET status='disabled' WHERE user_id=$1 AND district_id=$2 AND role='pupil' AND school_id=$3", [USERS.pu[0], ID.d1, ID.s1]),
+      restore: () => admin.query("UPDATE memberships SET status='active' WHERE user_id=$1 AND district_id=$2 AND role='pupil' AND school_id=$3", [USERS.pu[0], ID.d1, ID.s1])
+    });
+
+    let revokedAssignmentId;
+    await expectRevokedCallback({
+      expected: "app_not_available",
+      revoke: async () => {
+        const r = await admin.query("UPDATE app_assignments SET revoked_at=now() WHERE district_id=$1 AND app_id=$2 AND revoked_at IS NULL RETURNING id", [ID.d1, reg.body.data.id]);
+        assert.ok(r.rowCount > 0, "fixture must have an active app assignment");
+        revokedAssignmentId = r.rows[0].id;
+      },
+      restore: () => admin.query("UPDATE app_assignments SET revoked_at=NULL, revoked_by=NULL WHERE id=$1", [revokedAssignmentId])
+    });
+
+    await expectRevokedCallback({
+      expected: "app_not_available|license_inactive",
+      revoke: async ({ launchUrl }) => {
+        const launchId = new URL(launchUrl).searchParams.get("login_hint");
+        const original = await admin.query("SELECT license_id FROM app_launches WHERE id=$1", [launchId]);
+        assert.equal(original.rowCount, 1, "original launch row must exist");
+        await admin.query("UPDATE app_licenses SET status='cancelled' WHERE id=$1", [original.rows[0].license_id]);
+      },
+      restore: async ({ launchUrl }) => {
+        const launchId = new URL(launchUrl).searchParams.get("login_hint");
+        const original = await admin.query("SELECT license_id FROM app_launches WHERE id=$1", [launchId]);
+        if (original.rowCount) await admin.query("UPDATE app_licenses SET status='active' WHERE id=$1", [original.rows[0].license_id]);
+      }
+    });
+
+    await expectRevokedCallback({
+      expected: "launch_not_found",
+      revoke: () => admin.query("UPDATE users SET status='disabled' WHERE id=$1", [USERS.pu[0]]),
+      restore: () => admin.query("UPDATE users SET status='active' WHERE id=$1", [USERS.pu[0]])
+    });
+
+    await expectRevokedCallback({
+      expected: "launch_not_found",
+      revoke: () => admin.query("UPDATE schools SET status='disabled' WHERE id=$1", [ID.s1]),
+      restore: () => admin.query("UPDATE schools SET status='active' WHERE id=$1", [ID.s1])
+    });
+
   it("every role gets a home dashboard scoped like its list endpoints", async () => {
     for (const name of ["supt1", "it", "p1", "p2", "t1", "pa", "pu"]) {
       const r = await as(name)("GET", "/api/home");
