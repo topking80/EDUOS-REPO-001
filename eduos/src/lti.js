@@ -25,14 +25,27 @@ export const LTI_ROLE = Object.freeze({
 const HINT_TTL_MS = 5 * 60_000;
 const b64u = buf => Buffer.from(buf).toString("base64url");
 
-export function loadPlatformKey(pem) {
+export function loadPlatformKey(pem, previousPem = "", subjectSecret = "") {
   if (!pem) return null;
-  const privateKey = crypto.createPrivateKey(pem.replace(/\\n/g, "\n"));
-  if (privateKey.asymmetricKeyType !== "rsa") throw new Error("LTI_PLATFORM_PRIVATE_KEY must be an RSA private key");
-  const jwk = crypto.createPublicKey(privateKey).export({ format: "jwk" });
-  const kid = crypto.createHash("sha256").update(jwk.n).digest("base64url").slice(0, 16);
-  const hintKey = crypto.createHash("sha256").update("eduos-lti-hint\0").update(privateKey.export({ type: "pkcs8", format: "der" })).digest();
-  return { privateKey, kid, jwks: { keys: [{ kty: "RSA", n: jwk.n, e: jwk.e, alg: "RS256", use: "sig", kid }] }, hintKey };
+  const loadRsa = value => {
+    const privateKey = crypto.createPrivateKey(value.replace(/\\n/g, "\n"));
+    if (privateKey.asymmetricKeyType !== "rsa") throw new Error("LTI platform signing keys must be RSA");
+    const publicJwk = crypto.createPublicKey(privateKey).export({ format: "jwk" });
+    const kid = crypto.createHash("sha256").update(JSON.stringify({ e: publicJwk.e, kty: publicJwk.kty, n: publicJwk.n })).digest("base64url").slice(0, 22);
+    return { privateKey, publicJwk, kid };
+  };
+  const current = loadRsa(pem);
+  const previous = previousPem ? loadRsa(previousPem) : null;
+  if (previous && previous.kid === current.kid) throw new Error("LTI previous signing key must differ from the active key");
+  if (subjectSecret && Buffer.byteLength(subjectSecret) < 32) throw new Error("LTI_PLATFORM_SUBJECT_KEY must contain at least 32 bytes");
+  const hintKey = crypto.createHash("sha256").update("eduos-lti-hint\\0").update(current.privateKey.export({ type: "pkcs8", format: "der" })).digest();
+  const subjectKey = subjectSecret ? crypto.createHash("sha256").update("eduos-lti-subject\\0").update(subjectSecret).digest() : hintKey;
+  const jwk = key => ({ kty: "RSA", n: key.publicJwk.n, e: key.publicJwk.e, alg: "RS256", use: "sig", kid: key.kid });
+  return {
+    privateKey: current.privateKey, kid: current.kid, previousKid: previous?.kid || null,
+    jwks: { keys: [jwk(current), ...(previous ? [jwk(previous)] : [])] },
+    hintKey, subjectKey
+  };
 }
 
 export function signJwt(key, claims) {
