@@ -50,8 +50,10 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
         AND m.status='active'
     )
     AND EXISTS (
+      -- Keep a learner's historical family timeline available after a school
+      -- transfer; staff/classroom access below still requires current scope.
       SELECT 1 FROM students s
-      WHERE s.id=p_student AND s.district_id=p_district AND s.school_id=p_school
+      WHERE s.id=p_student AND s.district_id=p_district
     )
     AND (
       (
