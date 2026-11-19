@@ -163,6 +163,8 @@ export const config = {
   brandingUploadMaxBytes: Number(process.env.BRANDING_UPLOAD_MAX_KB || 2048) * 1024,
   publicBrandingRateLimit: Number(process.env.PUBLIC_BRANDING_RATE_LIMIT_PER_MIN || 300),
   ltiPlatformKey: process.env.LTI_PLATFORM_PRIVATE_KEY || "",
+  // Publish the previous platform public key during rotation so relying parties\n  // can validate still-live tokens. Keep the subject HMAC key stable across\n  // signing-key rotations to preserve pairwise subject identifiers.\n  ltiPlatformPreviousKey: process.env.LTI_PLATFORM_PRIVATE_KEY_PREVIOUS || "",
+  ltiSubjectKey: process.env.LTI_PLATFORM_SUBJECT_KEY || "",
   trustedProxyIps: (process.env.TRUSTED_PROXY_IPS || "").split(",").map(x => x.trim()).filter(Boolean),
   // 32.4.0 role apps. Christie runs the local deterministic tutor unless an
   // external provider is explicitly configured AND allowed; external
