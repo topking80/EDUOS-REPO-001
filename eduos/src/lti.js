@@ -30,6 +30,7 @@ export function loadPlatformKey(pem, previousPem = "", subjectSecret = "") {
   const loadRsa = value => {
     const privateKey = crypto.createPrivateKey(value.replace(/\\n/g, "\n"));
     if (privateKey.asymmetricKeyType !== "rsa") throw new Error("LTI platform signing keys must be RSA");
+    if ((privateKey.asymmetricKeyDetails?.modulusLength || 0) < 2048) throw new Error("LTI platform RSA keys must be at least 2048 bits");
     const publicJwk = crypto.createPublicKey(privateKey).export({ format: "jwk" });
     const kid = crypto.createHash("sha256").update(JSON.stringify({ e: publicJwk.e, kty: publicJwk.kty, n: publicJwk.n })).digest("base64url").slice(0, 22);
     return { privateKey, publicJwk, kid };
@@ -112,12 +113,20 @@ export function launchClaims({ key, issuer, app, launch, user, school, nonce, no
   return claims;
 }
 
-export function validLtiConfig(cfg) {
-  // https only, except loopback tools used for local development.
-  const url = v => typeof v === "string" && v.length <= 2048 &&
-    (/^https:\/\/\S+$/.test(v) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/\S*)?$/.test(v));
-  return cfg && typeof cfg.clientId === "string" && /^[\w.:\/-]{1,200}$/.test(cfg.clientId) &&
-    typeof cfg.deploymentId === "string" && /^[\w.:\/-]{1,200}$/.test(cfg.deploymentId) &&
+export function validLtiConfig(cfg, { allowInsecureLoopback = process.env.NODE_ENV !== "production" } = {}) {
+  // Development may use HTTP only for literal loopback hosts. Production
+  // requires HTTPS everywhere; credentials and fragments are never valid.
+  const url = value => {
+    if (typeof value !== "string" || value.length > 2048 || /\\s/.test(value)) return false;
+    let parsed;
+    try { parsed = new URL(value); } catch { return false; }
+    if (parsed.username || parsed.password || parsed.hash) return false;
+    if (parsed.protocol === "https:") return true;
+    return allowInsecureLoopback && parsed.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
+  };
+  return cfg && typeof cfg.clientId === "string" && /^[\\w.:\\/-]{1,200}$/.test(cfg.clientId) &&
+    typeof cfg.deploymentId === "string" && /^[\\w.:\\/-]{1,200}$/.test(cfg.deploymentId) &&
     url(cfg.loginUrl) && Array.isArray(cfg.redirectUris) && cfg.redirectUris.length >= 1 && cfg.redirectUris.length <= 10 &&
     cfg.redirectUris.every(url) && url(cfg.targetLinkUri);
 }
