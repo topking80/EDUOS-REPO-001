@@ -1287,7 +1287,20 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     // Keep this assertion scoped to calls made by this test. Earlier provider
     // tests deliberately exercise failures and reconciliation concurrently.
     mock.st.probes.length = 0;
-    assert.equal((await as("supt1")("POST", "/api/commerce/providers/btcpay/test", {})).body.data.detail, "store_ok");
+    const tested = await as("supt1")("POST", "/api/commerce/providers/btcpay/test", {});
+    assert.equal(tested.body.data.detail, "store_ok");
+    // Connection testing has no orderId, so assert its distinct store lookup
+    // before checkout probes are collected. This guards the provider-test
+    // route itself against accidentally calling BTCPay inside its DB transaction.
+    const connectionChecks = mock.st.probes.filter(p =>
+      p.method === "GET" &&
+      p.path === "/btcpay/api/v1/stores/STORE12345" &&
+      !p.query
+    );
+    assert.equal(connectionChecks.length, 1,
+      `one BTCPay connection check was observed: ${JSON.stringify(connectionChecks)}`);
+    assert.deepEqual(connectionChecks[0].open, [],
+      `BTCPay connection check ran after the request transaction committed: ${JSON.stringify(connectionChecks[0].open)}`);
     const btc = await buy("pa", "btcprobe", "bitcoin");
     assert.equal(btc.status, 201, JSON.stringify(btc.body));
     const paymentId = btc.body.data.payment.id;
