@@ -290,6 +290,16 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.equal(duplicated.status, 400);
     assert.match(await duplicated.text(), /invalid_request/);
 
+    // The route-specific URL-encoded parser has a 16KB ceiling. Oversized
+    // callback bodies must fail closed before OIDC validation or token issue.
+    const oversizedForm = new URLSearchParams(pollutionForm);
+    oversizedForm.set("padding", "x".repeat(17 * 1024));
+    const oversized = await fetch(`${server.base}/lti/authorize`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: oversizedForm
+    });
+    assert.equal(oversized.status, 413);
+    assert.match(await oversized.text(), /payload_too_large/);
+
     // Revocation-window regression tests: each scenario gets a fresh launch
     // hint, then changes authoritative PostgreSQL state before the callback.
     // Restore fixture state in finally so one assertion cannot poison later cases.
