@@ -659,6 +659,8 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.ok(p.provider_ref, "late-capture fixture has a provider order reference");
     assert.ok(p.payer_actor?.userId, "late-capture fixture persists the authenticated payer");
     const providerEventId = "evt_late_capture_refund_0001";
+    // Preserve the bound origin before stop() clears the server handle.
+    const serverBase = server.base;
     // Freeze the independent worker while this test exercises a manually
     // inserted inbox event; otherwise the worker can claim and ignore it
     // between INSERT and the fixture eligibility assertion.
@@ -679,9 +681,9 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const configKeys = ["DATABASE_URL","PUBLIC_ORIGIN","OIDC_ISSUER","OIDC_CLIENT_ID","OIDC_CLIENT_SECRET","OIDC_REDIRECT_URI"];
     const priorConfig = Object.fromEntries(configKeys.map(k => [k, process.env[k]]));
     Object.assign(process.env, {
-      DATABASE_URL: db.appUrl, PUBLIC_ORIGIN: server.base, OIDC_ISSUER: idp.issuer,
+      DATABASE_URL: db.appUrl, PUBLIC_ORIGIN: serverBase, OIDC_ISSUER: idp.issuer,
       OIDC_CLIENT_ID: "eduos-integration-test", OIDC_CLIENT_SECRET: "eduos-integration-test-secret",
-      OIDC_REDIRECT_URI: `${server.base}/auth/callback`
+      OIDC_REDIRECT_URI: `${serverBase}/auth/callback`
     });
     let applyVerifiedWebhook;
     try { ({ applyVerifiedWebhook } = await import("../../src/commerce/service.js")); }
