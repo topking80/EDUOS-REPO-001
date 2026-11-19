@@ -73,7 +73,10 @@ export function pairwiseSub(key, appId, userId) {
   return crypto.createHmac("sha256", key.hintKey).update(`sub\0${appId}\0${userId}`).digest("base64url").slice(0, 32);
 }
 
-const SCOPE_RANK = { none: 0, identity: 1, roster_basic: 2, roster_full: 2, grades: 2, attendance: 2 };
+// LTI Core currently supports only no identity or basic identity claims.
+// Roster, grade and attendance scopes remain unsupported until their
+// separately governed Advantage services exist.
+const SCOPE_RANK = Object.freeze({ none: 0, identity: 1 });
 /** Build id_token claims, limited by the app's data-sharing scope. */
 export function launchClaims({ key, issuer, app, launch, user, school, nonce, now = Math.floor(Date.now() / 1000) }) {
   const cfg = app.integration_config || {};
@@ -90,7 +93,8 @@ export function launchClaims({ key, issuer, app, launch, user, school, nonce, no
     "https://purl.imsglobal.org/spec/lti/claim/tool_platform": { guid: launch.districtId, product_family_code: "eduos", name: "EduOS" }
   };
   if (rank >= 1) { claims.name = user.display_name; claims.email = user.email; }
-  if (rank >= 2 && school) claims["https://purl.imsglobal.org/spec/lti/claim/context"] = { id: school.id, label: school.name, title: school.name, type: ["http://purl.imsglobal.org/vocab/lis/v2/course#CourseOffering"] };
+  // School records are not LTI course contexts. Never disclose school IDs or
+  // names as a substitute for an approved course mapping, even for identity scope.
   return claims;
 }
 
