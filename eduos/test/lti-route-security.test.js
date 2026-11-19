@@ -37,8 +37,8 @@ test("LTI authorization requires non-empty OIDC nonce and state", () => {
   assert.match(source, /typeof p\.state !== "string" \|\| p\.state\.length < 1/);
 });
 
-test("LTI authorization accepts the OIDC request without initiation-only parameters", () => {
-  assert.doesNotMatch(source, /p\.iss !== issuer/);
+test("LTI authorization validates the platform issuer and does not require initiation-only parameters", () => {
+  assert.match(source, /typeof p\.iss !== "string" \|\| p\.iss !== issuer/);
   assert.doesNotMatch(source, /typeof p\.target_link_uri/);
   assert.match(source, /p\.prompt !== undefined && p\.prompt !== "none"/);
 });
