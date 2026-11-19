@@ -45,9 +45,12 @@ test("launch hints are signed, expiring, bounded and tamper evident", () => {
     launchId: "launch-1", districtId: "district-1", exp: 301000
   });
   assert.equal(readHint(key, hint, 301001), null);
-  const [body, mac] = hint.split(".");
-  const tamperedBody = body.slice(0, -1) + (body.endsWith("a") ? "b" : "a");
-  assert.equal(readHint(key, `${tamperedBody}.${mac}`, 1001), null);
+  assert.equal(hint.includes("district-1"), false);
+  assert.equal(hint.includes("launch-1"), false);
+  const parts = hint.split(".");
+  const ciphertext = parts[2];
+  parts[2] = (ciphertext[0] === "A" ? "B" : "A") + ciphertext.slice(1);
+  assert.equal(readHint(key, parts.join("."), 1001), null);
   assert.equal(readHint(key, "x".repeat(2049), 1001), null);
 });
 
