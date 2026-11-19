@@ -82,3 +82,25 @@ test("LTI tool configuration requires HTTPS endpoints and bounded redirect lists
   assert.equal(validLtiConfig({ ...valid, redirectUris: [] }), false);
   assert.equal(validLtiConfig({ ...valid, loginUrl: "javascript:alert(1)" }), false);
 });
+
+
+test("LTI Core fails closed for roster, grade, attendance and unknown scopes", () => {
+  const key = loadPlatformKey(privatePem());
+  const base = {
+    key, issuer: "https://eduos.example",
+    app: { id: "app-1", integration_config: { clientId: "canvas-client", deploymentId: "deployment-1", targetLinkUri: "https://tool.example/launch" }, data_sharing_scope: "none" },
+    launch: { role: "teacher", districtId: "district-1" },
+    user: { id: "user-1", display_name: "Teacher", email: "teacher@example.test" },
+    school: { id: "school-private", name: "Private School Name" }, nonce: "nonce-1", now: 1000
+  };
+  for (const scope of ["roster_basic", "roster_full", "grades", "attendance", "unexpected"]) {
+    const claims = launchClaims({ ...base, app: { ...base.app, data_sharing_scope: scope } });
+    assert.equal(claims.name, undefined, scope);
+    assert.equal(claims.email, undefined, scope);
+    assert.equal(claims["https://purl.imsglobal.org/spec/lti/claim/context"], undefined, scope);
+  }
+  const identity = launchClaims({ ...base, app: { ...base.app, data_sharing_scope: "identity" } });
+  assert.equal(identity.name, "Teacher");
+  assert.equal(identity.email, "teacher@example.test");
+  assert.equal(identity["https://purl.imsglobal.org/spec/lti/claim/context"], undefined);
+});
