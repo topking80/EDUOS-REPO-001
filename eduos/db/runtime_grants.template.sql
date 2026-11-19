@@ -423,3 +423,7 @@ REVOKE DELETE, TRUNCATE ON school_athletic_directors, sports_eligibility_policy,
 GRANT EXECUTE ON FUNCTION eduos_sports_eligibility_inputs(uuid) TO eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_is_athletic_director(uuid), eduos_is_activity_staff(uuid, text[]), eduos_activity_school(uuid),
   eduos_can_see_eligibility(uuid), eduos_can_read_roster(uuid, uuid, uuid), eduos_can_manage_roster(uuid, uuid), eduos_family_on_roster(uuid) TO eduos_app;
+
+-- 37.8.0 LTI Advantage: replay ledger is inaccessible to the runtime role;
+-- only the SECURITY DEFINER function may claim a launch under tenant context.
+GRANT EXECUTE ON FUNCTION eduos_lti_consume_launch(uuid, text, timestamptz) TO eduos_app;
