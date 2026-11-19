@@ -517,7 +517,15 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await as("p1")("POST", `/api/events/${eventId}/check-in`, { ticketCode: paid.body.data.tickets[0].code })).status, 409);
     await admin.query("UPDATE commerce_payments SET pending_since=now() - interval '5 minutes' WHERE id=$1", [pid]);
     await until(async () => (await payment(pid)).status === "refunded", "reconciliation after an ambiguous refund response");
-    assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='refund'", [pid])).rows[0].n, 1);
+    const refundLedger = await admin.query(
+      `SELECT count(*)::int AS line_count,
+              count(DISTINCT edal_entry_id)::int AS refund_count
+         FROM commerce_ledger_entries
+        WHERE payment_id=$1 AND entry_kind='refund'`, [pid]
+    );
+    assert.ok(refundLedger.rows[0].line_count > 0, "the refund records its ledger lines");
+    assert.equal(refundLedger.rows[0].refund_count, 1,
+      "all refund ledger lines belong to exactly one EDAL refund entry");
   });
 
   it("concurrent webhook workers cannot claim the same inbox event", async () => {
