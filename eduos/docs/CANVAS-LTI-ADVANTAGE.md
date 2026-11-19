@@ -4,7 +4,7 @@ Status: implementation plan and security acceptance criteria. This document does
 
 ## Repository audit
 
-The existing `src/lti.js` contains LTI 1.3 building blocks: RS256 platform-key loading, JWKS construction, signed short-lived launch hints, per-process replay tracking, pairwise subjects, basic resource-link claims, and HTTPS URL validation. Its own header explicitly says it does not provide NRPS or AGS. The audit also found no LTI route registration in `src/server.js` and no LTI-specific test suite. Therefore the existing module is a foundation, not a usable Canvas integration.
+The existing `src/lti.js` contains LTI 1.3 building blocks: RS256 platform-key loading, JWKS construction, signed short-lived launch hints, pairwise subjects, basic resource-link claims, and HTTPS URL validation. `src/mesh-routes.js` already registers the OIDC authorization and JWKS endpoints; this PR adds durable replay consumption and LTI-specific regression tests. NRPS, AGS, and Deep Linking remain unimplemented. Therefore this is an initial platform-side Core slice, not a complete or Canvas-certified integration.
 
 ## Product commitment
 
@@ -40,8 +40,8 @@ Canvas LMS is a supported educational-software integration through the district-
 - [x] Register the LTI authorization route and JWKS endpoint through the district app routes.
 - [x] Add a tenant-scoped PostgreSQL replay ledger and atomic consume function; the runtime role can call only the function, not read or mutate the ledger directly.
 - [x] Wire atomic replay consumption into the OIDC authorization transaction; reject duplicate launches across processes/restarts.
-- [ ] Persist and validate OIDC state/nonce across the complete browser round trip; the current authorization route requires non-empty values and signs the supplied nonce into the ID token, but does not yet provide durable pre-auth state/nonce correlation.
-- Add strict OIDC request validation and key rotation. Keep LTI deployment ID in the signed LTI claim; it is not a standard OIDC authorization-request parameter.
+- [x] Preserve the tool-generated OIDC `state` in the authorization response and include the tool-generated `nonce` in the signed ID token. The tool (as the OIDC relying party) is responsible for checking its returned state and token nonce against the values it created; the platform must not invent a second state/nonce correlation record for this platform-side flow.
+- [ ] Complete strict OIDC request validation and key rotation. Keep LTI deployment ID in the signed LTI claim; it is not a standard OIDC authorization-request parameter.
 - Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
 - Add unit, route, multi-tenant, replay, and negative-security tests.
 
