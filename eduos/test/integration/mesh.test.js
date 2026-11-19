@@ -271,6 +271,18 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.equal(polluted.status, 400);
     assert.match(await polluted.text(), /duplicate_request_parameters/);
 
+    // Prototype-sensitive and arbitrary form keys must be rejected before
+    // request fields are materialized into an object.
+    for (const key of ["__proto__", "constructor", "prototype", "unsupported_extension"]) {
+      const hostile = await fetch(authorize.replace(/^http/, "http"), {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ [key]: "unexpected" }).toString()
+      });
+      assert.equal(hostile.status, 400, `OIDC form rejects key ${key}`);
+      assert.match(await hostile.text(), /invalid_request/);
+    }
+
     // OIDC response_mode=form_post must reject JSON even when the payload
     // contains otherwise valid OIDC parameters.
     const jsonPost = await fetch(`${server.base}/lti/authorize`, {
