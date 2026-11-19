@@ -483,8 +483,13 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
 
   // LTI 1.3 OIDC authentication request from the tool (GET or form POST).
   const ltiAuthorize = async (req, res, next) => {
-    const p = { ...(req.query || {}), ...(typeof req.body === "object" && req.body ? req.body : {}) };
     const deny = (status, error) => res.status(status).type("text/plain").send(`LTI launch refused: ${error}`);
+    const query = req.query || {};
+    const body = typeof req.body === "object" && req.body ? req.body : {};
+    // OIDC parameters must arrive through exactly one transport. Mixing query
+    // and form parameters creates ambiguous precedence (parameter pollution).
+    if (req.method === "POST" && Object.keys(query).length) return deny(400, "duplicate_request_parameters");
+    const p = req.method === "POST" ? body : query;
     if (!ltiKey) return deny(503, "lti_not_configured");
     if ((p.prompt !== undefined && p.prompt !== "none") ||
         p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" ||
