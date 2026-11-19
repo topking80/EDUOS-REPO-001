@@ -138,7 +138,7 @@ function managesApp(actor, app) {
 }
 
 export function registerMeshRoutes(app, { emitServerFlow }) {
-  const ltiKey = loadPlatformKey(config.ltiPlatformKey);
+  const ltiKey = loadPlatformKey(config.ltiPlatformKey, config.ltiPlatformPreviousKey, config.ltiSubjectKey);
   const issuer = config.publicOrigin.replace(/\/$/, "");
 
   // ---- district settings (caps; NULL = unlimited) ----
