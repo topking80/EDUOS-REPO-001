@@ -574,18 +574,24 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     if (!req.is("application/x-www-form-urlencoded")) return res.status(415).type("text/plain").send("LTI launch refused: unsupported_content_type");
     return expressRawUrlencoded(req, res, error => {
       if (error) return next(error);
-      // Parse only after the raw byte limit has been enforced. URLSearchParams
-      // preserves repeated keys; retain them as arrays so OIDC scalar checks
-      // reject parameter pollution instead of silently choosing one value.
-      const parsed = Object.create(null);
+      // Reject unknown names before constructing an object from request data.
+      // Map avoids user-controlled property writes; Object.fromEntries receives
+      // only protocol keys from this fixed allowlist and preserves duplicate values.
+      const allowedFormParameters = new Set([
+        "scope", "response_type", "response_mode", "prompt", "client_id",
+        "redirect_uri", "login_hint", "lti_message_hint", "state", "nonce"
+      ]);
+      const parsed = new Map();
       for (const [key, value] of new URLSearchParams(req.body.toString("utf8"))) {
-        if (Object.prototype.hasOwnProperty.call(parsed, key)) {
-          parsed[key] = Array.isArray(parsed[key]) ? [...parsed[key], value] : [parsed[key], value];
+        if (!allowedFormParameters.has(key)) return res.status(400).type("text/plain").send("LTI launch refused: invalid_request");
+        if (parsed.has(key)) {
+          const previous = parsed.get(key);
+          parsed.set(key, Array.isArray(previous) ? [...previous, value] : [previous, value]);
         } else {
-          parsed[key] = value;
+          parsed.set(key, value);
         }
       }
-      req.body = parsed;
+      req.body = Object.fromEntries(parsed);
       return ltiAuthorize(req, res, next);
     });
   });
