@@ -507,6 +507,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!app || !launch || !user || user.status !== "active") return { error: "launch_not_found", status: 403 };
         const cfg = app.integration_config || {};
         if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
+        if (!["none", "identity"].includes(app.data_sharing_scope)) return { error: "unsupported_lti_data_scope", status: 403 };
         if (p.target_link_uri !== (cfg.targetLinkUri || app.launch_url)) return { error: "target_link_mismatch", status: 400 };
         if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
         // Claim the launch atomically in the same tenant transaction as the
