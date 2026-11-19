@@ -93,10 +93,13 @@ describe("37.10.0 Timeline authorization foundation / RLS", { skip }, () => {
     // publication transition is implemented by the service layer.
     assert.deepEqual(await ids({ role: "principal", user: USERS.p1[0] }), [ENTRY.principalSchool]);
     await admin.query("UPDATE timeline_entries SET status='published'");
-    await assert.rejects(
-      insert({ role: "teacher", user: USERS.t1[0] }, "f1000000-0000-4000-8000-000000000007", "educators"),
-      /row-level security|policy/i
-    );
+    // A newly inserted entry still defaults to draft after other entries are
+    // published; publishing one row must not disable later authorized drafts.
+    assert.equal((await insert(
+      { role: "teacher", user: USERS.t1[0] },
+      "f1000000-0000-4000-8000-000000000007",
+      "educators"
+    )).length, 1);
     await assert.rejects(
       context({ role: "parent", user: USERS.pa[0] },
         `INSERT INTO timeline_entries(district_id,school_id,student_id,created_by,entry_type,title,body,visibility,occurred_at)
@@ -166,7 +169,7 @@ describe("37.10.0 Timeline authorization foundation / RLS", { skip }, () => {
     assert.deepEqual(await ids({ role: "parent", user: USERS.pa[0] }), [],
       "revoked guardian cannot read even entries they originally authored");
     await admin.query(
-      "UPDATE memberships SET status='suspended' WHERE district_id=$1 AND user_id=$2 AND role='principal' AND school_id=$3",
+      "UPDATE memberships SET status='disabled' WHERE district_id=$1 AND user_id=$2 AND role='principal' AND school_id=$3",
       [ID.d1, USERS.p1[0], ID.s1]
     );
     assert.deepEqual(await ids({ role: "principal", user: USERS.p1[0] }), [],
