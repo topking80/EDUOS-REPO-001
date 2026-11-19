@@ -19,7 +19,7 @@ import { requirePermission, isDistrictRole, canPerform } from "./policy.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { pageOf, pageSql, paged } from "./paging.js";
-import { loadPlatformKey, signJwt, makeHint, readHint, consumeHint, launchClaims, validLtiConfig } from "./lti.js";
+import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig } from "./lti.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validId = v => typeof v === "string" && UUID_RE.test(v);
@@ -489,18 +489,26 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     // in 5 minutes and is accepted once.
     try {
       const actor = { districtId: hint.d, userId: hint.u, role: hint.r, schoolId: hint.s };
-      const ctx = await withTenantTransaction(actor, async client => {
+      if (!validId(hint.d) || !validId(hint.l) || !validId(hint.a) || !validId(hint.u) ||
+          (hint.s !== null && hint.s !== undefined && !validId(hint.s)) ||
+          !Number.isFinite(hint.exp) || hint.exp <= Date.now()) return deny(400, "invalid_or_expired_launch");
+      const result = await withTenantTransaction(actor, async client => {
         const app = (await client.query("SELECT * FROM apps WHERE id=$1 AND status='active'", [hint.a])).rows[0];
         const launch = (await client.query("SELECT id,role,school_id FROM app_launches WHERE id=$1 AND user_id=$2 AND app_id=$3", [hint.l, hint.u, hint.a])).rows[0];
         const user = (await client.query("SELECT id,display_name,email,status FROM users WHERE id=$1", [hint.u])).rows[0];
         const school = hint.s ? (await client.query("SELECT id,name FROM schools WHERE id=$1", [hint.s])).rows[0] : null;
+        if (!app || !launch || !user || user.status !== "active") return { error: "launch_not_found", status: 403 };
+        const cfg = app.integration_config || {};
+        if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
+        if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
+        // Claim the launch atomically in the same tenant transaction as the
+        // authorization checks. This prevents replay across processes/restarts.
+        const consumed = await consumeHintDurably(client, hint.d, hint.l, new Date(hint.exp));
+        if (!consumed) return { error: "launch_already_used", status: 409 };
         return { app, launch, user, school };
       });
-      if (!ctx.app || !ctx.launch || !ctx.user || ctx.user.status !== "active") return deny(403, "launch_not_found");
-      const cfg = ctx.app.integration_config || {};
-      if (ctx.app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return deny(400, "client_mismatch");
-      if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return deny(400, "redirect_uri_not_registered");
-      if (!consumeHint(hint.l)) return deny(409, "launch_already_used");
+      if (result.error) return deny(result.status, result.error);
+      const ctx = result;
       const idToken = signJwt(ltiKey, launchClaims({ key: ltiKey, issuer, app: ctx.app, launch: { role: ctx.launch.role, districtId: hint.d }, user: ctx.user, school: ctx.school, nonce: p.nonce }));
       const esc = v => String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       const target = new URL(p.redirect_uri);
