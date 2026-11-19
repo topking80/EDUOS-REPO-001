@@ -104,6 +104,23 @@ describe("37.10.0 Timeline authorization foundation / RLS", { skip }, () => {
         [ID.d1, ID.s1, ID.alice, USERS.pu[0]]),
       /row-level security|policy/i
     );
+
+    await assert.rejects(
+      context({ role: "parent", user: USERS.pa[0] },
+        `INSERT INTO timeline_entries(district_id,school_id,student_id,created_by,entry_type,title,body,visibility,status,occurred_at)
+         VALUES($1,$2,$3,$4,'reflection','Spoofed publication','No','family','published',now())`,
+        [ID.d1, ID.s1, ID.alice, USERS.pa[0]]),
+      /row-level security|policy/i,
+      "runtime users must not publish by setting status on insert"
+    );
+    await assert.rejects(
+      context({ role: "teacher", user: USERS.t1[0] },
+        `INSERT INTO timeline_entries(district_id,school_id,student_id,course_id,created_by,entry_type,title,body,visibility,occurred_at)
+         VALUES($1,$2,$3,NULL,$4,'reflection','Malformed classroom entry','No','classroom',now())`,
+        [ID.d1, ID.s1, ID.alice, USERS.t1[0]]),
+      /check constraint|row-level security|policy/i,
+      "classroom entries must be tied to a course"
+    );
   });
 
   it("keeps private content private and enforces family, educator, classroom, and school audiences", async () => {
@@ -148,5 +165,11 @@ describe("37.10.0 Timeline authorization foundation / RLS", { skip }, () => {
     );
     assert.deepEqual(await ids({ role: "parent", user: USERS.pa[0] }), [],
       "revoked guardian cannot read even entries they originally authored");
+    await admin.query(
+      "UPDATE memberships SET status='disabled' WHERE district_id=$1 AND user_id=$2 AND role='principal' AND school_id=$3",
+      [ID.d1, USERS.p1[0], ID.s1]
+    );
+    assert.deepEqual(await ids({ role: "principal", user: USERS.p1[0] }), [],
+      "disabled school membership immediately removes access");
   });
 });
