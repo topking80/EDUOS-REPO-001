@@ -127,6 +127,7 @@ function validateAppBody(body, partial) {
     if (/secret|password|private/i.test(JSON.stringify(Object.keys(c)))) return "integration_config_must_not_hold_secrets";
   }
   if (!partial && b.integrationType === "lti13" && !validLtiConfig(b.integrationConfig)) return "invalid_lti_config";
+  if (!partial && b.integrationType === "lti13" && !["none", "identity"].includes(b.dataSharingScope || "none")) return "unsupported_lti_data_scope";
   return null;
 }
 
@@ -272,7 +273,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!managesApp(req.actor, cur)) return fail(403, "cannot_manage_app");
         const nextType = b.integrationType ?? cur.integration_type;
         const nextCfg = b.integrationConfig ?? cur.integration_config;
+        const nextScope = b.dataSharingScope ?? cur.data_sharing_scope;
         if (nextType === "lti13" && !validLtiConfig(nextCfg)) return fail(400, "invalid_lti_config");
+        if (nextType === "lti13" && !["none", "identity"].includes(nextScope)) return fail(400, "unsupported_lti_data_scope");
         const map = { name: "name", vendor: "vendor", description: "description", category: "category", launchUrl: "launch_url", integrationType: "integration_type",
           dataSharingScope: "data_sharing_scope", dpaStatus: "dpa_status", dpaExpiresOn: "dpa_expires_on", coppaCompliant: "coppa_compliant",
           ferpaSchoolOfficial: "ferpa_school_official", ownerSchoolId: "owner_school_id", status: "status" };
