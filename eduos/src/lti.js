@@ -59,19 +59,30 @@ export function signJwt(key, claims) {
 
 /** Signed, expiring launch hint: binds the launch to one user, app and tenant. */
 export function makeHint(key, payload, now = Date.now()) {
-  const body = b64u(JSON.stringify({ ...payload, exp: now + HINT_TTL_MS }));
-  const mac = crypto.createHmac("sha256", key.hintKey).update(body).digest("base64url");
-  return `${body}.${mac}`;
+  // lti_message_hint is sent to the external tool in the browser URL. Encrypt
+  // the tenant/user launch context; an HMAC alone would expose internal IDs.
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key.hintKey, iv);
+  const plaintext = Buffer.from(JSON.stringify({ ...payload, exp: now + HINT_TTL_MS }));
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  return `v1.${b64u(iv)}.${b64u(ciphertext)}.${b64u(cipher.getAuthTag())}`;
 }
 export function readHint(key, hint, now = Date.now()) {
-  if (typeof hint !== "string" || hint.length > 2048 || !/^[\w-]+\.[\w-]+$/.test(hint)) return null;
-  const [body, mac] = hint.split(".");
-  const want = crypto.createHmac("sha256", key.hintKey).update(body).digest();
-  const got = Buffer.from(mac, "base64url");
-  if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) return null;
-  let payload; try { payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")); } catch { return null; }
-  if (!payload || typeof payload.exp !== "number" || payload.exp < now) return null;
-  return payload;
+  if (typeof hint !== "string" || hint.length > 2048) return null;
+  const match = /^v1\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{22})$/.exec(hint);
+  if (!match) return null;
+  try {
+    const [, ivPart, ciphertextPart, tagPart] = match;
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key.hintKey, Buffer.from(ivPart, "base64url"));
+    decipher.setAuthTag(Buffer.from(tagPart, "base64url"));
+    const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertextPart, "base64url")), decipher.final()]);
+    const payload = JSON.parse(plaintext.toString("utf8"));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
+        !Number.isSafeInteger(payload.exp) || payload.exp <= now) return null;
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 // One-time use of each launch hint within its lifetime (per process).
