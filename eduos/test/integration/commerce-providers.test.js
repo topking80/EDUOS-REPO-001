@@ -165,6 +165,75 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     await assert.rejects(admin.query("UPDATE commerce_provider_accounts SET secrets_enc='plain-text-secret' WHERE district_id=$1 AND processor='paypal'", [ID.d1]), /check constraint/);
   });
 
+  it("webhook endpoint issue, rotation, revocation, and tenant isolation are enforced end to end", async () => {
+    const path = "/api/commerce/providers/paypal/webhook-endpoint";
+    const denied = await as("p1")("POST", path, {});
+    assert.equal(denied.status, 403, "non-provider staff cannot mint callback credentials");
+
+    const issued = await as("it1")("POST", path, {});
+    assert.equal(issued.status, 201, JSON.stringify(issued.body));
+    assert.equal(issued.headers.get("cache-control"), "no-store", "bearer URL responses are never cached");
+    const issuedData = issued.body.data;
+    assert.equal(issuedData.token, undefined, "the raw token is not separately returned");
+    const firstToken = new URL(issuedData.webhookUrl).pathname.split("/").at(-1);
+    assert.match(firstToken, /^[a-f0-9]{64}$/);
+    const firstDigest = createHash("sha256").update(firstToken, "utf8").digest("hex");
+    const firstRow = (await admin.query(
+      "SELECT id,token_sha256,active,revoked_at FROM commerce_webhook_endpoints WHERE district_id=$1 AND processor='paypal' AND token_sha256=$2",
+      [ID.d1, firstDigest]
+    )).rows[0];
+    assert.ok(firstRow, "the digest, not the bearer token, is persisted");
+    assert.notEqual(firstRow.token_sha256, firstToken);
+    assert.deepEqual([firstRow.active, firstRow.revoked_at], [true, null]);
+
+    const crossDistrict = await as("supt2")("GET", "/api/commerce/providers");
+    assert.deepEqual(crossDistrict.body.data.webhookEndpoints.paypal, [], "another district cannot see this endpoint");
+    const app = new pg.Client(db.appUrl); await app.connect();
+    try {
+      await app.query("BEGIN");
+      await app.query("SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true)",
+        [ID.d2, USERS.supt2[0], "superintendent"]);
+      assert.equal((await app.query("SELECT count(*)::int AS n FROM commerce_webhook_endpoints")).rows[0].n, 0,
+        "RLS hides another district's endpoint row");
+      await app.query("ROLLBACK");
+    } finally { await app.end(); }
+
+    const rotated = await as("it1")("POST", `${path}/rotate`, {});
+    assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
+    assert.equal(rotated.headers.get("cache-control"), "no-store");
+    assert.equal(rotated.body.data.token, undefined);
+    const secondToken = new URL(rotated.body.data.webhookUrl).pathname.split("/").at(-1);
+    assert.match(secondToken, /^[a-f0-9]{64}$/);
+    assert.notEqual(secondToken, firstToken, "rotation creates a fresh bearer credential");
+    const rows = (await admin.query(
+      "SELECT token_sha256,active,revoked_at FROM commerce_webhook_endpoints WHERE district_id=$1 AND processor='paypal' ORDER BY created_at,id",
+      [ID.d1]
+    )).rows;
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows.map(r => r.active), [false, true]);
+    assert.ok(rows[0].revoked_at);
+    assert.equal(rows[1].token_sha256, createHash("sha256").update(secondToken, "utf8").digest("hex"));
+
+    const callback = token => fetch(`${server.base}/api/commerce/webhooks/paypal/${token}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({})
+    });
+    const oldCallback = await callback(firstToken);
+    assert.equal(oldCallback.status, 404, "rotated credentials cannot resolve at the public intake");
+    const activeCallback = await callback(secondToken);
+    assert.equal(activeCallback.status, 401, "the active endpoint resolves, then rejects an unsigned provider callback");
+
+    const revoked = await as("it1")("DELETE", path, {});
+    assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
+    assert.deepEqual([revoked.body.data.revoked, revoked.body.data.active], [1, false]);
+    const revokedCallback = await callback(secondToken);
+    assert.equal(revokedCallback.status, 404, "revoked credentials cannot resolve at the public intake");
+    const finalRows = (await admin.query(
+      "SELECT active,revoked_at FROM commerce_webhook_endpoints WHERE district_id=$1 AND processor='paypal'",
+      [ID.d1]
+    )).rows;
+    assert.ok(finalRows.every(r => !r.active && r.revoked_at), "no active endpoint remains after revocation");
+  });
+
   it("RLS: another district sees nothing, and payers can't read the accounts table", async () => {
     const o2 = await as("supt2")("GET", "/api/commerce/providers");
     assert.equal(o2.body.data.processors.paypal.status, "not_set_up");
