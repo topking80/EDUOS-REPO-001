@@ -423,3 +423,10 @@ REVOKE DELETE, TRUNCATE ON school_athletic_directors, sports_eligibility_policy,
 GRANT EXECUTE ON FUNCTION eduos_sports_eligibility_inputs(uuid) TO eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_is_athletic_director(uuid), eduos_is_activity_staff(uuid, text[]), eduos_activity_school(uuid),
   eduos_can_see_eligibility(uuid), eduos_can_read_roster(uuid, uuid, uuid), eduos_can_manage_roster(uuid, uuid), eduos_family_on_roster(uuid) TO eduos_app;
+
+-- 37.10.0 Timeline authorization foundation. Drafts are append-only until
+-- the audited revision/publish transition API is implemented.
+GRANT SELECT, INSERT ON timeline_entries TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON timeline_entries FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_timeline_can_read(uuid,uuid,uuid,uuid,text,text,uuid),
+  eduos_timeline_can_insert(uuid,uuid,uuid,uuid,text,text,uuid,text) TO eduos_app;
