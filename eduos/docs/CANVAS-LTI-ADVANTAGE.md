@@ -37,9 +37,10 @@ Canvas LMS is a supported educational-software integration through the district-
 ## Delivery sequence
 
 ### Phase 1 — make the existing LTI 1.3 core operable
-- Register protocol routes and JWKS endpoint in the server with explicit feature flags.
-- [x] Add a tenant-scoped PostgreSQL replay ledger and atomic consume function; the runtime role can call only the function, not read or mutate the ledger directly. A production launch route must use this helper inside `withTenantTransaction` before the in-memory helper can be retired.
-- [ ] Wire all state/nonce/replay tracking to durable storage; add durable state and nonce validation alongside launch replay consumption.
+- [x] Register the LTI authorization route and JWKS endpoint through the district app routes.
+- [x] Add a tenant-scoped PostgreSQL replay ledger and atomic consume function; the runtime role can call only the function, not read or mutate the ledger directly.
+- [x] Wire atomic replay consumption into the OIDC authorization transaction; reject duplicate launches across processes/restarts.
+- [ ] Persist and validate OIDC state/nonce across the complete browser round trip; the current authorization route requires non-empty values and signs the supplied nonce into the ID token, but does not yet provide durable pre-auth state/nonce correlation.
 - Add strict OIDC request validation and key rotation.
 - Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
 - Add unit, route, multi-tenant, replay, and negative-security tests.
@@ -78,4 +79,4 @@ Canvas LMS is a supported educational-software integration through the district-
 
 ## Current limitations
 
-This PR records the required scope and audit findings and adds a durable replay-consumption primitive. It does not yet wire that primitive into a launch route, and it does not claim NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, deployment, target-link, redirect, state, and nonce request checks. It still does not claim durable pre-auth state/nonce correlation, NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
