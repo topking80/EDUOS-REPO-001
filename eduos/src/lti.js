@@ -103,3 +103,24 @@ export function validLtiConfig(cfg) {
     url(cfg.loginUrl) && Array.isArray(cfg.redirectUris) && cfg.redirectUris.length >= 1 && cfg.redirectUris.length <= 10 &&
     cfg.redirectUris.every(url) && (cfg.targetLinkUri === undefined || url(cfg.targetLinkUri));
 }
+
+/**
+ * Atomically consume a launch hint in PostgreSQL. Call only inside
+ * withTenantTransaction(actor, ...), so app.district_id is transaction-scoped.
+ * The database function enforces tenant equality and serializes competing
+ * consumers across every API instance.
+ */
+export async function consumeHintDurably(client, districtId, launchId, expiresAt) {
+  if (!client || typeof client.query !== "function" ||
+      typeof districtId !== "string" || !districtId ||
+      typeof launchId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(launchId) ||
+      !(expiresAt instanceof Date) || !Number.isFinite(expiresAt.getTime()) ||
+      expiresAt.getTime() <= Date.now() || expiresAt.getTime() > Date.now() + 6 * 60_000) {
+    throw new TypeError("invalid durable LTI launch claim");
+  }
+  const result = await client.query(
+    "SELECT eduos_lti_consume_launch($1::uuid, $2::text, $3::timestamptz) AS consumed",
+    [districtId, launchId, expiresAt]
+  );
+  return result.rows?.[0]?.consumed === true;
+}
