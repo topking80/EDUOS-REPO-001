@@ -562,7 +562,21 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     // LTI response_mode=form_post requires an URL-encoded form body. Do not
     // accept JSON or other parsers' output as an alternate OIDC transport.
     if (!req.is("application/x-www-form-urlencoded")) return res.status(415).type("text/plain").send("LTI launch refused: unsupported_content_type");
-    return expressUrlencoded(req, res, () => ltiAuthorize(req, res, next));
+    return expressRawUrlencoded(req, res, () => {
+      // Parse only after the raw byte limit has been enforced. URLSearchParams
+      // preserves repeated keys; retain them as arrays so OIDC scalar checks
+      // reject parameter pollution instead of silently choosing one value.
+      const parsed = Object.create(null);
+      for (const [key, value] of new URLSearchParams(req.body.toString("utf8"))) {
+        if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+          parsed[key] = Array.isArray(parsed[key]) ? [...parsed[key], value] : [parsed[key], value];
+        } else {
+          parsed[key] = value;
+        }
+      }
+      req.body = parsed;
+      return ltiAuthorize(req, res, next);
+    });
   });
   app.get("/.well-known/jwks.json", (_req, res) => { res.setHeader("Cache-Control", "public, max-age=300"); res.json(ltiKey ? ltiKey.jwks : { keys: [] }); });
 
@@ -644,6 +658,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
   });
 }
 
-// Small form parser for the LTI OIDC POST variant (no other route needs it).
+// Bounded raw parser for the LTI OIDC POST variant. Parsing raw bytes first
+// makes the 16KB cap apply before protocol-field validation and also covers
+// chunked requests without relying on Content-Length.
 import express from "express";
-const expressUrlencoded = express.urlencoded({ extended: false, limit: "16kb" });
+const expressRawUrlencoded = express.raw({ type: "application/x-www-form-urlencoded", limit: "16kb" });
