@@ -54,7 +54,29 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
       WHERE s.id=p_student AND s.district_id=p_district AND s.school_id=p_school
     )
     AND (
-      (p_author=eduos_ctx_user() AND p_status IN ('draft','published'))
+      (
+        p_author=eduos_ctx_user() AND p_status IN ('draft','published')
+        AND (
+          (eduos_ctx_role()='parent' AND EXISTS (
+            SELECT 1 FROM student_user_links l
+            WHERE l.district_id=p_district AND l.student_id=p_student
+              AND l.user_id=eduos_ctx_user() AND l.status='active'
+              AND l.relationship IN ('parent','guardian')
+          ))
+          OR (eduos_ctx_role()='pupil' AND EXISTS (
+            SELECT 1 FROM student_user_links l
+            WHERE l.district_id=p_district AND l.student_id=p_student
+              AND l.user_id=eduos_ctx_user() AND l.status='active'
+              AND l.relationship='pupil'
+          ))
+          OR (eduos_ctx_role()='teacher' AND p_school=eduos_ctx_school() AND EXISTS (
+            SELECT 1 FROM teacher_student_rosters r
+            WHERE r.district_id=p_district AND r.school_id=p_school
+              AND r.student_id=p_student AND r.teacher_user_id=eduos_ctx_user()
+          ))
+          OR (eduos_ctx_role() IN ('principal','vice_principal') AND p_school=eduos_ctx_school())
+        )
+      )
       OR (
         p_status='published' AND (
           (p_visibility='family' AND eduos_ctx_role()='parent' AND EXISTS (
