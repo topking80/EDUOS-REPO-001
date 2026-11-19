@@ -17,7 +17,8 @@ import { runAfterCommit } from "./commerce/phases.js";
 import { SANDBOX_OUTCOMES } from "./commerce/payments.js";
 import { summarize, DEFAULT_RATES } from "./commerce/split.js";
 import { commerceStatus, loadSettings, settingsOut, confirmPayment, refundPayment, startMarketplaceCheckout, paymentOut, reconcileCommercePayments } from "./commerce/service.js";
-import { providersOverview, saveAccount, testAccount, saveSetup } from "./commerce/setup.js";
+import { providersOverview, saveAccount, testAccount, saveSetup, issueWebhookEndpoint, revokeWebhookEndpoint } from "./commerce/setup.js";
+import { processCommerceWebhookEvents } from "./commerce/webhook-worker.js";
 
 const intIn = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 const canPay = (req, res, next) => (canPerform(req.actor, "commerce", "pay") || canPerform(req.actor, "commerce", "purchase"))
@@ -53,7 +54,11 @@ export function startCommerceReconcile() {
   const timer = setInterval(() => {
     if (reconcileRunning) return;
     reconcileRunning = true;
-    reconcileCommercePayments().catch(e => console.error("Commerce reconcile failed", { message: e.message })).finally(() => { reconcileRunning = false; });
+    Promise.allSettled([reconcileCommercePayments(), processCommerceWebhookEvents()])
+      .then(results => {
+        if (results[0].status === "rejected") console.error("Commerce reconcile failed", { message: results[0].reason?.message });
+        if (results[1].status === "rejected") console.error("Commerce webhook worker failed", { message: results[1].reason?.message });
+      }).finally(() => { reconcileRunning = false; });
   }, config.commerceReconcileIntervalSeconds * 1000);
   timer.unref?.();
   return timer;
@@ -217,7 +222,64 @@ export function registerCommerceRoutes(app) {
   // their values.
   const provAdmin = [limiter, requireSession, requireCsrf, requirePermission("commerce", "providers")];
   app.get("/api/commerce/providers", requireSession, requirePermission("commerce", "providers"), wrap(async (c, req) => providersOverview(c, req.actor.districtId)));
+  // Provider administrators can inspect terminal webhook failures without
+  // exposing callback payloads, endpoint tokens, or payer identity.
+  app.get("/api/commerce/providers/webhook-refund-cases", requireSession, requirePermission("commerce", "providers"), wrap(async c => {
+    const cases = await rows(c, `
+      SELECT id,payment_id,webhook_event_id,processor,provider_capture_ref,amount_cents,
+             currency,reason_code,status,opened_at,last_seen_at,resolved_at,resolution_note
+        FROM commerce_webhook_refund_cases
+       WHERE status='open'
+       ORDER BY opened_at ASC,id ASC
+       LIMIT 100
+    `);
+    return { refundCases: cases.map(x => ({
+      id:x.id,paymentId:x.payment_id,webhookEventId:x.webhook_event_id,
+      processor:x.processor,captureRef:x.provider_capture_ref,amountCents:x.amount_cents,
+      currency:x.currency,reasonCode:x.reason_code,status:x.status,
+      openedAt:x.opened_at,lastSeenAt:x.last_seen_at
+    })) };
+  }));
+  app.post("/api/commerce/providers/webhook-refund-cases/:id/resolve", ...provAdmin, wrap(async (c, req) => {
+    need(validId(req.params.id), 400, "invalid_refund_case_id");
+    const note = req.body?.resolutionNote;
+    need(typeof note === "string" && note.trim().length >= 10 && note.trim().length <= 1000,
+      400, "resolution_note_required");
+    const resolved = await one(c, `
+      UPDATE commerce_webhook_refund_cases
+         SET status='resolved',resolved_at=now(),resolved_by=$2,resolution_note=$3
+       WHERE id=$1 AND status='open'
+       RETURNING id,payment_id
+    `, [req.params.id, req.actor.userId, note.trim()]);
+    need(resolved, 404, "refund_case_not_found");
+    await audit(c, req, "late_capture_refund_resolved", "commerce_webhook_refund_case",
+      resolved.id, `payment=${resolved.payment_id};resolution=${note.trim().slice(0,500)}`);
+    return { id: resolved.id, status: "resolved" };
+  }));
+  app.get("/api/commerce/providers/webhook-dead-letters", requireSession, requirePermission("commerce", "providers"), wrap(async c => {
+    const events = await rows(c, `
+      SELECT e.id, e.payment_id, e.processor, e.provider_event_id, e.event_type,
+             e.attempts, e.last_error_code, e.received_at, e.processed_at
+        FROM commerce_webhook_events e
+       WHERE e.state='dead_letter'
+       ORDER BY e.processed_at DESC, e.id DESC
+       LIMIT 100
+    `);
+    return { deadLetters: events.map(e => ({
+      id: e.id, paymentId: e.payment_id, processor: e.processor,
+      providerEventId: e.provider_event_id, eventType: e.event_type,
+      attempts: e.attempts, errorCode: e.last_error_code,
+      receivedAt: e.received_at, processedAt: e.processed_at
+    })) };
+  }));
   app.put("/api/commerce/providers/:processor", ...provAdmin, wrap(async (c, req) => saveAccount(c, req, req.params.processor, req.body || {})));
   app.post("/api/commerce/providers/:processor/test", ...provAdmin, phased(async (c, req) => testAccount(c, req, req.params.processor)));
+  // Endpoint URLs contain one-time bearer tokens; wrap() applies Cache-Control: no-store.
+  app.post("/api/commerce/providers/:processor/webhook-endpoint", ...provAdmin,
+    wrap(async (c, req) => created(await issueWebhookEndpoint(c, req, req.params.processor))));
+  app.post("/api/commerce/providers/:processor/webhook-endpoint/rotate", ...provAdmin,
+    wrap(async (c, req) => issueWebhookEndpoint(c, req, req.params.processor)));
+  app.delete("/api/commerce/providers/:processor/webhook-endpoint", ...provAdmin,
+    wrap(async (c, req) => revokeWebhookEndpoint(c, req, req.params.processor)));
   app.put("/api/commerce/payment-methods", ...provAdmin, wrap(async (c, req) => saveSetup(c, req, req.body || {})));
 }

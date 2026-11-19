@@ -2884,8 +2884,78 @@ VIEWS.payments = async () => {
         h("label", { for: "pm-card" }, "Who processes Visa / Mastercard"), cardSel,
         h("label", { for: "pm-default" }, "Shown first at checkout"), def,
         h("button", { class: "btn primary", type: "submit" }, "Save options"))),
-    r.methods.map(tile)];
+    r.methods.map(tile), await webhookOperations()];
 };
+
+// 37.8.0: district webhook operations. The endpoint URL is a bearer credential:
+// retain it only in this view, reveal it once, and never persist it locally.
+async function webhookOperations() {
+  const [refundLoad, deadLoad] = await Promise.allSettled([
+    api.get("/api/commerce/providers/webhook-refund-cases"),
+    api.get("/api/commerce/providers/webhook-dead-letters")
+  ]);
+  const refundCases = refundLoad.status === "fulfilled" && Array.isArray(refundLoad.value?.data?.refundCases)
+    ? refundLoad.value.data.refundCases : null;
+  const deadLetters = deadLoad.status === "fulfilled" && Array.isArray(deadLoad.value?.data?.deadLetters)
+    ? deadLoad.value.data.deadLetters : null;
+  const out = h("section", { class: "card", "aria-label": "Webhook operations" },
+    h("h2", {}, "Payment webhook operations"),
+    h("p", { class: "small muted" }, "Manage provider callback URLs and review payment events that need an administrator. Endpoint URLs contain a secret: copy them into the provider dashboard immediately. EduOS shows a newly issued URL only once."),
+    h("div", { class: "stack" }, ["paypal", "square", "btcpay"].map(processor => {
+      const label = PROC_LABEL[processor];
+      const status = h("p", { class: "small muted", role: "status" }, "Endpoint status is not exposed; issuing or rotating replaces the previous URL.");
+      const reveal = h("div", { class: "stack", hidden: true });
+      const issue = async () => {
+        if (!(await ask({ title: `Issue or rotate ${label} webhook URL?`, text: "The previous URL will stop working immediately. You must update the provider dashboard with the new URL.", confirm: "Issue URL", danger: true }))) return;
+        try {
+          const result = (await api.post(`/api/commerce/providers/${processor}/webhook-endpoint/rotate`, {})).data;
+          const field = h("input", { type: "text", readonly: true, value: result.webhookUrl, "aria-label": `${label} one-time webhook URL`, autocomplete: "off" });
+          const copy = h("button", { class: "btn", type: "button", onclick: async () => {
+            try {
+              if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(result.webhookUrl);
+              else { field.focus(); field.select(); document.execCommand("copy"); }
+              toast("Webhook URL copied");
+            } catch { field.focus(); field.select(); toast("Select and copy the URL"); }
+          } }, "Copy URL");
+          reveal.hidden = false;
+          reveal.replaceChildren(h("p", { class: "notice" }, result.notice || "Copy this URL now. It will not be shown again."), field, copy);
+          status.textContent = "New URL issued. Update the matching provider dashboard now.";
+        } catch (err) { cmErr(err, `Couldn't issue the ${label} URL.`); }
+      };
+      const revoke = async () => {
+        if (!(await ask({ title: `Revoke ${label} webhook URL?`, text: "The provider will no longer be able to deliver callbacks to this district endpoint until a new URL is issued.", confirm: "Revoke", danger: true }))) return;
+        try {
+          await api.req("DELETE", `/api/commerce/providers/${processor}/webhook-endpoint`);
+          reveal.hidden = true; reveal.replaceChildren(); status.textContent = "Active webhook URLs revoked.";
+          toast(`${label} endpoint revoked`);
+        } catch (err) { cmErr(err, `Couldn't revoke the ${label} URL.`); }
+      };
+      return h("div", { class: "stack" }, h("div", { class: "row wrap" },
+        h("h3", { class: "grow" }, label), h("button", { class: "btn", type: "button", onclick: issue }, "Issue / rotate URL"),
+        h("button", { class: "btn", type: "button", onclick: revoke }, "Revoke URL")), status, reveal);
+    })),
+    h("h3", {}, "Late payment captures needing a refund"),
+    h("p", { class: "small muted" }, "These payments arrived after the ticket hold expired. Tickets were not issued. Refund the payer in the provider dashboard first, then record the resolution here."),
+    refundCases === null ? h("p", { class: "notice", role: "alert" }, "Refund cases couldn't be loaded. Check your connection and reload this page before taking action.")
+      : refundCases.length ? h("ul", { class: "list" }, refundCases.map(item => {
+      const note = h("textarea", { rows: 2, minlength: 10, maxlength: 1000, placeholder: "Record when and how the refund was sent (10–1000 characters).", "aria-label": `Refund resolution for ${item.processor} capture ${item.captureRef}` });
+      const meta = h("p", { class: "small muted" }, `${PROC_LABEL[item.processor] || item.processor} · ${item.captureRef} · ${money(item.amountCents, item.currency)} · ${String(item.reasonCode || "late_capture").replace(/_/g, " ")} · opened ${fmtDay(item.openedAt)}`);
+      return h("li", { class: "stack" }, meta, note, h("button", { class: "btn", type: "button", onclick: async () => {
+        if (note.value.trim().length < 10) { toast("Add a refund note of at least 10 characters"); note.focus(); return; }
+        try {
+          await api.post(`/api/commerce/providers/webhook-refund-cases/${item.id}/resolve`, { resolutionNote: note.value.trim() });
+          toast("Refund resolution recorded"); go("payments", { push: false });
+        } catch (err) { cmErr(err, "Couldn't record the refund resolution."); }
+      } }, "Record refund resolution"));
+    })) : empty("No late-capture refund cases are open."),
+    h("h3", {}, "Webhook events requiring investigation"),
+    deadLetters === null ? h("p", { class: "notice", role: "alert" }, "Dead-letter events couldn't be loaded. Check your connection and reload this page before concluding there are no failed events.")
+      : deadLetters.length ? h("ul", { class: "list" }, deadLetters.map(item =>
+      h("li", {}, h("p", {}, `${PROC_LABEL[item.processor] || item.processor} · ${item.eventType}`),
+        h("p", { class: "small muted" }, `Event ${item.providerEventId} · ${item.attempts} attempts · ${item.errorCode || "unknown error"} · received ${fmtDay(item.receivedAt)}`)))) : empty("No webhook events are in the dead-letter queue."),
+    h("p", { class: "small muted" }, "Dead-letter payloads and payer details are intentionally not displayed. Investigate the provider event using its ID and your provider's dashboard."));
+  return out;
+}
 
 async function boot() {
   try {

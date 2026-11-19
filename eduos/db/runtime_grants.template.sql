@@ -423,3 +423,24 @@ REVOKE DELETE, TRUNCATE ON school_athletic_directors, sports_eligibility_policy,
 GRANT EXECUTE ON FUNCTION eduos_sports_eligibility_inputs(uuid) TO eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_is_athletic_director(uuid), eduos_is_activity_staff(uuid, text[]), eduos_activity_school(uuid),
   eduos_can_see_eligibility(uuid), eduos_can_read_roster(uuid, uuid, uuid), eduos_can_manage_roster(uuid, uuid), eduos_family_on_roster(uuid) TO eduos_app;
+
+-- 37.8.0 provider webhook inbox: tenant-scoped event intake and processing ledger.
+GRANT SELECT, INSERT, UPDATE ON commerce_webhook_events TO eduos_app;
+REVOKE DELETE, TRUNCATE ON commerce_webhook_events FROM eduos_app;
+REVOKE ALL ON FUNCTION eduos_commerce_webhook_event_guard() FROM eduos_app;
+-- 37.8.0 opaque endpoint tokens: tenant-scoped provisioning/revocation; the
+-- public resolver accepts only a SHA-256 token digest and returns sealed secrets.
+GRANT SELECT, INSERT, UPDATE ON commerce_webhook_endpoints TO eduos_app;
+REVOKE DELETE, TRUNCATE ON commerce_webhook_endpoints FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_commerce_webhook_account(text) TO eduos_app;
+
+-- 37.8.0: public verified webhook intake can persist only a matched inbox event.
+GRANT EXECUTE ON FUNCTION eduos_commerce_receive_webhook(text,text,text,text,text,text,text,integer,text) TO eduos_app;
+
+-- 37.8.0: worker may claim one event at a time through the narrow definer.
+GRANT EXECUTE ON FUNCTION eduos_commerce_claim_webhook() TO eduos_app;
+-- Late provider captures are held for explicit operator refund reconciliation.
+GRANT SELECT, INSERT ON commerce_webhook_refund_cases TO eduos_app;
+GRANT UPDATE (last_seen_at, status, resolved_at, resolved_by, resolution_note)
+  ON commerce_webhook_refund_cases TO eduos_app;
+REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;

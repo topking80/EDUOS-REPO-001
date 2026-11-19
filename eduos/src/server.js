@@ -25,6 +25,7 @@ import { registerAdminRoutes } from "./admin-routes.js";
 import { registerMeshRoutes } from "./mesh-routes.js";
 import { registerMarketplaceRoutes } from "./marketplace-routes.js";
 import { registerCommerceRoutes, startCommerceReconcile } from "./commerce-routes.js";
+import { receiveCommerceWebhook, webhookHttpStatus } from "./commerce/webhook-intake.js";
 import { registerHomeRoutes } from "./home-routes.js";
 import { registerBrandingRoutes } from "./branding-routes.js";
 import { registerTransportRoutes } from "./transport-routes.js";
@@ -76,7 +77,11 @@ app.use(compression());
 // JSON_BODY_LIMIT (default 256kb) everywhere except the SIS import routes, which
 // parse up to SIS_IMPORT_MAX_MB (default 50) only AFTER the session is verified.
 const BULK_PATHS = new Set(["/api/integrations/sis/import-csv", "/api/integrations/sis/import"]);
-const smallJson = express.json({ limit: config.jsonBodyLimit, strict: true });
+const smallJson = express.json({ limit: config.jsonBodyLimit, strict: true, verify: (req, _res, buf) => {
+  // Provider signatures cover the exact bytes, not re-serialized JSON. Keep a
+  // bounded raw Buffer for public commerce webhook routes before JSON parsing.
+  if (req.path.startsWith("/api/commerce/webhooks/")) req.rawBody = Buffer.from(buf);
+} });
 const bulkJson = express.json({ limit: config.sisImportMaxBytes, strict: true });
 // 32.7.0: node-to-hub EDEN requests are signed over the exact body bytes, so
 // that parser keeps the raw text (and allows the larger sealed DECN packages).
@@ -1929,6 +1934,21 @@ app.get("/api/webhooks/:webhookId/deliveries",requireSession,requirePermission("
 registerAdminRoutes(app);
 registerMeshRoutes(app,{emitServerFlow});
 registerMarketplaceRoutes(app);
+// Public provider callbacks: exact raw request bytes were captured by smallJson above.
+app.post("/api/commerce/webhooks/:processor/:token",
+  rateLimit({ windowMs: 60_000, limit: Math.max(10, config.commsRateLimit), standardHeaders: true, legacyHeaders: false }),
+  async (req, res) => {
+    try {
+      const result = await receiveCommerceWebhook({ processor: req.params.processor, token: req.params.token,
+        headers: req.headers, rawBody: req.rawBody, body: req.body });
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json({ received: true, outcome: result.outcome });
+    } catch (error) {
+      res.setHeader("Cache-Control", "no-store");
+      const status = webhookHttpStatus(error);
+      res.status(status).json({ error: status >= 500 ? "webhook_temporarily_unavailable" : (error.code || "invalid_webhook") });
+    }
+  });
 registerCommerceRoutes(app); // 37.7.0 commerce, sandbox only
 registerHomeRoutes(app);
 registerBrandingRoutes(app,{emitServerFlow});

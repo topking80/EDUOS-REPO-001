@@ -31,7 +31,7 @@ const roleTabs = (() => {
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json" };
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-function mockApi(role, pathname) {
+function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   switch (pathname) {
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: "s1", memberships: [] };
@@ -86,6 +86,9 @@ function mockApi(role, pathname) {
     case "/api/commerce/marketplace": return { data: { marketplaceFeeBps: 500, licenses: [
       { feeEventId: "f1", approvedAt: now, listingId: "l1", name: "Math Garden", vendor: "MathCo", unitPriceCents: 1250, priceUnit: "seat", seatLimit: 30, purchase: null },
       { feeEventId: "f2", approvedAt: now, listingId: "l2", name: "Read Along", vendor: "ReadCo", unitPriceCents: null, priceUnit: "flat", seatLimit: null, purchase: { id: "m1", status: "paid", total_cents: 5000, quantity: 1 } }] } };
+    // 37.8.0 district webhook operations.
+    case "/api/commerce/providers/webhook-refund-cases": if (failWebhookLoads) return null; return { data: { refundCases: [{ id: "rf1", processor: "paypal", captureRef: "CAPTURE-123", amountCents: 1250, currency: "USD", reasonCode: "hold_expired", openedAt: now }] } };
+    case "/api/commerce/providers/webhook-dead-letters": if (failWebhookLoads) return null; return { data: { deadLetters: [{ id: "dl1", processor: "square", providerEventId: "evt-123", eventType: "payment.updated", attempts: 20, errorCode: "provider_unreachable", receivedAt: now }] } };
     // 37.7.1 district payment setup, built from the real catalog.
     case "/api/commerce/providers": return { data: { liveSwitch: false, secretsKeyConfigured: true, btcpayAllowedHosts: [],
       setup: { enabledMethods: ["paypal", "sandbox"], defaultMethod: "paypal", cardProcessor: "square", updatedAt: now },
@@ -103,11 +106,24 @@ function mockApi(role, pathname) {
 }
 
 function startServer() {
-  const state = { role: "parent" };
+  const state = { role: "parent", endpointOps: { issued: 0, revoked: 0, urls: [] } };
   const server = http.createServer((req, res) => {
     const { pathname } = new URL(req.url, "http://x");
     if (pathname.startsWith("/api/")) {
-      const body = req.method === "GET" ? mockApi(state.role, pathname) : { data: {} };
+      const endpoint = pathname.match(/^\/api\/commerce\/providers\/(paypal|square|btcpay)\/webhook-endpoint(?:\/(rotate))?$/);
+      if (endpoint && req.method === "POST" && endpoint[2] === "rotate") {
+        const processor = endpoint[1], webhookUrl = `https://hooks.example.test/api/commerce/webhooks/${processor}/smoke-token-${state.endpointOps.issued + 1}`;
+        state.endpointOps.issued++;
+        state.endpointOps.urls.push(webhookUrl);
+        res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" });
+        return res.end(JSON.stringify({ data: { processor, webhookUrl, notice: "Copy this URL now. It will not be shown again." } }));
+      }
+      if (endpoint && req.method === "DELETE" && !endpoint[2]) {
+        state.endpointOps.revoked++;
+        res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
+      }
+      const body = req.method === "GET" ? mockApi(state.role, pathname, state.failWebhookLoads) : { data: {} };
       res.writeHead(body ? (req.method === "GET" ? 200 : 201) : 404, { "content-type": "application/json", "cache-control": "no-store" });
       return res.end(JSON.stringify(body ?? { error: "not_found" }));
     }
@@ -154,10 +170,69 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           : !text ? "blank"
           : hash !== `#/${tab}` ? `was sent to ${hash}` : null;
         if (problem) failures.push(`${role} #/${tab}: ${problem}`);
+        if (["superintendent", "it_admin"].includes(role) && tab === "payments") {
+          if (!text.includes("Payment webhook operations") || !text.includes("Late payment captures needing a refund") || !text.includes("Webhook events requiring investigation"))
+            failures.push(`${role} #/payments: webhook operations panel is incomplete`);
+          if (!text.includes("CAPTURE-123") || !text.includes("evt-123")) failures.push(`${role} #/payments: webhook recovery records did not render`);
+        }
       } finally {
         page.close();
       }
     }
+  }
+  // Failed queue requests must be visibly different from genuinely empty queues.
+  state.role = "superintendent";
+  state.failWebhookLoads = true;
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/payments` });
+      const text = await page.mainText();
+      if (!text.includes("Refund cases couldn't be loaded") || !text.includes("Dead-letter events couldn't be loaded"))
+        failures.push("superintendent #/payments: webhook API failures were presented as empty queues");
+      if (page.errors.length) failures.push(`superintendent #/payments failure state: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
+  }
+  // Exercise the real provider endpoint controls: issue, rotate (replacing the
+  // one-time bearer URL), then revoke (clearing the secret from the view).
+  state.failWebhookLoads = false;
+  state.endpointOps = { issued: 0, revoked: 0, urls: [] };
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/payments` });
+      await page.mainText();
+      const clickButton = label => page.eval(`([...document.querySelectorAll("button")].find(b => b.textContent.trim() === ${JSON.stringify(label)}) || {}).click?.()`);
+      const clickDialogButton = label => page.eval(`([...document.querySelectorAll("dialog button")].find(b => b.textContent.trim() === ${JSON.stringify(label)}) || {}).click?.()`);
+      const waitFor = async expression => {
+        const end = Date.now() + 5000;
+        while (Date.now() < end) {
+          if (await page.eval(expression)) return true;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        return false;
+      };
+
+      await clickButton("Issue / rotate URL");
+      await clickDialogButton("Issue URL");
+      if (!await waitFor('document.querySelector(\'[aria-label="PayPal one-time webhook URL"]\')?.value'))
+        failures.push("superintendent #/payments: issuing a webhook URL did not reveal the one-time URL");
+      const firstUrl = await page.eval('document.querySelector(\'[aria-label="PayPal one-time webhook URL"]\')?.value');
+      await clickButton("Issue / rotate URL");
+      await clickDialogButton("Issue URL");
+      if (!await waitFor(`document.querySelector('[aria-label="PayPal one-time webhook URL"]')?.value !== ${JSON.stringify(firstUrl)}`))
+        failures.push("superintendent #/payments: rotating a webhook URL did not replace the prior URL");
+      const secondUrl = await page.eval('document.querySelector(\'[aria-label="PayPal one-time webhook URL"]\')?.value');
+      await clickButton("Revoke URL");
+      await clickDialogButton("Revoke");
+      if (!await waitFor('!document.querySelector(\'[aria-label="PayPal one-time webhook URL"]\')'))
+        failures.push("superintendent #/payments: revoking a webhook URL did not clear the revealed secret");
+      if (firstUrl === secondUrl || !firstUrl?.includes("smoke-token-1") || !secondUrl?.includes("smoke-token-2"))
+        failures.push("superintendent #/payments: issue/rotate returned unexpected one-time URL values");
+      if (state.endpointOps.issued !== 2 || state.endpointOps.revoked !== 1)
+        failures.push(`superintendent #/payments: expected 2 issue/rotate calls and 1 revoke call, got ${JSON.stringify(state.endpointOps)}`);
+      if (page.errors.length) failures.push(`superintendent #/payments endpoint controls: ${page.errors[0].split("\\n")[0]}`);
+    } finally { page.close(); }
   }
   assert.deepEqual(failures, []);
 });

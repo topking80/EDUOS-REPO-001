@@ -159,8 +159,8 @@ export async function startTicketCheckout(c, req, { event, type, quantity, key }
     [a.districtId, event.school_id, event.id, a.userId, t.id, quantity, total, t.currency, key, holdMinutes]);
   // Reserve: the seats and a 'creating' payment commit before the processor is called.
   const p = await one(c, `INSERT INTO commerce_payments(id,district_id,school_id,purpose,ticket_order_id,payer_user_id,amount_cents,currency,processing_fee_cents,provider,payment_method,mode,
-        status,description,pending_since,pending_actor)
-      VALUES($1,$2,$3,'event_tickets',$4,$5,$6,$7,$8,$9,$10,$11,'creating',$12,now(),$13::jsonb) RETURNING id`,
+        status,description,pending_since,pending_actor,payer_actor)
+      VALUES($1,$2,$3,'event_tickets',$4,$5,$6,$7,$8,$9,$10,$11,'creating',$12,now(),$13::jsonb,$13::jsonb) RETURNING id`,
     [randomUUID(), a.districtId, event.school_id, order.id, a.userId, total, t.currency, fee, processor, method, mode,
       `${quantity} × ${t.name}, ${event.title}`.slice(0, 255), actorJson(a)]);
   await audit(c, req, "checkout", "event_ticket_order", order.id, `event=${event.id};quantity=${quantity};payment=${p.id};provider=${processor};method=${method};mode=${mode}`);
@@ -182,6 +182,76 @@ export async function pendingCheckout(c, orderId) {
   const p = await one(c, "SELECT * FROM commerce_payments WHERE ticket_order_id=$1 ORDER BY created_at DESC LIMIT 1", [orderId]);
   const o = await one(c, "SELECT hold_expires_at FROM event_ticket_orders WHERE id=$1", [orderId]);
   return p ? paymentOut(p, { holdExpiresAt: o?.hold_expires_at || null }) : null;
+}
+
+/**
+ * A provider can capture after the ticket hold has been released. Persist a
+ * durable operator case, but never create tickets or a settlement ledger row.
+ * The capture reference is retained so an administrator can reconcile the
+ * external refund against the exact provider transaction.
+ */
+async function recordLateCaptureRefundCase(c, req, p, event, reasonCode) {
+  if (!event.webhookEventId) throw new HttpError(409, "webhook_event_reference_required");
+  await c.query(`UPDATE commerce_payments
+      SET provider_capture_ref=coalesce(provider_capture_ref,$2),
+          confirmed_at=coalesce(confirmed_at,now()), pending_since=NULL, pending_actor=NULL
+    WHERE id=$1`, [p.id, event.captureRef]);
+  await c.query(`INSERT INTO commerce_webhook_refund_cases
+      (district_id,payment_id,webhook_event_id,processor,provider_capture_ref,amount_cents,currency,reason_code)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT(payment_id,provider_capture_ref)
+    DO UPDATE SET last_seen_at=now()`,
+    [p.district_id, p.id, event.webhookEventId, event.processor, event.captureRef,
+      event.amountCents, event.currency, reasonCode]);
+  await audit(c, req, "payment_after_hold", "commerce_payment", p.id,
+    `verified_provider_capture_after_${reasonCode};manual_refund_required`, "failure");
+}
+
+/**
+ * Apply a signature-verified provider event inside the authenticated payer's
+ * tenant transaction. This deliberately reuses the exact settlement path used
+ * by interactive confirmation: payment transition, tickets/license, EDAL,
+ * ledger, receipt and audit all commit or roll back together.
+ */
+export async function applyVerifiedWebhook(c, req, event) {
+  const a = req.actor;
+  const p = await one(c, "SELECT * FROM commerce_payments WHERE id=$1 FOR UPDATE", [event.paymentId]);
+  if (!p || p.district_id !== a.districtId || p.payer_user_id !== a.userId)
+    throw new HttpError(404, "webhook_payment_not_found");
+  if (p.provider !== event.processor || p.provider_ref !== event.providerRef
+      || p.amount_cents !== event.amountCents || p.currency !== event.currency
+      || (p.provider_capture_ref && p.provider_capture_ref !== event.captureRef))
+    throw new HttpError(409, "webhook_payment_mismatch");
+  if (p.status === "expired") {
+    await recordLateCaptureRefundCase(c, req, p, event, "payment_after_checkout_expired");
+    return { outcome: "ignored", reason: "payment_after_hold_refund_required" };
+  }
+  if (p.status !== "requires_confirmation")
+    return { outcome: "ignored", reason: "payment_not_awaiting_confirmation" };
+  if (!(await loadSettings(c, a.districtId)).enabled)
+    return { outcome: "ignored", reason: "commerce_disabled" };
+  // A guardian's payer identity may legitimately have no schoolId. Ticket
+  // orders are school-scoped by RLS, so derive this transaction's school
+  // context from the already-validated payment row before reading or settling
+  // its order. Never trust a school identifier supplied by the webhook.
+  if (p.purpose === "event_tickets" && p.school_id)
+    await c.query("SELECT set_config('app.school_id',$1,true)", [p.school_id]);
+  if (p.purpose === "event_tickets") {
+    const order = await one(c, "SELECT id,status,hold_expires_at < now() AS hold_expired FROM event_ticket_orders WHERE id=$1 FOR UPDATE", [p.ticket_order_id]);
+    if (!order || order.status !== "payment_pending" || order.hold_expired) {
+      await c.query("SELECT eduos_commerce_expire_holds()");
+      await c.query("UPDATE commerce_payments SET status='expired',confirmed_at=now(),pending_since=NULL,pending_actor=NULL WHERE id=$1 AND status='requires_confirmation'", [p.id]);
+      await recordLateCaptureRefundCase(c, req, p, event, "ticket_hold_expired");
+      return { outcome: "ignored", reason: "payment_after_hold_refund_required" };
+    }
+  }
+  const result = { status: "succeeded", captureRef: event.captureRef };
+  const settled = p.purpose === "event_tickets"
+    ? await recordTickets(c, req, p, result)
+    : await recordMarketplace(c, req, p, result);
+  if (settled.status !== "succeeded")
+    throw new HttpError(409, "webhook_settlement_not_completed");
+  return { outcome: "applied", paymentId: p.id, receipt: settled.receipt?.number || null };
 }
 
 /** Record a ticket payment's outcome (phase 2 of confirm; the order is locked here). */
@@ -256,8 +326,8 @@ export async function startMarketplaceCheckout(c, req, feeEventId, b) {
   const m = await one(c, `INSERT INTO marketplace_purchases(district_id,fee_event_id,listing_id,vendor_id,license_id,quantity,unit_price_cents,total_cents,idempotency_key,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [a.districtId, fe.id, fe.listing_id, fe.vendor_id, fe.license_id, qty, fe.unit_price_cents, total, key, a.userId]);
   const p = await one(c, `INSERT INTO commerce_payments(id,district_id,school_id,purpose,marketplace_purchase_id,payer_user_id,amount_cents,currency,processing_fee_cents,provider,payment_method,mode,
-        status,description,pending_since,pending_actor)
-      VALUES($1,$2,NULL,'marketplace_license',$3,$4,$5,'USD',$6,$7,$8,$9,'creating',$10,now(),$11::jsonb) RETURNING id`,
+        status,description,pending_since,pending_actor,payer_actor)
+      VALUES($1,$2,NULL,'marketplace_license',$3,$4,$5,'USD',$6,$7,$8,$9,'creating',$10,now(),$11::jsonb,$11::jsonb) RETURNING id`,
     [randomUUID(), a.districtId, m.id, a.userId, total, fee, processor, method, mode, `${qty === 1 ? "License" : `${qty} seats`}: ${fe.name}`.slice(0, 255), actorJson(a)]);
   await audit(c, req, "checkout", "marketplace_purchase", m.id, `fee_event=${fe.id};listing=${fe.listing_id};seats=${qty};payment=${p.id};provider=${processor};method=${method};mode=${mode}`);
   return afterCommit(async () => ({ purchase: purchaseOut(m), payment: paymentOut(await createdPayment(req, p.id, adapter)), replayed: false }));

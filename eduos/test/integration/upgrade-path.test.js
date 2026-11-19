@@ -127,10 +127,52 @@ describe("upgrade from an older release on a populated database", { skip }, () =
        WHERE n.nspname='public' AND c.relkind='r'
          AND EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='district_id' AND NOT a.attisdropped)
          AND NOT (c.relrowsecurity AND c.relforcerowsecurity) ORDER BY 1`);
-    // Sign-in tables, read before any district is known (the server resolves
-    // the session, then sets the tenant). Any other table is a regression.
-    assert.deepEqual(unprotected.rows.map(r => r.relname), ["district_users", "memberships", "native_login_handoffs", "sessions"],
-      "every other district table has forced row-level security");
+    // Sign-in tables are read before any district is known. The four commerce
+    // tables also intentionally have ENABLED (but not FORCE) RLS: only the
+    // migration-owned, narrowly scoped SECURITY DEFINER webhook functions may
+    // bypass tenant policies. The runtime role remains a non-owner and is
+    // therefore still subject to those policies. Any additional exception is
+    // a regression.
+    assert.deepEqual(unprotected.rows.map(r => r.relname), [
+      "commerce_payments", "commerce_provider_accounts",
+      "commerce_webhook_endpoints", "commerce_webhook_events",
+      "district_users", "memberships", "native_login_handoffs", "sessions"
+    ], "only sign-in tables and the four scoped commerce definer tables may omit FORCE RLS");
+    const lateRefundRls = await admin.query(`
+      SELECT c.relrowsecurity,c.relforcerowsecurity
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+       WHERE n.nspname='public' AND c.relname='commerce_webhook_refund_cases'`);
+    assert.deepEqual(
+      [lateRefundRls.rows[0]?.relrowsecurity, lateRefundRls.rows[0]?.relforcerowsecurity],
+      [true, true],
+      "late-capture refund cases remain tenant-scoped under the runtime role"
+    );
+    const webhookStateCheck = await admin.query(`
+      SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+       WHERE conrelid='public.commerce_webhook_events'::regclass
+         AND conname='commerce_webhook_events_state_check'`);
+    assert.match(webhookStateCheck.rows[0].definition, /dead_letter/,
+      "retry exhaustion has an explicit terminal inbox state");
+    const webhookTerminalCheck = await admin.query(`
+      SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+       WHERE conrelid='public.commerce_webhook_events'::regclass
+         AND conname='commerce_webhook_events_terminal_timestamp_check'`);
+    assert.match(webhookTerminalCheck.rows[0].definition, /dead_letter/,
+      "dead letters carry a terminal processed timestamp");
+    const webhookGuard = await admin.query(
+      "SELECT pg_get_functiondef('public.eduos_commerce_webhook_event_guard()'::regprocedure) AS definition");
+    assert.match(webhookGuard.rows[0].definition, /dead_letter/,
+      "the event guard permits only the explicit terminal transition");
+    const webhookClaim = await admin.query(
+      "SELECT pg_get_functiondef('public.eduos_commerce_claim_webhook()'::regprocedure) AS definition");
+    assert.match(webhookClaim.rows[0].definition, /attempts < 20/,
+      "dead-lettered events cannot be claimed again");
+    assert.match(webhookClaim.rows[0].definition, /payer_actor IS NULL/,
+      "events without a saved payer actor are terminally closed, never settled as an invented user");
+    assert.match(webhookClaim.rows[0].definition, /missing_payer_actor/,
+      "missing payer identity is visible to operators");
+    assert.match(webhookClaim.rows[0].definition, /claimed_at IS NULL OR/,
+      "orphaned processing leases with no timestamp can be recovered safely");
     const publicDefiner = await admin.query(`
       SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
        WHERE n.nspname='public' AND p.prosecdef

@@ -164,18 +164,42 @@ Guard triggers allow only forward transitions:
 - orders: `payment_pending` → `paid` / `cancelled`; `paid` → `refunded`;
 - tickets: `issued` → `checked_in` / `cancelled` / `refunded`.
 
+## Webhook intake and recovery (37.8.0)
+
+PayPal, Square and BTCPay now have a public, tokenized callback route and a
+durable verified-event inbox. Provider signatures are checked against the
+original request bytes. The intake route does not settle payments. A scheduled
+worker claims events with a five-minute lease, revalidates the payment and
+ticket hold, then invokes the existing settlement transaction. Duplicate
+provider event IDs are idempotent; invalid or unmatched events cannot issue
+tickets.
+
+Events that exhaust 20 attempts appear in the provider administrator's dead
+letter view. Captures received after a ticket hold expires are routed to a
+separate refund-case queue; they do not issue tickets or enter the settlement
+ledger. The district operator must refund through the provider and record the
+resolution in EduOS. Configure `COMMERCE_RECONCILE_INTERVAL_SECONDS` (default
+60; 0 disables both payment reconciliation and webhook processing).
+
+See `COMMERCE-PROVIDERS.md` for endpoint provisioning, provider dashboard
+configuration, rotation/revocation, operator routes and the sandbox launch
+checklist.
+
 ## Not done (needs a decision before real money)
 
-- **Real processors (37.7.1).** PayPal, Square and BTCPay adapters exist and
-  are tested against mocks only; see `COMMERCE-PROVIDERS.md`. Still missing:
-  a public webhook endpoint, Venmo and PayPal card fields, payouts to schools,
-  vendors and the state fund, and reconciliation.
-- **Sales tax.** Which items are taxable and at what rate is a legal and
-  finance question per state. The rate defaults to 0% and is not
-  per-jurisdiction.
-- **Legal review.** Terms, refunds policy, and state rules on fees charged to
-  families. GAP-ANALYSIS lists commerce as high risk.
-- **Partial refunds, chargebacks and disputes.** None of these exist yet.
-- **Flutter:** native ticket buying for families and learners, with the
-  "Pay with" picker and processor checkout (37.7.1). The leader screens
-  (settings, payment options, revenue, refunds, gate check-in) are web only.
+- **Live-provider validation.** CI uses mocked transports and makes no live
+  provider calls. Each district must test its own sandbox credentials,
+  hosted checkout, webhook delivery, duplicate events, late captures and
+  provider-side refunds before enabling real payments.
+- **Payouts and financial operations.** Payouts to schools, vendors and the
+  state fund; partial refunds, chargebacks, disputes and jurisdiction-specific
+  sales tax remain incomplete.
+- **Legal and finance review.** Terms, refund policy, public-school
+  procurement/accounting rules, tax treatment and state rules on fees charged
+  to families must be reviewed before launch. GAP-ANALYSIS lists commerce as
+  high risk.
+- **Venmo and PayPal card fields:** require PayPal's JavaScript SDK buttons
+  and card fields embedded in the page.
+- **Flutter:** family ticket checkout exists, but leader payment settings,
+  provider endpoint management, revenue, refund-case and dead-letter screens
+  remain web only.

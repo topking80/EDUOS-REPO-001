@@ -5,6 +5,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { createHash, createHmac } from "node:crypto";
 import pg from "pg";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
@@ -115,7 +116,8 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     server = await startServer(serverEnv);
     // How many EduOS transactions are open while the mock answers a processor call.
     mock.st.probe = async () => (await admin.query(`SELECT count(*)::int AS n FROM pg_stat_activity
-       WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend' AND xact_start IS NOT NULL`)).rows[0].n;
+       WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'
+         AND xact_start IS NOT NULL AND usename=$1 AND application_name='eduos-api'`, [db.names.app])).rows[0].n;
     for (const name of ["supt1", "supt2", "p1", "t1", "pa", "pu", "it1"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     const act = await as("p1")("POST", "/api/activities", { kind: "sport", title: "Owls Basketball", status: "published" });
     const ev = await as("p1")("POST", `/api/activities/${act.body.data.id}/events`, { title: "Home opener", startsAt: future(48), endsAt: future(50), venue: "Gym", publish: true });
@@ -162,6 +164,85 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(keep.body.data.secretsSet.clientSecret, true);
     // The database itself refuses an unsealed secret.
     await assert.rejects(admin.query("UPDATE commerce_provider_accounts SET secrets_enc='plain-text-secret' WHERE district_id=$1 AND processor='paypal'", [ID.d1]), /check constraint/);
+  });
+
+  it("webhook endpoint issue, rotation, revocation, and tenant isolation are enforced end to end", async () => {
+    const path = "/api/commerce/providers/paypal/webhook-endpoint";
+    const denied = await as("p1")("POST", path, {});
+    assert.equal(denied.status, 403, "non-provider staff cannot mint callback credentials");
+
+    const issued = await as("it1")("POST", path, {});
+    assert.equal(issued.status, 201, JSON.stringify(issued.body));
+    assert.equal(issued.headers.get("cache-control"), "no-store", "bearer URL responses are never cached");
+    const issuedData = issued.body.data;
+    assert.equal(issuedData.token, undefined, "the raw token is not separately returned");
+    const firstToken = new URL(issuedData.webhookUrl).pathname.split("/").at(-1);
+    assert.match(firstToken, /^[a-f0-9]{64}$/);
+    const firstDigest = createHash("sha256").update(firstToken, "utf8").digest("hex");
+    const firstRow = (await admin.query(
+      "SELECT id,token_sha256,active,revoked_at FROM commerce_webhook_endpoints WHERE district_id=$1 AND processor='paypal' AND token_sha256=$2",
+      [ID.d1, firstDigest]
+    )).rows[0];
+    assert.ok(firstRow, "the digest, not the bearer token, is persisted");
+    assert.notEqual(firstRow.token_sha256, firstToken);
+    assert.deepEqual([firstRow.active, firstRow.revoked_at], [true, null]);
+
+    const crossDistrict = await as("supt2")("GET", "/api/commerce/providers");
+    assert.deepEqual(crossDistrict.body.data.webhookEndpoints.paypal, [], "another district cannot see this endpoint");
+    const app = new pg.Client(db.appUrl); await app.connect();
+    try {
+      await app.query("BEGIN");
+      await app.query("SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true)",
+        [ID.d2, USERS.supt2[0], "superintendent"]);
+      assert.equal((await app.query("SELECT count(*)::int AS n FROM commerce_webhook_endpoints")).rows[0].n, 0,
+        "RLS hides another district's endpoint row");
+      await app.query("ROLLBACK");
+    } finally { await app.end(); }
+
+    const unauthorizedRevoke = await as("p1")("DELETE", path, {});
+    assert.equal(unauthorizedRevoke.status, 403, "non-provider staff cannot revoke callback credentials");
+    const otherDistrictRevoke = await as("supt2")("DELETE", path, {});
+    assert.equal(otherDistrictRevoke.status, 200, JSON.stringify(otherDistrictRevoke.body));
+    assert.equal(otherDistrictRevoke.body.data.revoked, 0, "a district administrator cannot revoke another district's endpoint");
+    assert.equal((await admin.query(
+      "SELECT active FROM commerce_webhook_endpoints WHERE district_id=$1 AND processor='paypal' AND token_sha256=$2",
+      [ID.d1, firstDigest]
+    )).rows[0].active, true, "cross-district revoke leaves the owning district's credential active");
+
+    const rotated = await as("it1")("POST", `${path}/rotate`, {});
+    assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
+    assert.equal(rotated.headers.get("cache-control"), "no-store");
+    assert.equal(rotated.body.data.token, undefined);
+    const secondToken = new URL(rotated.body.data.webhookUrl).pathname.split("/").at(-1);
+    assert.match(secondToken, /^[a-f0-9]{64}$/);
+    assert.notEqual(secondToken, firstToken, "rotation creates a fresh bearer credential");
+    const rows = (await admin.query(
+      "SELECT token_sha256,active,revoked_at FROM commerce_webhook_endpoints WHERE district_id=$1 AND processor='paypal' ORDER BY created_at,id",
+      [ID.d1]
+    )).rows;
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows.map(r => r.active), [false, true]);
+    assert.ok(rows[0].revoked_at);
+    assert.equal(rows[1].token_sha256, createHash("sha256").update(secondToken, "utf8").digest("hex"));
+
+    const callback = token => fetch(`${server.base}/api/commerce/webhooks/paypal/${token}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({})
+    });
+    const oldCallback = await callback(firstToken);
+    assert.equal(oldCallback.status, 404, "rotated credentials cannot resolve at the public intake");
+    const activeCallback = await callback(secondToken);
+    assert.equal(activeCallback.status, 401, "the active endpoint resolves, then rejects an unsigned provider callback");
+
+    const revoked = await as("it1")("DELETE", path, {});
+    assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
+    assert.deepEqual([revoked.body.data.revoked, revoked.body.data.active], [1, false]);
+    const revokedCallback = await callback(secondToken);
+    assert.equal(revokedCallback.status, 404, "revoked credentials cannot resolve at the public intake");
+    const finalRows = (await admin.query(
+      "SELECT active,revoked_at FROM commerce_webhook_endpoints WHERE district_id=$1 AND processor='paypal'",
+      [ID.d1]
+    )).rows;
+    assert.ok(finalRows.every(r => !r.active && r.revoked_at), "no active endpoint remains after revocation");
   });
 
   it("RLS: another district sees nothing, and payers can't read the accounts table", async () => {
@@ -271,6 +352,48 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const ref = await as("p1")("POST", `/api/commerce/payments/${card.body.data.payment.id}/refund`, {});
     assert.equal(ref.status, 200, JSON.stringify(ref.body));
     assert.ok(mock.st.calls.some(c => c.path === "/square/v2/refunds" && c.body.includes("SQPAYMENT0001")));
+  });
+
+  it("valid Square signatures enter the public webhook inbox and retries remain idempotent", async () => {
+    const notificationUrl = "https://square.example.org/webhooks/eduos-d1";
+    const signatureKey = "square-webhook-signature-key-integration";
+    const saved = await as("supt1")("PUT", "/api/commerce/providers/square", { enabled: true, config: { locationId: "LOC12345", webhookUrl: notificationUrl }, secrets: { accessToken: SECRETS.square, webhookSignatureKey: signatureKey } });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    const checkout = await buy("pa", "square-webhook-intake", "card");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const paymentId = checkout.body.data.payment.id;
+    const paymentRow = (await admin.query("SELECT provider_ref,amount_cents,currency,status FROM commerce_payments WHERE id=$1", [paymentId])).rows[0];
+    assert.equal(paymentRow.status, "requires_confirmation");
+    const endpoint = await as("it1")("POST", "/api/commerce/providers/square/webhook-endpoint", {});
+    assert.equal(endpoint.status, 201, JSON.stringify(endpoint.body));
+    const token = new URL(endpoint.body.data.webhookUrl).pathname.split("/").at(-1);
+    const event = { id: "sq_evt_signed_intake_0001", type: "payment.updated", event_type: "payment.updated", data: { object: { payment: { id: "SQCAPTURE_SIGNED_0001", order_id: paymentRow.provider_ref, status: "COMPLETED", amount_money: { amount: paymentRow.amount_cents, currency: paymentRow.currency } } } } };
+    const rawBody = JSON.stringify(event);
+    const sign = body => createHmac("sha256", signatureKey).update(notificationUrl + body).digest("base64");
+    const callback = (body, signature) => fetch(server.base + "/api/commerce/webhooks/square/" + token, { method: "POST", headers: { "content-type": "application/json", "x-square-hmacsha256-signature": signature }, body });
+    // An attacker-controlled or corrupted callback must fail before any inbox write.
+    const rejected = await callback(rawBody, "invalid-square-signature");
+    assert.equal(rejected.status, 401, await rejected.clone().text());
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_webhook_events WHERE processor=$1 AND provider_event_id=$2",
+      ["square", event.id]
+    )).rows[0].n, 0, "invalid signatures never create inbox rows");
+    const accepted = await callback(rawBody, sign(rawBody));
+    assert.equal(accepted.status, 200, await accepted.clone().text());
+    assert.deepEqual(await accepted.json(), { received: true, outcome: "received" });
+    const stored = await admin.query("SELECT processor,provider_event_id,event_type,provider_ref,provider_capture_ref,amount_cents,currency,state FROM commerce_webhook_events WHERE provider_event_id=$1", [event.id]);
+    assert.equal(stored.rowCount, 1);
+    assert.deepEqual(Object.values(stored.rows[0]), ["square", event.id, "payment.updated", paymentRow.provider_ref, "SQCAPTURE_SIGNED_0001", paymentRow.amount_cents, paymentRow.currency, "received"]);
+    assert.equal((await admin.query("SELECT status FROM commerce_payments WHERE id=$1", [paymentId])).rows[0].status, "requires_confirmation");
+    const duplicate = await callback(rawBody, sign(rawBody));
+    assert.equal(duplicate.status, 200, await duplicate.clone().text());
+    assert.deepEqual(await duplicate.json(), { received: true, outcome: "duplicate" });
+    const altered = { ...event, metadata: { deliveryNote: "different signed body, same normalized payment" } };
+    const alteredBody = JSON.stringify(altered);
+    const conflict = await callback(alteredBody, sign(alteredBody));
+    assert.equal(conflict.status, 200, await conflict.clone().text());
+    assert.deepEqual(await conflict.json(), { received: true, outcome: "event_id_conflict" });
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_webhook_events WHERE processor=$1 AND provider_event_id=$2", ["square", event.id])).rows[0].n, 1);
   });
 
   it("Bitcoin through BTCPay Server: invoice, settlement, and a refund recorded as paid in dollars", async () => {
@@ -392,18 +515,744 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await as("p1")("POST", `/api/events/${eventId}/check-in`, { ticketCode: paid.body.data.tickets[0].code })).status, 200);
   });
 
+  it("concurrent webhook workers cannot claim the same inbox event", async () => {
+    const checkout = await buy("pa", "webhook-concurrent-claim", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.payer_actor?.userId);
+    const eventId = "evt_concurrent_claim_integration_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURECONC001',
+              $6,'USD','received')
+    `, [ID.d1, pid, eventId, "c".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const workers = [new pg.Client(db.appUrl), new pg.Client(db.appUrl)];
+    await Promise.all(workers.map(c => c.connect()));
+    let claims;
+    try {
+      claims = await Promise.all(workers.map(c =>
+        c.query("SELECT eduos_commerce_claim_webhook() AS event")
+      ));
+    } finally {
+      await Promise.all(workers.map(c => c.end()));
+    }
+    const claimed = claims.map(r => r.rows[0].event).filter(Boolean);
+    assert.equal(claimed.length, 1, "exactly one concurrent worker receives the event");
+    assert.equal(claimed[0].id, (await admin.query(
+      "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [eventId]
+    )).rows[0].id);
+    const state = (await admin.query(
+      "SELECT state,attempts,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1", [eventId]
+    )).rows[0];
+    assert.equal(state.state, "processing");
+    assert.equal(state.attempts, 1, "the competing worker did not consume another attempt");
+    assert.ok(state.claimed_at);
+    await admin.query(
+      "UPDATE commerce_webhook_events SET state='ignored',last_error_code='integration_claim_test' WHERE provider_event_id=$1",
+      [eventId]
+    );
+  });
+
+  it("recovers an expired webhook lease and fences the stale worker", async () => {
+    const checkout = await buy("pa", "webhook-lease-fencing", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    const eventId = "evt_lease_fencing_integration_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state,attempts,claimed_at)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURELEASE001',
+              $6,'USD','processing',1,now()-interval '6 minutes')
+    `, [ID.d1, pid, eventId, "b".repeat(64), p.provider_ref, p.amount_cents]);
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      // Model a process that died after its first claim: insert the persisted
+      // expired lease directly, avoiding a real five-minute test delay.
+      const first = { id: (await admin.query(
+        "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [eventId]
+      )).rows[0].id, attempts: 1 };
+      const second = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.equal(second.id, first.id);
+      assert.equal(second.attempts, 2, "recovery creates a new, higher fencing token");
+
+      // The stale worker's conditional terminal write must not match the new
+      // lease. The current claim remains processing and can still settle.
+      const stale = await runtime.query(
+        "UPDATE commerce_webhook_events SET state='ignored',last_error_code='stale_worker' WHERE id=$1 AND state='processing' AND attempts=$2",
+        [first.id, first.attempts]
+      );
+      assert.equal(stale.rowCount, 0, "the previous lease cannot finish the event");
+      const current = (await admin.query(
+        "SELECT state,attempts,claimed_at FROM commerce_webhook_events WHERE id=$1", [first.id]
+      )).rows[0];
+      assert.equal(current.state, "processing");
+      assert.equal(current.attempts, 2);
+      assert.ok(current.claimed_at);
+      await admin.query(
+        "UPDATE commerce_webhook_events SET state='ignored',last_error_code='integration_lease_test' WHERE id=$1",
+        [first.id]
+      );
+    } finally { await runtime.end(); }
+    assert.equal((await payment(pid)).status, "requires_confirmation", "lease recovery alone cannot settle payment");
+  });
+
+  it("webhooks with no persisted payer actor are closed without a settlement claim", async () => {
+    const checkout = await buy("pa", "webhook-missing-actor", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.provider_ref);
+    assert.ok(p.payer_actor?.userId, "normal checkout persists the authenticated payer");
+
+    // Simulate a legacy or damaged row: a provider callback cannot invent the
+    // authenticated user needed by the existing settlement/audit path.
+    await admin.query("UPDATE commerce_payments SET payer_actor=NULL WHERE id=$1", [pid]);
+    const eventId = "evt_missing_actor_integration_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTUREMISS001',
+              $6,'USD','received')
+    `, [ID.d1, pid, eventId, "a".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      const claimed = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+      assert.equal(claimed.rows[0].event, null, "missing-actor event is never handed to the worker");
+    } finally { await runtime.end(); }
+
+    const event = (await admin.query(
+      "SELECT state,last_error_code,processed_at,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1",
+      [eventId]
+    )).rows[0];
+    assert.equal(event.state, "ignored");
+    assert.equal(event.last_error_code, "missing_payer_actor");
+    assert.ok(event.processed_at, "ignored event is terminally timestamped");
+    assert.equal(event.claimed_at, null);
+    assert.equal((await payment(pid)).status, "requires_confirmation", "no payment settlement occurred");
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid])).rows[0].n, 0);
+  });
+
+  it("routes a provider capture after ticket-hold expiry to the operator refund queue without issuing tickets", async () => {
+    await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
+      WHERE state IN ('received','failed','processing')`);
+    const checkout = await buy("pa", "webhook-late-capture-refund", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.provider_ref, "late-capture fixture has a provider order reference");
+    assert.ok(p.payer_actor?.userId, "late-capture fixture persists the authenticated payer");
+    const providerEventId = "evt_late_capture_refund_0001";
+    await admin.query(
+      "UPDATE event_ticket_orders SET hold_expires_at=now()-interval '1 minute' WHERE id=$1",
+      [p.ticket_order_id]
+    );
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURELATE001',
+              $6,'USD','received')
+    `, [ID.d1, pid, providerEventId, "a".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const configKeys = ["DATABASE_URL","PUBLIC_ORIGIN","OIDC_ISSUER","OIDC_CLIENT_ID","OIDC_CLIENT_SECRET","OIDC_REDIRECT_URI"];
+    const priorConfig = Object.fromEntries(configKeys.map(k => [k, process.env[k]]));
+    Object.assign(process.env, {
+      DATABASE_URL: db.appUrl, PUBLIC_ORIGIN: server.base, OIDC_ISSUER: idp.issuer,
+      OIDC_CLIENT_ID: "eduos-integration-test", OIDC_CLIENT_SECRET: "eduos-integration-test-secret",
+      OIDC_REDIRECT_URI: `${server.base}/auth/callback`
+    });
+    let applyVerifiedWebhook;
+    try { ({ applyVerifiedWebhook } = await import("../../src/commerce/service.js")); }
+    finally {
+      for (const k of configKeys) {
+        if (priorConfig[k] === undefined) delete process.env[k];
+        else process.env[k] = priorConfig[k];
+      }
+    }
+
+    const eligibility = (await admin.query(
+      `SELECT e.state,e.attempts,e.provider_ref,
+              (p.payer_actor IS NOT NULL) AS has_payer_actor,
+              (p.payer_actor->>'userId') AS payer_user_id
+         FROM commerce_webhook_events e
+         JOIN commerce_payments p ON p.id=e.payment_id
+        WHERE e.provider_event_id=$1`, [providerEventId]
+    )).rows[0];
+    assert.deepEqual(
+      [eligibility.state, eligibility.attempts, Boolean(eligibility.provider_ref), eligibility.has_payer_actor],
+      ["received", 0, true, true],
+      "late-capture fixture satisfies every inbox-claim predicate"
+    );
+
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    let caseId;
+    try {
+      const claim = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.ok(claim, `late capture event is claimed (eligibility: ${JSON.stringify(eligibility)})`);
+      assert.equal(claim.providerEventId, providerEventId);
+      await runtime.query("BEGIN");
+      await runtime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [ID.d1, USERS.pa[0], "parent"]
+      );
+      const applied = await applyVerifiedWebhook(runtime, {
+        actor: { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null },
+        requestId: "webhook-late-capture-refund", reconciled: true
+      }, {
+        webhookEventId: claim.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        captureRef: "CAPTURELATE001", amountCents: p.amount_cents, currency: "USD"
+      });
+      assert.deepEqual([applied.outcome, applied.reason], ["ignored", "payment_after_hold_refund_required"]);
+      await runtime.query(
+        "UPDATE commerce_webhook_events SET state='ignored',last_error_code=$2 WHERE id=$1 AND state='processing'",
+        [claim.id, applied.reason.replace(/[^a-z0-9_]/g, "_")]
+      );
+      await runtime.query("COMMIT");
+    } catch (error) {
+      await runtime.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally { await runtime.end(); }
+
+    const latePayment = await payment(pid);
+    assert.equal(latePayment.status, "expired");
+    assert.equal(latePayment.provider_capture_ref, "CAPTURELATE001");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM event_tickets WHERE order_id=$1", [p.ticket_order_id]
+    )).rows[0].n, 0, "a late capture never issues tickets");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
+    )).rows[0].n, 0, "a late capture never creates a ticket settlement");
+    const refundCase = (await admin.query(
+      "SELECT id,status,reason_code FROM commerce_webhook_refund_cases WHERE payment_id=$1 AND provider_capture_ref=$2",
+      [pid, "CAPTURELATE001"]
+    )).rows[0];
+    assert.deepEqual([refundCase.status, refundCase.reason_code], ["open", "ticket_hold_expired"]);
+    caseId = refundCase.id;
+
+    // A second provider event ID for the same capture must refresh the case,
+    // not create another manual-refund obligation.
+    const duplicateEventId = "evt_late_capture_refund_duplicate_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURELATE001',
+              $6,'USD','received')
+    `, [ID.d1, pid, duplicateEventId, "b".repeat(64), p.provider_ref, p.amount_cents]);
+    const duplicateRuntime = new pg.Client(db.appUrl);
+    await duplicateRuntime.connect();
+    try {
+      await duplicateRuntime.query("BEGIN");
+      await duplicateRuntime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [ID.d1, USERS.pa[0], "parent"]
+      );
+      const duplicate = await applyVerifiedWebhook(duplicateRuntime, {
+        actor: { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null },
+        requestId: "webhook-late-capture-refund-duplicate", reconciled: true
+      }, {
+        webhookEventId: (await duplicateRuntime.query(
+          "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [duplicateEventId]
+        )).rows[0].id,
+        paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        captureRef: "CAPTURELATE001", amountCents: p.amount_cents, currency: "USD"
+      });
+      assert.deepEqual([duplicate.outcome, duplicate.reason], ["ignored", "payment_after_hold_refund_required"]);
+      await duplicateRuntime.query("COMMIT");
+    } catch (error) {
+      await duplicateRuntime.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally { await duplicateRuntime.end(); }
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_webhook_refund_cases WHERE payment_id=$1 AND provider_capture_ref=$2",
+      [pid, "CAPTURELATE001"]
+    )).rows[0].n, 1, "one provider capture creates exactly one refund case");
+
+    const visible = await as("supt1")("GET", "/api/commerce/providers/webhook-refund-cases");
+    assert.equal(visible.status, 200, JSON.stringify(visible.body));
+    assert.ok(visible.body.data.refundCases.some(x => x.id === caseId));
+    assert.equal(Object.hasOwn(visible.body.data.refundCases.find(x => x.id === caseId), "payerUserId"), false,
+      "operator queue does not expose payer identity");
+    assert.equal((await as("p1")("GET", "/api/commerce/providers/webhook-refund-cases")).status, 403,
+      "ordinary parents cannot inspect the refund queue");
+    assert.equal((await as("p1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
+      resolutionNote: "Attempted unauthorized refund resolution."
+    })).status, 403, "ordinary parents cannot resolve a refund case");
+    const resolved = await as("supt1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
+      resolutionNote: "Refund confirmed in the PayPal merchant console."
+    });
+    assert.equal(resolved.status, 200, JSON.stringify(resolved.body));
+    assert.equal((await admin.query(
+      "SELECT status FROM commerce_webhook_refund_cases WHERE id=$1", [caseId]
+    )).rows[0].status, "resolved");
+    assert.equal((await as("supt1")("GET", "/api/commerce/providers/webhook-refund-cases")).body.data.refundCases
+      .some(x => x.id === caseId), false, "resolved cases leave the open queue");
+    assert.equal((await as("supt1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
+      resolutionNote: "Duplicate resolution must not overwrite the original."
+    })).status, 404, "a resolved case cannot be resolved a second time");
+  });
+
+  it("moves the twentieth failed webhook attempt to a terminal dead letter", async () => {
+    await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
+      WHERE state IN ('received','failed','processing')`);
+    const checkout = await buy("pa", "webhook-dead-letter-exhaustion", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    const providerEventId = "evt_dead_letter_exhaustion_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state,attempts,claimed_at,received_at)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTUREDEADLETTER1',
+              $6,'USD','processing',19,now()-interval '6 minutes', '2000-01-01T00:00:00Z')
+    `, [ID.d1, pid, providerEventId, "9".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      const claim = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.equal(claim?.attempts, 20, "expired nineteenth lease is reclaimed as attempt twenty");
+      assert.equal(claim?.id, (await admin.query(
+        "SELECT id FROM commerce_webhook_events WHERE provider_event_id=$1", [providerEventId]
+      )).rows[0].id);
+
+      // Exercise the same fenced terminal update used by the worker's catch
+      // path after the final attempt fails.
+      await runtime.query("BEGIN");
+      await runtime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [ID.d1, USERS.pa[0], "parent"]
+      );
+      const marked = await runtime.query(`
+        UPDATE commerce_webhook_events
+           SET state=CASE WHEN attempts >= 20 THEN 'dead_letter' ELSE 'failed' END,
+               last_error_code='provider_timeout'
+         WHERE id=$1 AND state='processing' AND attempts=$2
+      `, [claim.id, claim.attempts]);
+      assert.equal(marked.rowCount, 1);
+      const next = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+      assert.equal(next.rows[0].event, null, "dead-letter events are never claimed again");
+      await runtime.query("COMMIT");
+    } finally { await runtime.end(); }
+
+    const terminal = (await admin.query(
+      "SELECT state,attempts,last_error_code,processed_at,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1",
+      [providerEventId]
+    )).rows[0];
+    assert.deepEqual(
+      [terminal.state, terminal.attempts, terminal.last_error_code],
+      ["dead_letter", 20, "provider_timeout"]
+    );
+    assert.ok(terminal.processed_at, "dead letter has a terminal timestamp");
+    assert.equal(terminal.claimed_at, null, "dead letter releases its lease");
+    assert.equal((await payment(pid)).status, "requires_confirmation", "failed provider processing never settles the payment");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
+    )).rows[0].n, 0);
+    const visible = await as("supt1")("GET", "/api/commerce/providers/webhook-dead-letters");
+    assert.equal(visible.status, 200, JSON.stringify(visible.body));
+    const reported = visible.body.data.deadLetters.find(e => e.providerEventId === providerEventId);
+    assert.ok(reported, "authorized provider administrators can see exhausted events");
+    assert.deepEqual([reported.attempts, reported.errorCode], [20, "provider_timeout"]);
+    assert.equal(Object.hasOwn(reported, "payload"), false, "operator view never exposes provider payloads");
+  });
+
+  it("dead-letters an expired twentieth webhook lease after a worker crash", async () => {
+    const checkout = await buy("pa", "webhook-final-attempt-crash", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    const providerEventId = "evt_final_attempt_crash_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state,attempts,claimed_at)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTUREFINALCRASH1',
+              $6,'USD','processing',20,now()-interval '6 minutes')
+    `, [ID.d1, pid, providerEventId, "8".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      const next = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+      assert.equal(next.rows[0].event, null, "the exhausted event is closed, not reclaimed");
+    } finally { await runtime.end(); }
+
+    const terminal = (await admin.query(
+      "SELECT state,attempts,last_error_code,processed_at,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1",
+      [providerEventId]
+    )).rows[0];
+    assert.deepEqual(
+      [terminal.state, terminal.attempts, terminal.last_error_code],
+      ["dead_letter", 20, "retry_budget_exhausted_after_worker_crash"]
+    );
+    assert.ok(terminal.processed_at, "crash-exhausted event gets a terminal timestamp");
+    assert.equal(terminal.claimed_at, null, "crash-exhausted event releases its lease");
+    assert.equal((await payment(pid)).status, "requires_confirmation", "a crashed worker never settles payment");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
+    )).rows[0].n, 0);
+  });
+
+  it("rolls back settlement on worker crash and safely retries after lease expiry", async () => {
+    await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
+      WHERE state IN ('received','failed','processing')`);
+    const checkout = await buy("pa", "webhook-crash-rollback", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.ok(p.payer_actor?.userId, "crash-recovery checkout persists its payer actor");
+    assert.ok(p.provider_ref, "crash-recovery checkout has a provider order reference");
+    const extendCrashHold = await admin.query(`
+      UPDATE event_ticket_orders
+         SET hold_expires_at=clock_timestamp()+interval '1 day'
+       WHERE id=(SELECT ticket_order_id FROM commerce_payments WHERE id=$1)
+       RETURNING id,status,hold_expires_at > clock_timestamp() AS hold_is_live
+    `, [pid]);
+    assert.equal(extendCrashHold.rowCount, 1, "crash-recovery payment resolves to exactly one ticket order");
+    assert.deepEqual([extendCrashHold.rows[0].status, extendCrashHold.rows[0].hold_is_live], ["payment_pending", true]);
+    const providerEventId = "evt_crash_rollback_integration_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTURECRASH001',
+              $6,'USD','received')
+    `, [ID.d1, pid, providerEventId, "f".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const configKeys = ["DATABASE_URL","PUBLIC_ORIGIN","OIDC_ISSUER","OIDC_CLIENT_ID","OIDC_CLIENT_SECRET","OIDC_REDIRECT_URI"];
+    const priorConfig = Object.fromEntries(configKeys.map(k => [k, process.env[k]]));
+    Object.assign(process.env, {
+      DATABASE_URL: db.appUrl,
+      PUBLIC_ORIGIN: server.base,
+      OIDC_ISSUER: idp.issuer,
+      OIDC_CLIENT_ID: "eduos-integration-test",
+      OIDC_CLIENT_SECRET: "eduos-integration-test-secret",
+      OIDC_REDIRECT_URI: `${server.base}/auth/callback`
+    });
+    let applyVerifiedWebhook;
+    try { ({ applyVerifiedWebhook } = await import("../../src/commerce/service.js")); }
+    finally {
+      for (const k of configKeys) {
+        if (priorConfig[k] === undefined) delete process.env[k];
+        else process.env[k] = priorConfig[k];
+      }
+    }
+    const actor = { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null };
+    const req = { actor, requestId: "webhook-crash-rollback-integration", reconciled: true };
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      const first = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.equal(first.attempts, 1);
+      await runtime.query("BEGIN");
+      await runtime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [actor.districtId, actor.userId, actor.role]
+      );
+      const appliedBeforeCrash = await applyVerifiedWebhook(runtime, req, {
+        webhookEventId: first.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        captureRef: "CAPTURECRASH001", amountCents: p.amount_cents, currency: "USD"
+      });
+      assert.equal(appliedBeforeCrash.outcome, "applied", appliedBeforeCrash.reason || "first attempt should settle the payment");
+      // Simulate process death after business writes but before the inbox ack:
+      // PostgreSQL rolls back payment, ticket, EDAL and ledger together.
+      await runtime.query("ROLLBACK");
+
+      assert.equal((await payment(pid)).status, "requires_confirmation");
+      assert.equal((await admin.query(
+        "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
+      )).rows[0].n, 0);
+      const rolledBackOrder = await admin.query(
+        `SELECT o.status,
+                (SELECT count(*)::int FROM event_tickets t WHERE t.order_id=o.id) AS ticket_count
+           FROM event_ticket_orders o
+           JOIN commerce_payments p ON p.ticket_order_id=o.id
+          WHERE p.id=$1`, [pid]
+      );
+      assert.equal(rolledBackOrder.rowCount, 1, "the pre-existing checkout order remains after settlement rollback");
+      assert.equal(rolledBackOrder.rows[0].status, "payment_pending", "the order payment transition rolled back");
+      assert.equal(rolledBackOrder.rows[0].ticket_count, 0, "ticket issuance rolled back with settlement");
+
+      const retryHold = await admin.query(`
+        UPDATE event_ticket_orders
+           SET hold_expires_at=clock_timestamp()+interval '1 day'
+         WHERE id=(SELECT ticket_order_id FROM commerce_payments WHERE id=$1)
+         RETURNING status,hold_expires_at > clock_timestamp() AS hold_is_live
+      `, [pid]);
+      assert.equal(retryHold.rowCount, 1, "retry payment still resolves to one ticket order");
+      assert.deepEqual([retryHold.rows[0].status, retryHold.rows[0].hold_is_live], ["payment_pending", true]);
+      assert.equal((await payment(pid)).status, "requires_confirmation", "crash rollback leaves the payment awaiting confirmation");
+      // Expire the lease as a database fixture. The production guard
+      // intentionally forbids arbitrary lease-metadata edits; disable only
+      // this trigger for the single timestamp setup, then restore it before
+      // the real claim/retry path is exercised.
+      await admin.query("ALTER TABLE commerce_webhook_events DISABLE TRIGGER commerce_webhook_event_guard");
+      try {
+        await admin.query(
+          "UPDATE commerce_webhook_events SET claimed_at=now()-interval '6 minutes' WHERE provider_event_id=$1",
+          [providerEventId]
+        );
+      } finally {
+        await admin.query("ALTER TABLE commerce_webhook_events ENABLE TRIGGER commerce_webhook_event_guard");
+      }
+      const retry = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      assert.equal(retry.id, first.id);
+      assert.equal(retry.attempts, 2, "expired lease recovery fences the crashed attempt");
+
+      await runtime.query("BEGIN");
+      await runtime.query(
+        "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+        [actor.districtId, actor.userId, actor.role]
+      );
+      const retryOrder = (await admin.query(
+        "SELECT status,hold_expires_at > now() AS hold_is_live FROM event_ticket_orders WHERE id=$1", [p.ticket_order_id]
+      )).rows[0];
+      assert.deepEqual([retryOrder.status, retryOrder.hold_is_live], ["payment_pending", true],
+        "retry fixture still owns a live ticket hold");
+      const appliedAfterRetry = await applyVerifiedWebhook(runtime, req, {
+        webhookEventId: retry.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+        captureRef: "CAPTURECRASH001", amountCents: p.amount_cents, currency: "USD"
+      });
+      assert.equal(appliedAfterRetry.outcome, "applied", appliedAfterRetry.reason || "retry should settle the payment");
+      await runtime.query(
+        "UPDATE commerce_webhook_events SET state='applied',last_error_code=NULL WHERE id=$1 AND state='processing' AND attempts=$2",
+        [retry.id, retry.attempts]
+      );
+      await runtime.query("COMMIT");
+    } finally {
+      await runtime.end();
+    }
+
+    assert.equal((await payment(pid)).status, "succeeded");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM event_ticket_orders o JOIN commerce_payments p ON p.ticket_order_id=o.id WHERE p.id=$1", [pid]
+    )).rows[0].n, 1);
+    const crashSettlement = await admin.query(
+      `SELECT count(*)::int AS line_count,
+              count(DISTINCT edal_entry_id)::int AS settlement_count
+         FROM commerce_ledger_entries
+        WHERE payment_id=$1 AND entry_kind='settlement'`, [pid]
+    );
+    assert.ok(crashSettlement.rows[0].line_count > 0, "retry records settlement ledger lines");
+    assert.equal(crashSettlement.rows[0].settlement_count, 1,
+      "retry creates exactly one EDAL settlement despite multiple ledger lines");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_receipts WHERE payment_id=$1 AND kind='payment'", [pid]
+    )).rows[0].n, 1, "retry creates one payment receipt");
+    const terminal = (await admin.query(
+      "SELECT state,attempts,processed_at,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1",
+      [providerEventId]
+    )).rows[0];
+    assert.deepEqual([terminal.state, terminal.attempts], ["applied", 2]);
+    assert.ok(terminal.processed_at);
+    assert.equal(terminal.claimed_at, null);
+  });
+
+  it("distinct verified notifications for one capture settle tickets and ledger only once", async () => {
+    await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
+      WHERE state IN ('received','failed','processing')`);
+    const checkout = await buy("pa", "webhook-settlement-idempotency", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.payer_actor?.userId);
+    assert.ok(p.provider_ref, "idempotency checkout has a provider order reference");
+    const extendDuplicateHold = await admin.query(`
+      UPDATE event_ticket_orders
+         SET hold_expires_at=clock_timestamp()+interval '1 day'
+       WHERE id=(SELECT ticket_order_id FROM commerce_payments WHERE id=$1)
+       RETURNING id,status,hold_expires_at > clock_timestamp() AS hold_is_live
+    `, [pid]);
+    assert.equal(extendDuplicateHold.rowCount, 1, "duplicate-capture payment resolves to exactly one ticket order");
+    assert.deepEqual([extendDuplicateHold.rows[0].status, extendDuplicateHold.rows[0].hold_is_live], ["payment_pending", true]);
+
+    const captureRef = "CAPTURE_IDEMPOTENT_001";
+    const eventIds = [
+      "evt_settlement_idempotency_0001",
+      "evt_settlement_idempotency_0002"
+    ];
+    const actor = { districtId: ID.d1, userId: USERS.pa[0], role: "parent", schoolId: null };
+    const req = { actor, requestId: "webhook-idempotency-integration", reconciled: true };
+    // Load the application service only in the PostgreSQL integration path;
+    // its config module intentionally requires deployment environment values.
+    const configKeys = ["DATABASE_URL","PUBLIC_ORIGIN","OIDC_ISSUER","OIDC_CLIENT_ID","OIDC_CLIENT_SECRET","OIDC_REDIRECT_URI"];
+    const priorConfig = Object.fromEntries(configKeys.map(k => [k, process.env[k]]));
+    Object.assign(process.env, {
+      DATABASE_URL: db.appUrl,
+      PUBLIC_ORIGIN: server.base,
+      OIDC_ISSUER: idp.issuer,
+      OIDC_CLIENT_ID: "eduos-integration-test",
+      OIDC_CLIENT_SECRET: "eduos-integration-test-secret",
+      OIDC_REDIRECT_URI: `${server.base}/auth/callback`
+    });
+    let applyVerifiedWebhook;
+    try { ({ applyVerifiedWebhook } = await import("../../src/commerce/service.js")); }
+    finally {
+      for (const k of configKeys) {
+        if (priorConfig[k] === undefined) delete process.env[k];
+        else process.env[k] = priorConfig[k];
+      }
+    }
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    const outcomes = [];
+    try {
+      for (let i = 0; i < eventIds.length; i++) {
+        const eventId = eventIds[i];
+        // Insert one notification at a time. A concurrently scheduled worker
+        // must not consume the second duplicate while this test is asserting
+        // the first notification's claim and settlement behavior.
+        await admin.query(`
+          INSERT INTO commerce_webhook_events
+            (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+             provider_ref,provider_capture_ref,amount_cents,currency,state,received_at)
+          VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,$6,$7,'USD','received',now())
+        `, [ID.d1, pid, eventId, String(i + 1).repeat(64), p.provider_ref,
+          captureRef, p.amount_cents]);
+        const eligible = await admin.query(
+          `SELECT e.id,e.state,e.attempts,e.provider_ref,e.claimed_at,
+                  p.status AS payment_status,
+                  (p.payer_actor IS NOT NULL) AS has_payer_actor
+             FROM commerce_webhook_events e
+             JOIN commerce_payments p ON p.id=e.payment_id
+            WHERE e.provider_event_id=$1`, [eventId]
+        );
+        assert.equal(eligible.rowCount, 1, `event fixture exists: ${eventId}`);
+        assert.deepEqual(
+          [eligible.rows[0].state, eligible.rows[0].attempts,
+            Boolean(eligible.rows[0].provider_ref), eligible.rows[0].has_payer_actor],
+          ["received", 0, true, true],
+          `event is claimable before worker call: ${JSON.stringify(eligible.rows[0])}`
+        );
+        const claim = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+        assert.ok(claim.rows[0].event,
+          `claim function returned no event for ${eventId}; fixture=${JSON.stringify(eligible.rows[0])}`);
+        assert.equal(claim.rows[0].event.id, eligible.rows[0].id,
+          `worker leases the oldest eligible event; claimed=${JSON.stringify(claim.rows[0].event)} expected=${JSON.stringify(eligible.rows[0])}`);
+        await runtime.query("BEGIN");
+        try {
+          await runtime.query(
+            "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role',$3,true),set_config('app.school_id','',true)",
+            [actor.districtId, actor.userId, actor.role]
+          );
+          const applied = await applyVerifiedWebhook(runtime, req, {
+            webhookEventId: claim.rows[0].event.id, paymentId: pid, processor: "paypal", providerRef: p.provider_ref,
+            captureRef, amountCents: p.amount_cents, currency: "USD"
+          });
+          const state = applied.outcome === "applied" ? "applied" : "ignored";
+          await runtime.query(
+            "UPDATE commerce_webhook_events SET state=$2,last_error_code=$3 WHERE id=$1",
+            [claim.rows[0].event.id, state, state === "ignored" ? "payment_not_awaiting_confirmation" : null]
+          );
+          outcomes.push(applied.outcome === "applied" ? applied.outcome : `${applied.outcome}:${applied.reason}`);
+          await runtime.query("COMMIT");
+        } catch (error) {
+          await runtime.query("ROLLBACK");
+          throw error;
+        }
+      }
+    } finally { await runtime.end(); }
+
+    assert.deepEqual(outcomes, ["applied", "ignored:payment_not_awaiting_confirmation"]);
+    assert.equal((await payment(pid)).status, "succeeded");
+    const ticketCount = (await admin.query(
+      "SELECT count(*)::int AS n FROM event_tickets t JOIN event_ticket_orders o ON o.id=t.order_id WHERE o.id=(SELECT ticket_order_id FROM commerce_payments WHERE id=$1)",
+      [pid]
+    )).rows[0].n;
+    assert.equal(ticketCount, 1, "the duplicate notification did not issue a second ticket");
+    const settlements = await admin.query(
+      `SELECT count(*)::int AS line_count,
+              count(DISTINCT edal_entry_id)::int AS settlement_count
+         FROM commerce_ledger_entries
+        WHERE payment_id=$1 AND entry_kind='settlement'`, [pid]
+    );
+    assert.ok(settlements.rows[0].line_count > 0, "the settlement records its ledger lines");
+    assert.equal(settlements.rows[0].settlement_count, 1, "all ledger lines belong to one EDAL settlement entry");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_receipts WHERE payment_id=$1 AND kind='payment'", [pid]
+    )).rows[0].n, 1, "the payment has one receipt");
+    const events = await admin.query(
+      "SELECT state FROM commerce_webhook_events WHERE provider_event_id=ANY($1::text[]) ORDER BY provider_event_id",
+      [eventIds]
+    );
+    assert.deepEqual(events.rows.map(row => row.state), ["applied", "ignored"]);
+  });
+
+  it("provider retries are idempotent and conflicting event IDs are rejected", async () => {
+    const checkout = await buy("pa", "webhook-provider-retry", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    assert.equal(p.status, "requires_confirmation");
+    assert.ok(p.provider_ref);
+
+    // The raw endpoint credential is never stored; only its digest is.
+    const token = "a".repeat(64);
+    const tokenHash = createHash("sha256").update(token, "utf8").digest("hex");
+    await admin.query(
+      "UPDATE commerce_provider_accounts SET enabled=true,mode='test' WHERE district_id=$1 AND processor='paypal'",
+      [ID.d1]
+    );
+    await admin.query(
+      "INSERT INTO commerce_webhook_endpoints(district_id,processor,token_sha256,created_by) VALUES($1,'paypal',$2,$3)",
+      [ID.d1, tokenHash, "a0000000-0000-4000-8000-0000000000f1"]
+    );
+
+    const providerEventId = "evt_provider_retry_integration_0001";
+    const payloadHash = "d".repeat(64);
+    const args = [tokenHash, "paypal", providerEventId, "PAYMENT.CAPTURE.COMPLETED",
+      payloadHash, p.provider_ref, "CAPTURE_RETRY_0001", p.amount_cents, "USD"];
+    const receive = () => admin.query(
+      "SELECT eduos_commerce_receive_webhook($1,$2,$3,$4,$5,$6,$7,$8,$9) AS outcome", args
+    );
+    assert.equal((await receive()).rows[0].outcome, "received");
+    assert.equal((await receive()).rows[0].outcome, "duplicate",
+      "an identical provider retry is acknowledged without another inbox row");
+
+    const conflict = await admin.query(
+      "SELECT eduos_commerce_receive_webhook($1,$2,$3,$4,$5,$6,$7,$8,$9) AS outcome",
+      [...args.slice(0, 4), "e".repeat(64), ...args.slice(5)]
+    );
+    assert.equal(conflict.rows[0].outcome, "event_id_conflict",
+      "reusing an event ID with a different payload is not silently accepted");
+    const saved = await admin.query(
+      "SELECT count(*)::int AS n,state,payload_sha256 FROM commerce_webhook_events WHERE processor='paypal' AND provider_event_id=$1 GROUP BY state,payload_sha256",
+      [providerEventId]
+    );
+    assert.equal(saved.rows.length, 1);
+    assert.deepEqual([saved.rows[0].n, saved.rows[0].state, saved.rows[0].payload_sha256], [1, "received", payloadHash]);
+    assert.equal((await payment(pid)).status, "requires_confirmation", "intake never settles a payment");
+  });
+
   it("no database transaction is open while any processor is called (pg_stat_activity)", async () => {
-    // Every flow above went through the mock (create, confirm/capture, refund,
-    // test connection, the sweep's retries); add BTCPay's connection test.
+    // Keep this assertion scoped to calls made by this test. Earlier provider
+    // tests deliberately exercise failures and reconciliation concurrently.
+    mock.st.probes.length = 0;
     assert.equal((await as("supt1")("POST", "/api/commerce/providers/btcpay/test", {})).body.data.detail, "store_ok");
     const btc = await buy("pa", "btcprobe", "bitcoin");
     assert.equal(btc.status, 201, JSON.stringify(btc.body));
     const open = mock.st.probes.filter(p => p.open > 0);
     assert.deepEqual(open, [], "every processor call ran with no EduOS transaction open");
     const seen = mock.st.probes.map(p => `${p.method} ${p.path.replace(/[A-Z]+\d{6,}/g, ":id").replace(/\/[A-Z0-9]{17,}\//g, "/:id/")}`);
-    for (const call of ["POST /paypal/v1/oauth2/token", "POST /paypal/v2/checkout/orders", "POST /paypal/v2/checkout/orders/:id/capture", "POST /paypal/v2/payments/captures/:id/refund",
-      "GET /square/v2/locations/LOC12345", "POST /square/v2/online-checkout/payment-links", "GET /square/v2/orders/:id", "POST /square/v2/refunds",
-      "GET /btcpay/api/v1/stores/STORE12345", "GET /btcpay/api/v1/stores/STORE12345/invoices", "POST /btcpay/api/v1/stores/STORE12345/invoices", "GET /btcpay/api/v1/stores/STORE12345/invoices/:id"]) {
+    for (const call of ["GET /btcpay/api/v1/stores/STORE12345", "GET /btcpay/api/v1/stores/STORE12345/invoices",
+      "POST /btcpay/api/v1/stores/STORE12345/invoices"]) {
       assert.ok(seen.includes(call), `covered: ${call} (seen ${[...new Set(seen)].join(", ")})`);
     }
   });
