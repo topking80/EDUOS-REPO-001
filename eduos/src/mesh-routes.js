@@ -480,7 +480,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     const p = { ...(req.query || {}), ...(typeof req.body === "object" && req.body ? req.body : {}) };
     const deny = (status, error) => res.status(status).type("text/plain").send(`LTI launch refused: ${error}`);
     if (!ltiKey) return deny(503, "lti_not_configured");
-    if (p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" ||
+    if (p.iss !== issuer || p.prompt !== "none" ||
+        p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" ||
         typeof p.nonce !== "string" || p.nonce.length < 1 || p.nonce.length > 256 ||
         typeof p.state !== "string" || p.state.length < 1 || p.state.length > 2048 ||
         typeof p.redirect_uri !== "string" || typeof p.client_id !== "string" ||
