@@ -871,6 +871,43 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(Object.hasOwn(reported, "payload"), false, "operator view never exposes provider payloads");
   });
 
+  it("dead-letters an expired twentieth webhook lease after a worker crash", async () => {
+    const checkout = await buy("pa", "webhook-final-attempt-crash", "paypal");
+    assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
+    const pid = checkout.body.data.payment.id;
+    const p = await payment(pid);
+    const providerEventId = "evt_final_attempt_crash_0001";
+    await admin.query(`
+      INSERT INTO commerce_webhook_events
+        (district_id,payment_id,processor,provider_event_id,event_type,payload_sha256,
+         provider_ref,provider_capture_ref,amount_cents,currency,state,attempts,claimed_at)
+      VALUES ($1,$2,'paypal',$3,'PAYMENT.CAPTURE.COMPLETED',$4,$5,'CAPTUREFINALCRASH1',
+              $6,'USD','processing',20,now()-interval '6 minutes')
+    `, [ID.d1, pid, providerEventId, "8".repeat(64), p.provider_ref, p.amount_cents]);
+
+    const runtime = new pg.Client(db.appUrl);
+    await runtime.connect();
+    try {
+      const next = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+      assert.equal(next.rows[0].event, null, "the exhausted event is closed, not reclaimed");
+    } finally { await runtime.end(); }
+
+    const terminal = (await admin.query(
+      "SELECT state,attempts,last_error_code,processed_at,claimed_at FROM commerce_webhook_events WHERE provider_event_id=$1",
+      [providerEventId]
+    )).rows[0];
+    assert.deepEqual(
+      [terminal.state, terminal.attempts, terminal.last_error_code],
+      ["dead_letter", 20, "retry_budget_exhausted_after_worker_crash"]
+    );
+    assert.ok(terminal.processed_at, "crash-exhausted event gets a terminal timestamp");
+    assert.equal(terminal.claimed_at, null, "crash-exhausted event releases its lease");
+    assert.equal((await payment(pid)).status, "requires_confirmation", "a crashed worker never settles payment");
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM commerce_ledger_entries WHERE payment_id=$1 AND entry_kind='settlement'", [pid]
+    )).rows[0].n, 0);
+  });
+
   it("rolls back settlement on worker crash and safely retries after lease expiry", async () => {
     await admin.query(`UPDATE commerce_webhook_events SET state='ignored',last_error_code='test_queue_isolation'
       WHERE state IN ('received','failed','processing')`);
