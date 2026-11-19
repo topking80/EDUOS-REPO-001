@@ -41,7 +41,8 @@ Canvas LMS is a supported educational-software integration through the district-
 - [x] Add a tenant-scoped PostgreSQL replay ledger and atomic consume function; the runtime role can call only the function, not read or mutate the ledger directly.
 - [x] Wire atomic replay consumption into the OIDC authorization transaction; reject duplicate launches across processes/restarts.
 - [x] Preserve the tool-generated OIDC `state` in the authorization response and include the tool-generated `nonce` in the signed ID token. The tool (as the OIDC relying party) is responsible for checking its returned state and token nonce against the values it created; the platform must not invent a second state/nonce correlation record for this platform-side flow.
-- [ ] Complete strict OIDC request validation and key rotation. Keep LTI deployment ID in the signed LTI claim; it is not a standard OIDC authorization-request parameter.
+- [x] Require the configured platform issuer and `prompt=none` on the OIDC authorization request, in addition to the existing response type/mode, scope, state, nonce, client, target-link, and redirect checks.
+- [ ] Complete remaining strict OIDC request validation and signing-key rotation. Keep LTI deployment ID in the signed LTI claim; it is not a standard OIDC authorization-request parameter.
 - Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
 - Add unit, route, multi-tenant, replay, and negative-security tests.
 
@@ -79,4 +80,4 @@ Canvas LMS is a supported educational-software integration through the district-
 
 ## Current limitations
 
-This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, target-link, exact redirect, state, and nonce request checks; the deployment ID is emitted in the signed LTI claim rather than incorrectly required as an OIDC authorization parameter. It still does not claim durable pre-auth state/nonce correlation, NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, target-link, exact redirect, state, and nonce request checks; the deployment ID is emitted in the signed LTI claim rather than incorrectly required as an OIDC authorization parameter. It still does not claim complete OIDC conformance, signing-key rotation, NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
