@@ -471,12 +471,15 @@ export async function finishRefund(req, paymentId, given = null) {
   const out = await tx(a, async c => {
     const cur = await one(c, "SELECT * FROM commerce_payments WHERE id=$1 FOR UPDATE", [p.id]);
     if (cur.status !== "refund_pending") throw new HttpError(409, "payment_not_refundable", { status: cur.status });
-    if (!r.ok) {
-      // The processor refused or couldn't be reached: back to paid, tickets usable again.
-      await c.query("UPDATE commerce_payments SET status='succeeded', pending_since=NULL, pending_actor=NULL WHERE id=$1", [p.id]);
-      if (p.purpose === "event_tickets") await c.query("UPDATE event_ticket_orders SET refund_pending=false WHERE id=$1", [p.ticket_order_id]);
-      await audit(c, req, "refund_failed", "commerce_payment", p.id, `provider=${p.provider};code=${r.error instanceof ProviderError ? r.error.code : "provider_error"}${auditNote(req)}`, "failure");
-      return null;
+    if (!r.ok || r.value?.status !== "refunded") {
+      // A timeout, malformed response, or processor PENDING response does not
+      // prove that no refund occurred. Keep tickets blocked and the payment
+      // reserved for idempotent reconciliation; never represent an uncertain
+      // processor outcome as paid again.
+      await c.query("UPDATE commerce_payments SET pending_since=now(), refund_ref=coalesce(refund_ref,$2) WHERE id=$1",
+        [p.id, r.ok ? (r.value?.refundRef || null) : null]);
+      return { status: "pending", payment: paymentOut({ ...cur, pending_since: new Date().toISOString() }),
+        reason: r.ok ? "provider_refund_pending" : "provider_refund_outcome_unknown" };
     }
     let description = "Refund";
     if (p.purpose === "event_tickets") {

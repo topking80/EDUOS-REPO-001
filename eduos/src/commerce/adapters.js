@@ -118,7 +118,7 @@ export function paypalAdapter({ mode, clientId, clientSecret, webhookId = null, 
       if (!captureRef || !amountOk(amountCents)) throw new ProviderError("provider_refund_reference_missing", "paypal");
       const r = await authed("POST", `/v2/payments/captures/${encodeURIComponent(captureRef)}/refund`, { headers: { "paypal-request-id": idem("paypal-refund", captureRef) }, body: {} });
       if (!r.id || !["COMPLETED", "PENDING"].includes(r.status)) throw new ProviderError("provider_refund_failed", `paypal: ${r.status || "unknown"}`);
-      return { status: "refunded", refundRef: r.id };
+      return { status: r.status === "COMPLETED" ? "refunded" : "pending", refundRef: r.id };
     },
     // PayPal signs webhooks with a certificate; the documented check is its
     // verify-webhook-signature API. Needs the webhook ID from the dashboard.
@@ -172,7 +172,7 @@ export function squareAdapter({ mode, accessToken, locationId, webhookSignatureK
       if (!captureRef || !amountOk(amountCents)) throw new ProviderError("provider_refund_reference_missing", "square");
       const j = await sq("POST", "/v2/refunds", { body: { idempotency_key: idem("square-refund", captureRef), payment_id: captureRef, amount_money: { amount: amountCents, currency: "USD" }, reason: "EduOS refund" } });
       if (!j.refund?.id || ["REJECTED", "FAILED"].includes(j.refund.status)) throw new ProviderError("provider_refund_failed", `square: ${j.refund?.status || "unknown"}`);
-      return { status: "refunded", refundRef: j.refund.id };
+      return { status: j.refund.status === "COMPLETED" ? "refunded" : "pending", refundRef: j.refund.id };
     },
     // x-square-hmacsha256-signature = base64(HMAC-SHA256(key, notificationUrl + rawBody)).
     verifyWebhook({ headers, rawBody }) { return verifySquareSignature({ signatureKey: webhookSignatureKey, notificationUrl: webhookUrl, rawBody, signature: header(headers, "x-square-hmacsha256-signature") }); }
