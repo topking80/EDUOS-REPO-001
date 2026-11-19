@@ -297,8 +297,9 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     const oversized = await fetch(`${server.base}/lti/authorize`, {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: oversizedForm
     });
-    assert.equal(oversized.status, 413);
-    assert.match(await oversized.text(), /payload_too_large/);
+    const oversizedBody = await oversized.text();
+    assert.equal(oversized.status, 413, `oversized LTI form response: ${oversizedBody}`);
+    assert.match(oversizedBody, /payload_too_large/);
 
     // Revocation-window regression tests: each scenario gets a fresh launch
     // hint, then changes authoritative PostgreSQL state before the callback.
