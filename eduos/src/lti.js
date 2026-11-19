@@ -117,7 +117,7 @@ export function validLtiConfig(cfg, { allowInsecureLoopback = process.env.NODE_E
   // Development may use HTTP only for literal loopback hosts. Production
   // requires HTTPS everywhere; credentials and fragments are never valid.
   const url = value => {
-    if (typeof value !== "string" || value.length > 2048 || /\\s/.test(value)) return false;
+    if (typeof value !== "string" || value.length > 2048 || /\s/.test(value)) return false;
     let parsed;
     try { parsed = new URL(value); } catch { return false; }
     if (parsed.username || parsed.password || parsed.hash) return false;
@@ -125,8 +125,8 @@ export function validLtiConfig(cfg, { allowInsecureLoopback = process.env.NODE_E
     return allowInsecureLoopback && parsed.protocol === "http:" &&
       ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
   };
-  return cfg && typeof cfg.clientId === "string" && /^[\\w.:\\/-]{1,200}$/.test(cfg.clientId) &&
-    typeof cfg.deploymentId === "string" && /^[\\w.:\\/-]{1,200}$/.test(cfg.deploymentId) &&
+  return cfg && typeof cfg.clientId === "string" && /^[\w.:\/-]{1,200}$/.test(cfg.clientId) &&
+    typeof cfg.deploymentId === "string" && /^[\w.:\/-]{1,200}$/.test(cfg.deploymentId) &&
     url(cfg.loginUrl) && Array.isArray(cfg.redirectUris) && cfg.redirectUris.length >= 1 && cfg.redirectUris.length <= 10 &&
     cfg.redirectUris.every(url) && url(cfg.targetLinkUri);
 }
