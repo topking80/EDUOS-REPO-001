@@ -467,7 +467,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         const u = new URL(cfg.loginUrl);
         u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
         u.searchParams.set("target_link_uri", cfg.targetLinkUri || a.launch_url); u.searchParams.set("lti_message_hint", hint);
-        u.searchParams.set("client_id", cfg.clientId); u.searchParams.set("lti_deployment_id", cfg.deploymentId);
+        u.searchParams.set("client_id", cfg.clientId);
         return { status: 200, data: { url: u.href, integrationType: "lti13" } };
       });
       res.setHeader("Cache-Control", "no-store");
@@ -484,7 +484,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         typeof p.nonce !== "string" || p.nonce.length < 1 || p.nonce.length > 256 ||
         typeof p.state !== "string" || p.state.length < 1 || p.state.length > 2048 ||
         typeof p.redirect_uri !== "string" || typeof p.client_id !== "string" ||
-        typeof p.lti_deployment_id !== "string" || typeof p.target_link_uri !== "string")
+        typeof p.target_link_uri !== "string")
       return deny(400, "invalid_request");
     const hint = readHint(ltiKey, p.lti_message_hint);
     if (!hint || p.login_hint !== hint.l) return deny(400, "invalid_or_expired_launch");
@@ -503,7 +503,6 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!app || !launch || !user || user.status !== "active") return { error: "launch_not_found", status: 403 };
         const cfg = app.integration_config || {};
         if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
-        if (p.lti_deployment_id !== cfg.deploymentId) return { error: "deployment_mismatch", status: 400 };
         if (p.target_link_uri !== (cfg.targetLinkUri || app.launch_url)) return { error: "target_link_mismatch", status: 400 };
         if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
         // Claim the launch atomically in the same tenant transaction as the
