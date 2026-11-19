@@ -25,12 +25,18 @@ export const LTI_ROLE = Object.freeze({
 const HINT_TTL_MS = 5 * 60_000;
 const b64u = buf => Buffer.from(buf).toString("base64url");
 
+export function assertPlatformRsaKey(privateKey) {
+  if (privateKey?.asymmetricKeyType !== "rsa") throw new Error("LTI platform signing keys must be RSA");
+  if ((privateKey.asymmetricKeyDetails?.modulusLength || 0) < 2048)
+    throw new Error("LTI platform RSA keys must be at least 2048 bits");
+  return privateKey;
+}
+
 export function loadPlatformKey(pem, previousPem = "", subjectSecret = "") {
   if (!pem) return null;
   const loadRsa = value => {
     const privateKey = crypto.createPrivateKey(value.replace(/\\n/g, "\n"));
-    if (privateKey.asymmetricKeyType !== "rsa") throw new Error("LTI platform signing keys must be RSA");
-    if ((privateKey.asymmetricKeyDetails?.modulusLength || 0) < 2048) throw new Error("LTI platform RSA keys must be at least 2048 bits");
+    assertPlatformRsaKey(privateKey);
     const publicJwk = crypto.createPublicKey(privateKey).export({ format: "jwk" });
     const kid = crypto.createHash("sha256").update(JSON.stringify({ e: publicJwk.e, kty: publicJwk.kty, n: publicJwk.n })).digest("base64url").slice(0, 22);
     return { privateKey, publicJwk, kid };
