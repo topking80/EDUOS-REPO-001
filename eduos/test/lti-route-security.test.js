@@ -25,3 +25,8 @@ test("LTI authorization requires non-empty OIDC nonce and state", () => {
   assert.match(source, /typeof p\.nonce !== "string" \|\| p\.nonce\.length < 1/);
   assert.match(source, /typeof p\.state !== "string" \|\| p\.state\.length < 1/);
 });
+
+test("LTI authorization rejects an untrusted issuer and interactive prompt", () => {
+  assert.match(source, /p\.iss !== issuer/);
+  assert.match(source, /p\.prompt !== "none"/);
+});
