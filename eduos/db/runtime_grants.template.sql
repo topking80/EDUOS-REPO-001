@@ -444,3 +444,8 @@ GRANT SELECT, INSERT ON commerce_webhook_refund_cases TO eduos_app;
 GRANT UPDATE (last_seen_at, status, resolved_at, resolved_by, resolution_note)
   ON commerce_webhook_refund_cases TO eduos_app;
 REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
+
+
+-- LTI 1.3: replay ledger remains inaccessible; only the tenant-checked
+-- SECURITY DEFINER function may atomically claim a launch under tenant context.
+GRANT EXECUTE ON FUNCTION eduos_lti_consume_launch(uuid, text, timestamptz) TO eduos_app;

@@ -73,7 +73,10 @@ export function pairwiseSub(key, appId, userId) {
   return crypto.createHmac("sha256", key.hintKey).update(`sub\0${appId}\0${userId}`).digest("base64url").slice(0, 32);
 }
 
-const SCOPE_RANK = { none: 0, identity: 1, roster_basic: 2, roster_full: 2, grades: 2, attendance: 2 };
+// LTI Core currently supports only no identity or basic identity claims.
+// Roster, grade and attendance scopes remain unsupported until their
+// separately governed Advantage services exist.
+const SCOPE_RANK = Object.freeze({ none: 0, identity: 1 });
 /** Build id_token claims, limited by the app's data-sharing scope. */
 export function launchClaims({ key, issuer, app, launch, user, school, nonce, now = Math.floor(Date.now() / 1000) }) {
   const cfg = app.integration_config || {};
@@ -84,13 +87,14 @@ export function launchClaims({ key, issuer, app, launch, user, school, nonce, no
     "https://purl.imsglobal.org/spec/lti/claim/message_type": "LtiResourceLinkRequest",
     "https://purl.imsglobal.org/spec/lti/claim/version": "1.3.0",
     "https://purl.imsglobal.org/spec/lti/claim/deployment_id": cfg.deploymentId,
-    "https://purl.imsglobal.org/spec/lti/claim/target_link_uri": cfg.targetLinkUri || app.launch_url,
+    "https://purl.imsglobal.org/spec/lti/claim/target_link_uri": cfg.targetLinkUri,
     "https://purl.imsglobal.org/spec/lti/claim/resource_link": { id: app.id },
     "https://purl.imsglobal.org/spec/lti/claim/roles": LTI_ROLE[launch.role] || [],
     "https://purl.imsglobal.org/spec/lti/claim/tool_platform": { guid: launch.districtId, product_family_code: "eduos", name: "EduOS" }
   };
   if (rank >= 1) { claims.name = user.display_name; claims.email = user.email; }
-  if (rank >= 2 && school) claims["https://purl.imsglobal.org/spec/lti/claim/context"] = { id: school.id, label: school.name, title: school.name, type: ["http://purl.imsglobal.org/vocab/lis/v2/course#CourseOffering"] };
+  // School records are not LTI course contexts. Never disclose school IDs or
+  // names as a substitute for an approved course mapping, even for identity scope.
   return claims;
 }
 
@@ -101,5 +105,26 @@ export function validLtiConfig(cfg) {
   return cfg && typeof cfg.clientId === "string" && /^[\w.:\/-]{1,200}$/.test(cfg.clientId) &&
     typeof cfg.deploymentId === "string" && /^[\w.:\/-]{1,200}$/.test(cfg.deploymentId) &&
     url(cfg.loginUrl) && Array.isArray(cfg.redirectUris) && cfg.redirectUris.length >= 1 && cfg.redirectUris.length <= 10 &&
-    cfg.redirectUris.every(url) && (cfg.targetLinkUri === undefined || url(cfg.targetLinkUri));
+    cfg.redirectUris.every(url) && url(cfg.targetLinkUri);
+}
+
+/**
+ * Atomically consume a launch hint in PostgreSQL. Call only inside
+ * withTenantTransaction(actor, ...), so app.district_id is transaction-scoped.
+ * The database function enforces tenant equality and serializes competing
+ * consumers across every API instance.
+ */
+export async function consumeHintDurably(client, districtId, launchId, expiresAt) {
+  if (!client || typeof client.query !== "function" ||
+      typeof districtId !== "string" || !districtId ||
+      typeof launchId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(launchId) ||
+      !(expiresAt instanceof Date) || !Number.isFinite(expiresAt.getTime()) ||
+      expiresAt.getTime() <= Date.now() || expiresAt.getTime() > Date.now() + 6 * 60_000) {
+    throw new TypeError("invalid durable LTI launch claim");
+  }
+  const result = await client.query(
+    "SELECT eduos_lti_consume_launch($1::uuid, $2::text, $3::timestamptz) AS consumed",
+    [districtId, launchId, expiresAt]
+  );
+  return result.rows?.[0]?.consumed === true;
 }

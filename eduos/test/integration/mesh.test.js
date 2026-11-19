@@ -201,7 +201,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     await new Promise(r => tool.listen(0, "127.0.0.1", r));
     const base = `http://127.0.0.1:${tool.address().port}`;
     const reg = await as("it")("POST", "/api/apps", { name: "LTI Lab", vendor: "Tool Co", launchUrl: `${base}/launch`, integrationType: "lti13", dataSharingScope: "none", coppaCompliant: true,
-      integrationConfig: { clientId: "tool-client", deploymentId: "dep-1", loginUrl: `${base}/login`, redirectUris: [`${base}/launch`] } });
+      integrationConfig: { clientId: "tool-client", deploymentId: "dep-1", loginUrl: `${base}/login`, redirectUris: [`${base}/launch`], targetLinkUri: `${base}/launch` } });
     assert.equal(reg.status, 201, JSON.stringify(reg.body));
     assert.equal((await as("it")("POST", "/api/apps", { name: "Bad LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "lti13", integrationConfig: { clientId: "c" } })).body.error, "invalid_lti_config");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { clientSecret: "x" } })).body.error, "integration_config_must_not_hold_secrets");

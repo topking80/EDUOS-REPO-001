@@ -19,7 +19,7 @@ import { requirePermission, isDistrictRole, canPerform } from "./policy.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { pageOf, pageSql, paged } from "./paging.js";
-import { loadPlatformKey, signJwt, makeHint, readHint, consumeHint, launchClaims, validLtiConfig } from "./lti.js";
+import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig } from "./lti.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validId = v => typeof v === "string" && UUID_RE.test(v);
@@ -127,6 +127,7 @@ function validateAppBody(body, partial) {
     if (/secret|password|private/i.test(JSON.stringify(Object.keys(c)))) return "integration_config_must_not_hold_secrets";
   }
   if (!partial && b.integrationType === "lti13" && !validLtiConfig(b.integrationConfig)) return "invalid_lti_config";
+  if (!partial && b.integrationType === "lti13" && !["none", "identity"].includes(b.dataSharingScope || "none")) return "unsupported_lti_data_scope";
   return null;
 }
 
@@ -272,7 +273,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!managesApp(req.actor, cur)) return fail(403, "cannot_manage_app");
         const nextType = b.integrationType ?? cur.integration_type;
         const nextCfg = b.integrationConfig ?? cur.integration_config;
+        const nextScope = b.dataSharingScope ?? cur.data_sharing_scope;
         if (nextType === "lti13" && !validLtiConfig(nextCfg)) return fail(400, "invalid_lti_config");
+        if (nextType === "lti13" && !["none", "identity"].includes(nextScope)) return fail(400, "unsupported_lti_data_scope");
         const map = { name: "name", vendor: "vendor", description: "description", category: "category", launchUrl: "launch_url", integrationType: "integration_type",
           dataSharingScope: "data_sharing_scope", dpaStatus: "dpa_status", dpaExpiresOn: "dpa_expires_on", coppaCompliant: "coppa_compliant",
           ferpaSchoolOfficial: "ferpa_school_official", ownerSchoolId: "owner_school_id", status: "status" };
@@ -453,6 +456,10 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!rows.length) return fail(403, "app_not_available");
         const a = rows[0];
         if (a.integration_type === "lti13" && !ltiKey) return fail(503, "lti_not_configured");
+        const cfg = a.integration_type === "lti13"
+          ? (await client.query("SELECT integration_config FROM apps WHERE id=$1", [a.id])).rows[0].integration_config
+          : null;
+        if (a.integration_type === "lti13" && !validLtiConfig(cfg)) return fail(409, "lti_configuration_invalid");
         const seat = (await client.query("SELECT eduos_claim_seat($1) AS r", [a.license_id])).rows[0].r;
         if (seat === "exhausted") return fail(409, "no_seats_available");
         if (seat !== "ok") return fail(409, "license_inactive");
@@ -462,12 +469,11 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           [req.actor.districtId, a.id, a.license_id, req.actor.userId, req.actor.schoolId || null, req.actor.role, a.integration_type, a.data_sharing_scope]);
         await audit(client, req, "launch", "app", a.id, { integrationType: a.integration_type, dataSharingScope: a.data_sharing_scope, launchId: launch.rows[0].id }, req.actor.schoolId || null);
         if (a.integration_type !== "lti13") return { status: 200, data: { url: a.launch_url, integrationType: a.integration_type } };
-        const cfg = (await client.query("SELECT integration_config FROM apps WHERE id=$1", [a.id])).rows[0].integration_config;
         const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null });
         const u = new URL(cfg.loginUrl);
         u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
-        u.searchParams.set("target_link_uri", cfg.targetLinkUri || a.launch_url); u.searchParams.set("lti_message_hint", hint);
-        u.searchParams.set("client_id", cfg.clientId); u.searchParams.set("lti_deployment_id", cfg.deploymentId);
+        u.searchParams.set("target_link_uri", cfg.targetLinkUri); u.searchParams.set("lti_message_hint", hint);
+        u.searchParams.set("client_id", cfg.clientId);
         return { status: 200, data: { url: u.href, integrationType: "lti13" } };
       });
       res.setHeader("Cache-Control", "no-store");
@@ -480,8 +486,11 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     const p = { ...(req.query || {}), ...(typeof req.body === "object" && req.body ? req.body : {}) };
     const deny = (status, error) => res.status(status).type("text/plain").send(`LTI launch refused: ${error}`);
     if (!ltiKey) return deny(503, "lti_not_configured");
-    if (p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" || typeof p.nonce !== "string" || p.nonce.length > 256 ||
-        typeof p.redirect_uri !== "string" || typeof p.client_id !== "string" || (p.state !== undefined && (typeof p.state !== "string" || p.state.length > 2048)))
+    if ((p.prompt !== undefined && p.prompt !== "none") ||
+        p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" ||
+        typeof p.nonce !== "string" || p.nonce.length < 1 || p.nonce.length > 256 ||
+        typeof p.state !== "string" || p.state.length < 1 || p.state.length > 2048 ||
+        typeof p.redirect_uri !== "string" || typeof p.client_id !== "string")
       return deny(400, "invalid_request");
     const hint = readHint(ltiKey, p.lti_message_hint);
     if (!hint || p.login_hint !== hint.l) return deny(400, "invalid_or_expired_launch");
@@ -489,18 +498,48 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     // in 5 minutes and is accepted once.
     try {
       const actor = { districtId: hint.d, userId: hint.u, role: hint.r, schoolId: hint.s };
-      const ctx = await withTenantTransaction(actor, async client => {
+      if (!validId(hint.d) || !validId(hint.l) || !validId(hint.a) || !validId(hint.u) ||
+          (hint.s !== null && hint.s !== undefined && !validId(hint.s)) ||
+          !Number.isFinite(hint.exp) || hint.exp <= Date.now()) return deny(400, "invalid_or_expired_launch");
+      const result = await withTenantTransaction(actor, async client => {
+        // Re-check the user's live district membership before honoring a signed
+        // hint; disabling a membership must revoke in-flight launch authority.
+        const membership = await client.query(
+          "SELECT 1 FROM memberships WHERE user_id=$1 AND district_id=$2 AND role=$3 AND school_id IS NOT DISTINCT FROM $4::uuid AND status='active'",
+          [hint.u, hint.d, hint.r, hint.s || null]
+        );
+        if (!membership.rowCount) return { error: "membership_inactive", status: 403 };
+        // Re-check current catalog assignment, license, DPA and learner eligibility
+        // at callback time; a launch hint must not outlive a revoked entitlement.
+        const current = await availableApps(client, actor, hint.a);
+        if (!current.rows.length) return { error: "app_not_available", status: 403 };
         const app = (await client.query("SELECT * FROM apps WHERE id=$1 AND status='active'", [hint.a])).rows[0];
-        const launch = (await client.query("SELECT id,role,school_id FROM app_launches WHERE id=$1 AND user_id=$2 AND app_id=$3", [hint.l, hint.u, hint.a])).rows[0];
+        const launch = (await client.query("SELECT id,role,school_id,license_id FROM app_launches WHERE id=$1 AND user_id=$2 AND app_id=$3", [hint.l, hint.u, hint.a])).rows[0];
         const user = (await client.query("SELECT id,display_name,email,status FROM users WHERE id=$1", [hint.u])).rows[0];
-        const school = hint.s ? (await client.query("SELECT id,name FROM schools WHERE id=$1", [hint.s])).rows[0] : null;
+        const school = hint.s ? (await client.query("SELECT id,name FROM schools WHERE id=$1 AND status='active'", [hint.s])).rows[0] : null;
+        if (!app || !launch || !user || user.status !== "active" || (hint.s && !school))
+          return { error: "launch_not_found", status: 403 };
+        if (launch.role !== hint.r || (launch.school_id || null) !== (hint.s || null))
+          return { error: "launch_context_changed", status: 403 };
+        // The license whose seat was claimed at launch must still be active;
+        // a replacement license must not silently revive a revoked launch.
+        const license = await client.query(
+          "SELECT 1 FROM app_licenses WHERE id=$1 AND app_id=$2 AND status='active' AND starts_on<=current_date AND (ends_on IS NULL OR ends_on>=current_date)",
+          [launch.license_id, hint.a]
+        );
+        if (!license.rowCount) return { error: "license_inactive", status: 403 };
+        const cfg = app.integration_config || {};
+        if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
+        if (!["none", "identity"].includes(app.data_sharing_scope)) return { error: "unsupported_lti_data_scope", status: 403 };
+        if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
+        // Claim the launch atomically in the same tenant transaction as the
+        // authorization checks. This prevents replay across processes/restarts.
+        const consumed = await consumeHintDurably(client, hint.d, hint.l, new Date(hint.exp));
+        if (!consumed) return { error: "launch_already_used", status: 409 };
         return { app, launch, user, school };
       });
-      if (!ctx.app || !ctx.launch || !ctx.user || ctx.user.status !== "active") return deny(403, "launch_not_found");
-      const cfg = ctx.app.integration_config || {};
-      if (ctx.app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return deny(400, "client_mismatch");
-      if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return deny(400, "redirect_uri_not_registered");
-      if (!consumeHint(hint.l)) return deny(409, "launch_already_used");
+      if (result.error) return deny(result.status, result.error);
+      const ctx = result;
       const idToken = signJwt(ltiKey, launchClaims({ key: ltiKey, issuer, app: ctx.app, launch: { role: ctx.launch.role, districtId: hint.d }, user: ctx.user, school: ctx.school, nonce: p.nonce }));
       const esc = v => String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       const target = new URL(p.redirect_uri);

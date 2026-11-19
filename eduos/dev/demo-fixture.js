@@ -77,7 +77,7 @@ export const APPS = [
   { id: id(504), name: "Science Lab (LTI demo)", vendor: "EduOS dev tool", category: "Science", owner: null, type: "lti13",
     url: `${LTI_TOOL_ORIGIN}/launch`, scope: "none", dpa: "none", coppa: true, ferpa: false,
     description: "LTI 1.3 launch demo. Start the local tool with: node dev/lti-tool.js",
-    config: { clientId: "eduos-demo-tool", deploymentId: "riverside-1", loginUrl: `${LTI_TOOL_ORIGIN}/login`, redirectUris: [`${LTI_TOOL_ORIGIN}/launch`] },
+    config: { clientId: "eduos-demo-tool", deploymentId: "riverside-1", loginUrl: `${LTI_TOOL_ORIGIN}/login`, redirectUris: [`${LTI_TOOL_ORIGIN}/launch`], targetLinkUri: `${LTI_TOOL_ORIGIN}/launch` },
     licenses: [{ seats: null, starts: "2026-07-01", ends: null }], assign: [{ scope: "district", roles: ["principal", "teacher", "pupil"] }] }
 ];
 export const APP_REQUESTS = [
