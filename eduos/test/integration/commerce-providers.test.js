@@ -825,14 +825,17 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       "SELECT status FROM commerce_webhook_refund_cases WHERE id=$1", [caseId]
     )).rows[0].status, "resolved");
     const resolutionAudit = await admin.query(
-      `SELECT count(*)::int AS n, max(detail) AS detail
+      `SELECT count(*)::int AS n, max(detail) AS detail, max(actor_user_id) AS actor_user_id
          FROM audit_events
-        WHERE district_id=$1 AND actor_user_id=$2
+        WHERE district_id=$1
           AND action='late_capture_refund_resolved'
-          AND resource_type='commerce_webhook_refund_case' AND resource_id=$3`,
-      [ID.d1, USERS.supt1[0], caseId]
+          AND resource_type='commerce_webhook_refund_case' AND resource_id=$2`,
+      [ID.d1, caseId]
     );
-    assert.equal(resolutionAudit.rows[0].n, 1, "resolution emits exactly one audit event");
+    assert.equal(resolutionAudit.rows[0].n, 1,
+      "successful resolution emits exactly one event and denied cross-district attempts emit none");
+    assert.equal(resolutionAudit.rows[0].actor_user_id, USERS.supt1[0],
+      "only the authorized district operator is recorded as the resolver");
     assert.match(resolutionAudit.rows[0].detail, /Refund confirmed in the PayPal merchant console/,
       "audit evidence retains the operator's external-refund attestation");
     assert.equal((await as("supt1")("GET", "/api/commerce/providers/webhook-refund-cases")).body.data.refundCases
