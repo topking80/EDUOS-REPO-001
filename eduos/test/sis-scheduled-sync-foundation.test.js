@@ -26,7 +26,8 @@ test("scheduled SIS records preserve a single attributable actor",()=>{
 });
 
 test("schedules are independently approved and connector-version bound",()=>{
-  assert.match(migration,/approved_by uuid REFERENCES users/);
+  assert.match(migration,/approved_by uuid,/);
+  assert.match(migration,/FOREIGN KEY\(district_id,approved_by\) REFERENCES memberships/);
   assert.match(migration,/approved_by<>updated_by/);
   assert.match(migration,/config_version integer NOT NULL CHECK \(config_version>=1\)/);
   assert.match(migration,/CHECK \(\(NOT enabled OR paused_at IS NOT NULL\) = \(next_run_at IS NULL\)\)/);
