@@ -449,6 +449,9 @@ REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
 -- Revisions and lifecycle events are append-only; media bytes remain in the
 -- private object store and are never exposed through these metadata tables.
 GRANT SELECT, INSERT ON student_history_entries TO eduos_app;
+-- Revoke previously deployed column grants as well as withholding them below:
+-- re-running this template must close permissions granted by an older template.
+REVOKE UPDATE (status) ON student_history_entries FROM eduos_app;
 -- Approval/publication/deletion status is changed only by an authorized workflow.
 GRANT UPDATE (entry_type, classification, title, body, occurred_at, school_year, audience, source_reference)
   ON student_history_entries TO eduos_app;
@@ -460,6 +463,9 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_revisions FROM 
 REVOKE UPDATE, DELETE, TRUNCATE ON student_history_entry_attachments,
   student_time_capsule_items, student_time_capsule_events FROM eduos_app;
 GRANT SELECT, INSERT ON student_time_capsules, student_time_capsule_recipients TO eduos_app;
+-- Explicitly revoke lifecycle columns granted by earlier versions of this template.
+REVOKE UPDATE (status, release_kind, release_at, milestone_key, sealed_at, released_at, cancelled_at)
+  ON student_time_capsules FROM eduos_app;
 -- Runtime edits are limited to descriptive draft metadata. Sealing, scheduling,
 -- release, cancellation and milestone transitions require authorized workflow functions.
 GRANT UPDATE (title, message, timezone, updated_at)
