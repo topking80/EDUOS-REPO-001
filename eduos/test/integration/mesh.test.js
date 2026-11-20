@@ -216,7 +216,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     const blocked = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
     assert.equal(blocked.status, 409); assert.equal(blocked.body.error, "lti_approval_required");
     assert.equal((await as("p1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 403, "school principals cannot approve district LTI registrations");
-    const approval = await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/approve`);
+    const approval = await as("supt1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`);
     assert.equal(approval.status, 200, JSON.stringify(approval.body));
     assert.equal(approval.body.data.registrationStatus, "approved");
     const approvalPrivileges = await appDb.query(
@@ -250,7 +250,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     const changed = await as("it")("PATCH", `/api/apps/${reg.body.data.id}`, { integrationConfig: changedConfig });
     assert.equal(changed.status, 200); assert.equal(changed.body.data.registrationStatus, "pending", "registration changes invalidate approval");
     assert.equal((await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`)).status, 409);
-    assert.equal((await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200, "district must reapprove changed registration");
+    assert.equal((await as("supt1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200, "district must reapprove changed registration");
     const launch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
     assert.equal(launch.status, 200, JSON.stringify(launch.body));
     const login1 = await fetch(launch.body.data.url, { redirect: "manual" });
@@ -258,7 +258,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     const revoked = await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/revoke`);
     assert.equal(revoked.status, 200); assert.equal(revoked.body.data.registrationStatus, "revoked");
     assert.equal((await fetch(authorize)).status, 409, "revocation blocks an in-flight callback");
-    assert.equal((await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200);
+    assert.equal((await as("supt1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200);
     assert.equal((await fetch(authorize)).status, 409, "reapproval does not revive hints issued under an earlier approval");
     const freshLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
     assert.equal(freshLaunch.status, 200);
