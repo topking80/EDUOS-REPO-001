@@ -289,6 +289,8 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       const id = added.body.data.id;
       assert.equal((await as("supt1")("POST", `/api/integrations/connectors/${id}/approve`)).body.error, "approver_must_differ");
       assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${id}/approve`)).status, 200);
+      const writeScope = await as("supt1")("PATCH", `/api/integrations/connectors/${id}`, { scope: "url:POST|/api/v1/courses" });
+      assert.equal(writeScope.status,400,"Canvas connector rejects write scopes");
       const scheduleAttempt = await as("supt1")("PUT", `/api/integrations/connectors/${id}/schedule`, { intervalMinutes: 60 });
       assert.equal(scheduleAttempt.status,409);
       assert.equal(scheduleAttempt.body.error,"canvas_sync_not_enabled");
