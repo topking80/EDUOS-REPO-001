@@ -122,7 +122,7 @@ export function launchClaims({ key, issuer, app, launch, user, school, nonce, no
     "https://purl.imsglobal.org/spec/lti/claim/target_link_uri": cfg.targetLinkUri,
     "https://purl.imsglobal.org/spec/lti/claim/resource_link": { id: app.id },
     "https://purl.imsglobal.org/spec/lti/claim/roles": LTI_ROLE[launch.role] || [],
-    "https://purl.imsglobal.org/spec/lti/claim/tool_platform": { guid: crypto.createHash("sha256").update(`eduos-lti-platform\\0${issuer}`).digest("hex"), product_family_code: "eduos", name: "EduOS" }
+    "https://purl.imsglobal.org/spec/lti/claim/tool_platform": { guid: crypto.createHash("sha256").update(`eduos-lti-platform\0${issuer}`).digest("hex"), product_family_code: "eduos", name: "EduOS" }
   };
   if (rank >= 1) { claims.name = user.display_name; claims.email = user.email; }
   // School records are not LTI course contexts. Never disclose school IDs or
