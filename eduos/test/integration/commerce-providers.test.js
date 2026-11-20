@@ -800,6 +800,18 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.ok(visible.body.data.refundCases.some(x => x.id === caseId));
     assert.equal(Object.hasOwn(visible.body.data.refundCases.find(x => x.id === caseId), "payerUserId"), false,
       "operator queue does not expose payer identity");
+
+    // District two has the same provider-management capability, but RLS must
+    // keep district one's refund obligation invisible and unresolvable.
+    const otherDistrictQueue = await as("supt2")("GET", "/api/commerce/providers/webhook-refund-cases");
+    assert.equal(otherDistrictQueue.status, 200, JSON.stringify(otherDistrictQueue.body));
+    assert.equal(otherDistrictQueue.body.data.refundCases.some(x => x.id === caseId), false,
+      "another district cannot read this refund case");
+    const crossDistrictResolve = await as("supt2")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
+      resolutionNote: "Cross-district resolution attempt must be denied."
+    });
+    assert.equal(crossDistrictResolve.status, 404,
+      "RLS hides another district's case from the resolve mutation");
     assert.equal((await as("p1")("GET", "/api/commerce/providers/webhook-refund-cases")).status, 403,
       "ordinary parents cannot inspect the refund queue");
     assert.equal((await as("p1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
@@ -812,6 +824,20 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await admin.query(
       "SELECT status FROM commerce_webhook_refund_cases WHERE id=$1", [caseId]
     )).rows[0].status, "resolved");
+    const resolutionAudit = await admin.query(
+      `SELECT count(*)::int AS n, max(detail) AS detail, (array_agg(actor_user_id))[1] AS actor_user_id
+         FROM audit_events
+        WHERE district_id=$1
+          AND action='late_capture_refund_resolved'
+          AND resource_type='commerce_webhook_refund_case' AND resource_id=$2`,
+      [ID.d1, caseId]
+    );
+    assert.equal(resolutionAudit.rows[0].n, 1,
+      "successful resolution emits exactly one event and denied cross-district attempts emit none");
+    assert.equal(resolutionAudit.rows[0].actor_user_id, USERS.supt1[0],
+      "only the authorized district operator is recorded as the resolver");
+    assert.match(resolutionAudit.rows[0].detail, /Refund confirmed in the PayPal merchant console/,
+      "audit evidence retains the operator's external-refund attestation");
     assert.equal((await as("supt1")("GET", "/api/commerce/providers/webhook-refund-cases")).body.data.refundCases
       .some(x => x.id === caseId), false, "resolved cases leave the open queue");
     assert.equal((await as("supt1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
