@@ -115,9 +115,13 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       COMMERCE_TEST_API_BASE: mock.base, COMMERCE_ALLOWED_HOSTS: "btcpay.example.org", COMMERCE_RECONCILE_INTERVAL_SECONDS: "0" };
     server = await startServer(serverEnv);
     // How many EduOS transactions are open while the mock answers a processor call.
-    mock.st.probe = async () => (await admin.query(`SELECT count(*)::int AS n FROM pg_stat_activity
-       WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'
-         AND xact_start IS NOT NULL AND usename=$1 AND application_name='eduos-api'`, [db.names.app])).rows[0].n;
+    mock.st.probe = async () => (await admin.query(`SELECT pid,state,wait_event_type,
+              round(extract(epoch FROM clock_timestamp()-xact_start)*1000)::int AS xact_age_ms,
+              left(query,200) AS query
+         FROM pg_stat_activity
+        WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'
+          AND xact_start IS NOT NULL AND usename=$1 AND application_name='eduos-api'
+        ORDER BY xact_start`, [db.names.app])).rows;
     for (const name of ["supt1", "supt2", "p1", "t1", "pa", "pu", "it1"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     const act = await as("p1")("POST", "/api/activities", { kind: "sport", title: "Owls Basketball", status: "published" });
     const ev = await as("p1")("POST", `/api/activities/${act.body.data.id}/events`, { title: "Home opener", startsAt: future(48), endsAt: future(50), venue: "Gym", publish: true });
@@ -668,6 +672,13 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.ok(p.provider_ref, "late-capture fixture has a provider order reference");
     assert.ok(p.payer_actor?.userId, "late-capture fixture persists the authenticated payer");
     const providerEventId = "evt_late_capture_refund_0001";
+    // Preserve the bound origin before stop() clears the server handle.
+    const serverBase = server.base;
+    // Freeze the independent worker while this test exercises a manually
+    // inserted inbox event; otherwise the worker can claim and ignore it
+    // between INSERT and the fixture eligibility assertion.
+    await server.stop();
+    server = null;
     await admin.query(
       "UPDATE event_ticket_orders SET hold_expires_at=now()-interval '1 minute' WHERE id=$1",
       [p.ticket_order_id]
@@ -683,9 +694,9 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const configKeys = ["DATABASE_URL","PUBLIC_ORIGIN","OIDC_ISSUER","OIDC_CLIENT_ID","OIDC_CLIENT_SECRET","OIDC_REDIRECT_URI"];
     const priorConfig = Object.fromEntries(configKeys.map(k => [k, process.env[k]]));
     Object.assign(process.env, {
-      DATABASE_URL: db.appUrl, PUBLIC_ORIGIN: server.base, OIDC_ISSUER: idp.issuer,
+      DATABASE_URL: db.appUrl, PUBLIC_ORIGIN: serverBase, OIDC_ISSUER: idp.issuer,
       OIDC_CLIENT_ID: "eduos-integration-test", OIDC_CLIENT_SECRET: "eduos-integration-test-secret",
-      OIDC_REDIRECT_URI: `${server.base}/auth/callback`
+      OIDC_REDIRECT_URI: `${serverBase}/auth/callback`
     });
     let applyVerifiedWebhook;
     try { ({ applyVerifiedWebhook } = await import("../../src/commerce/service.js")); }
@@ -739,6 +750,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       await runtime.query("ROLLBACK").catch(() => {});
       throw error;
     } finally { await runtime.end(); }
+    server = await startServer(serverEnv);
 
     const latePayment = await payment(pid);
     assert.equal(latePayment.status, "expired");
@@ -1025,7 +1037,22 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     const runtime = new pg.Client(db.appUrl);
     await runtime.connect();
     try {
-      const first = (await runtime.query("SELECT eduos_commerce_claim_webhook() AS event")).rows[0].event;
+      const claimResult = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
+      const first = claimResult.rows[0].event;
+      if (!first) {
+        const diagnostic = await admin.query(`
+          SELECT e.id,e.provider_event_id,e.state,e.attempts,e.claimed_at,e.provider_ref,
+                 p.status AS payment_status,(p.payer_actor IS NOT NULL) AS has_payer_actor,
+                 (p.payer_actor IS NOT NULL AND e.provider_ref IS NOT NULL AND e.attempts < 20
+                   AND (e.state IN ('received','failed')
+                     OR (e.state='processing' AND (e.claimed_at IS NULL OR e.claimed_at < now()-interval '5 minutes')))) AS claimable
+            FROM commerce_webhook_events e
+            JOIN commerce_payments p ON p.district_id=e.district_id AND p.id=e.payment_id
+           WHERE e.state IN ('received','failed','processing')
+           ORDER BY e.received_at,e.id
+        `);
+        assert.ok(first, `claim returned null; webhook queue at failure: ${JSON.stringify(diagnostic.rows)}`);
+      }
       assert.equal(first.attempts, 1);
       await runtime.query("BEGIN");
       await runtime.query(
@@ -1071,9 +1098,19 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       // the real claim/retry path is exercised.
       await admin.query("ALTER TABLE commerce_webhook_events DISABLE TRIGGER commerce_webhook_event_guard");
       try {
-        await admin.query(
-          "UPDATE commerce_webhook_events SET claimed_at=now()-interval '6 minutes' WHERE provider_event_id=$1",
+        const expiredLease = await admin.query(
+          `UPDATE commerce_webhook_events
+              SET claimed_at=clock_timestamp()-interval '6 minutes'
+            WHERE provider_event_id=$1 AND state='processing' AND attempts=1
+            RETURNING id,state,attempts,claimed_at,
+                      claimed_at < clock_timestamp()-interval '5 minutes' AS lease_is_expired`,
           [providerEventId]
+        );
+        assert.equal(expiredLease.rowCount, 1, "the exact first-attempt event lease must be expired");
+        assert.deepEqual(
+          [expiredLease.rows[0].state, expiredLease.rows[0].attempts, expiredLease.rows[0].lease_is_expired],
+          ["processing", 1, true],
+          "the retry fixture must be an expired processing lease, not another queue row"
         );
       } finally {
         await admin.query("ALTER TABLE commerce_webhook_events ENABLE TRIGGER commerce_webhook_event_guard");
@@ -1179,6 +1216,11 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     }
     const runtime = new pg.Client(db.appUrl);
     await runtime.connect();
+    // The server's periodic reconciler is an independent worker. Stop this
+    // test server while manually claiming inbox rows so the test owns the
+    // entire claim/settlement sequence; restart it in finally for later tests.
+    await server.stop();
+    server = null;
     const outcomes = [];
     try {
       for (let i = 0; i < eventIds.length; i++) {
@@ -1209,8 +1251,23 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
           `event is claimable before worker call: ${JSON.stringify(eligible.rows[0])}`
         );
         const claim = await runtime.query("SELECT eduos_commerce_claim_webhook() AS event");
-        assert.ok(claim.rows[0].event,
-          `claim function returned no event for ${eventId}; fixture=${JSON.stringify(eligible.rows[0])}`);
+        if (!claim.rows[0].event) {
+          const queue = await admin.query(`
+            SELECT e.id,e.provider_event_id,e.state,e.attempts,e.claimed_at,e.processed_at,
+                   e.last_error_code,e.provider_ref,p.status AS payment_status,
+                   (p.payer_actor IS NOT NULL) AS has_payer_actor,
+                   (p.payer_actor IS NOT NULL AND e.provider_ref IS NOT NULL AND e.attempts < 20
+                     AND (e.state IN ('received','failed') OR
+                          (e.state='processing' AND (e.claimed_at IS NULL OR e.claimed_at < now()-interval '5 minutes'))))
+                     AS claimable
+              FROM commerce_webhook_events e
+              JOIN commerce_payments p ON p.district_id=e.district_id AND p.id=e.payment_id
+             WHERE e.state IN ('received','failed','processing','applied','ignored','dead_letter')
+             ORDER BY e.received_at,e.id
+             LIMIT 50
+          `);
+          assert.fail(`claim function returned no event for ${eventId}; fixture=${JSON.stringify(eligible.rows[0])}; queue=${JSON.stringify(queue.rows)}`);
+        }
         assert.equal(claim.rows[0].event.id, eligible.rows[0].id,
           `worker leases the oldest eligible event; claimed=${JSON.stringify(claim.rows[0].event)} expected=${JSON.stringify(eligible.rows[0])}`);
         await runtime.query("BEGIN");
@@ -1235,7 +1292,10 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
           throw error;
         }
       }
-    } finally { await runtime.end(); }
+    } finally {
+      await runtime.end();
+      server = await startServer(serverEnv);
+    }
 
     assert.deepEqual(outcomes, ["applied", "ignored:payment_not_awaiting_confirmation"]);
     assert.equal((await payment(pid)).status, "succeeded");
@@ -1270,6 +1330,11 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(p.status, "requires_confirmation");
     assert.ok(p.provider_ref);
 
+    // This test inspects an unclaimed inbox event; pause the independent
+    // periodic worker until its intake/idempotency assertions are complete.
+    await server.stop();
+    server = null;
+    try {
     // The raw endpoint credential is never stored; only its digest is.
     const token = "a".repeat(64);
     const tokenHash = createHash("sha256").update(token, "utf8").digest("hex");
@@ -1300,19 +1365,48 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal(conflict.rows[0].outcome, "event_id_conflict",
       "reusing an event ID with a different payload is not silently accepted");
     const saved = await admin.query(
-      "SELECT count(*)::int AS n,state,payload_sha256 FROM commerce_webhook_events WHERE processor='paypal' AND provider_event_id=$1 GROUP BY state,payload_sha256",
+      "SELECT count(*)::int AS n,state,payload_sha256,claimed_at,processed_at,last_error_code FROM commerce_webhook_events WHERE processor='paypal' AND provider_event_id=$1 GROUP BY state,payload_sha256,claimed_at,processed_at,last_error_code",
       [providerEventId]
     );
-    assert.equal(saved.rows.length, 1);
-    assert.deepEqual([saved.rows[0].n, saved.rows[0].state, saved.rows[0].payload_sha256], [1, "received", payloadHash]);
+    assert.equal(saved.rows.length, 1, `one inbox row remains for the provider event: ${JSON.stringify(saved.rows)}`);
+    const activeQueue = await admin.query(`
+      SELECT e.provider_event_id,e.state,e.attempts,e.claimed_at,e.processed_at,e.last_error_code,
+             p.status AS payment_status
+        FROM commerce_webhook_events e
+        JOIN commerce_payments p ON p.district_id=e.district_id AND p.id=e.payment_id
+       WHERE e.state IN ('received','failed','processing','applied','ignored','dead_letter')
+       ORDER BY e.received_at,e.id
+       LIMIT 50
+    `);
+    assert.deepEqual(
+      [saved.rows[0].n, saved.rows[0].state, saved.rows[0].payload_sha256],
+      [1, "received", payloadHash],
+      `webhook intake must not run the worker; event=${JSON.stringify(saved.rows[0])}; queue=${JSON.stringify(activeQueue.rows)}`
+    );
     assert.equal((await payment(pid)).status, "requires_confirmation", "intake never settles a payment");
+    } finally {
+      server = await startServer(serverEnv);
+    }
   });
 
   it("no database transaction is open while any processor is called (pg_stat_activity)", async () => {
     // Keep this assertion scoped to calls made by this test. Earlier provider
     // tests deliberately exercise failures and reconciliation concurrently.
     mock.st.probes.length = 0;
-    assert.equal((await as("supt1")("POST", "/api/commerce/providers/btcpay/test", {})).body.data.detail, "store_ok");
+    const tested = await as("supt1")("POST", "/api/commerce/providers/btcpay/test", {});
+    assert.equal(tested.body.data.detail, "store_ok");
+    // Connection testing has no orderId, so assert its distinct store lookup
+    // before checkout probes are collected. This guards the provider-test
+    // route itself against accidentally calling BTCPay inside its DB transaction.
+    const connectionChecks = mock.st.probes.filter(p =>
+      p.method === "GET" &&
+      p.path === "/btcpay/api/v1/stores/STORE12345" &&
+      !p.query
+    );
+    assert.equal(connectionChecks.length, 1,
+      `one BTCPay connection check was observed: ${JSON.stringify(connectionChecks)}`);
+    assert.deepEqual(connectionChecks[0].open, [],
+      `BTCPay connection check ran after the request transaction committed: ${JSON.stringify(connectionChecks[0].open)}`);
     const btc = await buy("pa", "btcprobe", "bitcoin");
     assert.equal(btc.status, 201, JSON.stringify(btc.body));
     const paymentId = btc.body.data.payment.id;
@@ -1320,8 +1414,8 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     // integration suites. Scope this assertion to this checkout's BTCPay
     // orderId so another suite's unrelated open transaction cannot fail it.
     const ownCalls = mock.st.probes.filter(p => p.orderId === paymentId);
-    const open = ownCalls.filter(p => p.open > 0);
-    assert.deepEqual(open, [], "this checkout's BTCPay calls ran with no EduOS transaction open");
+    const open = ownCalls.filter(p => p.open.length > 0);
+    assert.deepEqual(open, [], `this checkout's BTCPay calls ran with no EduOS transaction open: ${JSON.stringify(open)}`);
     const seen = ownCalls.map(p => `${p.method} ${p.path}`);
     for (const call of ["GET /btcpay/api/v1/stores/STORE12345/invoices", "POST /btcpay/api/v1/stores/STORE12345/invoices"]) {
       assert.ok(seen.includes(call), `covered: ${call} (seen ${[...new Set(seen)].join(", ")})`);
