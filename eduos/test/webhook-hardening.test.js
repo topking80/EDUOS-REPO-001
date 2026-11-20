@@ -2,9 +2,10 @@
 // addresses, Retry-After, signatures during a signing-key rotation, the
 // delivery limiter and the production allowlist rule.
 import { test } from "node:test";
+import http from "node:http";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { isBlockedAddress, parseRetryAfter, signatureHeader, verifySignature, deliverWebhook } from "../src/webhooks.js";
+import { isBlockedAddress, parseRetryAfter, signatureHeader, verifySignature, deliverOnce, deliverWebhook } from "../src/webhooks.js";
 import { createLimiter } from "../src/webhook-outbox.js";
 
 test("special-purpose IPv4 and IPv6 ranges are refused; ordinary public addresses aren't", () => {
@@ -38,6 +39,46 @@ test("a short Retry-After is waited out in the call; a long one ends the call's 
   a = await deliverWebhook({ ...base, options: { lookup, maxAttempts: 3, sleep: async ms => waited.push(ms),
     send: async () => ({ outcome: "http_error", statusCode: 503, retryAfterSeconds: 120, durationMs: 1 }) } });
   assert.equal(a.length, 1); assert.deepEqual(waited, []); assert.equal(a[0].retryAfterSeconds, 120);
+});
+
+test("a real HTTP 408 response captures its Retry-After header", async () => {
+  const receiver = http.createServer((_req, res) => {
+    res.writeHead(408, { "Retry-After": "30" });
+    res.end();
+  });
+  await new Promise(resolve => receiver.listen(0, "127.0.0.1", resolve));
+  try {
+    const result = await deliverOnce({
+      url: new URL(`http://127.0.0.1:${receiver.address().port}/hook`),
+      address: "127.0.0.1", family: 4, headers: {}, body: "{}"
+    });
+    assert.deepEqual([result.outcome, result.statusCode, result.retryAfterSeconds], ["http_error", 408, 30]);
+  } finally {
+    await new Promise((resolve, reject) => receiver.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test("HTTP 408 responses are retried as transient failures; permanent 4xx responses are not", async () => {
+  const subscription = { id: "s", url: "https://hooks.example.test/x" };
+  const base = { subscription, secret: "s".repeat(40), eventType: "webhook.test", deliveryId: "d", body: "{}" };
+  const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+  const waits = [];
+  let calls = 0;
+  const attempts = await deliverWebhook({ ...base, options: {
+    lookup, maxAttempts: 2, sleep: async ms => waits.push(ms),
+    send: async () => (++calls === 1
+      ? { outcome: "http_error", statusCode: 408, durationMs: 1 }
+      : { outcome: "delivered", statusCode: 204, durationMs: 1 })
+  } });
+  assert.deepEqual(attempts.map(a => [a.outcome, a.statusCode]), [["http_error", 408], ["delivered", 204]]);
+  assert.deepEqual(waits, [400]);
+  calls = 0;
+  const permanent = await deliverWebhook({ ...base, options: {
+    lookup, maxAttempts: 2,
+    send: async () => { calls++; return { outcome: "http_error", statusCode: 404, durationMs: 1 }; }
+  } });
+  assert.equal(calls, 1, "a permanent 404 is not retried");
+  assert.equal(permanent.length, 1);
 });
 
 test("during a key rotation the header carries one signature per secret and either verifies", () => {

@@ -42,9 +42,9 @@ counters, never names.
 - **Registration.** One active subscription per URL per district, and at most
   `max_active_webhooks` (district setting); both are enforced by PostgreSQL,
   so concurrent requests can't get past them.
-- **Retries.** A timeout, network error, 5xx or 429 is retried with back-off
+- **Retries.** A timeout, network error, HTTP 408, 5xx or 429 is retried with back-off
   (15 s, 30 s, 60 s … at most an hour). If the receiver sends `Retry-After`
-  (seconds or an HTTP date) on a 429 or 503, the next attempt waits at least
+  (seconds or an HTTP date) on a 408, 429 or 503, the next attempt waits at least
   that long, capped at an hour.
   - After `max_attempts` the job is a dead letter.
   - A domain that doesn't exist gets one retry.
