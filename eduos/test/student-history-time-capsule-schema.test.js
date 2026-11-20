@@ -38,6 +38,7 @@ test("history revisions are captured transactionally and cannot be rewritten", (
   assert.ok(migration.includes("student_time_capsule_events_append_only"));
   assert.ok(migration.includes("REVOKE ALL ON FUNCTION eduos_student_history_capture_revision() FROM PUBLIC"));
   assert.ok(migration.includes("REVOKE ALL ON FUNCTION eduos_student_history_write_revision() FROM PUBLIC"));
+  assert.match(migration, /CREATE FUNCTION eduos_student_history_write_revision\\(\\) RETURNS trigger\\s+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp/);
 });
 
 test("media attachments reference the existing private media registry, never binary payloads or public URLs", () => {
@@ -62,12 +63,12 @@ test("history authors, revision actors, and capsule owners/recipients are distri
 
 test("runtime role gets only the operations required by TC-01 and no destructive privileges", () => {
   for (const table of ["student_history_entries", "student_time_capsules"]) {
-    assert.ok(grants.includes(`GRANT SELECT, INSERT ON ${table} TO eduos_app`));
+    assert.ok(grants.includes(table === "student_history_entry_revisions" ? "GRANT SELECT ON student_history_entry_revisions TO eduos_app" : `GRANT SELECT, INSERT ON ${table} TO eduos_app`));
     assert.ok(grants.includes(`REVOKE DELETE, TRUNCATE ON ${table} FROM eduos_app`));
   }
   for (const table of ["student_history_entry_revisions", "student_history_entry_attachments", "student_time_capsule_items", "student_time_capsule_events"]) {
     assert.ok(grants.includes(`GRANT SELECT, INSERT ON ${table} TO eduos_app`));
-    assert.ok(grants.includes(`REVOKE UPDATE, DELETE, TRUNCATE ON ${table} FROM eduos_app`));
+    assert.ok(grants.includes(table === "student_history_entry_revisions" ? "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_revisions FROM eduos_app" : `REVOKE UPDATE, DELETE, TRUNCATE ON ${table} FROM eduos_app`));
   }
   assert.ok(grants.includes("GRANT SELECT, INSERT ON student_time_capsule_recipients TO eduos_app"));
   assert.ok(grants.includes("GRANT UPDATE (entry_type, classification, title, body, occurred_at, school_year, audience, status, source_reference)"));
