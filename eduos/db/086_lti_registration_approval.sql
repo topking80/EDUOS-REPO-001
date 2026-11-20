@@ -85,6 +85,7 @@ BEGIN
   UPDATE apps SET lti_registration_status='approved',lti_approved_config_hash=p_config_hash,
       lti_approved_by=actor_id,lti_approved_at=now(),lti_revoked_by=NULL,lti_revoked_at=NULL,updated_at=now()
     WHERE id=p_app_id AND district_id=tenant_id AND integration_type='lti13' AND status='active'
+      AND created_by IS DISTINCT FROM actor_id
     RETURNING apps.lti_registration_status,apps.lti_approved_at INTO registration_status,approved_at;
   IF NOT FOUND THEN RAISE EXCEPTION 'LTI registration not approvable' USING ERRCODE = 'P0002'; END IF;
   RETURN NEXT;
