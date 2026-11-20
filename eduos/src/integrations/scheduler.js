@@ -105,7 +105,7 @@ async function recordScheduledFailure(tx,districtId,serviceActorId,job,runId,err
     return true;
   });
 }
-export async function processScheduledSisSync(job, { db = pool, tx = schedulerTenantTransaction(db), log = console } = {}) {
+async function processScheduledSisSyncLeased(job, { db = pool, tx = schedulerTenantTransaction(db), log = console, leaseLost = () => false } = {}) {
   const districtId = job.district_id;
   const serviceActorId = await tx(districtId, async c => {
     const actor = await c.query("SELECT id FROM integration_service_actors WHERE actor_key='sis_scheduler'");
@@ -166,7 +166,7 @@ export async function processScheduledSisSync(job, { db = pool, tx = schedulerTe
       const v=current.rows[0];
       if(!v||v.status!=="active"||!v.enabled||v.paused_at||v.config_version!==input.config_version
          ||v.schedule_version!==input.config_version||v.job_version!==input.config_version||v.job_status!=="processing"
-         ||v.lease_token!==job.lease_token||!v.lease_until||new Date(v.lease_until)<=new Date())
+         ||v.lease_token!==job.lease_token||!v.lease_until||new Date(v.lease_until)<=new Date()||leaseLost())
         throw Object.assign(new Error("scheduled_sync_approval_or_lease_changed"),{code:"SCHEDULE_STALE"});
       const inputs=await loadPlanInputs(c,districtId,input.connector_id,roster.students.map(s=>s.localStudentNumber));
       const plan=planImport(roster,inputs.map,inputs.existing,inputs.schools);
@@ -200,6 +200,31 @@ export async function processScheduledSisSync(job, { db = pool, tx = schedulerTe
       String(error.code||"scheduled_sync_failed").slice(0,300),retry);
     log.error?.("Scheduled SIS sync failed",{jobId:job.id,code:error.code||"scheduled_sync_failed"});
     return {status:retry?"retry":"failed"};
+  }
+}
+
+export async function processScheduledSisSync(job, deps = {}) {
+  const db=deps.db||pool;
+  const tx=deps.tx||schedulerTenantTransaction(db);
+  const log=deps.log||console;
+  let leaseLost=false,renewing=false;
+  const timer=setInterval(()=>{
+    if(renewing||leaseLost)return;
+    renewing=true;
+    tx(job.district_id,c=>c.query(
+      `UPDATE integration_sync_jobs SET lease_until=now()+make_interval(secs=>$4)
+        WHERE id=$1 AND district_id=$2 AND status='processing' AND lease_token=$3 AND lease_until>now()
+        RETURNING id`,
+      [job.id,job.district_id,job.lease_token,SYNC_JOB_LEASE_SECONDS]))
+      .then(result=>{if(!result.rowCount)leaseLost=true;})
+      .catch(error=>{leaseLost=true;log.warn?.("Scheduled SIS lease renewal failed",{jobId:job.id,code:error.code||"lease_renewal_failed"});})
+      .finally(()=>{renewing=false;});
+  },60_000);
+  timer.unref?.();
+  try {
+    return await processScheduledSisSyncLeased(job,{...deps,db,tx,log,leaseLost:()=>leaseLost});
+  } finally {
+    clearInterval(timer);
   }
 }
 
