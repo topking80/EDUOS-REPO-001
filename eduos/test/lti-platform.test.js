@@ -14,7 +14,7 @@ const privatePem = () => crypto.generateKeyPairSync("rsa", {
 
 test("LTI signing-key policy rejects non-RSA and sub-2048-bit key metadata", () => {
   assert.throws(() => assertPlatformRsaKey({ asymmetricKeyType: "ec", asymmetricKeyDetails: {} }), /must be RSA/);
-  assert.throws(() => assertPlatformRsaKey({ asymmetricKeyType: "rsa", asymmetricKeyDetails: { modulusLength: 1024 } }), /at least 2048 bits/);
+  assert.throws(() => assertPlatformRsaKey({ asymmetricKeyType: "rsa", asymmetricKeyDetails: { modulusLength: 2047 } }), /at least 2048 bits/);
   assert.doesNotThrow(() => assertPlatformRsaKey({ asymmetricKeyType: "rsa", asymmetricKeyDetails: { modulusLength: 2048 } }));
 });
 
