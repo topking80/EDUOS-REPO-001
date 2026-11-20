@@ -212,6 +212,23 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
 
     const resumed = await as("supt1")("POST", `/api/integrations/connectors/${or.id}/schedule/resume`);
     assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
+
+    // Pause while the worker is fetching. The final import transaction must
+    // re-check the lease and schedule state and must not apply this roster.
+    let release; fake.ctl.hold = new Promise(resolve => { release = resolve; });
+    const arrived = new Promise(resolve => { fake.ctl.arrived = resolve; });
+    const inFlight = run(["src/integrations/scheduler-cli.js"], { ...workerEnv, DATABASE_URL: db.appUrl });
+    await arrived;
+    const pausedInFlight = await as("supt1")("POST", "/api/integrations/schedules/pause-all", { reason: "pause_during_fetch" });
+    assert.equal(pausedInFlight.status, 200, JSON.stringify(pausedInFlight.body));
+    fake.ctl.hold = null; fake.ctl.arrived = null; release();
+    const stopped = await inFlight;
+    assert.equal(stopped.code, 0, stopped.out);
+    const afterCancelled = Number((await admin.query("SELECT count(*)::int AS n FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL", [or.id])).rows[0].n);
+    assert.equal(afterCancelled, before, "pause during fetch prevents the scheduled import");
+
+    const resumedAgain = await as("supt1")("POST", `/api/integrations/connectors/${or.id}/schedule/resume`);
+    assert.equal(resumedAgain.status, 200, JSON.stringify(resumedAgain.body));
     const resumedRun = await run(["src/integrations/scheduler-cli.js"], { ...workerEnv, DATABASE_URL: db.appUrl });
     assert.equal(resumedRun.code, 0, resumedRun.out);
     const afterResume = Number((await admin.query("SELECT count(*)::int AS n FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL", [or.id])).rows[0].n);
