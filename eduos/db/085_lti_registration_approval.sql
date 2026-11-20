@@ -30,18 +30,27 @@ UPDATE apps SET lti_registration_status='pending'
 CREATE FUNCTION eduos_invalidate_lti_approval() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 BEGIN
-  IF NEW.integration_type = 'lti13' THEN
-    IF TG_OP = 'INSERT' OR OLD.integration_type IS DISTINCT FROM NEW.integration_type
-       OR OLD.integration_config IS DISTINCT FROM NEW.integration_config THEN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.integration_type = 'lti13' THEN
       NEW.lti_registration_status := 'pending';
-      NEW.lti_approved_config_hash := NULL;
-      NEW.lti_approved_by := NULL;
-      NEW.lti_approved_at := NULL;
-      NEW.lti_revoked_by := NULL;
-      NEW.lti_revoked_at := NULL;
+    ELSE
+      NEW.lti_registration_status := 'not_required';
     END IF;
-  ELSE
+    NEW.lti_approved_config_hash := NULL;
+    NEW.lti_approved_by := NULL;
+    NEW.lti_approved_at := NULL;
+    NEW.lti_revoked_by := NULL;
+    NEW.lti_revoked_at := NULL;
+  ELSIF NEW.integration_type <> 'lti13' THEN
     NEW.lti_registration_status := 'not_required';
+    NEW.lti_approved_config_hash := NULL;
+    NEW.lti_approved_by := NULL;
+    NEW.lti_approved_at := NULL;
+    NEW.lti_revoked_by := NULL;
+    NEW.lti_revoked_at := NULL;
+  ELSIF OLD.integration_type IS DISTINCT FROM NEW.integration_type
+     OR OLD.integration_config IS DISTINCT FROM NEW.integration_config THEN
+    NEW.lti_registration_status := 'pending';
     NEW.lti_approved_config_hash := NULL;
     NEW.lti_approved_by := NULL;
     NEW.lti_approved_at := NULL;
