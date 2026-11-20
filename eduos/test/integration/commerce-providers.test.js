@@ -22,7 +22,7 @@ const SECRETS = { paypal: "pp-secret-DO-NOT-ECHO-1234567", square: "sq-token-DO-
  * st.gate holds the next matching call until the test releases it.
  */
 async function startMock() {
-  const st = { paypal: new Map(), paypalByKey: new Map(), square: new Map(), btcpay: new Map(), calls: [], n: 0, probes: [], probe: null, failNext: null, gate: null };
+  const st = { paypal: new Map(), paypalByKey: new Map(), square: new Map(), btcpay: new Map(), calls: [], n: 0, probes: [], probe: null, failNext: null, gate: null, paypalRefundStatus: null };
   const server = http.createServer(async (req, res) => {
     let raw = ""; for await (const c of req) raw += c;
     const body = raw && req.headers["content-type"]?.includes("json") ? JSON.parse(raw) : raw;
@@ -53,7 +53,7 @@ async function startMock() {
       const r = /^\/paypal\/v2\/payments\/captures\/([A-Z0-9]+)\/refund$/.exec(p);
       if (r) {
         const key = req.headers["paypal-request-id"];
-        const done = st.paypalByKey.get(key) || { id: id("PPREF"), status: "COMPLETED" };
+        const done = st.paypalByKey.get(key) || { id: id("PPREF"), status: st.paypalRefundStatus || "COMPLETED" };
         if (key) st.paypalByKey.set(key, done);
         return send(201, { id: done.id, status: done.status });
       }
@@ -507,16 +507,29 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.match((await admin.query("SELECT detail FROM audit_events WHERE action='refund' AND resource_id=$1", [pid])).rows[0].detail, /reconciled=true/);
   });
 
-  it("a refused refund puts the payment back as paid and the tickets work again", async () => {
+  it("an ambiguous refund response stays pending and is reconciled before tickets are released", async () => {
     const r = await buy("pa", "pprefuse", "paypal");
     const pid = r.body.data.payment.id;
     [...mock.st.paypal.values()].find(o => o.request.purchase_units[0].reference_id === pid).status = "APPROVED";
     const paid = await as("pa")("POST", `/api/commerce/payments/${pid}/confirm`, {});
     mock.st.failNext = /\/refund$/;
     const ref = await as("supt1")("POST", `/api/commerce/payments/${pid}/refund`, {});
-    assert.equal(ref.status, 502);
-    assert.deepEqual([(await payment(pid)).status, (await payment(pid)).pending_since], ["succeeded", null]);
-    assert.equal((await as("p1")("POST", `/api/events/${eventId}/check-in`, { ticketCode: paid.body.data.tickets[0].code })).status, 200);
+    assert.equal(ref.status, 200, JSON.stringify(ref.body));
+    assert.equal(ref.body.data.status, "pending");
+    assert.equal((await payment(pid)).status, "refund_pending",
+      "a provider HTTP error is ambiguous; it must not restore a possibly-refunded payment to succeeded");
+    assert.equal((await as("p1")("POST", `/api/events/${eventId}/check-in`, { ticketCode: paid.body.data.tickets[0].code })).status, 409);
+    await admin.query("UPDATE commerce_payments SET pending_since=now() - interval '5 minutes' WHERE id=$1", [pid]);
+    await until(async () => (await payment(pid)).status === "refunded", "reconciliation after an ambiguous refund response");
+    const refundLedger = await admin.query(
+      `SELECT count(*)::int AS line_count,
+              count(DISTINCT edal_entry_id)::int AS refund_count
+         FROM commerce_ledger_entries
+        WHERE payment_id=$1 AND entry_kind='refund'`, [pid]
+    );
+    assert.ok(refundLedger.rows[0].line_count > 0, "the refund records its ledger lines");
+    assert.equal(refundLedger.rows[0].refund_count, 1,
+      "all refund ledger lines belong to exactly one EDAL refund entry");
   });
 
   it("concurrent webhook workers cannot claim the same inbox event", async () => {
@@ -799,6 +812,18 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.ok(visible.body.data.refundCases.some(x => x.id === caseId));
     assert.equal(Object.hasOwn(visible.body.data.refundCases.find(x => x.id === caseId), "payerUserId"), false,
       "operator queue does not expose payer identity");
+
+    // District two has the same provider-management capability, but RLS must
+    // keep district one's refund obligation invisible and unresolvable.
+    const otherDistrictQueue = await as("supt2")("GET", "/api/commerce/providers/webhook-refund-cases");
+    assert.equal(otherDistrictQueue.status, 200, JSON.stringify(otherDistrictQueue.body));
+    assert.equal(otherDistrictQueue.body.data.refundCases.some(x => x.id === caseId), false,
+      "another district cannot read this refund case");
+    const crossDistrictResolve = await as("supt2")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
+      resolutionNote: "Cross-district resolution attempt must be denied."
+    });
+    assert.equal(crossDistrictResolve.status, 404,
+      "RLS hides another district's case from the resolve mutation");
     assert.equal((await as("p1")("GET", "/api/commerce/providers/webhook-refund-cases")).status, 403,
       "ordinary parents cannot inspect the refund queue");
     assert.equal((await as("p1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {
@@ -811,6 +836,20 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
     assert.equal((await admin.query(
       "SELECT status FROM commerce_webhook_refund_cases WHERE id=$1", [caseId]
     )).rows[0].status, "resolved");
+    const resolutionAudit = await admin.query(
+      `SELECT count(*)::int AS n, max(detail) AS detail, (array_agg(actor_user_id))[1] AS actor_user_id
+         FROM audit_events
+        WHERE district_id=$1
+          AND action='late_capture_refund_resolved'
+          AND resource_type='commerce_webhook_refund_case' AND resource_id=$2`,
+      [ID.d1, caseId]
+    );
+    assert.equal(resolutionAudit.rows[0].n, 1,
+      "successful resolution emits exactly one event and denied cross-district attempts emit none");
+    assert.equal(resolutionAudit.rows[0].actor_user_id, USERS.supt1[0],
+      "only the authorized district operator is recorded as the resolver");
+    assert.match(resolutionAudit.rows[0].detail, /Refund confirmed in the PayPal merchant console/,
+      "audit evidence retains the operator's external-refund attestation");
     assert.equal((await as("supt1")("GET", "/api/commerce/providers/webhook-refund-cases")).body.data.refundCases
       .some(x => x.id === caseId), false, "resolved cases leave the open queue");
     assert.equal((await as("supt1")("POST", `/api/commerce/providers/webhook-refund-cases/${caseId}/resolve`, {

@@ -125,6 +125,8 @@ export const config = {
   // External integrations (OneRoster, Ed-Fi) are off unless INTEGRATIONS_KEY
   // (32+ chars) is set: it encrypts connector client secrets at rest.
   integrationsKey: process.env.INTEGRATIONS_KEY || "",
+  // Bounded in-memory PowerSchool roster ceiling; larger districts need staged ingestion.
+  powerschoolMaxStudents: Number(process.env.POWERSCHOOL_MAX_STUDENTS || 200_000),
   integrationsAllowedHosts: (process.env.INTEGRATIONS_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
   // Development and tests only: permits http:// to a loopback server. Ignored in production.
   integrationsAllowInsecureLoopback: process.env.INTEGRATIONS_ALLOW_INSECURE_LOOPBACK === "true" && (process.env.NODE_ENV || "development") !== "production",
@@ -345,6 +347,7 @@ if (config.commerceSecretsKey && config.commerceSecretsKey.length < 32) {
 }
 intIn("COMMERCE_RECONCILE_INTERVAL_SECONDS", config.commerceReconcileIntervalSeconds, 0, 3600);
 intIn("COMMERCE_RECONCILE_STALE_SECONDS", config.commerceReconcileStaleSeconds, 10, 86400);
+intIn("POWERSCHOOL_MAX_STUDENTS", config.powerschoolMaxStudents, 1_000, 200_000);
 if (config.integrationsKey && config.integrationsKey.length < 32) {
   throw new Error("INTEGRATIONS_KEY must be at least 32 characters");
 }

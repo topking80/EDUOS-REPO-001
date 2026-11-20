@@ -457,3 +457,10 @@ REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
 -- LTI 1.3: replay ledger remains inaccessible; only the tenant-checked
 -- SECURITY DEFINER function may atomically claim a launch under tenant context.
 GRANT EXECUTE ON FUNCTION eduos_lti_consume_launch(uuid, text, timestamptz) TO eduos_app;
+
+-- 37.10.1 Timeline authorization foundation. Drafts remain append-only
+-- until the audited revision/publication transition service is added.
+GRANT SELECT, INSERT ON timeline_entries TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON timeline_entries FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_timeline_can_read(uuid,uuid,uuid,uuid,text,text,uuid),
+  eduos_timeline_can_insert(uuid,uuid,uuid,uuid,text,text,uuid,text) TO eduos_app;
