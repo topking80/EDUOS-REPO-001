@@ -11,6 +11,13 @@ test("PowerSchool school IDs are stable numeric DCIDs and names are bounded", ()
   assert.equal(powerschool.normalizeSchool({ id: 2, name: "N".repeat(200) }).school.name.length, 160);
 });
 
+test("PowerSchool student requests server-filter active enrollments and expand status", () => {
+  const url = new URL(powerschool.studentRosterUrl("https://district.example.org/", "12"));
+  assert.equal(url.pathname, "/ws/v1/school/12/student");
+  assert.equal(url.searchParams.get("q"), "school_enrollment.enroll_status==(A)");
+  assert.equal(url.searchParams.get("expansions"), "school_enrollment");
+});
+
 test("PowerSchool student normalization maps active roster fields only", () => {
   assert.deepEqual(powerschool.normalizeStudent({
     id: 987, student_number: "00421", first_name: "Ada", last_name: "Lovelace",
