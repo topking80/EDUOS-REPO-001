@@ -6,6 +6,7 @@ import { clientCredentialsToken, getJson, IntegrationError } from "./http.js";
 const PAGE_SIZE = 100;
 const MAX_PAGES = 50_000;
 const MAX_SCHOOLS = 2000;
+export const MAX_STUDENT_RECORDS = 200_000;
 const text = (v, max) => (typeof v === "string" || typeof v === "number") && String(v).trim()
   ? String(v).trim().slice(0, max) : null;
 
@@ -73,7 +74,9 @@ export function isMappedSchool(schoolId, mappedSchoolIds) {
   return Array.isArray(mappedSchoolIds) && mappedSchoolIds.includes(String(schoolId));
 }
 
-export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, mappedSchoolIds = [], maxStudentRecords = 200_000 }) {
+export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, mappedSchoolIds = [], maxStudentRecords = MAX_STUDENT_RECORDS }) {
+  const recordLimit = Math.min(Number.isSafeInteger(maxStudentRecords) ? maxStudentRecords : MAX_STUDENT_RECORDS, MAX_STUDENT_RECORDS);
+  if (recordLimit < 1) throw new IntegrationError("connector_too_many_records", "students");
   const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope, options });
   const base = baseUrl.replace(/\/+$/, "");
   const schoolRows = await collect(`${base}/ws/v1/district/school`, token, options, "schools", "school", MAX_SCHOOLS);
@@ -87,7 +90,7 @@ export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, s
     const schoolId = normalized.school.externalId;
     if (!isMappedSchool(schoolId, mappedSchoolIds)) continue;
     const studentRows = await collect(studentRosterUrl(base, schoolId),
-      token, options, "students", "student", maxStudentRecords - fetchedStudentRecords);
+      token, options, "students", "student", recordLimit - fetchedStudentRecords);
     fetchedStudentRecords += studentRows.length;
     for (const rawStudent of studentRows) {
       const result = normalizeStudent(rawStudent, schoolId);
