@@ -497,7 +497,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         const a = rows[0];
         if (a.integration_type === "lti13" && !ltiKey) return fail(503, "lti_not_configured");
         const cfg = a.integration_type === "lti13"
-          ? (await client.query("SELECT integration_config,lti_registration_status,lti_approved_config_hash FROM apps WHERE id=$1", [a.id])).rows[0]
+          ? (await client.query("SELECT integration_config,lti_registration_status,lti_approved_config_hash,lti_approved_at FROM apps WHERE id=$1", [a.id])).rows[0]
           : null;
         if (a.integration_type === "lti13" && !validLtiConfig(cfg.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
         if (a.integration_type === "lti13" && (cfg.lti_registration_status !== "approved" || cfg.lti_approved_config_hash !== ltiConfigFingerprint(cfg.integration_config))) return fail(409, "lti_approval_required");
@@ -511,7 +511,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         await audit(client, req, "launch", "app", a.id, { integrationType: a.integration_type, dataSharingScope: a.data_sharing_scope, launchId: launch.rows[0].id }, req.actor.schoolId || null);
         if (a.integration_type !== "lti13") return { status: 200, data: { url: a.launch_url, integrationType: a.integration_type } };
         const ltiCfg = cfg.integration_config;
-        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg) });
+        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg), v: new Date(cfg.lti_approved_at).toISOString() });
         const u = new URL(ltiCfg.loginUrl);
         u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
         u.searchParams.set("target_link_uri", ltiCfg.targetLinkUri); u.searchParams.set("lti_message_hint", hint);
@@ -595,6 +595,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           return { error: "lti_registration_changed", status: 409 };
         if (app.lti_registration_status !== "approved" || app.lti_approved_config_hash !== ltiConfigFingerprint(cfg))
           return { error: "lti_approval_required", status: 409 };
+        if (!app.lti_approved_at || hint.v !== new Date(app.lti_approved_at).toISOString())
+          return { error: "lti_approval_changed", status: 409 };
         if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
         if (!["none", "identity"].includes(app.data_sharing_scope)) return { error: "unsupported_lti_data_scope", status: 403 };
         if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
