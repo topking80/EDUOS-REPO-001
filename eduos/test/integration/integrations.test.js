@@ -8,6 +8,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import pg from "pg";
 import { PG_URL, ID, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
+import { getCanvasAccessToken } from "../../src/integrations/canvas-oauth.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 const SECRET = "or-secret-123", EDFI_SECRET = "edfi-secret-456";
@@ -65,11 +66,17 @@ function fakeCanvasOAuth() {
     if (req.method !== "POST" || req.url !== "/login/oauth2/token") return send(404, {});
     let body = ""; for await (const chunk of req) body += chunk;
     const form = new URLSearchParams(body); seen.push(Object.fromEntries(form));
-    if (form.get("grant_type") !== "authorization_code" || form.get("client_id") !== "canvas-client" ||
-        form.get("client_secret") !== "canvas-secret" || form.get("redirect_uri") !== "http://localhost/api/integrations/canvas/callback")
-      return send(401, { error: "invalid_grant" });
-    return send(200, { access_token: "canvas-access-secret", refresh_token: "canvas-refresh-secret",
-      token_type: "Bearer", expires_in: 3600, user: { id: 9876, name: "District Canvas Admin" } });
+    if (form.get("client_id") !== "canvas-client" || form.get("client_secret") !== "canvas-secret")
+      return send(401, { error: "invalid_client" });
+    if (form.get("grant_type") === "authorization_code" &&
+        form.get("redirect_uri") === "http://localhost/api/integrations/canvas/callback")
+      return send(200, { access_token: "canvas-access-secret", refresh_token: "canvas-refresh-secret",
+        token_type: "Bearer", expires_in: 3600, user: { id: 9876, name: "District Canvas Admin" } });
+    if (form.get("grant_type") === "refresh_token" &&
+        ["canvas-refresh-secret","canvas-refresh-rotated"].includes(form.get("refresh_token")))
+      return send(200, { access_token: "canvas-access-refreshed", refresh_token: "canvas-refresh-rotated",
+        token_type: "Bearer", expires_in: 3600 });
+    return send(400, { error: "invalid_grant" });
   });
   return new Promise(resolve => srv.listen(0, "127.0.0.1", () =>
     resolve({ base: `http://127.0.0.1:${srv.address().port}`, seen, close: () => new Promise(done => srv.close(done)) })));
@@ -309,6 +316,21 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       assert.equal(grant.canvas_user_id, "9876");
       assert.ok(!grant.access_token_enc.includes("canvas-access-secret"));
       assert.ok(!grant.refresh_token_enc.includes("canvas-refresh-secret"));
+
+      const rawSession = s.supt1.cookie.split(";")[0].split("=").slice(1).join("=");
+      const actorRow = (await admin.query("SELECT user_id,district_id,school_id,role FROM sessions WHERE token_hash=$1",
+        [crypto.createHash("sha256").update(rawSession).digest("hex")])).rows[0];
+      assert.ok(actorRow, "test session maps to a district actor");
+      const actor = { userId: actorRow.user_id, districtId: actorRow.district_id, schoolId: actorRow.school_id, role: actorRow.role };
+      await admin.query("UPDATE integration_canvas_oauth_grants SET expires_at=now()-interval '1 second' WHERE connector_id=$1",[id]);
+      const refreshed = await Promise.all([getCanvasAccessToken(actor,id),getCanvasAccessToken(actor,id)]);
+      assert.deepEqual(refreshed,["canvas-access-refreshed","canvas-access-refreshed"]);
+      assert.equal(canvasFake.seen.filter(x => x.grant_type === "refresh_token").length,1,
+        "concurrent callers share one database-serialized refresh");
+      const rotated = (await admin.query("SELECT access_token_enc,refresh_token_enc FROM integration_canvas_oauth_grants WHERE connector_id=$1",[id])).rows[0];
+      assert.ok(!rotated.access_token_enc.includes("canvas-access-refreshed"));
+      assert.ok(!rotated.refresh_token_enc.includes("canvas-refresh-rotated"));
+
       const status = await as("supt1")("GET", `/api/integrations/connectors/${id}/canvas/status`);
       assert.equal(status.status, 200);
       assert.equal(status.body.data.connected, true);
