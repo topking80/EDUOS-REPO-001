@@ -289,6 +289,20 @@ export function registerCanvasOAuthRoutes(app) {
     } catch(e){sendError(res,next,e);}
   });
 
+  app.post(`${BASE}/:id/canvas/refresh`, oauthStartLimiter, requireSession, requireCsrf, async (req,res,next) => {
+    if (!requireManager(req,res)) return;
+    if (!validId(req.params.id)) return res.status(400).json({error:"invalid_connector_id"});
+    try {
+      await getCanvasAccessToken(req.actor,req.params.id);
+      res.setHeader("Cache-Control","no-store");
+      res.json({data:{connected:true}});
+    } catch(e) {
+      if (e instanceof HttpError) return res.status(e.status).json({error:e.code});
+      if (e instanceof IntegrationError) return res.status(502).json({error:"canvas_token_refresh_failed"});
+      sendError(res,next,e);
+    }
+  });
+
   app.post(`${BASE}/:id/canvas/disconnect`, requireSession, requireCsrf, async (req,res,next) => {
     if (!requireManager(req,res)) return;
     if (!validId(req.params.id)) return res.status(400).json({error:"invalid_connector_id"});
