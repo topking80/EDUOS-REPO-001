@@ -262,10 +262,14 @@ export function registerCanvasOAuthRoutes(app) {
           String(token?.token_type || "").toLowerCase() !== "bearer" ||
           typeof token?.refresh_token !== "string" || !token.refresh_token ||
           !Number.isSafeInteger(token.expires_in) || token.expires_in < 60 || token.expires_in > 86400 ||
-          (typeof userId !== "string" && typeof userId !== "number"))
+          (typeof userId !== "string" && typeof userId !== "number")) {
+        if (typeof token?.access_token === "string" && token.access_token)
+          await revokeCanvasToken(result.connector.base_url,token.access_token);
         return res.status(502).type("text/plain").send("Canvas returned an incomplete authorization grant");
+      }
 
-      await withTenantTransaction(req.actor, async c => {
+      try {
+        await withTenantTransaction(req.actor, async c => {
         const current = await one(c,
           "SELECT status,config_version,kind FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",
           [result.connector.id, req.actor.districtId]);
@@ -287,7 +291,11 @@ export function registerCanvasOAuthRoutes(app) {
             access,refresh,token.expires_in,typeof token.scope==="string"?token.scope.split(/\s+/).filter(Boolean):result.connector.scope.split(/\s+/).filter(Boolean),req.actor.userId]);
         await c.query("DELETE FROM integration_canvas_oauth_states WHERE id=$1 AND district_id=$2",[result.stateId,req.actor.districtId]);
         await audit(c,req,"canvas_oauth_connect","integration_canvas_oauth_grant",result.connector.id,"Canvas OAuth grant stored; tokens encrypted");
-      });
+        });
+      } catch (e) {
+        await revokeCanvasToken(result.connector.base_url,token.access_token);
+        throw e;
+      }
       return res.redirect(303, "/app/?canvas=connected");
     } catch (e) {
       if (e instanceof HttpError) return res.status(e.status).type("text/plain").send("Canvas authorization was not accepted");
