@@ -47,9 +47,9 @@ CREATE TABLE integration_sync_schedules (
   UNIQUE(district_id,connector_id),
   UNIQUE(district_id,connector_id,id),
   FOREIGN KEY(district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
-  FOREIGN KEY(district_id,created_by) REFERENCES memberships(district_id,user_id),
-  FOREIGN KEY(district_id,updated_by) REFERENCES memberships(district_id,user_id),
-  FOREIGN KEY(district_id,approved_by) REFERENCES memberships(district_id,user_id),
+  FOREIGN KEY(district_id,created_by) REFERENCES district_users(district_id,user_id),
+  FOREIGN KEY(district_id,updated_by) REFERENCES district_users(district_id,user_id),
+  FOREIGN KEY(district_id,approved_by) REFERENCES district_users(district_id,user_id),
   CHECK (NOT enabled OR (approved_by IS NOT NULL AND approved_at IS NOT NULL AND approved_by<>updated_by)),
   CHECK ((NOT enabled OR paused_at IS NOT NULL) = (next_run_at IS NULL))
 );
@@ -99,7 +99,7 @@ ALTER TABLE integration_sync_runs
     REFERENCES integration_sync_jobs(district_id,connector_id,schedule_id,id),
   ADD CONSTRAINT integration_sync_runs_schedule_approver_fk
     FOREIGN KEY(district_id,schedule_approved_by)
-    REFERENCES memberships(district_id,user_id),
+    REFERENCES district_users(district_id,user_id),
   ADD CONSTRAINT integration_sync_runs_schedule_provenance_check
     CHECK (
       (started_by_service IS NULL AND schedule_id IS NULL AND scheduled_job_id IS NULL
