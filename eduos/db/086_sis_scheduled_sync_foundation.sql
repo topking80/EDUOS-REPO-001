@@ -99,7 +99,7 @@ REVOKE ALL ON integration_service_actors FROM PUBLIC;
 GRANT SELECT ON integration_service_actors TO eduos_app;
 GRANT SELECT,INSERT,UPDATE ON integration_sync_schedules TO eduos_app;
 GRANT SELECT,INSERT,UPDATE ON integration_sync_jobs TO eduos_app;
-GRANT SELECT,INSERT ON integration_service_actors TO eduos_app;
+GRANT SELECT ON integration_service_actors TO eduos_app;
 REVOKE DELETE,TRUNCATE ON integration_sync_schedules,integration_sync_jobs,integration_service_actors FROM eduos_app;
 
 -- Scheduler execution may append service-attributed SIS and audit rows, but
