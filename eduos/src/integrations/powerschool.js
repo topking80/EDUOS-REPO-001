@@ -73,7 +73,7 @@ export function isMappedSchool(schoolId, mappedSchoolIds) {
   return Array.isArray(mappedSchoolIds) && mappedSchoolIds.includes(String(schoolId));
 }
 
-export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, mappedSchoolIds = [], maxStudentRecords = 1_000_000 }) {
+export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, mappedSchoolIds = [], maxStudentRecords = 200_000 }) {
   const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope, options });
   const base = baseUrl.replace(/\/+$/, "");
   const schoolRows = await collect(`${base}/ws/v1/district/school`, token, options, "schools", "school", MAX_SCHOOLS);
