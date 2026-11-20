@@ -184,7 +184,7 @@ CREATE TABLE student_time_capsule_events (
   school_id uuid NOT NULL,
   student_id uuid NOT NULL,
   capsule_id uuid NOT NULL,
-  actor_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  actor_user_id uuid,
   event_type text NOT NULL CHECK (event_type IN (
     'created','item_added','recipient_added','sealed','scheduled',
     'release_attempted','released','cancelled','release_blocked'
