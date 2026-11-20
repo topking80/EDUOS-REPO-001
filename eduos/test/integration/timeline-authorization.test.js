@@ -33,11 +33,11 @@ describe("37.10.1 Timeline authorization foundation / RLS", { skip }, () => {
       if (!committed) await app.query("ROLLBACK");
     }
   };
-  const insert = async (actor, id, visibility, courseId = null) => context(actor,
+  const insert = async (actor, id, visibility, courseId = null, entryType = "reflection") => context(actor,
     `INSERT INTO timeline_entries(id,district_id,school_id,student_id,course_id,created_by,entry_type,title,body,visibility,occurred_at)
-     VALUES($1,$2,$3,$4,$5,$6,'reflection','A private timeline note','Test content not emitted in audit data',$7,now())
+     VALUES($1,$2,$3,$4,$5,$6,$7,'A private timeline note','Test content not emitted in audit data',$8,now())
      RETURNING id`,
-    [id, ID.d1, ID.s1, ID.alice, courseId, actor.user, visibility], true
+    [id, ID.d1, ID.s1, ID.alice, courseId, actor.user, entryType, visibility], true
   );
   const ids = async actor => (await context(actor,
     "SELECT id FROM timeline_entries ORDER BY id"
@@ -89,6 +89,35 @@ describe("37.10.1 Timeline authorization foundation / RLS", { skip }, () => {
     assert.equal((await insert({ role: "teacher", user: USERS.t1[0] }, ENTRY.teacherEducators, "educators")).length, 1);
     assert.equal((await insert({ role: "teacher", user: USERS.t1[0] }, ENTRY.teacherClassroom, "classroom", COURSE)).length, 1);
     assert.equal((await insert({ role: "principal", user: USERS.p1[0] }, ENTRY.principalSchool, "school")).length, 1);
+    assert.equal((await insert(
+      { role: "teacher", user: USERS.t1[0] },
+      "f1000000-0000-4000-8000-000000000008",
+      "educators", null, "educator_note"
+    )).length, 1, "teachers may create educator notes within their roster");
+    await assert.rejects(
+      insert({ role: "parent", user: USERS.pa[0] },
+        "f1000000-0000-4000-8000-000000000009", "family", null, "educator_note"),
+      /row-level security|policy/i,
+      "guardians cannot forge educator notes"
+    );
+    await assert.rejects(
+      insert({ role: "pupil", user: USERS.pu[0] },
+        "f1000000-0000-4000-8000-00000000000a", "private", null, "educator_note"),
+      /row-level security|policy/i,
+      "learners cannot forge educator notes"
+    );
+    await assert.rejects(
+      insert({ role: "teacher", user: USERS.t1[0] },
+        "f1000000-0000-4000-8000-00000000000b", "educators", null, "system_milestone"),
+      /row-level security|policy/i,
+      "system milestones are reserved for a trusted system-only path"
+    );
+    await assert.rejects(
+      insert({ role: "principal", user: USERS.p1[0] },
+        "f1000000-0000-4000-8000-00000000000c", "school", null, "system_milestone"),
+      /row-level security|policy/i,
+      "school leaders cannot forge system milestones"
+    );
     // Drafts remain visible only to their current author until a trusted
     // publication transition is implemented by the service layer.
     assert.deepEqual(await ids({ role: "principal", user: USERS.p1[0] }), [ENTRY.principalSchool]);
