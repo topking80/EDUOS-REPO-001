@@ -454,3 +454,8 @@ GRANT SELECT, INSERT ON timeline_entries TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON timeline_entries FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_timeline_can_read(uuid,uuid,uuid,uuid,text,text,uuid),
   eduos_timeline_can_insert(uuid,uuid,uuid,uuid,text,text,uuid,text) TO eduos_app;
+
+-- CANVAS-API-01: one-time OAuth state and tenant-owned encrypted grants.
+GRANT SELECT, INSERT, DELETE ON integration_canvas_oauth_states TO eduos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON integration_canvas_oauth_grants TO eduos_app;
+REVOKE TRUNCATE ON integration_canvas_oauth_states, integration_canvas_oauth_grants FROM eduos_app;
