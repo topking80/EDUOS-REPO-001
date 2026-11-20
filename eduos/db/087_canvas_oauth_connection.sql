@@ -11,13 +11,14 @@ CREATE TABLE integration_canvas_oauth_states (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   district_id uuid NOT NULL,
   connector_id uuid NOT NULL,
-  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL,
   state_hash char(64) NOT NULL UNIQUE CHECK (state_hash ~ '^[0-9a-f]{64}$'),
   config_version integer NOT NULL CHECK (config_version >= 1),
   redirect_uri text NOT NULL CHECK (length(redirect_uri) BETWEEN 1 AND 2048),
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  FOREIGN KEY (district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE
+  FOREIGN KEY (district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
+  FOREIGN KEY (district_id,user_id) REFERENCES district_users(district_id,user_id) ON DELETE CASCADE
 );
 CREATE INDEX integration_canvas_oauth_states_expiry ON integration_canvas_oauth_states(expires_at);
 
@@ -30,17 +31,18 @@ CREATE TABLE integration_canvas_oauth_grants (
   refresh_token_enc text NOT NULL CHECK (length(refresh_token_enc) BETWEEN 20 AND 8192),
   expires_at timestamptz NOT NULL,
   granted_scope text[] NOT NULL DEFAULT '{}'::text[],
-  authorized_by uuid NOT NULL REFERENCES users(id),
+  authorized_by uuid NOT NULL,
   authorized_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   refresh_lease_token uuid,
   refresh_lease_until timestamptz,
   PRIMARY KEY (district_id,connector_id),
   CHECK ((refresh_lease_token IS NULL) = (refresh_lease_until IS NULL)),
-  FOREIGN KEY (district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE
+  FOREIGN KEY (district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
+  FOREIGN KEY (district_id,authorized_by) REFERENCES district_users(district_id,user_id)
 );
 
-DO $$ DECLARE t text; BEGIN
+DO $ DECLARE t text; BEGIN
   FOREACH t IN ARRAY ARRAY['integration_canvas_oauth_states','integration_canvas_oauth_grants'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY',t);
