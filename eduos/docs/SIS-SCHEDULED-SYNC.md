@@ -1,6 +1,6 @@
 # SIS-02: Scheduled roster synchronization
 
-Scheduled sync is opt-in per connector. It is disabled until a district manager configures an interval and a different district manager approves that schedule. Connector approval remains a separate prerequisite.
+Scheduled sync is opt-in per connector. It is disabled until a district manager configures an interval and a different district manager approves that schedule. Connector approval remains a separate prerequisite, and a successful preview must exist after the current connector approval before the schedule can be approved.
 
 ## Controls
 
@@ -11,7 +11,7 @@ Scheduled sync is opt-in per connector. It is disabled until a district manager 
 - Pause every enabled schedule in a district: `POST /api/integrations/schedules/pause-all`.
 - Resume one approved schedule: `POST /api/integrations/connectors/:id/schedule/resume`.
 
-A connector URL, credential, scope, or school-map change returns the connector to pending approval and increments its config version. Scheduled work is cancelled unless the connector and schedule still have matching approved versions at the final import transaction.
+A connector URL, credential, scope, or school-map change returns the connector to pending approval and increments its config version. After re-approval, run a fresh preview before approving the schedule again. Scheduled work is cancelled unless the connector and schedule still have matching approved versions at the final import transaction.
 
 ## Worker
 
