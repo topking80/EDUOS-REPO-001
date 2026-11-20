@@ -50,6 +50,98 @@ function tokenPayload(text) {
   try { return JSON.parse(text); } catch { throw new HttpError(502, "canvas_token_response_invalid"); }
 }
 
+
+/**
+ * Return a live Canvas bearer token for a district connector. Refresh is
+ * serialized across application instances with a short database lease; the
+ * raw tokens exist only in this server-side call path.
+ */
+export async function getCanvasAccessToken(actor, connectorId) {
+  if (!validId(connectorId)) throw new HttpError(400, "invalid_connector_id");
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const claim = await withTenantTransaction(actor, async c => {
+      const connector = await one(c,
+        "SELECT id,kind,status,base_url,token_url,client_id,client_secret_enc,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2",
+        [connectorId,actor.districtId]);
+      if (!connector || connector.kind !== "canvas") throw new HttpError(404,"canvas_connector_not_found");
+      if (connector.status !== "active") throw new HttpError(409,"connector_not_approved");
+      const grant = await one(c,
+        "SELECT access_token_enc,refresh_token_enc,expires_at FROM integration_canvas_oauth_grants WHERE connector_id=$1 AND district_id=$2",
+        [connectorId,actor.districtId]);
+      if (!grant) throw new HttpError(409,"canvas_authorization_required");
+      if (new Date(grant.expires_at).getTime() > Date.now() + 60_000) {
+        return { accessToken: decryptSecret(config.integrationsKey,actor.districtId,`${connectorId}:canvas-access`,grant.access_token_enc) };
+      }
+      const leaseToken = crypto.randomUUID();
+      const leased = await one(c,
+        `UPDATE integration_canvas_oauth_grants SET refresh_lease_token=$3,
+           refresh_lease_until=now()+interval '30 seconds'
+          WHERE district_id=$1 AND connector_id=$2
+            AND (refresh_lease_until IS NULL OR refresh_lease_until<=now())
+          RETURNING refresh_token_enc`,
+        [actor.districtId,connectorId,leaseToken]);
+      if (!leased) return { waiting: true };
+      return { leaseToken, refreshTokenEnc: leased.refresh_token_enc, connector };
+    });
+    if (claim.accessToken) return claim.accessToken;
+    if (claim.waiting) {
+      await new Promise(resolve => setTimeout(resolve,250));
+      continue;
+    }
+
+    const release = async () => withTenantTransaction(actor,c => c.query(
+      `UPDATE integration_canvas_oauth_grants SET refresh_lease_token=NULL,refresh_lease_until=NULL
+        WHERE district_id=$1 AND connector_id=$2 AND refresh_lease_token=$3`,
+      [actor.districtId,connectorId,claim.leaseToken]));
+    try {
+      const origin = canvasOrigin(claim.connector.base_url);
+      const tokenUrl = new URL("/login/oauth2/token",origin).toString();
+      if (claim.connector.token_url !== tokenUrl) throw new HttpError(409,"canvas_token_url_mismatch");
+      const oldRefresh = decryptSecret(config.integrationsKey,actor.districtId,`${connectorId}:canvas-refresh`,claim.refreshTokenEnc);
+      const clientSecret = decryptSecret(config.integrationsKey,actor.districtId,connectorId,claim.connector.client_secret_enc);
+      const response = await outboundRequest(tokenUrl,{
+        method:"POST",options:{...urlOptions(),timeoutMs:10_000},
+        headers:{"content-type":"application/x-www-form-urlencoded",accept:"application/json"},
+        body:new URLSearchParams({grant_type:"refresh_token",refresh_token:oldRefresh,
+          client_id:claim.connector.client_id,client_secret:clientSecret}).toString()
+      });
+      if (response.status < 200 || response.status > 299) {
+        if (response.status === 400 || response.status === 401) {
+          await withTenantTransaction(actor,c=>c.query(
+            "DELETE FROM integration_canvas_oauth_grants WHERE district_id=$1 AND connector_id=$2 AND refresh_lease_token=$3",
+            [actor.districtId,connectorId,claim.leaseToken]));
+          throw new HttpError(409,"canvas_authorization_required");
+        }
+        throw new IntegrationError("canvas_token_refresh_failed",`HTTP ${response.status}`);
+      }
+      const token = tokenPayload(response.text);
+      if (typeof token?.access_token !== "string" || !token.access_token ||
+          String(token?.token_type || "").toLowerCase() !== "bearer" ||
+          !Number.isSafeInteger(token.expires_in) || token.expires_in < 60 || token.expires_in > 86400)
+        throw new IntegrationError("canvas_token_response_invalid");
+      const nextRefresh = typeof token.refresh_token === "string" && token.refresh_token ? token.refresh_token : oldRefresh;
+      const accessEnc = encryptSecret(config.integrationsKey,actor.districtId,`${connectorId}:canvas-access`,token.access_token);
+      const refreshEnc = encryptSecret(config.integrationsKey,actor.districtId,`${connectorId}:canvas-refresh`,nextRefresh);
+      const saved = await withTenantTransaction(actor,c=>one(c,
+        `UPDATE integration_canvas_oauth_grants g SET access_token_enc=$4,refresh_token_enc=$5,
+           expires_at=now()+make_interval(secs=>$6),updated_at=now(),
+           refresh_lease_token=NULL,refresh_lease_until=NULL
+          WHERE g.district_id=$1 AND g.connector_id=$2 AND g.refresh_lease_token=$3
+            AND EXISTS(SELECT 1 FROM integration_connectors x WHERE x.id=g.connector_id
+              AND x.district_id=g.district_id AND x.kind='canvas' AND x.status='active'
+              AND x.config_version=$7)
+          RETURNING g.connector_id`,
+        [actor.districtId,connectorId,claim.leaseToken,accessEnc,refreshEnc,token.expires_in,claim.connector.config_version]));
+      if (!saved) throw new HttpError(409,"canvas_connector_changed");
+      return token.access_token;
+    } catch (error) {
+      try { await release(); } catch { /* preserve the original failure */ }
+      throw error;
+    }
+  }
+  throw new IntegrationError("canvas_token_refresh_busy","A Canvas token refresh is still in progress");
+}
+
 export function registerCanvasOAuthRoutes(app) {
   app.post(`${BASE}/:id/canvas/authorize`, oauthStartLimiter, requireSession, requireCsrf, async (req, res, next) => {
     if (!requireManager(req, res)) return;
