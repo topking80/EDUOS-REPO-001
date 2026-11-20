@@ -35,7 +35,7 @@ async function cancelScheduleJobs(client,districtId,scheduleId,reason){
 
 async function invalidateScheduleForConnector(client,districtId,connectorId,reason){
   await client.query(
-    `UPDATE integration_sync_schedules SET enabled=false,next_run_at=NULL,paused_at=now(),
+    `UPDATE integration_sync_schedules SET enabled=false,next_run_at=NULL,paused_at=now(),approved_by=NULL,approved_at=NULL,
        pause_reason=$3,updated_at=now()
       WHERE district_id=$1 AND connector_id=$2`,
     [districtId,connectorId,String(reason||"connector_approval_changed").slice(0,240)]);
