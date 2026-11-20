@@ -449,7 +449,8 @@ REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
 -- Revisions and lifecycle events are append-only; media bytes remain in the
 -- private object store and are never exposed through these metadata tables.
 GRANT SELECT, INSERT ON student_history_entries TO eduos_app;
-GRANT UPDATE (entry_type, classification, title, body, occurred_at, school_year, audience, status, source_reference)
+-- Approval/publication/deletion status is changed only by an authorized workflow.
+GRANT UPDATE (entry_type, classification, title, body, occurred_at, school_year, audience, source_reference)
   ON student_history_entries TO eduos_app;
 REVOKE DELETE, TRUNCATE ON student_history_entries FROM eduos_app;
 GRANT SELECT ON student_history_entry_revisions TO eduos_app;
@@ -459,7 +460,9 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_revisions FROM 
 REVOKE UPDATE, DELETE, TRUNCATE ON student_history_entry_attachments,
   student_time_capsule_items, student_time_capsule_events FROM eduos_app;
 GRANT SELECT, INSERT ON student_time_capsules, student_time_capsule_recipients TO eduos_app;
-GRANT UPDATE (title, message, status, release_kind, release_at, milestone_key, timezone, sealed_at, released_at, cancelled_at, updated_at)
+-- Runtime edits are limited to descriptive draft metadata. Sealing, scheduling,
+-- release, cancellation and milestone transitions require authorized workflow functions.
+GRANT UPDATE (title, message, timezone, updated_at)
   ON student_time_capsules TO eduos_app;
 GRANT UPDATE (consent_status, updated_at) ON student_time_capsule_recipients TO eduos_app;
 REVOKE DELETE, TRUNCATE ON student_time_capsules, student_time_capsule_recipients FROM eduos_app;
