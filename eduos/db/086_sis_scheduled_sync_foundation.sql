@@ -45,9 +45,11 @@ CREATE TABLE integration_sync_schedules (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE(district_id,connector_id),
+  UNIQUE(district_id,connector_id,id),
   FOREIGN KEY(district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
   CHECK (NOT enabled OR (approved_by IS NOT NULL AND approved_at IS NOT NULL AND approved_by<>updated_by)),
-  CHECK (enabled OR next_run_at IS NULL OR paused_at IS NOT NULL)
+  CHECK (NOT enabled OR paused_at IS NULL),
+  CHECK (enabled OR next_run_at IS NULL)
 );
 CREATE INDEX integration_sync_schedules_due
   ON integration_sync_schedules(next_run_at,id)
@@ -69,6 +71,7 @@ CREATE TABLE integration_sync_jobs (
   last_error text CHECK(last_error IS NULL OR length(last_error)<=300),
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY(district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
+  FOREIGN KEY(district_id,connector_id,schedule_id) REFERENCES integration_sync_schedules(district_id,connector_id,id) ON DELETE CASCADE,
   CHECK ((status='processing') = (lease_until IS NOT NULL AND lease_token IS NOT NULL)),
   CHECK (status<>'processing' OR attempts BETWEEN 1 AND 5)
 );
