@@ -305,10 +305,10 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!validLtiConfig(a.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
         const fingerprint = ltiConfigFingerprint(a.integration_config);
         const updated = await client.query(
-          "UPDATE apps SET lti_registration_status='approved',lti_approved_config_hash=$2,lti_approved_by=$3,lti_approved_at=now(),lti_revoked_by=NULL,lti_revoked_at=NULL WHERE id=$1 RETURNING *",
+          "SELECT * FROM eduos_lti_approve_registration($1,$2,$3)",
           [a.id, fingerprint, req.actor.userId]);
         await audit(client, req, "approve_lti_registration", "app", a.id, { configFingerprint: fingerprint }, a.owner_school_id);
-        return { status: 200, data: { id: a.id, registrationStatus: updated.rows[0].lti_registration_status, approvedAt: updated.rows[0].lti_approved_at } };
+        return { status: 200, data: { id: a.id, registrationStatus: updated.rows[0].registration_status, approvedAt: updated.rows[0].approved_at } };
       });
       send(res, r);
     } catch (e) { next(e); }
@@ -323,10 +323,10 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         const a = found.rows[0];
         if (a.integration_type !== "lti13") return fail(409, "not_an_lti_registration");
         const updated = await client.query(
-          "UPDATE apps SET lti_registration_status='revoked',lti_approved_config_hash=NULL,lti_approved_by=NULL,lti_approved_at=NULL,lti_revoked_by=$2,lti_revoked_at=now() WHERE id=$1 RETURNING *",
+          "SELECT * FROM eduos_lti_revoke_registration($1,$2)",
           [a.id, req.actor.userId]);
         await audit(client, req, "revoke_lti_registration", "app", a.id, { previousStatus: a.lti_registration_status }, a.owner_school_id);
-        return { status: 200, data: { id: a.id, registrationStatus: updated.rows[0].lti_registration_status, revokedAt: updated.rows[0].lti_revoked_at } };
+        return { status: 200, data: { id: a.id, registrationStatus: updated.rows[0].registration_status, revokedAt: updated.rows[0].revoked_at } };
       });
       send(res, r);
     } catch (e) { next(e); }
