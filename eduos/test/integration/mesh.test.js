@@ -470,4 +470,30 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     const total = (await admin.query("SELECT count(*)::int AS n FROM audit_events WHERE district_id=$1", [ID.d1])).rows[0].n;
     assert.equal(csv.trim().split("\r\n").length - 1, total, "the export streams every audit event");
   });
+  it("EduOS launches the district's Canvas LMS destination through the approved app catalog", async () => {
+    const canvasUrl = "https://district.instructure.com/";
+    const reg = await as("it")("POST", "/api/apps", {
+      name: "Canvas LMS", vendor: "Instructure", description: "District learning management system",
+      category: "Learning Management System", launchUrl: canvasUrl, integrationType: "oidc_sso",
+      dataSharingScope: "identity", dpaStatus: "signed", coppaCompliant: true, ferpaSchoolOfficial: true
+    });
+    assert.equal(reg.status, 201, JSON.stringify(reg.body));
+    const id = reg.body.data.id;
+    assert.equal((await as("it")("POST", `/api/apps/${id}/licenses`, {})).status, 201);
+    assert.equal((await as("it")("POST", `/api/apps/${id}/assignments`, { scope: "district" })).status, 201);
+
+    const visible = await as("pu")("GET", "/api/my/apps");
+    assert.ok(visible.body.data.some(x => x.id === id && x.integrationType === "oidc_sso"));
+    const launched = await as("pu")("POST", `/api/apps/${id}/launch`);
+    assert.equal(launched.status, 200, JSON.stringify(launched.body));
+    assert.deepEqual(launched.body.data, { url: canvasUrl, integrationType: "oidc_sso" });
+
+    const events = await admin.query(
+      "SELECT action,detail FROM audit_events WHERE resource_type='app' AND resource_id=$1 AND action='launch'",
+      [id]
+    );
+    assert.equal(events.rowCount, 1);
+    assert.equal(JSON.parse(events.rows[0].detail).dataSharingScope, "identity");
+  });
+
 });
