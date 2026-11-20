@@ -205,7 +205,7 @@ CREATE INDEX student_time_capsule_events_history_idx
 -- Every entry insert/update creates a revision in the same transaction. The
 -- snapshot deliberately excludes attachment storage keys and binary content.
 CREATE FUNCTION eduos_student_history_capture_revision() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $
 BEGIN
   IF TG_OP = 'INSERT' THEN
     NEW.revision_no := 1;
@@ -218,7 +218,7 @@ END;
 $$;
 
 CREATE FUNCTION eduos_student_history_write_revision() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $
 DECLARE
   actor_id uuid := nullif(current_setting('app.user_id', true), '')::uuid;
 BEGIN
@@ -244,7 +244,7 @@ END;
 $$;
 
 CREATE FUNCTION eduos_student_history_reject_immutable_mutation() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $
 BEGIN
   RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = '55000';
 END;
