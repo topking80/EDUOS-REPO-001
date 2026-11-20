@@ -209,6 +209,10 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
       integrationConfig: { clientId: "tool-client", deploymentId: "dep-1", loginUrl: `${base}/login`, redirectUris: [`${base}/launch`], targetLinkUri: `${base}/launch` } });
     assert.equal(reg.status, 201, JSON.stringify(reg.body));
     assert.equal(reg.body.data.registrationStatus, "pending", "new LTI registrations require district approval");
+    // Establish launch entitlement first so the pending-approval response is
+    // tested independently of the app-availability authorization gate.
+    await as("it")("POST", `/api/apps/${reg.body.data.id}/licenses`, {});
+    await as("it")("POST", `/api/apps/${reg.body.data.id}/assignments`, { scope: "district" });
     const blocked = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
     assert.equal(blocked.status, 409); assert.equal(blocked.body.error, "lti_approval_required");
     assert.equal((await as("p1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 403, "school principals cannot approve district LTI registrations");
@@ -233,8 +237,6 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     await appDb.query("ROLLBACK");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Bad LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "lti13", integrationConfig: { clientId: "c" } })).body.error, "invalid_lti_config");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { clientSecret: "x" } })).body.error, "integration_config_must_not_hold_secrets");
-    await as("it")("POST", `/api/apps/${reg.body.data.id}/licenses`, {});
-    await as("it")("POST", `/api/apps/${reg.body.data.id}/assignments`, { scope: "district" });
     const changedConfig = { ...reg.body.data.integrationConfig, redirectUris: [...reg.body.data.integrationConfig.redirectUris, `${base}/alternate`] };
     const changed = await as("it")("PATCH", `/api/apps/${reg.body.data.id}`, { integrationConfig: changedConfig });
     assert.equal(changed.status, 200); assert.equal(changed.body.data.registrationStatus, "pending", "registration changes invalidate approval");
