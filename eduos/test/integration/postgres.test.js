@@ -357,6 +357,16 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
     await db?.drop();
   });
 
+  const expectDenied = async work => {
+    await app.query("SAVEPOINT expected_denial");
+    try {
+      await assert.rejects(work(), error => error.code === "42501");
+    } finally {
+      await app.query("ROLLBACK TO SAVEPOINT expected_denial");
+      await app.query("RELEASE SAVEPOINT expected_denial");
+    }
+  };
+
   const scoped = async (districtId, schoolId, role, userId, work) => {
     await app.query("BEGIN");
     try {
@@ -398,14 +408,8 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
       assert.deepEqual(visible.rows.map(row => row.id), [alice.id]);
       const changed = await app.query("UPDATE student_history_entries SET title='Alice milestone revised' WHERE id=$1 RETURNING revision_no", [alice.id]);
       assert.equal(changed.rows[0].revision_no, 2);
-      await assert.rejects(
-        () => app.query("INSERT INTO student_history_entries (district_id,school_id,student_id,entry_type,classification,title,occurred_at,source_type) VALUES ($1,$2,$3,'event','family_memory','cross-school attempt',now(),'guardian')", [ID.d1, ID.s2, ID.carol]),
-        error => error.code === "42501"
-      );
-      await assert.rejects(
-        () => app.query("UPDATE student_history_entries SET student_id=$1 WHERE id=$2", [ID.carol, alice.id]),
-        error => error.code === "42501"
-      );
+      await expectDenied(() => app.query("INSERT INTO student_history_entries (district_id,school_id,student_id,entry_type,classification,title,occurred_at,source_type) VALUES ($1,$2,$3,'event','family_memory','cross-school attempt',now(),'guardian')", [ID.d1, ID.s2, ID.carol]));
+      await expectDenied(() => app.query("UPDATE student_history_entries SET student_id=$1 WHERE id=$2", [ID.carol, alice.id]));
       return visible.rows.length;
     });
     assert.equal(schoolOne, 1);
@@ -448,14 +452,8 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
           (district_id, school_id, student_id, capsule_id, actor_user_id, event_type)
         VALUES ($1,$2,$3,$4,$5,'created')
       `, [ID.d1, ID.s1, ID.alice, capsule.id, USERS.pa[0]]);
-      await assert.rejects(
-        () => app.query("UPDATE student_history_entry_revisions SET revision_no=9 WHERE entry_id=$1", [alice.id]),
-        error => error.code === "42501"
-      );
-      await assert.rejects(
-        () => app.query("DELETE FROM student_history_entries WHERE id=$1", [alice.id]),
-        error => error.code === "42501"
-      );
+      await expectDenied(() => app.query("UPDATE student_history_entry_revisions SET revision_no=9 WHERE entry_id=$1", [alice.id]));
+      await expectDenied(() => app.query("DELETE FROM student_history_entries WHERE id=$1", [alice.id]));
     });
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM student_time_capsule_items WHERE entry_id=$1", [alice.id])).rows[0].n, 1);
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM student_time_capsule_events")).rows[0].n, 1);
