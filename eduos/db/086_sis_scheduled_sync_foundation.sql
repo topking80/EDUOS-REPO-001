@@ -80,6 +80,8 @@ CREATE TABLE integration_sync_jobs (
 CREATE INDEX integration_sync_jobs_claim
   ON integration_sync_jobs(available_at,created_at)
   WHERE status IN ('pending','processing');
+CREATE UNIQUE INDEX integration_sync_jobs_one_active_per_schedule
+  ON integration_sync_jobs(schedule_id) WHERE status IN ('pending','processing');
 
 DO $$
 DECLARE t text;
