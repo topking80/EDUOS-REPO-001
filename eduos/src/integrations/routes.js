@@ -2,7 +2,7 @@
 //
 // EduOS doesn't depend on any of them. Nothing runs unless INTEGRATIONS_KEY is
 // set, a district lead adds a connector and a different district lead approves
-// it; syncs run only when someone asks (preview first, then apply). Connectors
+// it; syncs run manually (preview first, then apply) or on a separately approved schedule. Connectors
 // only read from the external system, and imports go through the same rules
 // as the SIS CSV import.
 import crypto from "node:crypto";
