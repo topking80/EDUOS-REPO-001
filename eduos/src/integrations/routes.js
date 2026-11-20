@@ -178,7 +178,10 @@ export function registerIntegrationRoutes(app) {
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
     try {
       const data = await withTenantTransaction(req.actor, (c) => rows(c, `SELECT r.id, r.mode, r.status, r.started_at, r.finished_at, r.counts, r.rejected, r.error,
-          u.display_name AS started_by FROM integration_sync_runs r JOIN users u ON u.id=r.started_by
+          COALESCE(u.display_name,sa.display_name,'EduOS SIS Scheduler') AS started_by,
+          (r.started_by_service IS NOT NULL) AS service_initiated
+          FROM integration_sync_runs r LEFT JOIN users u ON u.id=r.started_by
+          LEFT JOIN integration_service_actors sa ON sa.id=r.started_by_service
           WHERE r.connector_id=$1 AND r.district_id=$2 ORDER BY r.started_at DESC LIMIT 20`, [req.params.id, req.actor.districtId]));
       res.setHeader("Cache-Control", "no-store");
       res.json({ data });
