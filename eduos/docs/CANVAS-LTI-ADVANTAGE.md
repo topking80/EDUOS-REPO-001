@@ -1,10 +1,10 @@
 # LTI 1.3 / LTI Advantage interoperability for third-party educational software
 
-Status: implementation plan and security acceptance criteria. This document does not claim that Canvas interoperability is complete.
+Status: implementation plan and security acceptance criteria. This document defines the implementation scope and acceptance criteria; it does not claim full LTI Advantage interoperability.
 
 ## Repository audit
 
-The existing `src/lti.js` contains LTI 1.3 building blocks: RS256 platform-key loading, JWKS construction, signed short-lived launch hints, pairwise subjects, basic resource-link claims, and HTTPS URL validation. `src/mesh-routes.js` already registers the OIDC authorization and JWKS endpoints; this PR adds durable replay consumption and LTI-specific regression tests. NRPS, AGS, and Deep Linking remain unimplemented. Therefore this is an initial platform-side Core slice, not a complete or Canvas-certified integration.
+The existing `src/lti.js` contains LTI 1.3 building blocks: RS256 platform-key loading, JWKS construction, signed short-lived launch hints, pairwise subjects, basic resource-link claims, and HTTPS URL validation. `src/mesh-routes.js` already registers the OIDC authorization and JWKS endpoints; this PR adds durable replay consumption and LTI-specific regression tests. NRPS, AGS, and Deep Linking remain unimplemented. Therefore this is an initial platform-side Core slice, not a complete or certified LTI Advantage integration.
 
 ## Product commitment
 
@@ -68,7 +68,7 @@ EduOS is the LTI 1.3 platform. Its purpose is to let districts connect approved,
 - Implement line-item, result, and score services with strict course/resource ownership.
 - Require explicit district and course-level grade-write approval.
 - Enforce score range/type validation, idempotency, replay protection, audit trails, and grade-change attribution.
-- Keep grade writes disabled until Canvas interoperability and district policy tests pass.
+- Keep grade writes disabled until independent LTI interoperability and district policy tests pass.
 
 ## Acceptance gates
 
