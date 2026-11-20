@@ -208,6 +208,13 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     const reg = await as("it")("POST", "/api/apps", { name: "LTI Lab", vendor: "Tool Co", launchUrl: `${base}/launch`, integrationType: "lti13", dataSharingScope: "none", coppaCompliant: true,
       integrationConfig: { clientId: "tool-client", deploymentId: "dep-1", loginUrl: `${base}/login`, redirectUris: [`${base}/launch`], targetLinkUri: `${base}/launch` } });
     assert.equal(reg.status, 201, JSON.stringify(reg.body));
+    assert.equal(reg.body.data.registrationStatus, "pending", "new LTI registrations require district approval");
+    const blocked = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    assert.equal(blocked.status, 409); assert.equal(blocked.body.error, "lti_approval_required");
+    assert.equal((await as("p1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 403, "school principals cannot approve district LTI registrations");
+    const approval = await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/approve`);
+    assert.equal(approval.status, 200, JSON.stringify(approval.body));
+    assert.equal(approval.body.data.registrationStatus, "approved");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Bad LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "lti13", integrationConfig: { clientId: "c" } })).body.error, "invalid_lti_config");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { clientSecret: "x" } })).body.error, "integration_config_must_not_hold_secrets");
     await as("it")("POST", `/api/apps/${reg.body.data.id}/licenses`, {});
