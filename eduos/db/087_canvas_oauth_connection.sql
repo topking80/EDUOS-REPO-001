@@ -16,6 +16,7 @@ CREATE TABLE integration_canvas_oauth_states (
   config_version integer NOT NULL CHECK (config_version >= 1),
   redirect_uri text NOT NULL CHECK (length(redirect_uri) BETWEEN 1 AND 2048),
   expires_at timestamptz NOT NULL,
+  consumed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
   FOREIGN KEY (district_id,user_id) REFERENCES district_users(district_id,user_id) ON DELETE CASCADE
