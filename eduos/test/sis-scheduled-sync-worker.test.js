@@ -53,6 +53,7 @@ test("district managers can separately approve schedules and pause all schedules
   assert.match(routes,/schedules\/pause-all/);
   assert.match(routes,/schedule\/pause/);
   assert.match(routes,/schedule\/resume/);
+  assert.match(routes,/schedule_approved_by/);
   assert.match(routes,/cancelScheduleJobs/);
   assert.match(routes,/invalidateScheduleForConnector/);
   assert.match(routes,/status IN \('pending','processing'\)/);
