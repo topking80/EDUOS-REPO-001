@@ -219,10 +219,24 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.equal((await as("it")("POST", "/api/apps", { name: "Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { clientSecret: "x" } })).body.error, "integration_config_must_not_hold_secrets");
     await as("it")("POST", `/api/apps/${reg.body.data.id}/licenses`, {});
     await as("it")("POST", `/api/apps/${reg.body.data.id}/assignments`, { scope: "district" });
+    const changedConfig = { ...reg.body.data.integrationConfig, redirectUris: [...reg.body.data.integrationConfig.redirectUris, `${base}/alternate`] };
+    const changed = await as("it")("PATCH", `/api/apps/${reg.body.data.id}`, { integrationConfig: changedConfig });
+    assert.equal(changed.status, 200); assert.equal(changed.body.data.registrationStatus, "pending", "registration changes invalidate approval");
+    assert.equal((await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`)).status, 409);
+    assert.equal((await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200, "district must reapprove changed registration");
     const launch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
     assert.equal(launch.status, 200, JSON.stringify(launch.body));
     const login1 = await fetch(launch.body.data.url, { redirect: "manual" });
-    const authorize = login1.headers.get("location");
+    let authorize = login1.headers.get("location");
+    const revoked = await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/revoke`);
+    assert.equal(revoked.status, 200); assert.equal(revoked.body.data.registrationStatus, "revoked");
+    assert.equal((await fetch(authorize)).status, 409, "revocation blocks an in-flight callback");
+    assert.equal((await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200);
+    assert.equal((await fetch(authorize)).status, 409, "reapproval does not revive hints issued under an earlier approval");
+    const freshLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    assert.equal(freshLaunch.status, 200);
+    const freshLogin = await fetch(freshLaunch.body.data.url, { redirect: "manual" });
+    authorize = freshLogin.headers.get("location");
     // Executable OIDC negative cases: reject malformed protocol parameters
     // before consuming the valid one-time launch hint.
     for (const [name, value] of [
