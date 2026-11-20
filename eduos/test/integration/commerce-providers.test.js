@@ -825,7 +825,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
       "SELECT status FROM commerce_webhook_refund_cases WHERE id=$1", [caseId]
     )).rows[0].status, "resolved");
     const resolutionAudit = await admin.query(
-      `SELECT count(*)::int AS n, max(detail) AS detail, max(actor_user_id) AS actor_user_id
+      `SELECT count(*)::int AS n, max(detail) AS detail, (array_agg(actor_user_id))[1] AS actor_user_id
          FROM audit_events
         WHERE district_id=$1
           AND action='late_capture_refund_resolved'
