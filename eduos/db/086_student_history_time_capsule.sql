@@ -153,7 +153,7 @@ CREATE TABLE student_time_capsule_items (
     REFERENCES student_history_entry_revisions(district_id, entry_id, revision_no) ON DELETE RESTRICT,
   FOREIGN KEY (district_id, school_id, student_id, entry_id, attachment_id)
     REFERENCES student_history_entry_attachments(district_id, school_id, student_id, entry_id, id) ON DELETE RESTRICT,
-  UNIQUE (district_id, capsule_id, position),
+  UNIQUE (district_id, capsule_id, position)
 );
 CREATE INDEX student_time_capsule_items_capsule_idx
   ON student_time_capsule_items(district_id, capsule_id, position);
