@@ -294,7 +294,7 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       const authorization = new URL(started.body.data.authorizationUrl);
       assert.equal(authorization.pathname, "/login/oauth2/auth");
       assert.equal(authorization.searchParams.get("client_id"), "canvas-client");
-      assert.equal(authorization.searchParams.get("redirect_uri"), "https://eduos.test/api/integrations/canvas/callback");
+      assert.equal(authorization.searchParams.get("redirect_uri"), "http://localhost/api/integrations/canvas/callback");
       const state = authorization.searchParams.get("state");
       assert.ok(state && state.length >= 32);
       const setCookie = started.headers.get("set-cookie") || "";
