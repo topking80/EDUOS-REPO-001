@@ -384,22 +384,25 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
   };
 
   it("isolates history by district and originating school and captures immutable revisions", async () => {
-    const alice = (await admin.query(`
-      INSERT INTO student_history_entries
-        (district_id, school_id, student_id, entry_type, classification, title, occurred_at, source_type, author_user_id)
-      VALUES ($1,$2,$3,'achievement','student_portfolio','Alice milestone',now(),'guardian',$4)
-      RETURNING id, revision_no
-    `, [ID.d1, ID.s1, ID.alice, USERS.pa[0]])).rows[0];
-    await admin.query(`
-      INSERT INTO student_history_entries
-        (district_id, school_id, student_id, entry_type, classification, title, occurred_at, source_type, author_user_id)
-      VALUES ($1,$2,$3,'event','family_memory','Carol school event',now(),'guardian',$4)
-    `, [ID.d1, ID.s2, ID.carol, USERS.p2s[0]]);
-    await admin.query(`
-      INSERT INTO student_history_entries
-        (district_id, school_id, student_id, entry_type, classification, title, occurred_at, source_type, author_user_id)
-      VALUES ($1,$2,$3,'achievement','student_portfolio','Xavier milestone',now(),'school',$4)
-    `, [ID.d2, ID.sd2, ID.xavier, USERS.supt2[0]]);
+    const alice = await scoped(ID.d1, ID.s1, "parent", USERS.pa[0], async () =>
+      (await app.query(`
+        INSERT INTO student_history_entries
+          (district_id, school_id, student_id, entry_type, classification, title, occurred_at, source_type, author_user_id)
+        VALUES ($1,$2,$3,'achievement','student_portfolio','Alice milestone',now(),'guardian',$4)
+        RETURNING id, revision_no
+      `, [ID.d1, ID.s1, ID.alice, USERS.pa[0]])).rows[0]);
+    await scoped(ID.d1, ID.s2, "parent", USERS.p2s[0], async () =>
+      app.query(`
+        INSERT INTO student_history_entries
+          (district_id, school_id, student_id, entry_type, classification, title, occurred_at, source_type, author_user_id)
+        VALUES ($1,$2,$3,'event','family_memory','Carol school event',now(),'guardian',$4)
+      `, [ID.d1, ID.s2, ID.carol, USERS.p2s[0]]));
+    await scoped(ID.d2, ID.sd2, "superintendent", USERS.supt2[0], async () =>
+      app.query(`
+        INSERT INTO student_history_entries
+          (district_id, school_id, student_id, entry_type, classification, title, occurred_at, source_type, author_user_id)
+        VALUES ($1,$2,$3,'achievement','student_portfolio','Xavier milestone',now(),'school',$4)
+      `, [ID.d2, ID.sd2, ID.xavier, USERS.supt2[0]]));
     assert.equal(alice.revision_no, 1);
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM student_history_entry_revisions WHERE entry_id=$1", [alice.id])).rows[0].n, 1);
 
