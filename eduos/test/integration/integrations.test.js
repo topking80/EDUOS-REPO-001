@@ -58,7 +58,7 @@ function fakeServer() {
 }
 
 describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () => {
-  let db, idp, server, admin, fake, s = {}, or, ef;
+  let db, idp, server, admin, fake, s = {}, or, ef, workerEnv;
   const as = name => client(server.base, s[name]);
   const sync = (name, id, mode) => as(name)("POST", `/api/integrations/connectors/${id}/sync`, { mode });
   const student = async (num) => (await admin.query("SELECT display_name, grade_level, school_id FROM students WHERE local_student_number=$1", [num])).rows[0];
@@ -68,6 +68,7 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     idp = await startIdp();
     fake = await fakeServer();
     const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app, INTEGRATIONS_KEY: crypto.randomBytes(32).toString("hex"), INTEGRATIONS_ALLOW_INSECURE_LOOPBACK: "true" });
+    workerEnv = env;
     const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
@@ -173,6 +174,46 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     assert.equal(await student("E-101"), undefined, "withdrawn student not imported");
     const runs = (await as("supt1")("GET", `/api/integrations/connectors/${ef.id}/runs`)).body.data.map(r => r.status);
     assert.deepEqual(runs, ["completed", "failed"]);
+  });
+
+  it("scheduled sync requires independent approval, executes as a service actor, and honors district pause", async () => {
+    const configured = await as("supt1")("PUT", `/api/integrations/connectors/${or.id}/schedule`, { intervalMinutes: 15 });
+    assert.equal(configured.status, 200, JSON.stringify(configured.body));
+    assert.equal((await as("supt1")("POST", `/api/integrations/connectors/${or.id}/schedule/approve`)).body.error, "approver_must_differ");
+    const approved = await as("supt1b")("POST", `/api/integrations/connectors/${or.id}/schedule/approve`);
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+
+    const dispatched = await run(["src/integrations/scheduler-cli.js"], { ...workerEnv, DATABASE_URL: db.appUrl });
+    assert.equal(dispatched.code, 0, dispatched.out);
+    const serviceRun = (await admin.query(
+      "SELECT started_by,started_by_service,status FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL ORDER BY started_at DESC LIMIT 1",
+      [or.id])).rows[0];
+    assert.ok(serviceRun, "scheduled connector run is visible in history");
+    assert.equal(serviceRun.started_by, null, "scheduler is not impersonating a user");
+    assert.ok(serviceRun.started_by_service);
+    assert.equal(serviceRun.status, "completed");
+    const sisRun = (await admin.query(
+      "SELECT initiated_by,initiated_by_service FROM sis_sync_runs WHERE source_system=$1 AND initiated_by_service IS NOT NULL LIMIT 1",
+      [`oneroster:${or.id}`])).rows[0];
+    assert.ok(sisRun);
+    assert.equal(sisRun.initiated_by, null);
+    assert.ok(sisRun.initiated_by_service);
+    assert.ok((await admin.query("SELECT 1 FROM audit_events WHERE actor_service_id=$1 AND action='scheduled_sync'", [serviceRun.started_by_service])).rowCount);
+
+    const paused = await as("supt1")("POST", "/api/integrations/schedules/pause-all", { reason: "district_test_pause" });
+    assert.equal(paused.status, 200, JSON.stringify(paused.body));
+    const before = Number((await admin.query("SELECT count(*)::int AS n FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL", [or.id])).rows[0].n);
+    const skipped = await run(["src/integrations/scheduler-cli.js"], { ...workerEnv, DATABASE_URL: db.appUrl });
+    assert.equal(skipped.code, 0, skipped.out);
+    const afterPause = Number((await admin.query("SELECT count(*)::int AS n FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL", [or.id])).rows[0].n);
+    assert.equal(afterPause, before, "paused schedule does not execute");
+
+    const resumed = await as("supt1")("POST", `/api/integrations/connectors/${or.id}/schedule/resume`);
+    assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
+    const resumedRun = await run(["src/integrations/scheduler-cli.js"], { ...workerEnv, DATABASE_URL: db.appUrl });
+    assert.equal(resumedRun.code, 0, resumedRun.out);
+    const afterResume = Number((await admin.query("SELECT count(*)::int AS n FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL", [or.id])).rows[0].n);
+    assert.equal(afterResume, before + 1, "resume queues a fresh scheduled run");
   });
 
   it("another district sees none of it", async () => {
