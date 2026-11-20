@@ -30,7 +30,7 @@ access.
 | Base URL | `https://sis.example.org/ims/oneroster/rostering/v1p2` | v8: `https://edfi.example.org/api/data` · ODS/API v5–7: `…/api/data/v3` | District SIS origin, e.g. `https://district.powerschool.com` |
 | Token URL | from your SIS | v8: Configuration Service `/connect/token`, or `/oauth/token` on API host · ODS/API: `/oauth/token` | Use the OAuth token URL supplied/configured for the installed PowerSchool plugin (commonly `/oauth/access_token/`) |
 | Auth | OAuth 2.0 client credentials; default scope `roster-core.readonly` | OAuth 2.0 client credentials | OAuth 2.0 client credentials |
-| Reads | `/schools`, `/students` | `schools`, `students`, `studentSchoolAssociations` | `GET /ws/v1/district/school`, then `GET /ws/v1/school/{school-dcid}/student` |
+| Reads | `/schools`, `/students` | `schools`, `students`, `studentSchoolAssociations` | `GET /ws/v1/district/school`, then active-only `GET /ws/v1/school/{school-dcid}/student?q=school_enrollment.enroll_status==(A)` |
 | Writes to SIS | None | None | None |
 
 For PowerSchool, install and enable a district-approved OAuth plugin, use its
@@ -38,8 +38,13 @@ client credentials, and ask the district/vendor to grant only the GET access
 needed for school and student roster endpoints. PowerSchool API plugin
 credentials are sensitive and must be stored only in the encrypted connector
 secret field. Do not reuse administrator passwords or browser session cookies.
-The PowerSchool endpoint and response shape can vary by SIS release and plugin;
-validate against the district's actual supported REST API before production use.
+The adapter requests only active school enrollments using PowerSchool's
+`school_enrollment.enroll_status==(A)` query and the `school_enrollment`
+expansion. It does not request contacts, addresses, demographics or guardian
+data. The PowerSchool endpoint and response shape can vary by SIS release and
+plugin; validate against the district's actual supported REST API before
+production use. PowerSchool documents OAuth plugin credentials in its
+[administrator guide](https://ps.powerschool-docs.com/pssis-admin/latest/view-oauth-client-credentials).
 
 ## Syncing
 
