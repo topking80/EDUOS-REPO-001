@@ -25,6 +25,10 @@ const COLS = `c.id, c.kind, c.name, c.base_url, c.token_url, c.client_id, c.scop
 const FROM = `FROM integration_connectors c JOIN users uu ON uu.id=c.updated_by LEFT JOIN users ua ON ua.id=c.approved_by`;
 const urlOptions = () => ({ allowInsecureLoopback: config.integrationsAllowInsecureLoopback, allowedHosts: config.integrationsAllowedHosts });
 
+const managerRole = (req,res,next) => {
+  if (!MANAGERS.includes(req.actor?.role)) return res.status(403).json({ error: "integrations_access_denied" });
+  next();
+};
 const manager = (req, res, next) => {
   if (!MANAGERS.includes(req.actor?.role)) return res.status(403).json({ error: "integrations_access_denied" });
   if (!config.integrationsKey) return res.status(503).json({ error: "integrations_disabled", hint: "Set INTEGRATIONS_KEY (32+ characters) on the server to use integrations." });
@@ -243,7 +247,7 @@ export function registerIntegrationRoutes(app) {
     }catch(e){sendError(res,next,e);}
   });
 
-  app.post(`${base}/:id/schedule/pause`, requireSession, requireCsrf, manager, async(req,res,next)=>{
+  app.post(`${base}/:id/schedule/pause`, requireSession, requireCsrf, managerRole, async(req,res,next)=>{
     if(!validId(req.params.id))return res.status(400).json({error:"invalid_connector_id"});
     const reason=typeof req.body?.reason==="string"?req.body.reason.trim().slice(0,240):"paused_by_district_manager";
     try{
@@ -260,7 +264,7 @@ export function registerIntegrationRoutes(app) {
     }catch(e){sendError(res,next,e);}
   });
 
-  app.post("/api/integrations/schedules/pause-all",requireSession,requireCsrf,manager,async(req,res,next)=>{
+  app.post("/api/integrations/schedules/pause-all",requireSession,requireCsrf,managerRole,async(req,res,next)=>{
     const reason=typeof req.body?.reason==="string"?req.body.reason.trim().slice(0,240):"district_wide_pause";
     try{
       const data=await withTenantTransaction(req.actor,async c=>{
