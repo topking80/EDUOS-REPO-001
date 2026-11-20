@@ -27,17 +27,19 @@ export function normalizeStudent(s, schoolExternalId) {
   const externalId = text(s?.id ?? s?.dcid, 80);
   if (!externalId) return { rejected: { externalId: null, reason: "missing_student_id" } };
   const enrollment = s?.school_enrollment && typeof s.school_enrollment === "object" ? s.school_enrollment : {};
-  const enrollmentStatus = s?.enroll_status ?? enrollment.enroll_status ?? enrollment.enroll_status_code ?? s?.enroll_status_code;
-  if (enrollmentStatus === undefined || enrollmentStatus === null || enrollmentStatus === "")
+  const enrollmentStatus = [s?.enroll_status, enrollment.enroll_status, enrollment.enroll_status_code, s?.enroll_status_code]
+    .find(value => value !== undefined && value !== null && String(value).trim() !== "");
+  if (enrollmentStatus === undefined)
     return { rejected: { externalId, reason: "missing_enrollment_status" } };
-  if (!["0", 0, "A", "active"].includes(enrollmentStatus)) return { skipped: true };
+  const normalizedStatus = String(enrollmentStatus).trim().toLowerCase();
+  if (!["0", "a", "active"].includes(normalizedStatus)) return { skipped: true };
   const name = s?.name && typeof s.name === "object" ? s.name : {};
   const first = text(s?.first_name ?? name.first_name, 80);
   const last = text(s?.last_name ?? name.last_name, 80);
   if (!first && !last) return { rejected: { externalId, reason: "missing_name" } };
   const number = text(s?.student_number ?? s?.studentNumber, 80);
   if (!number) return { rejected: { externalId, reason: "missing_student_number" } };
-  const grade = text(s?.grade_level ?? s?.gradeLevel, 20);
+  const grade = text(s?.grade_level ?? s?.gradeLevel ?? enrollment.grade_level ?? enrollment.gradeLevel, 20);
   return { student: {
     externalId, localStudentNumber: number,
     displayName: [first, last].filter(Boolean).join(" ").slice(0, 160),
