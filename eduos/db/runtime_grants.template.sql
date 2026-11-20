@@ -444,3 +444,15 @@ GRANT SELECT, INSERT ON commerce_webhook_refund_cases TO eduos_app;
 GRANT UPDATE (last_seen_at, status, resolved_at, resolved_by, resolution_note)
   ON commerce_webhook_refund_cases TO eduos_app;
 REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
+
+-- TC-01 student history and Time Capsule persistence foundation.
+-- Revisions and lifecycle events are append-only; media bytes remain in the
+-- private object store and are never exposed through these metadata tables.
+GRANT SELECT, INSERT, UPDATE ON student_history_entries TO eduos_app;
+REVOKE DELETE, TRUNCATE ON student_history_entries FROM eduos_app;
+GRANT SELECT, INSERT ON student_history_entry_revisions, student_history_entry_attachments,
+  student_time_capsule_items, student_time_capsule_events TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON student_history_entry_revisions,
+  student_history_entry_attachments, student_time_capsule_items, student_time_capsule_events FROM eduos_app;
+GRANT SELECT, INSERT, UPDATE ON student_time_capsules, student_time_capsule_recipients TO eduos_app;
+REVOKE DELETE, TRUNCATE ON student_time_capsules, student_time_capsule_recipients FROM eduos_app;
