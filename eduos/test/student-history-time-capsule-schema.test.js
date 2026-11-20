@@ -54,19 +54,19 @@ test("capsule items bind to same-student history and retain a specific entry rev
   assert.ok(migration.includes("REFERENCES student_history_entry_revisions(district_id, entry_id, revision_no)"));
   assert.ok(migration.includes("FOREIGN KEY (district_id, school_id, student_id, entry_id)"));
   assert.ok(migration.includes("FOREIGN KEY (district_id, school_id, student_id, capsule_id)"));
-  assert.ok(migration.includes("FOREIGN KEY (district_id, recipient_user_id) REFERENCES memberships"));
+  assert.ok(migration.includes("FOREIGN KEY (district_id, recipient_user_id) REFERENCES district_users"));
 });
 
 test("history authors, revision actors, and capsule owners/recipients are district members", () => {
-  assert.ok(migration.includes("FOREIGN KEY (district_id, author_user_id) REFERENCES memberships"));
-  assert.ok(migration.includes("FOREIGN KEY (district_id, actor_user_id) REFERENCES memberships"));
-  assert.ok(migration.includes("FOREIGN KEY (district_id, owner_user_id) REFERENCES memberships"));
+  assert.ok(migration.includes("FOREIGN KEY (district_id, author_user_id) REFERENCES district_users"));
+  assert.ok(migration.includes("FOREIGN KEY (district_id, actor_user_id) REFERENCES district_users"));
+  assert.ok(migration.includes("FOREIGN KEY (district_id, owner_user_id) REFERENCES district_users"));
 });
 
 test("runtime role gets only the operations required by TC-01 and no destructive privileges", () => {
   for (const table of ["student_history_entries", "student_time_capsules"]) {
-    assert.ok(grants.includes(`GRANT SELECT, INSERT ON ${table} TO eduos_app`));
-    assert.ok(grants.includes(`REVOKE DELETE, TRUNCATE ON ${table} FROM eduos_app`));
+    assert.match(grants, new RegExp(`GRANT SELECT, INSERT ON [^;]*\\b${table}\\b[^;]*TO eduos_app`), `${table} has its required read/create grant`);
+    assert.match(grants, new RegExp(`REVOKE DELETE, TRUNCATE ON [^;]*\\b${table}\\b[^;]*FROM eduos_app`), `${table} blocks destructive access`);
   }
   for (const table of ["student_history_entry_revisions", "student_history_entry_attachments", "student_time_capsule_items", "student_time_capsule_events"]) {
     const expectedGrant = table === "student_history_entry_revisions"
