@@ -19,7 +19,7 @@ import { requirePermission, isDistrictRole, canPerform } from "./policy.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { pageOf, pageSql, paged } from "./paging.js";
-import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig } from "./lti.js";
+import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig, ltiConfigFingerprint } from "./lti.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validId = v => typeof v === "string" && UUID_RE.test(v);
@@ -469,7 +469,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           [req.actor.districtId, a.id, a.license_id, req.actor.userId, req.actor.schoolId || null, req.actor.role, a.integration_type, a.data_sharing_scope]);
         await audit(client, req, "launch", "app", a.id, { integrationType: a.integration_type, dataSharingScope: a.data_sharing_scope, launchId: launch.rows[0].id }, req.actor.schoolId || null);
         if (a.integration_type !== "lti13") return { status: 200, data: { url: a.launch_url, integrationType: a.integration_type } };
-        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null });
+        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(cfg) });
         const u = new URL(cfg.loginUrl);
         u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
         u.searchParams.set("target_link_uri", cfg.targetLinkUri); u.searchParams.set("lti_message_hint", hint);
@@ -549,6 +549,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         // completing the OIDC round-trip.
         if (!validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" }))
           return { error: "lti_configuration_invalid", status: 409 };
+        if (typeof hint.c !== "string" || ltiConfigFingerprint(cfg) !== hint.c)
+          return { error: "lti_registration_changed", status: 409 };
         if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
         if (!["none", "identity"].includes(app.data_sharing_scope)) return { error: "unsupported_lti_data_scope", status: 403 };
         if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
