@@ -8,6 +8,7 @@ const worker=readFileSync(join(root,"src/integrations/scheduler.js"),"utf8");
 const routes=readFileSync(join(root,"src/integrations/routes.js"),"utf8");
 const server=readFileSync(join(root,"src/server.js"),"utf8");
 const pkg=readFileSync(join(root,"package.json"),"utf8");
+const config=readFileSync(join(root,"src/config.js"),"utf8");
 
 test("scheduled jobs are claimed with database leases and SKIP LOCKED",()=>{
   assert.match(worker,/FOR UPDATE SKIP LOCKED/);
@@ -18,6 +19,8 @@ test("scheduled jobs are claimed with database leases and SKIP LOCKED",()=>{
   assert.match(worker,/SYNC_JOB_MAX_ATTEMPTS = 5/);
   assert.match(worker,/lease_expired_after_max_attempts/);
   assert.match(worker,/recordScheduledFailure/);
+  assert.match(worker,/sis_sync_dispatch_disabled/);
+  assert.match(config,/SIS_SYNC_DISPATCH_ENABLED !== "false"/);
 });
 
 test("only enabled, approved, unpaused and version-current schedules enqueue",()=>{
