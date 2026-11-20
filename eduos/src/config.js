@@ -118,6 +118,8 @@ export const config = {
   // External integrations (OneRoster, Ed-Fi) are off unless INTEGRATIONS_KEY
   // (32+ chars) is set: it encrypts connector client secrets at rest.
   integrationsKey: process.env.INTEGRATIONS_KEY || "",
+  // Global operational kill switch for scheduled roster jobs; manual sync remains available.
+  sisSyncDispatchEnabled: process.env.SIS_SYNC_DISPATCH_ENABLED !== "false",
   // Bounded in-memory PowerSchool roster ceiling; larger districts need staged ingestion.
   powerschoolMaxStudents: Number(process.env.POWERSCHOOL_MAX_STUDENTS || 200_000),
   integrationsAllowedHosts: (process.env.INTEGRATIONS_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
