@@ -157,7 +157,7 @@ export async function processScheduledSisSync(job, { db = pool, tx = schedulerTe
       await c.query("SELECT pg_advisory_xact_lock(hashtext('integration-sync'),hashtext($1))",[input.connector_id]);
       const current=await c.query(
         `SELECT x.status,x.config_version,s.enabled,s.paused_at,s.config_version AS schedule_version,
-                j.status AS job_status,j.lease_token,j.lease_until
+                j.status AS job_status,j.config_version AS job_version,j.lease_token,j.lease_until
            FROM integration_connectors x
            JOIN integration_sync_schedules s ON s.connector_id=x.id AND s.district_id=x.district_id
            JOIN integration_sync_jobs j ON j.schedule_id=s.id AND j.district_id=s.district_id
@@ -165,7 +165,7 @@ export async function processScheduledSisSync(job, { db = pool, tx = schedulerTe
         [input.connector_id,districtId,input.schedule_id,job.id]);
       const v=current.rows[0];
       if(!v||v.status!=="active"||!v.enabled||v.paused_at||v.config_version!==input.config_version
-         ||v.schedule_version!==input.config_version||v.job_status!=="processing"
+         ||v.schedule_version!==input.config_version||v.job_version!==input.config_version||v.job_status!=="processing"
          ||v.lease_token!==job.lease_token||!v.lease_until||new Date(v.lease_until)<=new Date())
         throw Object.assign(new Error("scheduled_sync_approval_or_lease_changed"),{code:"SCHEDULE_STALE"});
       const inputs=await loadPlanInputs(c,districtId,input.connector_id,roster.students.map(s=>s.localStudentNumber));
