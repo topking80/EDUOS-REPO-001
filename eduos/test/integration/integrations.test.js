@@ -177,6 +177,8 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
   });
 
   it("scheduled sync requires independent approval, executes as a service actor, and honors district pause", async () => {
+    const currentPreview = await sync("supt1", or.id, "preview");
+    assert.equal(currentPreview.status, 200, JSON.stringify(currentPreview.body));
     const configured = await as("supt1")("PUT", `/api/integrations/connectors/${or.id}/schedule`, { intervalMinutes: 15 });
     assert.equal(configured.status, 200, JSON.stringify(configured.body));
     assert.equal((await as("supt1")("POST", `/api/integrations/connectors/${or.id}/schedule/approve`)).body.error, "approver_must_differ");
