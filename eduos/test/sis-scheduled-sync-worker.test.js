@@ -43,6 +43,7 @@ test("service scheduler uses district-only RLS context, never a user session",()
 test("district managers can separately approve schedules and pause all schedules",()=>{
   assert.match(routes,/schedule\/approve/);
   assert.match(routes,/approver_must_differ/);
+  assert.match(routes,/schedule_requires_current_preview/);
   assert.match(routes,/schedules\/pause-all/);
   assert.match(routes,/schedule\/pause/);
   assert.match(routes,/schedule\/resume/);
