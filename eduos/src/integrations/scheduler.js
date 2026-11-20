@@ -82,6 +82,17 @@ async function finishJob(tx, districtId, job, status, error = null, retry = fals
       Math.min(3600,15*Math.pow(2,Math.max(0,job.attempts-1))),job.lease_token]));
 }
 
+async function recordScheduledFailure(tx,districtId,serviceActorId,job,runId,error) {
+  return tx(districtId,async c=>{
+    const held=await c.query("SELECT id FROM integration_sync_jobs WHERE id=$1 AND district_id=$2 AND status='processing' AND lease_token=$3 FOR UPDATE",[job.id,districtId,job.lease_token]);
+    if(!held.rowCount)return false;
+    const code=String(error.code||"scheduled_sync_failed").slice(0,300);
+    await c.query("INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,started_at,finished_at,error) VALUES($1,$2,$3,'apply','failed',NULL,$4,now(),now(),$5)",[runId,districtId,job.connector_id,serviceActorId,code]);
+    await c.query("UPDATE integration_connectors SET last_sync_at=now(),last_sync_status='failed' WHERE id=$1",[job.connector_id]);
+    await c.query("INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id) VALUES($1,NULL,$2,'sis_scheduler','scheduled_sync','integration_connector',$3,'failure',$4,$5)",[districtId,serviceActorId,job.connector_id,code,job.id]);
+    return true;
+  });
+}
 export async function processScheduledSisSync(job, { db = pool, tx = schedulerTenantTransaction(db), log = console } = {}) {
   const districtId = job.district_id;
   const serviceActorId = await tx(districtId, async c => {
@@ -89,6 +100,7 @@ export async function processScheduledSisSync(job, { db = pool, tx = schedulerTe
     if (!actor.rowCount) throw new Error("sis_scheduler_service_actor_missing");
     return actor.rows[0].id;
   });
+  const runId=crypto.randomUUID();
   const input = await tx(districtId, async c => {
     const r = await c.query(
       `SELECT j.id,j.connector_id,j.schedule_id,j.config_version,j.attempts,j.lease_token,
@@ -120,6 +132,7 @@ export async function processScheduledSisSync(job, { db = pool, tx = schedulerTe
       maxStudentRecords:config.powerschoolMaxStudents
     });
   } catch (error) {
+    await recordScheduledFailure(tx,districtId,serviceActorId,job,runId,error);
     const retry = Number(job.attempts)<SYNC_JOB_MAX_ATTEMPTS;
     await finishJob(tx,districtId,job,retry?"pending":"failed",
       String(error.code||"connector_fetch_failed").slice(0,300),retry);
@@ -127,7 +140,6 @@ export async function processScheduledSisSync(job, { db = pool, tx = schedulerTe
     return {status:retry?"retry":"failed"};
   }
 
-  const runId=crypto.randomUUID();
   try {
     const result = await tx(districtId,async c=>{
       await c.query("SELECT pg_advisory_xact_lock(hashtext('integration-sync'),hashtext($1))",[input.connector_id]);
@@ -170,6 +182,7 @@ export async function processScheduledSisSync(job, { db = pool, tx = schedulerTe
       await finishJob(tx,districtId,job,"cancelled","schedule_or_lease_changed");
       return {status:"cancelled"};
     }
+    await recordScheduledFailure(tx,districtId,serviceActorId,job,runId,error);
     const retry=Number(job.attempts)<SYNC_JOB_MAX_ATTEMPTS;
     await finishJob(tx,districtId,job,retry?"pending":"failed",
       String(error.code||"scheduled_sync_failed").slice(0,300),retry);
