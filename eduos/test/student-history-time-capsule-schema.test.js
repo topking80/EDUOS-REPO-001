@@ -84,7 +84,7 @@ test("runtime role gets only the operations required by TC-01 and no destructive
   assert.ok(!grants.includes("GRANT UPDATE ON student_history_entries TO eduos_app"));
   assert.ok(!grants.includes("GRANT UPDATE ON student_time_capsules TO eduos_app"));
   assert.ok(grants.includes("GRANT UPDATE (consent_status, updated_at) ON student_time_capsule_recipients TO eduos_app"));
-  assert.ok(grants.includes("REVOKE DELETE, TRUNCATE ON student_time_capsule_recipients FROM eduos_app"));
+  assert.match(grants, /REVOKE DELETE, TRUNCATE ON [^;]*\\bstudent_time_capsule_recipients\\b[^;]*FROM eduos_app/);
 });
 
 test("TC-01 migration is picked up by automatic discovery without editing the fixed legacy list", () => {
