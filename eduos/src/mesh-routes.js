@@ -544,6 +544,11 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         );
         if (!license.rowCount) return { error: "license_inactive", status: 403 };
         const cfg = app.integration_config || {};
+        // Revalidate the live registration at callback time as well as launch
+        // initiation: configuration may have changed while the browser was
+        // completing the OIDC round-trip.
+        if (!validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" }))
+          return { error: "lti_configuration_invalid", status: 409 };
         if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
         if (!["none", "identity"].includes(app.data_sharing_scope)) return { error: "unsupported_lti_data_scope", status: 403 };
         if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
