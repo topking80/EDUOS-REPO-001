@@ -92,7 +92,7 @@ END $$;
 ALTER TABLE integration_service_actors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE integration_service_actors FORCE ROW LEVEL SECURITY;
 CREATE POLICY integration_service_actors_read ON integration_service_actors
-  FOR SELECT USING (eduos_is_table_owner());
+  FOR SELECT USING (true);
 REVOKE ALL ON integration_service_actors FROM PUBLIC;
 GRANT SELECT ON integration_service_actors TO eduos_app;
 GRANT SELECT,INSERT,UPDATE ON integration_sync_schedules TO eduos_app;
