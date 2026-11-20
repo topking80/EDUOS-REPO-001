@@ -99,7 +99,7 @@ in the district's Canvas tenant. Add a **Canvas LMS API** connector using the
 tenant origin only (for example, `https://district.instructure.com`), the
 matching token endpoint
 (`https://district.instructure.com/login/oauth2/token`), the developer key
-ID and its secret. The callback URI must be registered exactly as:
+ID and its secret. Configure the developer key to require endpoint scopes, then enter only the approved read-only Canvas endpoint scopes in EduOS (space-separated `url:GET|/api/v1/...` values). Write scopes are rejected by the connector. The callback URI must be registered exactly as:
 
 `PUBLIC_ORIGIN` + `/api/integrations/canvas/callback`
 
