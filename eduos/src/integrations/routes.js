@@ -126,7 +126,7 @@ export function registerIntegrationRoutes(app) {
       if (f.kind) throw new HttpError(400, "invalid_connector", { field: "kind" });
       const data = await withTenantTransaction(req.actor, async (c) => {
         const a = req.actor;
-        const cur = await one(c, "SELECT id FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
+        const cur = await one(c, "SELECT id,kind FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
         if (!cur) throw new HttpError(404, "connector_not_found");
         const sets = [], args = [cur.id];
         const add = (col, v) => { args.push(v); sets.push(`${col}=$${args.length}`); };
@@ -137,6 +137,10 @@ export function registerIntegrationRoutes(app) {
         await c.query(`UPDATE integration_connectors SET ${sets.join(", ")}, updated_at=now(), config_version=config_version+1, status='pending_approval', approved_by=NULL, approved_at=NULL WHERE id=$1`, args)
           .catch(e => { if (e.code === "23505") throw new HttpError(409, "connector_name_taken"); throw e; });
         await invalidateScheduleForConnector(c,a.districtId,cur.id,"connector_configuration_changed");
+        if (cur.kind === "canvas") {
+          await c.query("DELETE FROM integration_canvas_oauth_states WHERE district_id=$1 AND connector_id=$2",[a.districtId,cur.id]);
+          await c.query("DELETE FROM integration_canvas_oauth_grants WHERE district_id=$1 AND connector_id=$2",[a.districtId,cur.id]);
+        }
         await audit(c, req, "update", "integration_connector", cur.id, `changed=${Object.keys(f).map(k => k === "secret" ? "client_secret" : k).join(",")}; needs approval`);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [cur.id]));
       });
@@ -167,9 +171,13 @@ export function registerIntegrationRoutes(app) {
     try {
       const data = await withTenantTransaction(req.actor, async (c) => {
         const r = await one(c, `UPDATE integration_connectors SET status='disabled', disabled_by=$3, disabled_at=now(), updated_by=$3, updated_at=now(), config_version=config_version+1
-          WHERE id=$1 AND district_id=$2 AND status<>'disabled' RETURNING id`, [req.params.id, req.actor.districtId, req.actor.userId]);
+          WHERE id=$1 AND district_id=$2 AND status<>'disabled' RETURNING id,kind`, [req.params.id, req.actor.districtId, req.actor.userId]);
         if (!r) throw new HttpError(404, "connector_not_found");
         await invalidateScheduleForConnector(c,req.actor.districtId,r.id,"connector_disabled");
+        if (r.kind === "canvas") {
+          await c.query("DELETE FROM integration_canvas_oauth_states WHERE district_id=$1 AND connector_id=$2",[req.actor.districtId,r.id]);
+          await c.query("DELETE FROM integration_canvas_oauth_grants WHERE district_id=$1 AND connector_id=$2",[req.actor.districtId,r.id]);
+        }
         await audit(c, req, "disable", "integration_connector", r.id);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [r.id]));
       });
