@@ -1995,19 +1995,21 @@ VIEWS.integrations = async () => {
   const token = field("dl-token", "Token URL", { type: "url", maxlength: 2048 });
   const cid = field("dl-client", "Client ID", { maxlength: 300, autocomplete: "off" });
   const secret = field("dl-secret", "Client secret", { type: "password", maxlength: 2000, autocomplete: "new-password" });
+  const scope = field("dl-scope", "OAuth scopes (space-separated; required for Canvas)", { maxlength: 1000, required: false, placeholder: "url:GET|/api/v1/courses" });
   const hint = h("p", { class: "muted small" });
   const setHint = () => {
     base.el.placeholder = kind.value === "canvas" ? "https://district.instructure.com" : kind.value === "edfi" ? "https://edfi.district.org/api/data" : kind.value === "powerschool" ? "https://district.powerschool.com" : "https://sis.district.org/ims/oneroster/rostering/v1p2";
     token.el.placeholder = kind.value === "canvas" ? "https://district.instructure.com/login/oauth2/token" : kind.value === "edfi" ? "https://edfi.district.org/oauth/token" : kind.value === "powerschool" ? "https://district.powerschool.com/oauth/access_token/" : "https://sis.district.org/oauth/token";
-    hint.textContent = kind.value === "canvas" ? "Enter the Canvas tenant origin only and its matching /login/oauth2/token URL. Use the institution-issued Canvas developer key ID and secret. A second district lead must approve the connector before an administrator can authorize it. API data sync is not enabled in this phase." : kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : kind.value === "powerschool" ? "Use the district SIS origin and the OAuth token URL for its installed API plugin. EduOS reads district schools and each school’s students only; verify the plugin’s GET permissions and response contract with the district before enabling." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
+    scope.el.placeholder = kind.value === "canvas" ? "url:GET|/api/v1/courses url:GET|/api/v1/courses/:course_id/enrollments" : "Optional vendor-specific scope";
+    hint.textContent = kind.value === "canvas" ? "Enter the Canvas tenant origin only and its matching /login/oauth2/token URL. Use the institution-issued Canvas developer key ID and secret. Supply only approved read-only url:GET|/api/v1/... endpoint scopes, and configure the developer key to enforce scopes. A second district lead must approve the connector before an administrator can authorize it. API data sync is not enabled in this phase." : kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : kind.value === "powerschool" ? "Use the district SIS origin and the OAuth token URL for its installed API plugin. EduOS reads district schools and each school’s students only; verify the plugin’s GET permissions and response contract with the district before enabling." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
   };
   kind.addEventListener("change", setHint); setHint();
   out.push(h("section", { class: "card", "aria-label": "Add a data link" }, h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
-      try { await api.post("/api/integrations/connectors", { kind: kind.value, name: name.el.value, baseUrl: base.el.value, tokenUrl: token.el.value, clientId: cid.el.value, clientSecret: secret.el.value });
+      try { await api.post("/api/integrations/connectors", { kind: kind.value, name: name.el.value, baseUrl: base.el.value, tokenUrl: token.el.value, clientId: cid.el.value, clientSecret: secret.el.value, scope: scope.el.value || null });
         toast("Added. Another district lead needs to approve it."); reload(); }
       catch (e2) { toast(e2.body?.error === "invalid_connector" ? `Check the ${e2.body.field}.` : e2.body?.error === "connector_name_taken" ? "That name is taken." : "Couldn't add it."); } } },
     h("h2", {}, "Add a data link"), h("label", { for: kind.id }, "Type"), kind, hint,
-    [name, base, token, cid, secret].map(x => [x.label, x.el]), h("button", { class: "btn", type: "submit" }, "Add"))));
+    [name, base, token, cid, secret, scope].map(x => [x.label, x.el]), h("button", { class: "btn", type: "submit" }, "Add"))));
   return out;
 };
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
