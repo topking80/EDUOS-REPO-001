@@ -12,7 +12,7 @@ test("LTI launch validates configuration before claiming a license seat", () => 
 });
 
 test("LTI launch initiation rejects invalid configuration and uses only the configured target URI", () => {
-  assert.match(source, /validLtiConfig\(cfg, \{ allowInsecureLoopback: config\.nodeEnv !== "production" \}\)/);
+  assert.match(source, /validLtiConfig\(cfg\.integration_config, \{ allowInsecureLoopback: config\.nodeEnv !== "production" \}\)/);
   assert.match(source, /target_link_uri/);
 });
 
@@ -38,7 +38,7 @@ test("LTI authorization revalidates the live tool registration at callback time"
 });
 
 test("LTI launch binds the encrypted hint to the exact registration and rejects mid-flight changes", () => {
-  assert.match(source, /c: ltiConfigFingerprint\(cfg\)/);
+  assert.match(source, /c: ltiConfigFingerprint\(ltiCfg\)/);
   assert.match(source, /ltiConfigFingerprint\(cfg\) !== hint\.c/);
   assert.match(source, /lti_registration_changed/);
 });
