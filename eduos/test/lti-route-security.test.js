@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const source = await readFile(new URL("../src/mesh-routes.js", import.meta.url), "utf8");
 const lti = await readFile(new URL("../src/lti.js", import.meta.url), "utf8");
+const approvalMigration = await readFile(new URL("../db/086_lti_registration_approval.sql", import.meta.url), "utf8");
 
 test("LTI launch validates configuration before claiming a license seat", () => {
   const validate = source.indexOf('if (a.integration_type === "lti13" && !validLtiConfig(cfg.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" }))');
@@ -38,14 +39,14 @@ test("LTI authorization revalidates the live tool registration at callback time"
 });
 
 test("LTI launch binds the encrypted hint to the exact registration and rejects mid-flight changes", () => {
-  assert.match(source, /c: ltiConfigFingerprint\(ltiCfg\)/);
-  assert.match(source, /ltiConfigFingerprint\(cfg\) !== hint\.c/);
+  assert.match(source, /c: ltiConfigFingerprint\(ltiCfg, a\.data_sharing_scope\)/);
+  assert.match(source, /ltiConfigFingerprint\(cfg, app\.data_sharing_scope\) !== hint\.c/);
   assert.match(source, /lti_registration_changed/);
 });
 
 test("LTI launches require district approval and reapproval invalidates prior hints", () => {
   assert.match(source, /lti_registration_status !== "approved"/);
-  assert.match(source, /lti_approved_config_hash !== ltiConfigFingerprint/);
+  assert.match(source, /lti_approved_config_hash !== ltiConfigFingerprint\(cfg, app\.data_sharing_scope\)/);
   assert.match(source, /lti_approval_changed/);
   assert.match(source, /\/api\/apps\/:appId\/lti\/approve/);
   assert.match(source, /\/api\/apps\/:appId\/lti\/revoke/);
@@ -82,4 +83,9 @@ test("LTI app registration and updates reject unsupported roster, grade and atte
 
 test("LTI authorization refuses legacy apps with unsupported data scopes", () => {
   assert.match(source, /if \(!\["none", "identity"\]\.includes\(app\.data_sharing_scope\)\) return \{ error: "unsupported_lti_data_scope", status: 403 \}/);
+});
+
+test("changing an LTI data-sharing scope invalidates approval in PostgreSQL", () => {
+  assert.match(approvalMigration, /OLD\.data_sharing_scope IS DISTINCT FROM NEW\.data_sharing_scope/);
+  assert.match(approvalMigration, /UPDATE OF integration_type, integration_config, data_sharing_scope ON apps/);
 });
