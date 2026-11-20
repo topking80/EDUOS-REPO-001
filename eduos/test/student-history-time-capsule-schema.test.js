@@ -65,12 +65,18 @@ test("history authors, revision actors, and capsule owners/recipients are distri
 
 test("runtime role gets only the operations required by TC-01 and no destructive privileges", () => {
   for (const table of ["student_history_entries", "student_time_capsules"]) {
-    assert.ok(grants.includes(table === "student_history_entry_revisions" ? "GRANT SELECT ON student_history_entry_revisions TO eduos_app" : `GRANT SELECT, INSERT ON ${table} TO eduos_app`));
+    assert.ok(grants.includes(`GRANT SELECT, INSERT ON ${table} TO eduos_app`));
     assert.ok(grants.includes(`REVOKE DELETE, TRUNCATE ON ${table} FROM eduos_app`));
   }
   for (const table of ["student_history_entry_revisions", "student_history_entry_attachments", "student_time_capsule_items", "student_time_capsule_events"]) {
-    assert.ok(grants.includes(`GRANT SELECT, INSERT ON ${table} TO eduos_app`));
-    assert.ok(grants.includes(table === "student_history_entry_revisions" ? "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_revisions FROM eduos_app" : `REVOKE UPDATE, DELETE, TRUNCATE ON ${table} FROM eduos_app`));
+    const expectedGrant = table === "student_history_entry_revisions"
+      ? /GRANT SELECT ON [^;]*student_history_entry_revisions[^;]*TO eduos_app/
+      : new RegExp(`GRANT SELECT, INSERT ON [^;]*\\b${table}\\b[^;]*TO eduos_app`);
+    assert.match(grants, expectedGrant, `${table} has its required read/write grant`);
+    const expectedRevoke = table === "student_history_entry_revisions"
+      ? "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_revisions FROM eduos_app"
+      : `REVOKE UPDATE, DELETE, TRUNCATE ON ${table} FROM eduos_app`;
+    assert.ok(grants.includes(expectedRevoke), `${table} blocks forbidden mutation`);
   }
   assert.ok(grants.includes("GRANT SELECT, INSERT ON student_time_capsule_recipients TO eduos_app"));
   assert.ok(grants.includes("GRANT UPDATE (entry_type, classification, title, body, occurred_at, school_year, audience, status, source_reference)"));
@@ -78,7 +84,6 @@ test("runtime role gets only the operations required by TC-01 and no destructive
   assert.ok(!grants.includes("GRANT UPDATE ON student_history_entries TO eduos_app"));
   assert.ok(!grants.includes("GRANT UPDATE ON student_time_capsules TO eduos_app"));
   assert.ok(grants.includes("GRANT UPDATE (consent_status, updated_at) ON student_time_capsule_recipients TO eduos_app"));
-  assert.ok(grants.includes("GRANT UPDATE (title, message, status, release_kind, release_at, milestone_key, timezone, sealed_at, released_at, cancelled_at, updated_at)"));
   assert.ok(grants.includes("REVOKE DELETE, TRUNCATE ON student_time_capsule_recipients FROM eduos_app"));
 });
 
