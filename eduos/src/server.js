@@ -2027,7 +2027,7 @@ function startWebhookSweep(){
 
 let sisSyncSweepRunning=false;
 function startSisSyncSweep(){
-  if(!config.integrationsKey)return;
+  if(!config.integrationsKey||!config.sisSyncDispatchEnabled)return;
   const timer=setInterval(()=>{
     if(sisSyncSweepRunning)return;
     sisSyncSweepRunning=true;
