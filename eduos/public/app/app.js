@@ -1904,19 +1904,19 @@ VIEWS.node = async () => {
     kv("Record transfers (consent)", s.consentExceptions === "on" ? "on" : "off (default)"))));
   return out;
 };
-// District data links (src/integrations/): OneRoster 1.2 and Ed-Fi connectors.
+// District data links (src/integrations/): OneRoster 1.2, Ed-Fi and PowerSchool connectors.
 // Read-only, off until the server has INTEGRATIONS_KEY, and each connector
 // needs a second district lead's approval before it can sync.
-const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API" };
+const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API", powerschool: "PowerSchool SIS" };
 const CONNECTOR_STATUS = { pending_approval: ["expected", "Needs approval"], active: ["present", "Active"], disabled: ["not_started", "Off"] };
 const REJECT_TEXT = { duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
-  no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id" };
+  no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id",\n  invalid_school_id: "invalid school id", missing_student_id: "no student id", missing_student_number: "no student number" };
 VIEWS.integrations = async () => {
   const r = await api.get("/api/integrations/connectors");
   const { enabled, connectors = [], schools = [] } = r.data;
   const reload = () => go(state.tab, { push: false });
   const out = [h("h2", {}, "Data links"),
-    h("p", { class: "muted" }, "Bring student rosters in from your SIS or state system (OneRoster 1.2 or Ed-Fi). EduOS only reads from them, never sends student data out, and keeps working without them."),
+    h("p", { class: "muted" }, "Bring student rosters in from your SIS or state system (OneRoster 1.2, Ed-Fi or PowerSchool). EduOS only reads from them, never sends student data out, and keeps working without them."),
     staffDistrict() ? h("section", { class: "card", "aria-label": "Payment options" }, h("h2", {}, "Payment options"),
       h("p", { class: "small muted" }, "Connect the district's PayPal, Square or BTCPay Server account for ticket and marketplace payments."),
       h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Open payment setup")) : null];
