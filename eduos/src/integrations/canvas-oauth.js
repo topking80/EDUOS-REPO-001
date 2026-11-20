@@ -142,6 +142,24 @@ export async function getCanvasAccessToken(actor, connectorId) {
   throw new IntegrationError("canvas_token_refresh_busy","A Canvas token refresh is still in progress");
 }
 
+export async function revokeCanvasToken(actor, connectorId) {
+  try {
+    const accessToken = await getCanvasAccessToken(actor, connectorId);
+    const connector = await withTenantTransaction(actor,c => one(c,
+      "SELECT base_url FROM integration_connectors WHERE id=$1 AND district_id=$2 AND kind='canvas' AND status='active'",
+      [connectorId,actor.districtId]));
+    if (!connector) return false;
+    const origin = canvasOrigin(connector.base_url);
+    const response = await outboundRequest(new URL("/login/oauth2/token",origin).toString(),{
+      method:"DELETE",options:{...urlOptions(),timeoutMs:10_000},
+      headers:{authorization:`Bearer ${accessToken}`,accept:"application/json"}
+    });
+    return response.status >= 200 && response.status <= 299;
+  } catch {
+    // Local disconnect must still be possible during a Canvas outage.
+    return false;
+  }
+}
 export function registerCanvasOAuthRoutes(app) {
   app.post(`${BASE}/:id/canvas/authorize`, oauthStartLimiter, requireSession, requireCsrf, async (req, res, next) => {
     if (!requireManager(req, res)) return;
@@ -308,16 +326,17 @@ export function registerCanvasOAuthRoutes(app) {
     if (!requireManager(req,res)) return;
     if (!validId(req.params.id)) return res.status(400).json({error:"invalid_connector_id"});
     try {
+      const canvasTokenRevoked = await revokeCanvasToken(req.actor,req.params.id);
       await withTenantTransaction(req.actor,async c=>{
         const connector=await one(c,"SELECT id,kind FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,req.actor.districtId]);
         if(!connector)throw new HttpError(404,"connector_not_found");
         if(connector.kind!=="canvas")throw new HttpError(409,"not_a_canvas_connector");
         await c.query("DELETE FROM integration_canvas_oauth_states WHERE connector_id=$1 AND district_id=$2",[connector.id,req.actor.districtId]);
         await c.query("DELETE FROM integration_canvas_oauth_grants WHERE connector_id=$1 AND district_id=$2",[connector.id,req.actor.districtId]);
-        await audit(c,req,"canvas_oauth_disconnect","integration_canvas_oauth_grant",connector.id,"Local Canvas tokens and pending authorization states deleted; district must revoke the developer key in Canvas if full revocation is required");
+        await audit(c,req,"canvas_oauth_disconnect","integration_canvas_oauth_grant",connector.id,`Local Canvas tokens and pending authorization states deleted; canvas_token_revoked=${canvasTokenRevoked}; district must revoke the developer key in Canvas if full revocation is required`);
       });
       res.setHeader("Cache-Control","no-store");
-      res.json({data:{connected:false,canvasDeveloperKeyRevocationRequired:true}});
+      res.json({data:{connected:false,canvasTokenRevoked,canvasDeveloperKeyRevocationRequired:true}});
     }catch(e){sendError(res,next,e);}
   });
 }
