@@ -63,3 +63,53 @@ $$;
 CREATE TRIGGER apps_lti_approval_invalidate
   BEFORE INSERT OR UPDATE OF integration_type, integration_config ON apps
   FOR EACH ROW EXECUTE FUNCTION eduos_invalidate_lti_approval();
+
+-- Approval metadata is changed only through these tenant- and role-checked
+-- SECURITY DEFINER functions. The runtime role receives EXECUTE, not column
+-- UPDATE privileges for the approval state.
+CREATE FUNCTION eduos_lti_approve_registration(p_app_id uuid, p_config_hash text, p_actor uuid)
+RETURNS TABLE(registration_status text, approved_at timestamptz)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE tenant_id uuid := nullif(current_setting('app.district_id', true), '')::uuid;
+        actor_id uuid := nullif(current_setting('app.user_id', true), '')::uuid;
+        actor_role text := current_setting('app.role', true);
+BEGIN
+  IF tenant_id IS NULL OR actor_id IS NULL OR actor_id <> p_actor
+     OR actor_role NOT IN ('superintendent','it_admin')
+     OR p_config_hash IS NULL OR p_config_hash !~ '^[A-Za-z0-9_-]{43}$' THEN
+    RAISE EXCEPTION 'unauthorized LTI approval' USING ERRCODE = '42501';
+  END IF;
+  UPDATE apps SET lti_registration_status='approved',lti_approved_config_hash=p_config_hash,
+      lti_approved_by=actor_id,lti_approved_at=now(),lti_revoked_by=NULL,lti_revoked_at=NULL,updated_at=now()
+    WHERE id=p_app_id AND district_id=tenant_id AND integration_type='lti13' AND status='active'
+    RETURNING apps.lti_registration_status,apps.lti_approved_at INTO registration_status,approved_at;
+  IF NOT FOUND THEN RAISE EXCEPTION 'LTI registration not approvable' USING ERRCODE = 'P0002'; END IF;
+  RETURN NEXT;
+END;
+$$;
+
+CREATE FUNCTION eduos_lti_revoke_registration(p_app_id uuid, p_actor uuid)
+RETURNS TABLE(registration_status text, revoked_at timestamptz)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE tenant_id uuid := nullif(current_setting('app.district_id', true), '')::uuid;
+        actor_id uuid := nullif(current_setting('app.user_id', true), '')::uuid;
+        actor_role text := current_setting('app.role', true);
+BEGIN
+  IF tenant_id IS NULL OR actor_id IS NULL OR actor_id <> p_actor
+     OR actor_role NOT IN ('superintendent','it_admin') THEN
+    RAISE EXCEPTION 'unauthorized LTI revocation' USING ERRCODE = '42501';
+  END IF;
+  UPDATE apps SET lti_registration_status='revoked',lti_approved_config_hash=NULL,
+      lti_approved_by=NULL,lti_approved_at=NULL,lti_revoked_by=actor_id,lti_revoked_at=now(),updated_at=now()
+    WHERE id=p_app_id AND district_id=tenant_id AND integration_type='lti13'
+    RETURNING apps.lti_registration_status,apps.lti_revoked_at INTO registration_status,revoked_at;
+  IF NOT FOUND THEN RAISE EXCEPTION 'LTI registration not found' USING ERRCODE = 'P0002'; END IF;
+  RETURN NEXT;
+END;
+$$;
+REVOKE ALL ON FUNCTION eduos_lti_approve_registration(uuid,text,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION eduos_lti_revoke_registration(uuid,uuid) FROM PUBLIC;
