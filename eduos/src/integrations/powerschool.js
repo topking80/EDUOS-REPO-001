@@ -30,7 +30,7 @@ export function normalizeStudent(s, schoolExternalId) {
   // PowerSchool enroll_status 0 is active. When the provider omits it, the
   // school-scoped REST collection remains the source of enrollment membership.
   const enrollment = s?.school_enrollment && typeof s.school_enrollment === "object" ? s.school_enrollment : {};
-  const enrollmentStatus = s?.enroll_status ?? enrollment.enroll_status;
+  const enrollmentStatus = s?.enroll_status ?? enrollment.enroll_status ?? enrollment.enroll_status_code ?? s?.enroll_status_code;
   // Fail closed if the provider does not return the status despite the
   // active-enrollment query; never guess that an unknown record is current.
   if (enrollmentStatus === undefined || enrollmentStatus === null || enrollmentStatus === "")
