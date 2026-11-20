@@ -32,12 +32,13 @@ CREATE TABLE student_history_entries (
   source_type text NOT NULL
     CHECK (source_type IN ('student','guardian','teacher','school','district','sis','system','other')),
   source_reference text CHECK (source_reference IS NULL OR length(source_reference) <= 256),
-  author_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  author_user_id uuid,
   revision_no integer NOT NULL DEFAULT 1 CHECK (revision_no >= 1),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
   FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
+  FOREIGN KEY (district_id, author_user_id) REFERENCES memberships(district_id, user_id),
   UNIQUE (district_id, school_id, student_id, id)
 );
 
@@ -55,11 +56,12 @@ CREATE TABLE student_history_entry_revisions (
   student_id uuid NOT NULL,
   entry_id uuid NOT NULL,
   revision_no integer NOT NULL CHECK (revision_no >= 1),
-  actor_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  actor_user_id uuid,
   snapshot jsonb NOT NULL CHECK (jsonb_typeof(snapshot) = 'object'),
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
   FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
+  FOREIGN KEY (district_id, actor_user_id) REFERENCES memberships(district_id, user_id),
   FOREIGN KEY (district_id, school_id, student_id, entry_id)
     REFERENCES student_history_entries(district_id, school_id, student_id, id) ON DELETE CASCADE,
   UNIQUE (district_id, entry_id, revision_no)
@@ -150,7 +152,6 @@ CREATE TABLE student_time_capsule_items (
   FOREIGN KEY (district_id, school_id, student_id, entry_id, attachment_id)
     REFERENCES student_history_entry_attachments(district_id, school_id, student_id, entry_id, id) ON DELETE RESTRICT,
   UNIQUE (district_id, capsule_id, position),
-  CHECK (attachment_id IS NULL OR attachment_id IS NOT NULL)
 );
 CREATE INDEX student_time_capsule_items_capsule_idx
   ON student_time_capsule_items(district_id, capsule_id, position);
@@ -195,7 +196,8 @@ CREATE TABLE student_time_capsule_events (
   FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
   FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
   FOREIGN KEY (district_id, school_id, student_id, capsule_id)
-    REFERENCES student_time_capsules(district_id, school_id, student_id, id) ON DELETE CASCADE
+    REFERENCES student_time_capsules(district_id, school_id, student_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (district_id, actor_user_id) REFERENCES memberships(district_id, user_id)
 );
 CREATE INDEX student_time_capsule_events_history_idx
   ON student_time_capsule_events(district_id, capsule_id, occurred_at DESC);
