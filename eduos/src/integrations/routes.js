@@ -141,6 +141,14 @@ export function registerIntegrationRoutes(app) {
     try {
       const f = readFields(req.body || {}, true);
       if (f.kind) throw new HttpError(400, "invalid_connector", { field: "kind" });
+      const before = await withTenantTransaction(req.actor,c => one(c,
+        "SELECT kind,base_url,status FROM integration_connectors WHERE id=$1 AND district_id=$2",
+        [req.params.id,req.actor.districtId]));
+      if (!before) throw new HttpError(404,"connector_not_found");
+      let canvasAccessToken = null;
+      if (before.kind === "canvas" && before.status === "active") {
+        try { canvasAccessToken = await getCanvasAccessToken(req.actor,req.params.id); } catch { /* configuration update still proceeds */ }
+      }
       const data = await withTenantTransaction(req.actor, async (c) => {
         const a = req.actor;
         const cur = await one(c, "SELECT id,kind,base_url,token_url FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
@@ -176,7 +184,14 @@ export function registerIntegrationRoutes(app) {
         await audit(c, req, "update", "integration_connector", cur.id, `changed=${Object.keys(f).map(k => k === "secret" ? "client_secret" : k).join(",")}; needs approval`);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [cur.id]));
       });
-      res.json({ data });
+      if (before.kind === "canvas") {
+        const canvasTokenRevoked = await revokeCanvasToken(before.base_url,canvasAccessToken);
+        await withTenantTransaction(req.actor,c => audit(c,req,"canvas_oauth_revoke_after_config_change","integration_connector",req.params.id,
+          "canvas_token_revoked="+canvasTokenRevoked));
+        res.json({data:{...data,canvasTokenRevoked}});
+      } else {
+        res.json({ data });
+      }
     } catch (e) { sendError(res, next, e); }
   });
 
