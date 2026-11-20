@@ -25,6 +25,6 @@ The worker uses database row locks with `SKIP LOCKED`, per-job lease tokens, and
 
 ## Attribution and data scope
 
-Scheduled runs use the fixed `sis_scheduler` service principal. They do not create or impersonate a user. The human who approved the connector and the human who approved the schedule remain recorded separately. Service-initiated runs appear in connector run history and SIS import history.
+Scheduled runs use the fixed `sis_scheduler` service principal. They do not create or impersonate a user. The human who approved the connector and the human who approved the schedule remain recorded separately. Each scheduled run snapshots its schedule ID, job ID, schedule approver, and approval time so later reconfiguration cannot rewrite historical provenance. Service-initiated runs appear in connector run history and SIS import history.
 
 This feature imports roster data only. It does not write grades, attendance, staff, course enrollments, or other data back to the external SIS. Live district-tenant validation is required before production enablement.
