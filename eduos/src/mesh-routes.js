@@ -95,7 +95,7 @@ async function availableApps(client, actor, appId = null) {
 function appOut(r, actor) {
   const out = {
     id: r.id, name: r.name, vendor: r.vendor, description: r.description, category: r.category, launchUrl: r.launch_url,
-    integrationType: r.integration_type, dataSharingScope: r.data_sharing_scope, dpaStatus: r.dpa_status, dpaExpiresOn: r.dpa_expires_on,
+    integrationType: r.integration_type, registrationStatus: r.lti_registration_status || "not_required", dataSharingScope: r.data_sharing_scope, dpaStatus: r.dpa_status, dpaExpiresOn: r.dpa_expires_on,
     coppaCompliant: r.coppa_compliant, ferpaSchoolOfficial: r.ferpa_school_official, status: r.status,
     ownerSchoolId: r.owner_school_id, ownerSchoolName: r.owner_school_name ?? null, createdAt: r.created_at, updatedAt: r.updated_at
   };
