@@ -38,6 +38,7 @@ async function enqueueDue(tx, districtId) {
       `SELECT id,connector_id,config_version,interval_minutes
          FROM integration_sync_schedules
         WHERE district_id=$1 AND enabled=true AND paused_at IS NULL AND next_run_at<=now()
+          AND NOT EXISTS (SELECT 1 FROM integration_sync_jobs j WHERE j.schedule_id=integration_sync_schedules.id AND j.status IN ('pending','processing'))
         ORDER BY next_run_at,id FOR UPDATE SKIP LOCKED LIMIT 10`, [districtId]);
     for (const s of due.rows) {
       await c.query(
