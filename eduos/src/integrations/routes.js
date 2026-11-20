@@ -441,6 +441,7 @@ export function registerIntegrationRoutes(app) {
       conn = await withTenantTransaction(a, (c) => one(c, "SELECT * FROM integration_connectors WHERE id=$1 AND district_id=$2", [req.params.id, a.districtId]));
       if (!conn) throw new HttpError(404, "connector_not_found");
       if (conn.status !== "active") throw new HttpError(409, "connector_not_approved");
+      if (conn.kind === "canvas") throw new HttpError(409, "canvas_sync_not_enabled", { next: "CANVAS-API-02" });
       let roster;
       try {
         const [secret, mapped] = await Promise.all([
