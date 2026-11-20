@@ -452,6 +452,7 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
           (district_id, school_id, student_id, capsule_id, actor_user_id, event_type)
         VALUES ($1,$2,$3,$4,$5,'created')
       `, [ID.d1, ID.s1, ID.alice, capsule.id, USERS.pa[0]]);
+      await expectDenied(() => app.query("INSERT INTO student_history_entry_revisions (district_id,school_id,student_id,entry_id,revision_no,snapshot) VALUES ($1,$2,$3,$4,99,'{}'::jsonb)", [ID.d1, ID.s1, ID.alice, alice.id]));
       await expectDenied(() => app.query("UPDATE student_history_entry_revisions SET revision_no=9 WHERE entry_id=$1", [alice.id]));
       await expectDenied(() => app.query("DELETE FROM student_history_entries WHERE id=$1", [alice.id]));
     });
