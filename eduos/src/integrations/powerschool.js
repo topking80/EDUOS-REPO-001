@@ -80,6 +80,10 @@ export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, s
   const base = baseUrl.replace(/\/+$/, "");
   const schoolRows = await collect(`${base}/ws/v1/district/school`, token, options, "schools", "school", MAX_SCHOOLS);
   const schools = [], rejected = [], students = [];
+  // Bound total downloaded student records across every mapped school, not
+  // just normalized students or each individual school's page collection.
+  // Rejected/inactive records count toward the same resource limit.
+  let fetchedStudentRecords = 0;
   for (const raw of schoolRows) {
     const normalized = normalizeSchool(raw);
     if (!normalized.school) { rejected.push(normalized.rejected); continue; }
@@ -90,12 +94,12 @@ export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, s
     // before import so a concurrent mapping change invalidates this sync.
     if (!isMappedSchool(schoolId, mappedSchoolIds)) continue;
     const studentRows = await collect(studentRosterUrl(base, schoolId),
-      token, options, "students", "student", MAX_STUDENTS - students.length);
+      token, options, "students", "student", MAX_STUDENTS - fetchedStudentRecords);
+    fetchedStudentRecords += studentRows.length;
     for (const rawStudent of studentRows) {
       const result = normalizeStudent(rawStudent, schoolId);
       if (result.student) students.push(result.student);
       else if (result.rejected) rejected.push(result.rejected);
-      if (students.length > MAX_STUDENTS) throw new IntegrationError("connector_too_many_records", "students");
     }
   }
   return { schools, students, rejected };
