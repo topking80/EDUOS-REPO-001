@@ -19,19 +19,15 @@ function rows(body, collection, item) {
 
 export function normalizeSchool(s) {
   const id = text(s?.id ?? s?.dcid, 40);
-  if (!id || !/^\d+$/.test(id)) return { rejected: { externalId: id, reason: "invalid_school_id" } };
+  if (!id || !/^\\d+$/.test(id)) return { rejected: { externalId: id, reason: "invalid_school_id" } };
   return { school: { externalId: id, name: text(s?.name, 160) || text(s?.school_name, 160) || id } };
 }
 
 export function normalizeStudent(s, schoolExternalId) {
   const externalId = text(s?.id ?? s?.dcid, 80);
   if (!externalId) return { rejected: { externalId: null, reason: "missing_student_id" } };
-  // PowerSchool enroll_status 0 is active. When the provider omits it, the
-  // school-scoped REST collection remains the source of enrollment membership.
   const enrollment = s?.school_enrollment && typeof s.school_enrollment === "object" ? s.school_enrollment : {};
   const enrollmentStatus = s?.enroll_status ?? enrollment.enroll_status ?? enrollment.enroll_status_code ?? s?.enroll_status_code;
-  // Fail closed if the provider does not return the status despite the
-  // active-enrollment query; never guess that an unknown record is current.
   if (enrollmentStatus === undefined || enrollmentStatus === null || enrollmentStatus === "")
     return { rejected: { externalId, reason: "missing_enrollment_status" } };
   if (!["0", 0, "A", "active"].includes(enrollmentStatus)) return { skipped: true };
@@ -54,7 +50,7 @@ export function studentRosterUrl(baseUrl, schoolId) {
     q: "school_enrollment.enroll_status==(A)",
     expansions: "school_enrollment",
   });
-  return `${baseUrl.replace(/\/+$/, "")}/ws/v1/school/${encodeURIComponent(schoolId)}/student?${query}`;
+  return `${baseUrl.replace(/\\/+$/, "")}/ws/v1/school/${encodeURIComponent(schoolId)}/student?${query}`;
 }
 
 async function collect(url, token, options, collection, item, maxRecords) {
@@ -77,21 +73,16 @@ export function isMappedSchool(schoolId, mappedSchoolIds) {
 
 export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, mappedSchoolIds = [], maxStudentRecords = 1_000_000 }) {
   const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope, options });
-  const base = baseUrl.replace(/\/+$/, "");
+  const base = baseUrl.replace(/\\/+$/, "");
   const schoolRows = await collect(`${base}/ws/v1/district/school`, token, options, "schools", "school", MAX_SCHOOLS);
   const schools = [], rejected = [], students = [];
-  // Bound total downloaded student records across every mapped school, not
-  // just normalized students or each individual school's page collection.
-  // Rejected/inactive records count toward the same resource limit.
+  // Count raw downloaded records, including inactive and rejected rows.
   let fetchedStudentRecords = 0;
   for (const raw of schoolRows) {
     const normalized = normalizeSchool(raw);
     if (!normalized.school) { rejected.push(normalized.rejected); continue; }
     schools.push(normalized.school);
     const schoolId = normalized.school.externalId;
-    // Do not download student records for unmapped schools. The caller supplies
-    // the district-approved mapping snapshot; the route rechecks config_version
-    // before import so a concurrent mapping change invalidates this sync.
     if (!isMappedSchool(schoolId, mappedSchoolIds)) continue;
     const studentRows = await collect(studentRosterUrl(base, schoolId),
       token, options, "students", "student", maxStudentRecords - fetchedStudentRecords);
@@ -102,5 +93,5 @@ export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, s
       else if (result.rejected) rejected.push(result.rejected);
     }
   }
-  return { schools, students, rejected };
+  return { schools, students, rejected, fetchedStudentRecords };
 }
