@@ -174,6 +174,129 @@ export function registerIntegrationRoutes(app) {
     } catch (e) { sendError(res, next, e); }
   });
 
+  // SIS-02: schedules are separately approved from connector configuration.
+  app.get(`${base}/:id/schedule`, requireSession, manager, async (req,res,next) => {
+    if(!validId(req.params.id))return res.status(400).json({error:"invalid_connector_id"});
+    try {
+      const data=await withTenantTransaction(req.actor,c=>one(c,
+        `SELECT s.id,s.enabled,s.interval_minutes,s.next_run_at,s.paused_at,s.pause_reason,
+                s.config_version,s.approved_at,u.display_name AS approved_by,
+                s.updated_at,uu.display_name AS updated_by
+           FROM integration_sync_schedules s
+           JOIN users uu ON uu.id=s.updated_by LEFT JOIN users u ON u.id=s.approved_by
+          WHERE s.connector_id=$1 AND s.district_id=$2`,
+        [req.params.id,req.actor.districtId]));
+      res.setHeader("Cache-Control","no-store");
+      res.json({data});
+    } catch(e){sendError(res,next,e);}
+  });
+
+  app.put(`${base}/:id/schedule`, requireSession, requireCsrf, manager, async(req,res,next)=>{
+    if(!validId(req.params.id))return res.status(400).json({error:"invalid_connector_id"});
+    const interval=req.body?.intervalMinutes;
+    if(!Number.isInteger(interval)||interval<15||interval>10080)
+      return res.status(400).json({error:"invalid_schedule_interval",minimumMinutes:15,maximumMinutes:10080});
+    try{
+      const data=await withTenantTransaction(req.actor,async c=>{
+        const a=req.actor;
+        const connector=await one(c,"SELECT id,status,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
+        if(!connector)throw new HttpError(404,"connector_not_found");
+        if(connector.status!=="active")throw new HttpError(409,"connector_not_approved");
+        const saved=await one(c,
+          `INSERT INTO integration_sync_schedules(district_id,connector_id,interval_minutes,created_by,updated_by,config_version)
+           VALUES($1,$2,$3,$4,$4,$5)
+           ON CONFLICT(district_id,connector_id) DO UPDATE SET interval_minutes=EXCLUDED.interval_minutes,
+             updated_by=EXCLUDED.updated_by,updated_at=now(),config_version=EXCLUDED.config_version,
+             enabled=false,next_run_at=NULL,paused_at=NULL,pause_reason=NULL,approved_by=NULL,approved_at=NULL
+           RETURNING id,enabled,interval_minutes,config_version`,
+          [a.districtId,connector.id,interval,a.userId,connector.config_version]);
+        await audit(c,req,"configure","integration_sync_schedule",saved.id,`interval_minutes=${interval}; requires separate approval`);
+        return saved;
+      });
+      res.status(200).json({data});
+    }catch(e){sendError(res,next,e);}
+  });
+
+  app.post(`${base}/:id/schedule/approve`, requireSession, requireCsrf, manager, async(req,res,next)=>{
+    if(!validId(req.params.id))return res.status(400).json({error:"invalid_connector_id"});
+    try{
+      const data=await withTenantTransaction(req.actor,async c=>{
+        const a=req.actor;
+        const s=await one(c,
+          `SELECT s.id,s.updated_by,s.config_version,x.status,x.config_version AS connector_version
+             FROM integration_sync_schedules s JOIN integration_connectors x
+               ON x.id=s.connector_id AND x.district_id=s.district_id
+            WHERE s.connector_id=$1 AND s.district_id=$2 FOR UPDATE OF s,x`,
+          [req.params.id,a.districtId]);
+        if(!s)throw new HttpError(404,"schedule_not_found");
+        if(s.status!=="active"||s.config_version!==s.connector_version)throw new HttpError(409,"connector_approval_stale");
+        if(s.updated_by===a.userId)throw new HttpError(409,"approver_must_differ");
+        const approved=await one(c,
+          `UPDATE integration_sync_schedules SET enabled=true,paused_at=NULL,pause_reason=NULL,
+             next_run_at=now(),approved_by=$2,approved_at=now(),updated_at=now()
+            WHERE id=$1 RETURNING id,enabled,interval_minutes,next_run_at,approved_at`,
+          [s.id,a.userId]);
+        await audit(c,req,"approve","integration_sync_schedule",s.id,"scheduled roster apply approved");
+        return approved;
+      });
+      res.json({data});
+    }catch(e){sendError(res,next,e);}
+  });
+
+  app.post(`${base}/:id/schedule/pause`, requireSession, requireCsrf, manager, async(req,res,next)=>{
+    if(!validId(req.params.id))return res.status(400).json({error:"invalid_connector_id"});
+    const reason=typeof req.body?.reason==="string"?req.body.reason.trim().slice(0,240):"paused_by_district_manager";
+    try{
+      const data=await withTenantTransaction(req.actor,async c=>{
+        const s=await one(c,
+          `UPDATE integration_sync_schedules SET paused_at=now(),pause_reason=$3,next_run_at=NULL,updated_by=$4,updated_at=now()
+            WHERE connector_id=$1 AND district_id=$2 RETURNING id,enabled,paused_at,pause_reason`,
+          [req.params.id,req.actor.districtId,reason,req.actor.userId]);
+        if(!s)throw new HttpError(404,"schedule_not_found");
+        await audit(c,req,"pause","integration_sync_schedule",s.id,reason);
+        return s;
+      });
+      res.json({data});
+    }catch(e){sendError(res,next,e);}
+  });
+
+  app.post("/api/integrations/schedules/pause-all",requireSession,requireCsrf,manager,async(req,res,next)=>{
+    const reason=typeof req.body?.reason==="string"?req.body.reason.trim().slice(0,240):"district_wide_pause";
+    try{
+      const data=await withTenantTransaction(req.actor,async c=>{
+        const changed=await rows(c,
+          `UPDATE integration_sync_schedules SET paused_at=now(),pause_reason=$2,next_run_at=NULL,
+             updated_by=$3,updated_at=now()
+            WHERE district_id=$1 AND enabled=true AND paused_at IS NULL RETURNING id`,
+          [req.actor.districtId,reason,req.actor.userId]);
+        await audit(c,req,"pause_all","integration_sync_schedule",req.actor.districtId,`count=${changed.length}; ${reason}`);
+        return {paused:changed.length};
+      });
+      res.json({data});
+    }catch(e){sendError(res,next,e);}
+  });
+
+  app.post(`${base}/:id/schedule/resume`, requireSession, requireCsrf, manager, async(req,res,next)=>{
+    if(!validId(req.params.id))return res.status(400).json({error:"invalid_connector_id"});
+    try{
+      const data=await withTenantTransaction(req.actor,async c=>{
+        const s=await one(c,
+          `UPDATE integration_sync_schedules s SET paused_at=NULL,pause_reason=NULL,next_run_at=now(),
+             updated_by=$3,updated_at=now()
+            FROM integration_connectors x
+           WHERE s.connector_id=$1 AND s.district_id=$2 AND x.id=s.connector_id AND x.district_id=s.district_id
+             AND s.enabled=true AND s.approved_by IS NOT NULL AND x.status='active'
+             AND s.config_version=x.config_version
+           RETURNING s.id,s.enabled,s.next_run_at`,
+          [req.params.id,req.actor.districtId,req.actor.userId]);
+        if(!s)throw new HttpError(409,"schedule_not_approved_or_connector_stale");
+        await audit(c,req,"resume","integration_sync_schedule",s.id);
+        return s;
+      });
+      res.json({data});
+    }catch(e){sendError(res,next,e);}
+  });
+
   app.get(`${base}/:id/runs`, requireSession, manager, async (req, res, next) => {
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
     try {
