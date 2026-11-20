@@ -1,4 +1,4 @@
-# Canvas LMS integration: LTI 1.3 / LTI Advantage
+# LTI 1.3 / LTI Advantage interoperability for third-party educational software
 
 Status: implementation plan and security acceptance criteria. This document does not claim that Canvas interoperability is complete.
 
@@ -8,7 +8,7 @@ The existing `src/lti.js` contains LTI 1.3 building blocks: RS256 platform-key l
 
 ## Product commitment
 
-Canvas LMS is a supported educational-software integration through the district-managed app catalog. The platform side is EduOS; Canvas is the LTI tool/consumer for EduOS launches where configured, and EduOS may also act as an LTI platform for approved Canvas-hosted tools. These are distinct deployment roles and must not be conflated. Initial delivery should explicitly state which direction is implemented; this plan prioritizes EduOS as the LTI 1.3 platform for launching approved tools from EduOS, with Canvas interoperability validation against Canvas test instances.
+EduOS is the LTI 1.3 platform. Its purpose is to let districts connect approved, independent third-party educational applications that implement the LTI standard. Those applications act as LTI tools; EduOS initiates and governs launches, scopes, and permitted data exchange. Canvas LMS is a competing learning-management product, not an EduOS dependency, integration target, or required certification partner. References to Canvas in this plan are illustrative examples of an ecosystem participant that supports LTI—not a commitment to integrate Canvas itself. Protocol behavior must remain vendor-neutral and be tested with standards-conformant third-party tools and independent LTI test fixtures.
 
 ## Required protocol support
 
@@ -17,7 +17,7 @@ Canvas LMS is a supported educational-software integration through the district-
 - Assignment and Grade Services (AGS): scopes and line-item/results/score operations only after a district enables grade exchange for the specific integration and course.
 - Names and Role Provisioning Services (NRPS): roster/context membership only after explicit district approval and a per-course sharing decision.
 - Resource Link launches with stable resource-link identifiers and per-app pairwise subject identifiers.
-- Canvas-specific configuration and test fixtures kept separate from protocol-generic LTI behavior.
+- Vendor-neutral tool registration and configuration; provider-specific compatibility profiles must remain optional and separate from protocol-generic LTI behavior.
 
 ## District governance and privacy requirements
 
@@ -48,10 +48,11 @@ Canvas LMS is a supported educational-software integration through the district-
 - Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
 - Add unit, route, multi-tenant, replay, and negative-security tests.
 
-### Phase 2 — Canvas configuration and interoperability
-- Add Canvas-specific setup guidance and an administrator-facing configuration flow.
-- Validate Canvas issuer, client ID, deployment ID, login URL, explicit HTTPS target link URI, redirect URLs, and JWKS behavior against official Canvas LTI configuration.
-- Add end-to-end tests using a Canvas test instance; do not use production student data in test fixtures.
+### Phase 2 — vendor-neutral tool registration and interoperability
+- Add administrator-facing configuration for standards-conformant third-party LTI tools.
+- Validate issuer, client ID, deployment ID, login URL, explicit HTTPS target link URI, redirect URLs, and JWKS behavior using provider-neutral registration records.
+- Add end-to-end tests against independent LTI 1.3 reference fixtures and more than one standards-conformant tool implementation where available; do not use production student data in test fixtures.
+- Keep provider-specific setup notes optional and do not make any competing LMS a required integration target.
 
 ### Phase 3 — Deep Linking
 - Support signed Deep Linking requests and validated responses.
@@ -72,7 +73,7 @@ Canvas LMS is a supported educational-software integration through the district-
 ## Acceptance gates
 
 - Protocol conformance tests for LTI 1.3 Core and the enabled Advantage services.
-- Canvas test-instance launch, Deep Linking, NRPS, and AGS end-to-end tests for each released phase.
+- LTI 1.3 Core, Deep Linking, NRPS, and AGS end-to-end tests against independent reference fixtures and standards-conformant third-party tools for each released phase.
 - Negative tests for invalid signatures, wrong issuer/audience/deployment, nonce/state mismatch, replay, expired requests, redirect mismatch, unknown key IDs, revoked tools, disabled scopes, and tenant/course boundary violations.
 - Security tests for SSRF, credential leakage, log redaction, rate limits, request-size limits, and durable replay prevention across multiple app instances.
 - Authorization tests prove a teacher cannot approve their own connector, one district cannot read another district's courses/rosters/grades, and a tool cannot widen its approved scope.
@@ -82,7 +83,7 @@ Canvas LMS is a supported educational-software integration through the district-
 
 ## Current limitations
 
-This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, target-link, exact redirect, state, and nonce request checks; the deployment ID is emitted in the signed LTI claim rather than incorrectly required as an OIDC authorization parameter. It still does not claim complete OIDC conformance, NRPS, AGS, Deep Linking, Canvas test-instance certification, or production readiness. Signing-key overlap is implemented but must be configured and operationally exercised before production use. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, target-link, exact redirect, state, and nonce request checks; the deployment ID is emitted in the signed LTI claim rather than incorrectly required as an OIDC authorization parameter. It still does not claim complete OIDC conformance, NRPS, AGS, Deep Linking, third-party LTI interoperability validation, or production readiness. Signing-key overlap is implemented but must be configured and operationally exercised before production use. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
 
 ## Signing-key rotation procedure
 
