@@ -5,7 +5,7 @@ import { readFileSync, readdirSync } from "node:fs";
 const migration = readFileSync(new URL("../db/086_student_history_time_capsule.sql", import.meta.url), "utf8");
 const grants = readFileSync(new URL("../db/runtime_grants.template.sql", import.meta.url), "utf8");
 const migrationDocs = readFileSync(new URL("../docs/MIGRATIONS.md", import.meta.url), "utf8");
-const shippedMigrationNames = readdirSync(new URL("../db/", import.meta.url)).filter(name => /^\\d{3}_[a-z0-9_]+\\.sql$/.test(name)).sort();
+const shippedMigrationNames = readdirSync(new URL("../db/", import.meta.url)).filter(name => name.startsWith("086_") && name.endsWith(".sql")).sort();
 
 const tables = [
   "student_history_entries",
