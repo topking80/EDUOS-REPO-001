@@ -1,4 +1,4 @@
-# LTI 1.3 / LTI Advantage interoperability for third-party educational software
+# LTI 1.3 Core platform support for third-party educational software
 
 Status: implementation plan and security acceptance criteria. This document defines the implementation scope and acceptance criteria; it does not claim full LTI Advantage interoperability.
 
