@@ -66,7 +66,10 @@ test("history authors, revision actors, and capsule owners/recipients are distri
 test("runtime role gets only the operations required by TC-01 and no destructive privileges", () => {
   const normalized = grants.replace(/\\s+/g, " ");
   for (const table of ["student_history_entries", "student_time_capsules"]) {
-    assert.ok(normalized.includes(`GRANT SELECT, INSERT ON ${table} TO eduos_app;`), `${table} has its required read/create grant`);
+    const readCreateGrant = table === "student_time_capsules"
+      ? "GRANT SELECT, INSERT ON student_time_capsules, student_time_capsule_recipients TO eduos_app;"
+      : `GRANT SELECT, INSERT ON ${table} TO eduos_app;`;
+    assert.ok(normalized.includes(readCreateGrant), `${table} has its required read/create grant`);
     assert.ok(normalized.includes(`REVOKE DELETE, TRUNCATE ON ${table} FROM eduos_app;`) ||
       (table === "student_time_capsules" && normalized.includes("REVOKE DELETE, TRUNCATE ON student_time_capsules, student_time_capsule_recipients FROM eduos_app;")),
       `${table} blocks destructive access`);
