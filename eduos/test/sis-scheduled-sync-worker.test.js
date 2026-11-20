@@ -13,6 +13,8 @@ test("scheduled jobs are claimed with database leases and SKIP LOCKED",()=>{
   assert.match(worker,/FOR UPDATE SKIP LOCKED/);
   assert.match(worker,/lease_until/);
   assert.match(worker,/lease_token/);
+  assert.match(worker,/setInterval\(/);
+  assert.match(worker,/lease renewal failed/);
   assert.match(worker,/SYNC_JOB_MAX_ATTEMPTS = 5/);
   assert.match(worker,/lease_expired_after_max_attempts/);
   assert.match(worker,/recordScheduledFailure/);
