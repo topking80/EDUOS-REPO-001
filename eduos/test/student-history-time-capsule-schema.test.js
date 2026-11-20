@@ -50,6 +50,8 @@ test("media attachments reference the existing private media registry, never bin
 
 test("capsule items bind to same-student history and retain a specific entry revision", () => {
   assert.ok(migration.includes("entry_revision_no integer NOT NULL CHECK (entry_revision_no >= 1)"));
+  assert.ok(migration.includes("FOREIGN KEY (district_id, entry_id, entry_revision_no)"));
+  assert.ok(migration.includes("REFERENCES student_history_entry_revisions(district_id, entry_id, revision_no)"));
   assert.ok(migration.includes("FOREIGN KEY (district_id, school_id, student_id, entry_id)"));
   assert.ok(migration.includes("FOREIGN KEY (district_id, school_id, student_id, capsule_id)"));
   assert.ok(migration.includes("FOREIGN KEY (district_id, recipient_user_id) REFERENCES memberships"));
