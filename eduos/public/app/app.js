@@ -1910,7 +1910,7 @@ VIEWS.node = async () => {
 const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API", powerschool: "PowerSchool SIS" };
 const CONNECTOR_STATUS = { pending_approval: ["expected", "Needs approval"], active: ["present", "Active"], disabled: ["not_started", "Off"] };
 const REJECT_TEXT = { duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
-  no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id",\n  invalid_school_id: "invalid school id", missing_student_id: "no student id", missing_student_number: "no student number" };
+  no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id", invalid_school_id: "invalid school id", missing_student_id: "no student id", missing_student_number: "no student number" };
 VIEWS.integrations = async () => {
   const r = await api.get("/api/integrations/connectors");
   const { enabled, connectors = [], schools = [] } = r.data;
