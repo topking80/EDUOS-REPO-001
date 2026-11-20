@@ -50,6 +50,14 @@ export function normalizeStudent(s, schoolExternalId) {
   } };
 }
 
+export function studentRosterUrl(baseUrl, schoolId) {
+  const query = new URLSearchParams({
+    q: "school_enrollment.enroll_status==(A)",
+    expansions: "school_enrollment",
+  });
+  return `${baseUrl.replace(/\\/+$/, "")}/ws/v1/school/${encodeURIComponent(schoolId)}/student?${query}`;
+}
+
 async function collect(url, token, options, collection, item, maxRecords) {
   const out = [];
   for (let page = 1; page <= MAX_PAGES; page++) {
@@ -73,7 +81,7 @@ export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, s
     if (!normalized.school) { rejected.push(normalized.rejected); continue; }
     schools.push(normalized.school);
     const schoolId = normalized.school.externalId;
-    const studentRows = await collect(`${base}/ws/v1/school/${encodeURIComponent(schoolId)}/student`,
+    const studentRows = await collect(studentRosterUrl(base, schoolId),
       token, options, "students", "student", MAX_STUDENTS - students.length);
     for (const rawStudent of studentRows) {
       const result = normalizeStudent(rawStudent, schoolId);
