@@ -54,7 +54,7 @@ async function enqueueDue(tx, districtId) {
 
 async function claimJob(tx, districtId) {
   return tx(districtId, async c => {
-    const expired=await c.query("UPDATE integration_sync_jobs SET status='failed',last_error='lease_expired_after_max_attempts',lease_until=NULL,lease_token=NULL,finished_at=now() WHERE district_id=$1 AND status='processing' AND lease_until<now() AND attempts>=$2 RETURNING id,connector_id",[districtId,SYNC_JOB_MAX_ATTEMPTS]);
+    const expired=await c.query("UPDATE integration_sync_jobs SET status='failed',last_error='lease_expired_after_max_attempts',lease_until=NULL,lease_token=NULL,finished_at=now() WHERE district_id=$1 AND status='processing' AND lease_until<now() AND attempts>=$2 RETURNING id,connector_id,schedule_id",[districtId,SYNC_JOB_MAX_ATTEMPTS]);
     if(expired.rowCount){
       const actor=(await c.query("SELECT id FROM integration_service_actors WHERE actor_key='sis_scheduler'")).rows[0];
       if(actor){
@@ -99,8 +99,10 @@ async function recordScheduledFailure(tx,districtId,serviceActorId,job,runId,err
   return tx(districtId,async c=>{
     const held=await c.query("SELECT id FROM integration_sync_jobs WHERE id=$1 AND district_id=$2 AND status='processing' AND lease_token=$3 FOR UPDATE",[job.id,districtId,job.lease_token]);
     if(!held.rowCount)return false;
+    const approval=(await c.query("SELECT approved_by,approved_at FROM integration_sync_schedules WHERE id=$1 AND district_id=$2",[job.schedule_id,districtId])).rows[0];
+    if(!approval)return false;
     const code=String(error.code||"scheduled_sync_failed").slice(0,300);
-    await c.query("INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,started_at,finished_at,error) VALUES($1,$2,$3,'apply','failed',NULL,$4,now(),now(),$5)",[runId,districtId,job.connector_id,serviceActorId,code]);
+    await c.query("INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,schedule_id,scheduled_job_id,schedule_approved_by,schedule_approved_at,started_at,finished_at,error) VALUES($1,$2,$3,'apply','failed',NULL,$4,$5,$6,$7,$8,now(),now(),$9)",[runId,districtId,job.connector_id,serviceActorId,job.schedule_id,job.id,approval.approved_by,approval.approved_at,code]);
     await c.query("UPDATE integration_connectors SET last_sync_at=now(),last_sync_status='failed' WHERE id=$1",[job.connector_id]);
     await c.query("INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id) VALUES($1,NULL,$2,'sis_scheduler','scheduled_sync','integration_connector',$3,'failure',$4,$5)",[districtId,serviceActorId,job.connector_id,code,job.id]);
     return true;
