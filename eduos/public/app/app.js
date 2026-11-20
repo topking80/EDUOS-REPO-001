@@ -1983,7 +1983,12 @@ VIEWS.integrations = async () => {
         h("button", { class: "btn small", type: "button", onclick: async () => {
           const secret = await ask({ title: `New client secret for ${c.name}`, text: "It's stored encrypted. The connector then needs approval again.", label: "Client secret", confirm: "Save", maxlength: 2000 });
           if (secret) try { await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { clientSecret: secret }); toast("Saved. It needs approval again."); reload(); } catch { toast("Couldn't save."); } } }, "Change secret"),
-        c.status !== "disabled" ? h("button", { class: "btn small", type: "button", onclick: () => act("disable", "Turned off", "Couldn't turn it off.") }, "Turn off") : null),
+        c.status !== "disabled" ? h("button", { class: "btn small", type: "button", onclick: async () => {
+          try { const result = await api.post(`/api/integrations/connectors/${c.id}/disable`, {});
+            toast(c.kind === "canvas" && result.data.canvasTokenRevoked === false ? "Turned off locally; disable the Canvas developer key to revoke access." : "Turned off.");
+            reload();
+          } catch { toast("Could not turn it off."); }
+        } }, "Turn off") : null),
       slot);
   };
   out.push(h("section", { class: "card", "aria-label": "Connectors" }, h("h2", {}, "Connectors"),
