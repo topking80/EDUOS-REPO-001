@@ -153,6 +153,10 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
         AND m.role=eduos_ctx_role() AND m.school_id IS NOT DISTINCT FROM eduos_ctx_school()
         AND m.status='active'
     )
+    -- Human contributors cannot forge educator-authored notes or system milestones.
+    -- System milestones must be created by a future trusted system-only path.
+    AND p_entry_type <> 'system_milestone'
+    AND (p_entry_type <> 'educator_note' OR eduos_ctx_role()='teacher')
     AND CASE eduos_ctx_role()
       WHEN 'pupil' THEN p_visibility IN ('private','family') AND EXISTS (
         SELECT 1 FROM student_user_links l WHERE l.district_id=p_district
