@@ -8,7 +8,7 @@ The existing `src/lti.js` contains LTI 1.3 building blocks: RS256 platform-key l
 
 ## Product commitment
 
-EduOS is the LTI 1.3 platform. Its purpose is to let districts connect approved, independent third-party educational applications that implement the LTI standard. Those applications act as LTI tools; EduOS initiates and governs launches, scopes, and permitted data exchange. Canvas LMS is a competing learning-management product, not an EduOS dependency, integration target, or required certification partner. References to Canvas in this plan are illustrative examples of an ecosystem participant that supports LTI—not a commitment to integrate Canvas itself. Protocol behavior must remain vendor-neutral and be tested with standards-conformant third-party tools and independent LTI test fixtures.
+EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiates and governs those tool launches, scopes, and permitted data exchange. **Canvas LMS is a destination launched by EduOS, not an LTI tool that EduOS launches as an LTI platform.** Canvas is registered in the existing EduOS app catalog as an `oidc_sso` (when the district has configured Canvas to federate with its district identity provider) or `link` app. See [Canvas LMS launch configuration](CANVAS-LMS-LAUNCH.md). This LTI Core implementation remains vendor-neutral for actual LTI tools and is not the Canvas connector.
 
 ## Required protocol support
 
