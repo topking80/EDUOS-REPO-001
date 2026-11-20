@@ -249,9 +249,9 @@ export function registerIntegrationRoutes(app) {
     try{
       const data=await withTenantTransaction(req.actor,async c=>{
         const s=await one(c,
-          `UPDATE integration_sync_schedules SET paused_at=now(),pause_reason=$3,next_run_at=NULL,updated_by=$4,updated_at=now()
+          `UPDATE integration_sync_schedules SET paused_at=now(),pause_reason=$3,next_run_at=NULL,updated_at=now()
             WHERE connector_id=$1 AND district_id=$2 RETURNING id,enabled,paused_at,pause_reason`,
-          [req.params.id,req.actor.districtId,reason,req.actor.userId]);
+          [req.params.id,req.actor.districtId,reason]);
         if(!s)throw new HttpError(404,"schedule_not_found");
         await audit(c,req,"pause","integration_sync_schedule",s.id,reason);
         return s;
@@ -265,10 +265,9 @@ export function registerIntegrationRoutes(app) {
     try{
       const data=await withTenantTransaction(req.actor,async c=>{
         const changed=await rows(c,
-          `UPDATE integration_sync_schedules SET paused_at=now(),pause_reason=$2,next_run_at=NULL,
-             updated_by=$3,updated_at=now()
+          `UPDATE integration_sync_schedules SET paused_at=now(),pause_reason=$2,next_run_at=NULL,updated_at=now()
             WHERE district_id=$1 AND enabled=true AND paused_at IS NULL RETURNING id`,
-          [req.actor.districtId,reason,req.actor.userId]);
+          [req.actor.districtId,reason]);
         await audit(c,req,"pause_all","integration_sync_schedule",req.actor.districtId,`count=${changed.length}; ${reason}`);
         return {paused:changed.length};
       });
@@ -281,14 +280,13 @@ export function registerIntegrationRoutes(app) {
     try{
       const data=await withTenantTransaction(req.actor,async c=>{
         const s=await one(c,
-          `UPDATE integration_sync_schedules s SET paused_at=NULL,pause_reason=NULL,next_run_at=now(),
-             updated_by=$3,updated_at=now()
+          `UPDATE integration_sync_schedules s SET paused_at=NULL,pause_reason=NULL,next_run_at=now(),updated_at=now()
             FROM integration_connectors x
            WHERE s.connector_id=$1 AND s.district_id=$2 AND x.id=s.connector_id AND x.district_id=s.district_id
              AND s.enabled=true AND s.approved_by IS NOT NULL AND x.status='active'
              AND s.config_version=x.config_version
            RETURNING s.id,s.enabled,s.next_run_at`,
-          [req.params.id,req.actor.districtId,req.actor.userId]);
+          [req.params.id,req.actor.districtId]);
         if(!s)throw new HttpError(409,"schedule_not_approved_or_connector_stale");
         await audit(c,req,"resume","integration_sync_schedule",s.id);
         return s;
