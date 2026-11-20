@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const migration = readFileSync(new URL("../db/086_student_history_time_capsule.sql", import.meta.url), "utf8");
 const grants = readFileSync(new URL("../db/runtime_grants.template.sql", import.meta.url), "utf8");
 const migrationDocs = readFileSync(new URL("../docs/MIGRATIONS.md", import.meta.url), "utf8");
+const shippedMigrationNames = readdirSync(new URL("../db/", import.meta.url)).filter(name => /^\\d{3}_[a-z0-9_]+\\.sql$/.test(name)).sort();
 
 const tables = [
   "student_history_entries",
@@ -61,15 +62,21 @@ test("history authors, revision actors, and capsule owners/recipients are distri
 
 test("runtime role gets only the operations required by TC-01 and no destructive privileges", () => {
   for (const table of ["student_history_entries", "student_time_capsules"]) {
-    assert.ok(grants.includes(`GRANT SELECT, INSERT, UPDATE ON ${table} TO eduos_app`));
+    assert.ok(grants.includes(table === "student_history_entries" ? "GRANT SELECT, INSERT ON student_history_entries TO eduos_app" : `GRANT SELECT, INSERT, UPDATE ON ${table} TO eduos_app`));
     assert.ok(grants.includes(`REVOKE DELETE, TRUNCATE ON ${table} FROM eduos_app`));
   }
   for (const table of ["student_history_entry_revisions", "student_history_entry_attachments", "student_time_capsule_items", "student_time_capsule_events"]) {
     assert.ok(grants.includes(`GRANT SELECT, INSERT ON ${table} TO eduos_app`));
     assert.ok(grants.includes(`REVOKE UPDATE, DELETE, TRUNCATE ON ${table} FROM eduos_app`));
   }
-  assert.ok(grants.includes("GRANT SELECT, INSERT, UPDATE ON student_time_capsule_recipients TO eduos_app"));
+  assert.ok(grants.includes("GRANT SELECT, INSERT ON student_time_capsule_recipients TO eduos_app"));
+  assert.ok(grants.includes("GRANT UPDATE (consent_status, updated_at) ON student_time_capsule_recipients TO eduos_app"));
+  assert.ok(grants.includes("GRANT UPDATE (title, message, status, release_kind, release_at, milestone_key, timezone, sealed_at, released_at, cancelled_at, updated_at)"));
   assert.ok(grants.includes("REVOKE DELETE, TRUNCATE ON student_time_capsule_recipients FROM eduos_app"));
+});
+
+test("TC-01 migration is picked up by automatic discovery without editing the fixed legacy list", () => {
+  assert.ok(shippedMigrationNames.includes("086_student_history_time_capsule.sql"));
 });
 
 test("migration guide explains automatic numbered migration discovery and forward-only recovery", () => {
