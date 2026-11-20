@@ -89,6 +89,7 @@ REVOKE DELETE, TRUNCATE ON schools, users, memberships, district_users FROM eduo
 -- are append-only.
 GRANT SELECT, INSERT, UPDATE ON district_settings TO eduos_app;
 GRANT SELECT, INSERT, UPDATE ON app_licenses, app_assignments, app_requests TO eduos_app;
+REVOKE INSERT, UPDATE ON apps FROM eduos_app;
 GRANT SELECT ON apps TO eduos_app;
 GRANT INSERT (district_id,owner_school_id,name,vendor,description,category,launch_url,integration_type,integration_config,
               data_sharing_scope,dpa_status,dpa_expires_on,coppa_compliant,ferpa_school_official,created_by) ON apps TO eduos_app;
