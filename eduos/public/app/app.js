@@ -1976,8 +1976,8 @@ VIEWS.integrations = async () => {
         c.kind === "canvas" && c.status === "active" ? h("button", { class: "btn small", type: "button", onclick: async () => {
           try { const s = (await api.get(`/api/integrations/connectors/${c.id}/canvas/status`)).data;
             if (!s.connected) { toast("Canvas isn't connected yet."); return; }
-            if (!(await ask({ title: "Disconnect Canvas?", text: "EduOS will delete its stored Canvas tokens. A district administrator must also revoke the developer key in Canvas if full revocation is required.", confirm: "Disconnect" }))) return;
-            await api.post(`/api/integrations/connectors/${c.id}/canvas/disconnect`, {}); toast("Canvas disconnected."); reload();
+            if (!(await ask({ title: "Disconnect Canvas?", text: "EduOS will revoke the current Canvas token, delete stored tokens, and require a second district lead to approve before reconnecting. Disable the developer key in Canvas for full application revocation.", confirm: "Disconnect" }))) return;
+            const result = await api.post(`/api/integrations/connectors/${c.id}/canvas/disconnect`, {}); toast(result.data.canvasTokenRevoked ? "Canvas disconnected. A second district lead must approve before reconnecting." : "Local tokens deleted. Canvas token revocation could not be confirmed; disable the developer key in Canvas."); reload();
           } catch { toast("Couldn't disconnect Canvas."); }
         } }, "Disconnect Canvas") : null,
         h("button", { class: "btn small", type: "button", onclick: async () => {
