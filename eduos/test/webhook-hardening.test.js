@@ -40,6 +40,29 @@ test("a short Retry-After is waited out in the call; a long one ends the call's 
   assert.equal(a.length, 1); assert.deepEqual(waited, []); assert.equal(a[0].retryAfterSeconds, 120);
 });
 
+test("HTTP 408 responses are retried as transient failures; permanent 4xx responses are not", async () => {
+  const subscription = { id: "s", url: "https://hooks.example.test/x" };
+  const base = { subscription, secret: "s".repeat(40), eventType: "webhook.test", deliveryId: "d", body: "{}" };
+  const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+  const waits = [];
+  let calls = 0;
+  const attempts = await deliverWebhook({ ...base, options: {
+    lookup, maxAttempts: 2, sleep: async ms => waits.push(ms),
+    send: async () => (++calls === 1
+      ? { outcome: "http_error", statusCode: 408, durationMs: 1 }
+      : { outcome: "delivered", statusCode: 204, durationMs: 1 })
+  } });
+  assert.deepEqual(attempts.map(a => [a.outcome, a.statusCode]), [["http_error", 408], ["delivered", 204]]);
+  assert.deepEqual(waits, [400]);
+  calls = 0;
+  const permanent = await deliverWebhook({ ...base, options: {
+    lookup, maxAttempts: 2,
+    send: async () => { calls++; return { outcome: "http_error", statusCode: 404, durationMs: 1 }; }
+  } });
+  assert.equal(calls, 1, "a permanent 404 is not retried");
+  assert.equal(permanent.length, 1);
+});
+
 test("during a key rotation the header carries one signature per secret and either verifies", () => {
   const body = '{"type":"x"}', t = Math.floor(Date.now() / 1000);
   const header = signatureHeader(["new".padEnd(40, "n"), "old".padEnd(40, "o")], t, body);

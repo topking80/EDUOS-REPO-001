@@ -268,7 +268,7 @@ export function deliverOnce({ url, address, family, headers, body, timeoutMs = W
       response.on("end", () => {
         if (!response.complete) return finish({ outcome: "network_error", statusCode: null });
         const result = classify(response.statusCode);
-        if (response.statusCode === 429 || response.statusCode === 503) {
+        if (response.statusCode === 408 || response.statusCode === 429 || response.statusCode === 503) {
           const retryAfter = parseRetryAfter(response.headers["retry-after"]);
           if (retryAfter !== null) result.retryAfterSeconds = retryAfter;
         }
@@ -294,7 +294,7 @@ function classify(statusCode) {
 }
 
 const retryable = result => result.outcome === "timeout" || result.outcome === "network_error" ||
-  (result.outcome === "http_error" && (result.statusCode >= 500 || result.statusCode === 429));
+  (result.outcome === "http_error" && (result.statusCode === 408 || result.statusCode >= 500 || result.statusCode === 429));
 
 /**
  * Sign and deliver one event to one subscription, retrying transient
