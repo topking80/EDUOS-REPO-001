@@ -216,6 +216,15 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     assert.equal(resumedRun.code, 0, resumedRun.out);
     const afterResume = Number((await admin.query("SELECT count(*)::int AS n FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL", [or.id])).rows[0].n);
     assert.equal(afterResume, before + 1, "resume queues a fresh scheduled run");
+
+    const changed = await as("supt1")("PATCH", `/api/integrations/connectors/${or.id}`, { scope: "changed-scope" });
+    assert.equal(changed.status, 200, JSON.stringify(changed.body));
+    assert.equal(changed.body.data.status, "pending_approval");
+    const invalidated = await as("supt1")("GET", `/api/integrations/connectors/${or.id}/schedule`);
+    assert.equal(invalidated.body.data.enabled, false, "connector edits disable the previous schedule approval");
+    assert.ok(invalidated.body.data.paused_at);
+    assert.equal(invalidated.body.data.pause_reason, "connector_configuration_changed");
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_sync_jobs WHERE connector_id=$1 AND status IN ('pending','processing')", [or.id])).rows[0].n, 0);
   });
 
   it("another district sees none of it", async () => {
