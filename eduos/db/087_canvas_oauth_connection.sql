@@ -33,7 +33,10 @@ CREATE TABLE integration_canvas_oauth_grants (
   authorized_by uuid NOT NULL REFERENCES users(id),
   authorized_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
+  refresh_lease_token uuid,
+  refresh_lease_until timestamptz,
   PRIMARY KEY (district_id,connector_id),
+  CHECK ((refresh_lease_token IS NULL) = (refresh_lease_until IS NULL)),
   FOREIGN KEY (district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE
 );
 
