@@ -194,7 +194,6 @@ export function registerIntegrationRoutes(app) {
       if (existing.kind === "canvas" && existing.status === "active") {
         try { canvasAccessToken = await getCanvasAccessToken(req.actor,req.params.id); } catch { /* local disable still proceeds */ }
       }
-      const canvasTokenRevoked = existing.kind === "canvas" ? await revokeCanvasToken(existing.base_url,canvasAccessToken) : null;
       const data = await withTenantTransaction(req.actor, async (c) => {
         const r = await one(c, `UPDATE integration_connectors SET status='disabled', disabled_by=$3, disabled_at=now(), updated_by=$3, updated_at=now(), config_version=config_version+1
           WHERE id=$1 AND district_id=$2 AND status<>'disabled' RETURNING id,kind`, [req.params.id, req.actor.districtId, req.actor.userId]);
@@ -204,10 +203,16 @@ export function registerIntegrationRoutes(app) {
           await c.query("DELETE FROM integration_canvas_oauth_states WHERE district_id=$1 AND connector_id=$2",[req.actor.districtId,r.id]);
           await c.query("DELETE FROM integration_canvas_oauth_grants WHERE district_id=$1 AND connector_id=$2",[req.actor.districtId,r.id]);
         }
-        await audit(c, req, "disable", "integration_connector", r.id, r.kind === "canvas" ? "canvas_token_revoked=" + canvasTokenRevoked : null);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [r.id]));
       });
-      res.json({ data });
+      if (existing.kind === "canvas") {
+        const canvasTokenRevoked = await revokeCanvasToken(existing.base_url,canvasAccessToken);
+        await withTenantTransaction(req.actor,c => audit(c,req,"disable","integration_connector",req.params.id,"canvas_token_revoked="+canvasTokenRevoked));
+        res.json({data:{...data,canvasTokenRevoked}});
+      } else {
+        await withTenantTransaction(req.actor,c => audit(c,req,"disable","integration_connector",req.params.id));
+        res.json({data});
+      }
     } catch (e) { sendError(res, next, e); }
   });
 
