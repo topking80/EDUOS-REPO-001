@@ -26,7 +26,7 @@ test("every tenant-owned table has ENABLE and FORCE RLS plus district-scoped USI
       assert.match(sql, /FOREACH t IN ARRAY ARRAY\['integration_sync_schedules','integration_sync_jobs'\]/);
       assert.match(sql, /ALTER TABLE %I ENABLE ROW LEVEL SECURITY/);
       assert.match(sql, /ALTER TABLE %I FORCE ROW LEVEL SECURITY/);
-      assert.match(sql, /CREATE POLICY %I ON %I USING \(eduos_is_table_owner\(\) OR district_id=nullif\(current_setting\(''app\.district_id'',true\),'''\)::uuid\)/);
+      assert.match(sql, /CREATE POLICY %I ON %I USING \(eduos_is_table_owner\(\) OR district_id=nullif\(current_setting\(''app\.district_id'',true\),''''\)::uuid\)/);
     } else {
       const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       assert.match(sql, new RegExp(`ALTER TABLE ${escaped} ENABLE ROW LEVEL SECURITY`, "i"), `${table}: ENABLE RLS`);
