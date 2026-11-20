@@ -80,7 +80,7 @@ test("runtime role gets only the operations required by TC-01 and no destructive
   }
   assert.match(grants, /GRANT SELECT, INSERT ON student_time_capsules,\s*student_time_capsule_recipients TO eduos_app/);
   assert.ok(grants.includes("GRANT UPDATE (entry_type, classification, title, body, occurred_at, school_year, audience, source_reference)"));
-  assert.ok(grants.includes("GRANT UPDATE (title, message, timezone, updated_at) ON student_time_capsules TO eduos_app"));
+  assert.match(grants, /GRANT UPDATE \\(title, message, timezone, updated_at\\)\\s+ON student_time_capsules TO eduos_app/);
   assert.doesNotMatch(grants, /GRANT UPDATE \\([^)]*\\bstatus\\b[^)]*\\)\\s+ON student_history_entries TO eduos_app/);
   assert.doesNotMatch(grants, /GRANT UPDATE \\([^)]*\\b(status|release_kind|release_at|milestone_key|sealed_at|released_at|cancelled_at)\\b[^)]*\\)\\s+ON student_time_capsules TO eduos_app/);
   assert.ok(grants.includes("REVOKE UPDATE (status) ON student_history_entries FROM eduos_app"));
