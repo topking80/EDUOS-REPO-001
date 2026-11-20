@@ -97,21 +97,23 @@ export function registerCanvasOAuthRoutes(app) {
     res.setHeader("Referrer-Policy", "no-referrer");
     if (!requireManager(req, res)) return;
     try {
+      // Commit consumption separately. Throwing inside the DELETE transaction
+      // would roll it back and make denied/malformed states replayable.
+      const consumed = await withTenantTransaction(req.actor, c => one(c,
+        "DELETE FROM integration_canvas_oauth_states WHERE state_hash=$1 AND district_id=$2 RETURNING connector_id,user_id,config_version,redirect_uri,expires_at",
+        [hash(state), req.actor.districtId]));
+      const cookies = parse(req.headers.cookie || "");
+      const cookieValue = cookies[stateCookie(state)];
+      const cookieMatches = typeof cookieValue === "string" && cookieValue.length === state.length &&
+        crypto.timingSafeEqual(Buffer.from(cookieValue), Buffer.from(state));
+      if (!consumed || new Date(consumed.expires_at).getTime() <= Date.now() ||
+          consumed.user_id !== req.actor.userId || !cookieMatches)
+        throw new HttpError(400, "canvas_oauth_state_invalid");
+      if (req.query.error) throw new HttpError(400, "canvas_authorization_denied");
+      if (typeof req.query.code !== "string" || req.query.code.length < 1 || req.query.code.length > 4096)
+        throw new HttpError(400, "canvas_authorization_code_invalid");
+
       const result = await withTenantTransaction(req.actor, async c => {
-        // Consume before examining callback parameters: even denied/invalid
-        // responses cannot replay the same authorization state.
-        const consumed = await one(c,
-          "DELETE FROM integration_canvas_oauth_states WHERE state_hash=$1 AND district_id=$2 RETURNING connector_id,user_id,config_version,redirect_uri,expires_at",
-          [hash(state), req.actor.districtId]);
-        const cookies = parse(req.headers.cookie || "");
-        const cookieValue = cookies[stateCookie(state)];
-        if (!consumed || new Date(consumed.expires_at).getTime() <= Date.now() ||
-            consumed.user_id !== req.actor.userId || typeof cookieValue !== "string" ||
-            !crypto.timingSafeEqual(Buffer.from(cookieValue), Buffer.from(state)))
-          throw new HttpError(400, "canvas_oauth_state_invalid");
-        if (req.query.error) throw new HttpError(400, "canvas_authorization_denied");
-        if (typeof req.query.code !== "string" || req.query.code.length < 1 || req.query.code.length > 4096)
-          throw new HttpError(400, "canvas_authorization_code_invalid");
         const connector = await one(c,
           "SELECT id,kind,status,base_url,token_url,client_id,client_secret_enc,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",
           [consumed.connector_id, req.actor.districtId]);
