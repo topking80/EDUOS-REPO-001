@@ -343,6 +343,8 @@ export function registerCanvasOAuthRoutes(app) {
           if(current.config_version!==snapshot.config_version)throw new HttpError(409,"canvas_connector_changed");
           await c.query("UPDATE integration_connectors SET status='pending_approval',approved_by=NULL,approved_at=NULL,updated_by=$3,updated_at=now(),config_version=config_version+1 WHERE id=$1 AND district_id=$2",[req.params.id,req.actor.districtId,req.actor.userId]);
         }
+        await c.query("UPDATE integration_sync_schedules SET enabled=false,next_run_at=NULL,paused_at=now(),approved_by=NULL,approved_at=NULL,pause_reason='canvas_disconnected',updated_at=now() WHERE connector_id=$1 AND district_id=$2",[req.params.id,req.actor.districtId]);
+        await c.query("UPDATE integration_sync_jobs SET status='cancelled',lease_until=NULL,lease_token=NULL,finished_at=now(),last_error='canvas_disconnected' WHERE connector_id=$1 AND district_id=$2 AND status IN ('pending','processing')",[req.params.id,req.actor.districtId]);
         await c.query("DELETE FROM integration_canvas_oauth_states WHERE connector_id=$1 AND district_id=$2",[req.params.id,req.actor.districtId]);
       });
       const canvasTokenRevoked = await revokeCanvasToken(snapshot.base_url,accessToken);
