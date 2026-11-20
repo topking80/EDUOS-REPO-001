@@ -328,17 +328,31 @@ export function registerCanvasOAuthRoutes(app) {
     if (!requireManager(req,res)) return;
     if (!validId(req.params.id)) return res.status(400).json({error:"invalid_connector_id"});
     try {
-      const canvasTokenRevoked = await revokeCanvasToken(req.actor,req.params.id);
+      const snapshot = await withTenantTransaction(req.actor,c => one(c,
+        "SELECT id,kind,base_url,status,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2",[req.params.id,req.actor.districtId]));
+      if (!snapshot) throw new HttpError(404,"connector_not_found");
+      if (snapshot.kind !== "canvas") throw new HttpError(409,"not_a_canvas_connector");
+      let accessToken = null;
+      if (snapshot.status === "active") {
+        try { accessToken = await getCanvasAccessToken(req.actor,req.params.id); } catch { /* still allow local disconnect */ }
+      }
       await withTenantTransaction(req.actor,async c=>{
-        const connector=await one(c,"SELECT id,kind FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,req.actor.districtId]);
-        if(!connector)throw new HttpError(404,"connector_not_found");
-        if(connector.kind!=="canvas")throw new HttpError(409,"not_a_canvas_connector");
-        await c.query("DELETE FROM integration_canvas_oauth_states WHERE connector_id=$1 AND district_id=$2",[connector.id,req.actor.districtId]);
-        await c.query("DELETE FROM integration_canvas_oauth_grants WHERE connector_id=$1 AND district_id=$2",[connector.id,req.actor.districtId]);
-        await audit(c,req,"canvas_oauth_disconnect","integration_canvas_oauth_grant",connector.id,`Local Canvas tokens and pending authorization states deleted; canvas_token_revoked=${canvasTokenRevoked}; district must revoke the developer key in Canvas if full revocation is required`);
+        const current=await one(c,"SELECT status,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,req.actor.districtId]);
+        if(!current)throw new HttpError(404,"connector_not_found");
+        if(current.status==="active") {
+          if(current.config_version!==snapshot.config_version)throw new HttpError(409,"canvas_connector_changed");
+          await c.query("UPDATE integration_connectors SET status='pending_approval',approved_by=NULL,approved_at=NULL,updated_by=$3,updated_at=now(),config_version=config_version+1 WHERE id=$1 AND district_id=$2",[req.params.id,req.actor.districtId,req.actor.userId]);
+        }
+        await c.query("DELETE FROM integration_canvas_oauth_states WHERE connector_id=$1 AND district_id=$2",[req.params.id,req.actor.districtId]);
+      });
+      const canvasTokenRevoked = await revokeCanvasToken(snapshot.base_url,accessToken);
+      await withTenantTransaction(req.actor,async c=>{
+        await c.query("DELETE FROM integration_canvas_oauth_grants WHERE connector_id=$1 AND district_id=$2",[req.params.id,req.actor.districtId]);
+        await audit(c,req,"canvas_oauth_disconnect","integration_canvas_oauth_grant",req.params.id,
+          "Local Canvas tokens deleted; canvas_token_revoked="+canvasTokenRevoked+"; connector requires independent reapproval before reconnect");
       });
       res.setHeader("Cache-Control","no-store");
-      res.json({data:{connected:false,canvasTokenRevoked,canvasDeveloperKeyRevocationRequired:true}});
+      res.json({data:{connected:false,canvasTokenRevoked,reapprovalRequired:true,canvasDeveloperKeyRevocationRequired:true}});
     }catch(e){sendError(res,next,e);}
   });
 }
