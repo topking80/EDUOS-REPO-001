@@ -22,7 +22,7 @@ test("PowerSchool student normalization maps active roster fields only", () => {
   assert.equal(powerschool.normalizeStudent({ id: 1, student_number: "1", first_name: "A", enroll_status: -1 }, "12").skipped, true);
   assert.equal(powerschool.normalizeStudent({ id: 5, student_number: "5", first_name: "A", school_enrollment: { enroll_status: "W" } }, "12").skipped, true);
   assert.ok(powerschool.normalizeStudent({ id: 6, student_number: "6", first_name: "A", school_enrollment: { enroll_status: "A" } }, "12").student);
-  assert.equal(powerschool.normalizeStudent({ id: 2, student_number: "2" }, "12").rejected.reason, "missing_name");
+  assert.equal(powerschool.normalizeStudent({ id: 2, student_number: "2", enroll_status: "A" }, "12").rejected.reason, "missing_name");
   assert.equal(powerschool.normalizeStudent({ id: 3, first_name: "A", enroll_status: "A" }, "12").rejected.reason, "missing_student_number");
   assert.equal(powerschool.normalizeStudent({ id: 7, student_number: "7", first_name: "A" }, "12").rejected.reason, "missing_enrollment_status");
   assert.equal(powerschool.normalizeStudent({ student_number: "4", first_name: "A" }, "12").rejected.reason, "missing_student_id");
