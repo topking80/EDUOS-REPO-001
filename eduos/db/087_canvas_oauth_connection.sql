@@ -42,10 +42,10 @@ CREATE TABLE integration_canvas_oauth_grants (
   FOREIGN KEY (district_id,authorized_by) REFERENCES district_users(district_id,user_id)
 );
 
-DO $ DECLARE t text; BEGIN
+DO $canvas$ DECLARE t text; BEGIN
   FOREACH t IN ARRAY ARRAY['integration_canvas_oauth_states','integration_canvas_oauth_grants'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY',t);
     EXECUTE format('CREATE POLICY %I ON %I USING (eduos_is_table_owner() OR district_id = nullif(current_setting(''app.district_id'',true),'''')::uuid) WITH CHECK (eduos_is_table_owner() OR district_id = nullif(current_setting(''app.district_id'',true),'''')::uuid)',t||'_tenant_scope',t);
   END LOOP;
-END $$;
+END $canvas$;
