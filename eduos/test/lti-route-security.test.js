@@ -37,6 +37,12 @@ test("LTI authorization revalidates the live tool registration at callback time"
   assert.match(source, /lti_configuration_invalid/);
 });
 
+test("LTI launch binds the encrypted hint to the exact registration and rejects mid-flight changes", () => {
+  assert.match(source, /c: ltiConfigFingerprint\(cfg\)/);
+  assert.match(source, /ltiConfigFingerprint\(cfg\) !== hint\.c/);
+  assert.match(source, /lti_registration_changed/);
+});
+
 test("LTI authorization requires non-empty OIDC nonce and state", () => {
   assert.match(source, /typeof p\.nonce !== "string" \|\| p\.nonce\.length < 1/);
   assert.match(source, /typeof p\.state !== "string" \|\| p\.state\.length < 1/);
