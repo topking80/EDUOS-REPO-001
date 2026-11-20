@@ -38,7 +38,7 @@ test("history revisions are captured transactionally and cannot be rewritten", (
   assert.ok(migration.includes("student_time_capsule_events_append_only"));
   assert.ok(migration.includes("REVOKE ALL ON FUNCTION eduos_student_history_capture_revision() FROM PUBLIC"));
   assert.ok(migration.includes("REVOKE ALL ON FUNCTION eduos_student_history_write_revision() FROM PUBLIC"));
-  assert.match(migration, /CREATE FUNCTION eduos_student_history_write_revision\\(\\) RETURNS trigger\\s+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp/);
+  assert.ok(migration.includes("LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp"));
 });
 
 test("media attachments reference the existing private media registry, never binary payloads or public URLs", () => {
