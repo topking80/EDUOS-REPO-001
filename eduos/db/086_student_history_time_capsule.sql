@@ -218,7 +218,7 @@ END;
 $$;
 
 CREATE FUNCTION eduos_student_history_write_revision() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   actor_id uuid := nullif(current_setting('app.user_id', true), '')::uuid;
 BEGIN
