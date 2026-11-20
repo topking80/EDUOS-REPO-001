@@ -17,7 +17,7 @@ import * as oneroster from "./oneroster.js";
 import * as edfi from "./edfi.js";
 import * as powerschool from "./powerschool.js";
 import * as canvas from "./canvas.js";
-import { registerCanvasOAuthRoutes, revokeCanvasToken } from "./canvas-oauth.js";
+import { registerCanvasOAuthRoutes, getCanvasAccessToken, revokeCanvasToken } from "./canvas-oauth.js";
 import { planImport, loadPlanInputs, applyPlan } from "./sync.js";
 
 const MANAGERS = ["superintendent", "it_admin"];
@@ -188,9 +188,13 @@ export function registerIntegrationRoutes(app) {
   app.post(`${base}/:id/disable`, requireSession, requireCsrf, manager, async (req, res, next) => {
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
     try {
-      const existing = await withTenantTransaction(req.actor,c => one(c,"SELECT kind FROM integration_connectors WHERE id=$1 AND district_id=$2",[req.params.id,req.actor.districtId]));
+      const existing = await withTenantTransaction(req.actor,c => one(c,"SELECT kind,base_url,status FROM integration_connectors WHERE id=$1 AND district_id=$2",[req.params.id,req.actor.districtId]));
       if (!existing) throw new HttpError(404,"connector_not_found");
-      const canvasTokenRevoked = existing.kind === "canvas" ? await revokeCanvasToken(req.actor,req.params.id) : null;
+      let canvasAccessToken = null;
+      if (existing.kind === "canvas" && existing.status === "active") {
+        try { canvasAccessToken = await getCanvasAccessToken(req.actor,req.params.id); } catch { /* local disable still proceeds */ }
+      }
+      const canvasTokenRevoked = existing.kind === "canvas" ? await revokeCanvasToken(existing.base_url,canvasAccessToken) : null;
       const data = await withTenantTransaction(req.actor, async (c) => {
         const r = await one(c, `UPDATE integration_connectors SET status='disabled', disabled_by=$3, disabled_at=now(), updated_by=$3, updated_at=now(), config_version=config_version+1
           WHERE id=$1 AND district_id=$2 AND status<>'disabled' RETURNING id,kind`, [req.params.id, req.actor.districtId, req.actor.userId]);
