@@ -66,7 +66,7 @@ function fakeCanvasOAuth() {
     let body = ""; for await (const chunk of req) body += chunk;
     const form = new URLSearchParams(body); seen.push(Object.fromEntries(form));
     if (form.get("grant_type") !== "authorization_code" || form.get("client_id") !== "canvas-client" ||
-        form.get("client_secret") !== "canvas-secret" || form.get("redirect_uri") !== "https://eduos.test/api/integrations/canvas/callback")
+        form.get("client_secret") !== "canvas-secret" || form.get("redirect_uri") !== "http://localhost/api/integrations/canvas/callback")
       return send(401, { error: "invalid_grant" });
     return send(200, { access_token: "canvas-access-secret", refresh_token: "canvas-refresh-secret",
       token_type: "Bearer", expires_in: 3600, user: { id: 9876, name: "District Canvas Admin" } });
