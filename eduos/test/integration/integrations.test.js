@@ -198,6 +198,9 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     assert.ok(serviceRun.scheduled_job_id);
     assert.ok(serviceRun.schedule_approved_by, "human schedule approver is retained on the run");
     assert.ok(serviceRun.schedule_approved_at);
+    const scheduledHistory = (await as("supt1")("GET", `/api/integrations/connectors/${or.id}/runs`)).body.data;
+    assert.ok(scheduledHistory[0].schedule_approved_by);
+    assert.ok(scheduledHistory[0].schedule_approved_at);
     const sisRun = (await admin.query(
       "SELECT initiated_by,initiated_by_service FROM sis_sync_runs WHERE source_system=$1 AND initiated_by_service IS NOT NULL LIMIT 1",
       [`oneroster:${or.id}`])).rows[0];
