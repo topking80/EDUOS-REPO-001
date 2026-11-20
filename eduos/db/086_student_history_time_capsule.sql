@@ -261,10 +261,10 @@ CREATE TRIGGER student_history_entry_revision_snapshot
   AFTER INSERT OR UPDATE ON student_history_entries
   FOR EACH ROW EXECUTE FUNCTION eduos_student_history_write_revision();
 CREATE TRIGGER student_history_revisions_append_only
-  BEFORE UPDATE OR DELETE ON student_history_entry_revisions
+  BEFORE UPDATE ON student_history_entry_revisions
   FOR EACH ROW EXECUTE FUNCTION eduos_student_history_reject_immutable_mutation();
 CREATE TRIGGER student_time_capsule_events_append_only
-  BEFORE UPDATE OR DELETE ON student_time_capsule_events
+  BEFORE UPDATE ON student_time_capsule_events
   FOR EACH ROW EXECUTE FUNCTION eduos_student_history_reject_immutable_mutation();
 
 -- RLS is enforced at both district and originating-school boundaries. A
