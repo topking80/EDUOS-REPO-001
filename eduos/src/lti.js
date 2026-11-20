@@ -130,6 +130,13 @@ export function launchClaims({ key, issuer, app, launch, user, school, nonce, no
   return claims;
 }
 
+export function ltiConfigFingerprint(cfg) {
+  if (!cfg || typeof cfg !== "object" || !Array.isArray(cfg.redirectUris))
+    throw new TypeError("invalid LTI registration configuration");
+  const registration = [cfg.clientId, cfg.deploymentId, cfg.loginUrl, [...cfg.redirectUris], cfg.targetLinkUri];
+  return crypto.createHash("sha256").update(JSON.stringify(registration)).digest("base64url");
+}
+
 export function validLtiConfig(cfg, { allowInsecureLoopback = process.env.NODE_ENV !== "production" } = {}) {
   // Development may use HTTP only for literal loopback hosts. Production
   // requires HTTPS everywhere; credentials and fragments are never valid.
