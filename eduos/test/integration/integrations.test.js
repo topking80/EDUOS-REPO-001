@@ -333,6 +333,18 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       assert.equal(JSON.stringify(status.body).includes("canvas-access-secret"), false);
       assert.equal(JSON.stringify(status.body).includes("canvas-refresh-secret"), false);
  
+      const secondStart = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
+      const secondState = new URL(secondStart.body.data.authorizationUrl).searchParams.get("state");
+      const secondCookie = (secondStart.headers.get("set-cookie") || "").match(/(eduos_canvas_state_[^=]+=[^;,]+)/)?.[1];
+      assert.ok(secondCookie);
+      const wrongBrowser = await fetch(`${server.base}/api/integrations/canvas/callback?code=wrong-user&state=${encodeURIComponent(secondState)}`, {
+        headers: { cookie: `${s.supt1b.cookie}; ${secondCookie}` }, redirect: "manual"
+      });
+      assert.equal(wrongBrowser.status,400,"another district administrator cannot complete this user authorization");
+      const wrongUserReplay = await fetch(`${server.base}/api/integrations/canvas/callback?code=retry&state=${encodeURIComponent(secondState)}`, {
+        headers: { cookie: `${s.supt1.cookie}; ${secondCookie}` }, redirect: "manual"
+      });
+      assert.equal(wrongUserReplay.status,400,"failed browser/user binding still consumes OAuth state");
       const changed = await as("supt1")("PATCH", `/api/integrations/connectors/${id}`, { clientSecret: "rotated-canvas-secret" });
       assert.equal(changed.status, 200, JSON.stringify(changed.body));
       assert.equal(changed.body.data.status, "pending_approval");
