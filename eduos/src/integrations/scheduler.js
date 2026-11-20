@@ -53,6 +53,7 @@ async function enqueueDue(tx, districtId) {
 
 async function claimJob(tx, districtId) {
   return tx(districtId, async c => {
+    await c.query("UPDATE integration_sync_jobs SET status='failed',last_error='lease_expired_after_max_attempts',lease_until=NULL,lease_token=NULL,finished_at=now() WHERE district_id=$1 AND status='processing' AND lease_until<now() AND attempts>=$2",[districtId,SYNC_JOB_MAX_ATTEMPTS]);
     const picked = await c.query(
       `SELECT id FROM integration_sync_jobs
         WHERE district_id=$1 AND attempts<$2
