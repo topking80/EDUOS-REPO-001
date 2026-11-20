@@ -104,15 +104,16 @@ test("launch claims limit identity and context to the approved data scope", () =
 
 test("LTI registration fingerprint changes when any trust-boundary setting changes", () => {
   const cfg = { clientId: "client-a", deploymentId: "deployment-a", loginUrl: "https://tool.example/login", redirectUris: ["https://tool.example/callback"], targetLinkUri: "https://tool.example/launch" };
-  const fingerprint = ltiConfigFingerprint(cfg);
-  assert.equal(ltiConfigFingerprint({ ...cfg }), fingerprint);
+  const fingerprint = ltiConfigFingerprint(cfg, "none");
+  assert.equal(ltiConfigFingerprint({ ...cfg }, "none"), fingerprint);
   for (const changed of [
     { ...cfg, clientId: "client-b" },
     { ...cfg, deploymentId: "deployment-b" },
     { ...cfg, loginUrl: "https://other.example/login" },
     { ...cfg, redirectUris: ["https://other.example/callback"] },
     { ...cfg, targetLinkUri: "https://other.example/launch" }
-  ]) assert.notEqual(ltiConfigFingerprint(changed), fingerprint);
+  ]) assert.notEqual(ltiConfigFingerprint(changed, "none"), fingerprint);
+  assert.notEqual(ltiConfigFingerprint(cfg, "identity"), fingerprint);
 });
 
 test("LTI tool configuration requires HTTPS endpoints and bounded redirect lists", () => {
