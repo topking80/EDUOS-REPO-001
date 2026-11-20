@@ -89,3 +89,7 @@ test("changing an LTI data-sharing scope invalidates approval in PostgreSQL", ()
   assert.match(approvalMigration, /OLD\.data_sharing_scope IS DISTINCT FROM NEW\.data_sharing_scope/);
   assert.match(approvalMigration, /UPDATE OF integration_type, integration_config, data_sharing_scope ON apps/);
 });
+
+test("LTI approval requires a different district administrator from the app creator", () => {
+  assert.match(approvalMigration, /created_by IS DISTINCT FROM actor_id/);
+});
