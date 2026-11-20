@@ -248,6 +248,7 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     assert.equal(invalidated.body.data.enabled, false, "connector edits disable the previous schedule approval");
     assert.ok(invalidated.body.data.paused_at);
     assert.equal(invalidated.body.data.pause_reason, "connector_configuration_changed");
+    assert.equal(invalidated.body.data.approved_at, null, "old schedule approval is invalidated");
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_sync_jobs WHERE connector_id=$1 AND status IN ('pending','processing')", [or.id])).rows[0].n, 0);
   });
 
