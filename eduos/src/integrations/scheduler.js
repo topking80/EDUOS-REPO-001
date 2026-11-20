@@ -59,8 +59,10 @@ async function claimJob(tx, districtId) {
       const actor=(await c.query("SELECT id FROM integration_service_actors WHERE actor_key='sis_scheduler'")).rows[0];
       if(actor){
         for(const failed of expired.rows){
+          const approval=(await c.query("SELECT approved_by,approved_at FROM integration_sync_schedules WHERE id=$1 AND district_id=$2",[failed.schedule_id,districtId])).rows[0];
+          if(!approval)continue;
           const runId=crypto.randomUUID();
-          await c.query("INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,started_at,finished_at,error) VALUES($1,$2,$3,'apply','failed',NULL,$4,now(),now(),'lease_expired_after_max_attempts')",[runId,districtId,failed.connector_id,actor.id]);
+          await c.query("INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,schedule_id,scheduled_job_id,schedule_approved_by,schedule_approved_at,started_at,finished_at,error) VALUES($1,$2,$3,'apply','failed',NULL,$4,$5,$6,$7,$8,now(),now(),'lease_expired_after_max_attempts')",[runId,districtId,failed.connector_id,actor.id,failed.schedule_id,failed.id,approval.approved_by,approval.approved_at]);
           await c.query("UPDATE integration_connectors SET last_sync_at=now(),last_sync_status='failed' WHERE id=$1",[failed.connector_id]);
           await c.query("INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id) VALUES($1,NULL,$2,'sis_scheduler','scheduled_sync','integration_connector',$3,'failure','lease_expired_after_max_attempts',$4)",[districtId,actor.id,failed.connector_id,failed.id]);
         }
