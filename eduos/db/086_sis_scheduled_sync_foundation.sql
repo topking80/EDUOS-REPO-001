@@ -37,9 +37,9 @@ CREATE TABLE integration_sync_schedules (
   next_run_at timestamptz,
   paused_at timestamptz,
   pause_reason text CHECK (pause_reason IS NULL OR length(pause_reason)<=240),
-  created_by uuid NOT NULL REFERENCES users(id),
-  updated_by uuid NOT NULL REFERENCES users(id),
-  approved_by uuid REFERENCES users(id),
+  created_by uuid NOT NULL,
+  updated_by uuid NOT NULL,
+  approved_by uuid,
   approved_at timestamptz,
   config_version integer NOT NULL CHECK (config_version>=1),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -47,6 +47,9 @@ CREATE TABLE integration_sync_schedules (
   UNIQUE(district_id,connector_id),
   UNIQUE(district_id,connector_id,id),
   FOREIGN KEY(district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
+  FOREIGN KEY(district_id,created_by) REFERENCES memberships(district_id,user_id),
+  FOREIGN KEY(district_id,updated_by) REFERENCES memberships(district_id,user_id),
+  FOREIGN KEY(district_id,approved_by) REFERENCES memberships(district_id,user_id),
   CHECK (NOT enabled OR (approved_by IS NOT NULL AND approved_at IS NOT NULL AND approved_by<>updated_by)),
   CHECK ((NOT enabled OR paused_at IS NOT NULL) = (next_run_at IS NULL))
 );
