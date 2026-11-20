@@ -529,7 +529,7 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
         INSERT INTO student_time_capsule_items
           (district_id,school_id,student_id,capsule_id,entry_id,entry_revision_no,position)
         VALUES ($1,$2,$3,$4,$5,2,9)
-      `, [ID.d1, ID.s2, ID.alice, capsuleRefs.id, alice.id]));
+      `, [ID.d1, ID.s1, ID.alice, capsuleRefs.id, alice.id]));
       return counts;
     });
     assert.deepEqual(hiddenAtOtherSchool, {
