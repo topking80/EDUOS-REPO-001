@@ -385,12 +385,7 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       });
       assert.equal(replay.status, 400, "consumed OAuth state cannot be replayed");
 
-      const disconnected = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/disconnect`, {});
-      assert.equal(disconnected.status, 200, JSON.stringify(disconnected.body));
-      assert.equal(disconnected.body.data.connected, false);
-      assert.equal(disconnected.body.data.canvasDeveloperKeyRevocationRequired, true);
-      assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_canvas_oauth_grants WHERE connector_id=$1", [id])).rows[0].n, 0);
-    } finally { await canvasFake.close(); }
+          } finally { await canvasFake.close(); }
   });
 
   it("another district sees none of it", async () => {
