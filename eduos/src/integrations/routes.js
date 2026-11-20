@@ -88,6 +88,7 @@ const shape = (c) => c && ({ id: c.id, kind: c.kind, name: c.name, baseUrl: c.ba
 export function registerIntegrationRoutes(app) {
   const syncLimiter = rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false, keyGenerator: (req) => `integration-sync:${req.actor?.userId}` });
   const base = "/api/integrations/connectors";
+  registerCanvasOAuthRoutes(app);
 
   app.get(base, requireSession, async (req, res, next) => {
     if (!MANAGERS.includes(req.actor.role)) return res.status(403).json({ error: "integrations_access_denied" });
