@@ -188,12 +188,16 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     const dispatched = await run(["src/integrations/scheduler-cli.js"], { ...workerEnv, DATABASE_URL: db.appUrl });
     assert.equal(dispatched.code, 0, dispatched.out);
     const serviceRun = (await admin.query(
-      "SELECT started_by,started_by_service,status FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL ORDER BY started_at DESC LIMIT 1",
+      "SELECT started_by,started_by_service,status,schedule_id,scheduled_job_id,schedule_approved_by,schedule_approved_at FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL ORDER BY started_at DESC LIMIT 1",
       [or.id])).rows[0];
     assert.ok(serviceRun, "scheduled connector run is visible in history");
     assert.equal(serviceRun.started_by, null, "scheduler is not impersonating a user");
     assert.ok(serviceRun.started_by_service);
     assert.equal(serviceRun.status, "completed");
+    assert.ok(serviceRun.schedule_id);
+    assert.ok(serviceRun.scheduled_job_id);
+    assert.ok(serviceRun.schedule_approved_by, "human schedule approver is retained on the run");
+    assert.ok(serviceRun.schedule_approved_at);
     const sisRun = (await admin.query(
       "SELECT initiated_by,initiated_by_service FROM sis_sync_runs WHERE source_system=$1 AND initiated_by_service IS NOT NULL LIMIT 1",
       [`oneroster:${or.id}`])).rows[0];
