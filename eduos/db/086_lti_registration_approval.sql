@@ -49,7 +49,8 @@ BEGIN
     NEW.lti_revoked_by := NULL;
     NEW.lti_revoked_at := NULL;
   ELSIF OLD.integration_type IS DISTINCT FROM NEW.integration_type
-     OR OLD.integration_config IS DISTINCT FROM NEW.integration_config THEN
+     OR OLD.integration_config IS DISTINCT FROM NEW.integration_config
+     OR OLD.data_sharing_scope IS DISTINCT FROM NEW.data_sharing_scope THEN
     NEW.lti_registration_status := 'pending';
     NEW.lti_approved_config_hash := NULL;
     NEW.lti_approved_by := NULL;
@@ -61,7 +62,7 @@ BEGIN
 END;
 $$;
 CREATE TRIGGER apps_lti_approval_invalidate
-  BEFORE INSERT OR UPDATE OF integration_type, integration_config ON apps
+  BEFORE INSERT OR UPDATE OF integration_type, integration_config, data_sharing_scope ON apps
   FOR EACH ROW EXECUTE FUNCTION eduos_invalidate_lti_approval();
 
 -- Approval metadata is changed only through these tenant- and role-checked
