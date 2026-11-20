@@ -245,6 +245,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     await appDb.query("ROLLBACK");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Bad LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "lti13", integrationConfig: { clientId: "c" } })).body.error, "invalid_lti_config");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { clientSecret: "x" } })).body.error, "integration_config_must_not_hold_secrets");
+    assert.equal((await as("it")("POST", "/api/apps", { name: "Nested Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { settings: { credentials: { clientSecret: "x" } } } })).body.error, "integration_config_must_not_hold_secrets");
     const changedConfig = { ...reg.body.data.integrationConfig, redirectUris: [...reg.body.data.integrationConfig.redirectUris, `${base}/alternate`] };
     const changed = await as("it")("PATCH", `/api/apps/${reg.body.data.id}`, { integrationConfig: changedConfig });
     assert.equal(changed.status, 200); assert.equal(changed.body.data.registrationStatus, "pending", "registration changes invalidate approval");
