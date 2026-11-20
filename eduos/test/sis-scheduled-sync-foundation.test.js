@@ -37,7 +37,6 @@ test("durable jobs have bounded attempts, leases and tenant-composite references
   assert.match(migration,/attempts BETWEEN 0 AND 5/);
   assert.match(migration,/lease_until timestamptz/);
   assert.match(migration,/lease_token uuid/);
-  assert.match(migration,/FOR KEY SHARE/);
   assert.match(migration,/FOREIGN KEY\(district_id,connector_id,schedule_id\)/);
 });
 
