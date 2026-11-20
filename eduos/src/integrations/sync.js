@@ -6,7 +6,7 @@ import { applySisBatch } from "../sis-import.js";
 const MAX_REJECTED = 200;
 
 /**
- * roster: {schools, students, rejected} from a connector.
+ * roster: {schools, students, rejected, fetchedStudentRecords?} from a connector.
  * map: Map(externalSchoolId -> EduOS schoolId).
  * existing: Map(localStudentNumber -> EduOS schoolId) for numbers already in the district.
  * eduosSchools: [{id, name}] (for suggesting a mapping by exact name).
@@ -20,8 +20,6 @@ export function planImport(roster, map, existing, eduosSchools) {
     const schoolId = map.get(s.schoolExternalId);
     if (!schoolId) { unmapped.set(s.schoolExternalId, (unmapped.get(s.schoolExternalId) || 0) + 1); continue; }
     const current = existing.get(s.localStudentNumber);
-    // A student already at another EduOS school isn't moved by a sync; a
-    // transfer is done in EduOS so nobody loses access by accident.
     if (current && current !== schoolId) { rejected.push({ externalId: s.externalId, reason: "enrolled_at_another_eduos_school" }); continue; }
     if (!bySchool.has(schoolId)) bySchool.set(schoolId, []);
     bySchool.get(schoolId).push({ localStudentNumber: s.localStudentNumber, displayName: s.displayName, gradeLevel: s.gradeLevel });
@@ -32,7 +30,8 @@ export function planImport(roster, map, existing, eduosSchools) {
     suggestedSchoolId: map.get(x.externalId) ? null : byName.get(x.name.trim().toLowerCase()) || null, unmappedStudents: unmapped.get(x.externalId) || 0 }));
   for (const [externalId, n] of unmapped) if (!names.has(externalId)) externalSchools.push({ externalId, name: externalId, schoolId: null, suggestedSchoolId: null, unmappedStudents: n });
   const counts = {
-    schoolsFetched: roster.schools.length, studentsFetched: roster.students.length + roster.rejected.length,
+    schoolsFetched: roster.schools.length,
+    studentsFetched: Number.isSafeInteger(roster.fetchedStudentRecords) ? roster.fetchedStudentRecords : roster.students.length + roster.rejected.length,
     toImport: [...bySchool.values()].reduce((n, l) => n + l.length, 0),
     perSchool: Object.fromEntries([...bySchool].map(([id, l]) => [id, l.length])),
     notMapped: [...unmapped.values()].reduce((n, x) => n + x, 0), rejected: rejected.length,

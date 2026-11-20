@@ -1904,19 +1904,19 @@ VIEWS.node = async () => {
     kv("Record transfers (consent)", s.consentExceptions === "on" ? "on" : "off (default)"))));
   return out;
 };
-// District data links (src/integrations/): OneRoster 1.2 and Ed-Fi connectors.
+// District data links (src/integrations/): OneRoster 1.2, Ed-Fi and PowerSchool connectors.
 // Read-only, off until the server has INTEGRATIONS_KEY, and each connector
 // needs a second district lead's approval before it can sync.
-const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API" };
+const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API", powerschool: "PowerSchool SIS" };
 const CONNECTOR_STATUS = { pending_approval: ["expected", "Needs approval"], active: ["present", "Active"], disabled: ["not_started", "Off"] };
 const REJECT_TEXT = { duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
-  no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id" };
+  no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id", invalid_school_id: "invalid school id", missing_student_id: "no student id", missing_student_number: "no student number", missing_enrollment_status: "enrollment status unavailable" };
 VIEWS.integrations = async () => {
   const r = await api.get("/api/integrations/connectors");
   const { enabled, connectors = [], schools = [] } = r.data;
   const reload = () => go(state.tab, { push: false });
   const out = [h("h2", {}, "Data links"),
-    h("p", { class: "muted" }, "Bring student rosters in from your SIS or state system (OneRoster 1.2 or Ed-Fi). EduOS only reads from them, never sends student data out, and keeps working without them."),
+    h("p", { class: "muted" }, "Bring student rosters in from your SIS or state system (OneRoster 1.2, Ed-Fi or PowerSchool). EduOS only reads from them, never sends student data out, and keeps working without them."),
     staffDistrict() ? h("section", { class: "card", "aria-label": "Payment options" }, h("h2", {}, "Payment options"),
       h("p", { class: "small muted" }, "Connect the district's PayPal, Square or BTCPay Server account for ticket and marketplace payments."),
       h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Open payment setup")) : null];
@@ -1982,9 +1982,9 @@ VIEWS.integrations = async () => {
   const secret = field("dl-secret", "Client secret", { type: "password", maxlength: 2000, autocomplete: "new-password" });
   const hint = h("p", { class: "muted small" });
   const setHint = () => {
-    base.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/api/data" : "https://sis.district.org/ims/oneroster/rostering/v1p2";
-    token.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/oauth/token" : "https://sis.district.org/oauth/token";
-    hint.textContent = kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
+    base.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/api/data" : kind.value === "powerschool" ? "https://district.powerschool.com" : "https://sis.district.org/ims/oneroster/rostering/v1p2";
+    token.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/oauth/token" : kind.value === "powerschool" ? "https://district.powerschool.com/oauth/access_token/" : "https://sis.district.org/oauth/token";
+    hint.textContent = kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : kind.value === "powerschool" ? "Use the district SIS origin and the OAuth token URL for its installed API plugin. EduOS reads district schools and each school’s students only; verify the plugin’s GET permissions and response contract with the district before enabling." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
   };
   kind.addEventListener("change", setHint); setHint();
   out.push(h("section", { class: "card", "aria-label": "Add a data link" }, h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
