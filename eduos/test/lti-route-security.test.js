@@ -43,6 +43,14 @@ test("LTI launch binds the encrypted hint to the exact registration and rejects 
   assert.match(source, /lti_registration_changed/);
 });
 
+test("LTI launches require district approval and reapproval invalidates prior hints", () => {
+  assert.match(source, /lti_registration_status !== "approved"/);
+  assert.match(source, /lti_approved_config_hash !== ltiConfigFingerprint/);
+  assert.match(source, /lti_approval_changed/);
+  assert.match(source, /\/api\/apps\/:appId\/lti\/approve/);
+  assert.match(source, /\/api\/apps\/:appId\/lti\/revoke/);
+});
+
 test("LTI authorization requires non-empty OIDC nonce and state", () => {
   assert.match(source, /typeof p\.nonce !== "string" \|\| p\.nonce\.length < 1/);
   assert.match(source, /typeof p\.state !== "string" \|\| p\.state\.length < 1/);
