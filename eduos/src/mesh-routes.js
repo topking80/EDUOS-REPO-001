@@ -316,7 +316,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         const a = found.rows[0];
         if (a.integration_type !== "lti13" || a.status !== "active") return fail(409, "lti_registration_not_approvable");
         if (!validLtiConfig(a.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
-        const fingerprint = ltiConfigFingerprint(a.integration_config);
+        const fingerprint = ltiConfigFingerprint(a.integration_config, a.data_sharing_scope);
         const updated = await client.query(
           "SELECT * FROM eduos_lti_approve_registration($1,$2,$3)",
           [a.id, fingerprint, req.actor.userId]);
@@ -510,10 +510,10 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         const a = rows[0];
         if (a.integration_type === "lti13" && !ltiKey) return fail(503, "lti_not_configured");
         const cfg = a.integration_type === "lti13"
-          ? (await client.query("SELECT integration_config,lti_registration_status,lti_approved_config_hash,lti_approved_at FROM apps WHERE id=$1", [a.id])).rows[0]
+          ? (await client.query("SELECT integration_config,data_sharing_scope,lti_registration_status,lti_approved_config_hash,lti_approved_at FROM apps WHERE id=$1", [a.id])).rows[0]
           : null;
         if (a.integration_type === "lti13" && !validLtiConfig(cfg.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
-        if (a.integration_type === "lti13" && (cfg.lti_registration_status !== "approved" || cfg.lti_approved_config_hash !== ltiConfigFingerprint(cfg.integration_config))) return fail(409, "lti_approval_required");
+        if (a.integration_type === "lti13" && (cfg.lti_registration_status !== "approved" || cfg.lti_approved_config_hash !== ltiConfigFingerprint(cfg.integration_config, a.data_sharing_scope))) return fail(409, "lti_approval_required");
         const seat = (await client.query("SELECT eduos_claim_seat($1) AS r", [a.license_id])).rows[0].r;
         if (seat === "exhausted") return fail(409, "no_seats_available");
         if (seat !== "ok") return fail(409, "license_inactive");
@@ -524,7 +524,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         await audit(client, req, "launch", "app", a.id, { integrationType: a.integration_type, dataSharingScope: a.data_sharing_scope, launchId: launch.rows[0].id }, req.actor.schoolId || null);
         if (a.integration_type !== "lti13") return { status: 200, data: { url: a.launch_url, integrationType: a.integration_type } };
         const ltiCfg = cfg.integration_config;
-        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg), v: new Date(cfg.lti_approved_at).toISOString() });
+        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg, a.data_sharing_scope), v: new Date(cfg.lti_approved_at).toISOString() });
         const u = new URL(ltiCfg.loginUrl);
         u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
         u.searchParams.set("target_link_uri", ltiCfg.targetLinkUri); u.searchParams.set("lti_message_hint", hint);
@@ -604,9 +604,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         // completing the OIDC round-trip.
         if (!validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" }))
           return { error: "lti_configuration_invalid", status: 409 };
-        if (typeof hint.c !== "string" || ltiConfigFingerprint(cfg) !== hint.c)
+        if (typeof hint.c !== "string" || ltiConfigFingerprint(cfg, app.data_sharing_scope) !== hint.c)
           return { error: "lti_registration_changed", status: 409 };
-        if (app.lti_registration_status !== "approved" || app.lti_approved_config_hash !== ltiConfigFingerprint(cfg))
+        if (app.lti_registration_status !== "approved" || app.lti_approved_config_hash !== ltiConfigFingerprint(cfg, app.data_sharing_scope))
           return { error: "lti_approval_required", status: 409 };
         if (!app.lti_approved_at || hint.v !== new Date(app.lti_approved_at).toISOString())
           return { error: "lti_approval_changed", status: 409 };
