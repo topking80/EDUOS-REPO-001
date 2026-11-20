@@ -33,6 +33,19 @@ async function cancelScheduleJobs(client,districtId,scheduleId,reason){
     [districtId,scheduleId,String(reason||"schedule_changed").slice(0,300)]);
 }
 
+async function invalidateScheduleForConnector(client,districtId,connectorId,reason){
+  await client.query(
+    `UPDATE integration_sync_schedules SET enabled=false,next_run_at=NULL,paused_at=now(),
+       pause_reason=$3,updated_at=now()
+      WHERE district_id=$1 AND connector_id=$2`,
+    [districtId,connectorId,String(reason||"connector_approval_changed").slice(0,240)]);
+  await client.query(
+    `UPDATE integration_sync_jobs SET status='cancelled',lease_until=NULL,lease_token=NULL,
+       finished_at=now(),last_error=$3
+      WHERE district_id=$1 AND connector_id=$2 AND status IN ('pending','processing')`,
+    [districtId,connectorId,String(reason||"connector_approval_changed").slice(0,300)]);
+}
+
 const managerRole = (req,res,next) => {
   if (!MANAGERS.includes(req.actor?.role)) return res.status(403).json({ error: "integrations_access_denied" });
   next();
@@ -121,6 +134,7 @@ export function registerIntegrationRoutes(app) {
         add("updated_by", a.userId);
         await c.query(`UPDATE integration_connectors SET ${sets.join(", ")}, updated_at=now(), config_version=config_version+1, status='pending_approval', approved_by=NULL, approved_at=NULL WHERE id=$1`, args)
           .catch(e => { if (e.code === "23505") throw new HttpError(409, "connector_name_taken"); throw e; });
+        await invalidateScheduleForConnector(c,a.districtId,cur.id,"connector_configuration_changed");
         await audit(c, req, "update", "integration_connector", cur.id, `changed=${Object.keys(f).map(k => k === "secret" ? "client_secret" : k).join(",")}; needs approval`);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [cur.id]));
       });
@@ -153,6 +167,7 @@ export function registerIntegrationRoutes(app) {
         const r = await one(c, `UPDATE integration_connectors SET status='disabled', disabled_by=$3, disabled_at=now(), updated_by=$3, updated_at=now(), config_version=config_version+1
           WHERE id=$1 AND district_id=$2 AND status<>'disabled' RETURNING id`, [req.params.id, req.actor.districtId, req.actor.userId]);
         if (!r) throw new HttpError(404, "connector_not_found");
+        await invalidateScheduleForConnector(c,req.actor.districtId,r.id,"connector_disabled");
         await audit(c, req, "disable", "integration_connector", r.id);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [r.id]));
       });
@@ -180,6 +195,7 @@ export function registerIntegrationRoutes(app) {
         // different district lead's approval before the next import.
         await c.query(`UPDATE integration_connectors SET updated_by=$2, updated_at=now(), config_version=config_version+1,
             status=CASE WHEN status='disabled' THEN status ELSE 'pending_approval' END, approved_by=NULL, approved_at=NULL WHERE id=$1`, [req.params.id, a.userId]);
+        await invalidateScheduleForConnector(c,a.districtId,req.params.id,"school_mapping_changed");
         await audit(c, req, "update", "integration_school_map", req.params.id, `${list.map(m => `${m.externalId}=>${m.schoolId ?? "none"}`).join("; ")}; needs approval`);
       });
       res.json({ data: { saved: list.length, status: "pending_approval" } });
