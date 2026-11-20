@@ -40,9 +40,10 @@ credentials are sensitive and must be stored only in the encrypted connector
 secret field. Do not reuse administrator passwords or browser session cookies.
 The adapter requests only active school enrollments using PowerSchool's
 `school_enrollment.enroll_status==(A)` query and the `school_enrollment`
-expansion. Records missing an explicit active enrollment status are rejected
-rather than assumed active. It does not request contacts, addresses, demographics
-or guardian data. The PowerSchool endpoint and response shape can vary by SIS release and
+expansion. Student records are requested only for schools already mapped by
+the district; unmapped school rosters are not downloaded. Records missing an
+explicit active enrollment status are rejected rather than assumed active. It
+does not request contacts, addresses, demographics or guardian data. The PowerSchool endpoint and response shape can vary by SIS release and
 plugin; validate against the district's actual supported REST API before
 production use. PowerSchool documents OAuth plugin credentials in its
 [administrator guide](https://ps.powerschool-docs.com/pssis-admin/latest/view-oauth-client-credentials).
