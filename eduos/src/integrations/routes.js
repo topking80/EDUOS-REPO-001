@@ -206,8 +206,17 @@ export function registerIntegrationRoutes(app) {
       if (conn.status !== "active") throw new HttpError(409, "connector_not_approved");
       let roster;
       try {
-        const secret = decryptSecret(config.integrationsKey, a.districtId, conn.id, conn.client_secret_enc);
-        roster = await KINDS[conn.kind].fetchRoster({ baseUrl: conn.base_url, tokenUrl: conn.token_url, clientId: conn.client_id, clientSecret: secret, scope: conn.scope, options: urlOptions() });
+        const [secret, mapped] = await Promise.all([
+          Promise.resolve(decryptSecret(config.integrationsKey, a.districtId, conn.id, conn.client_secret_enc)),
+          withTenantTransaction(a, (c) => rows(c,
+            "SELECT external_id FROM integration_school_map WHERE connector_id=$1 AND district_id=$2 ORDER BY external_id",
+            [conn.id, a.districtId])),
+        ]);
+        roster = await KINDS[conn.kind].fetchRoster({
+          baseUrl: conn.base_url, tokenUrl: conn.token_url, clientId: conn.client_id,
+          clientSecret: secret, scope: conn.scope, options: urlOptions(),
+          mappedSchoolIds: mapped.map((m) => m.external_id),
+        });
       } catch (e) {
         // An unreadable secret means INTEGRATIONS_KEY changed: re-enter the secret.
         const code = e instanceof IntegrationError ? e.code : e.message === "secret_unreadable" || /unable to authenticate data/i.test(e.message) ? "connector_secret_unreadable" : null;
