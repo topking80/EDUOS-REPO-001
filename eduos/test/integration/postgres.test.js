@@ -433,6 +433,7 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
     ]);
     assert.equal(revisions.rows[1].actor_user_id, USERS.t1[0]);
 
+    const capsuleRefs = {};
     await scoped(ID.d1, ID.s1, "parent", USERS.pa[0], async () => {
       const capsule = (await app.query(`
         INSERT INTO student_time_capsules
@@ -440,6 +441,7 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
         VALUES ($1,$2,$3,$4,'Graduation capsule','scheduled',now()+interval '1 day')
         RETURNING id
       `, [ID.d1, ID.s1, ID.alice, USERS.pa[0]])).rows[0];
+      capsuleRefs.id = capsule.id;
       await app.query(`
         INSERT INTO student_time_capsule_items
           (district_id, school_id, student_id, capsule_id, entry_id, entry_revision_no, position)
@@ -461,6 +463,58 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
     });
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM student_time_capsule_items WHERE entry_id=$1", [alice.id])).rows[0].n, 1);
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM student_time_capsule_events")).rows[0].n, 1);
+
+    // Seed a private registry object as the database owner, then create its
+    // metadata attachment as the scoped runtime role.
+    const asset = (await admin.query(`
+      INSERT INTO private_media_objects
+        (asset_id,district_id,school_id,storage_key,media_kind,mime_type,byte_size,scan_status,processing_status)
+      VALUES (gen_random_uuid(),$1,$2,'tc01/alice/history-image','image','image/jpeg',1024,'clean','processed')
+      RETURNING asset_id
+    `, [ID.d1, ID.s1])).rows[0].asset_id;
+    await scoped(ID.d1, ID.s1, "parent", USERS.pa[0], async () => {
+      await app.query(`
+        INSERT INTO student_history_entry_attachments
+          (district_id,school_id,student_id,entry_id,asset_id,caption)
+        VALUES ($1,$2,$3,$4,$5,'Alice history image')
+      `, [ID.d1, ID.s1, ID.alice, alice.id, asset]);
+    });
+
+    // Child rows must inherit the same school and district isolation as their
+    // parent records; valid foreign keys must not make them visible cross-scope.
+    const hiddenAtOtherSchool = await scoped(ID.d1, ID.s2, "principal", USERS.p2s[0], async () => {
+      const counts = {};
+      for (const table of ["student_history_entry_attachments", "student_time_capsule_items",
+        "student_time_capsule_recipients", "student_time_capsule_events"]) {
+        counts[table] = (await app.query(`SELECT count(*)::int AS n FROM ${table} WHERE student_id=$1`, [ID.alice])).rows[0].n;
+      }
+      await expectDenied(() => app.query(`
+        INSERT INTO student_time_capsule_items
+          (district_id,school_id,student_id,capsule_id,entry_id,entry_revision_no,position)
+        VALUES ($1,$2,$3,$4,$5,2,9)
+      `, [ID.d1, ID.s2, ID.alice, capsuleRefs.id, alice.id]));
+      return counts;
+    });
+    assert.deepEqual(hiddenAtOtherSchool, {
+      student_history_entry_attachments: 0,
+      student_time_capsule_items: 0,
+      student_time_capsule_recipients: 0,
+      student_time_capsule_events: 0
+    });
+    const hiddenAtOtherDistrict = await scoped(ID.d2, ID.sd2, "superintendent", USERS.supt2[0], async () => {
+      const counts = {};
+      for (const table of ["student_history_entry_attachments", "student_time_capsule_items",
+        "student_time_capsule_recipients", "student_time_capsule_events"]) {
+        counts[table] = (await app.query(`SELECT count(*)::int AS n FROM ${table} WHERE student_id=$1`, [ID.alice])).rows[0].n;
+      }
+      return counts;
+    });
+    assert.deepEqual(hiddenAtOtherDistrict, {
+      student_history_entry_attachments: 0,
+      student_time_capsule_items: 0,
+      student_time_capsule_recipients: 0,
+      student_time_capsule_events: 0
+    });
   });
 });
 
