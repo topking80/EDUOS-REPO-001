@@ -143,10 +143,23 @@ export function registerIntegrationRoutes(app) {
       if (f.kind) throw new HttpError(400, "invalid_connector", { field: "kind" });
       const data = await withTenantTransaction(req.actor, async (c) => {
         const a = req.actor;
-        const cur = await one(c, "SELECT id,kind FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
+        const cur = await one(c, "SELECT id,kind,base_url,token_url FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
         if (!cur) throw new HttpError(404, "connector_not_found");
-        if (cur.kind === "canvas" && "scope" in f && !validCanvasScopes(f.scope))
-          throw new HttpError(400, "invalid_connector", { field: "scope" });
+        if (cur.kind === "canvas") {
+          if ("scope" in f && !validCanvasScopes(f.scope))
+            throw new HttpError(400, "invalid_connector", { field: "scope" });
+          const baseUrl = f.base_url ?? cur.base_url, tokenUrl = f.token_url ?? cur.token_url;
+          let origin;
+          try {
+            const u = new URL(baseUrl);
+            if (u.pathname !== "/" || u.search || u.hash || u.username || u.password ||
+                (u.protocol !== "https:" && !(config.integrationsAllowInsecureLoopback && u.hostname === "127.0.0.1")))
+              throw new Error("invalid_canvas_origin");
+            origin = u.origin;
+          } catch { throw new HttpError(400, "invalid_connector", { field: "baseUrl" }); }
+          if (tokenUrl !== new URL("/login/oauth2/token", origin).toString())
+            throw new HttpError(400, "invalid_connector", { field: "tokenUrl" });
+        }
         const sets = [], args = [cur.id];
         const add = (col, v) => { args.push(v); sets.push(`${col}=$${args.length}`); };
         for (const col of ["name", "base_url", "token_url", "client_id", "scope"]) if (col in f) add(col, f[col]);
