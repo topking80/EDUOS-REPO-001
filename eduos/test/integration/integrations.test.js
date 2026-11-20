@@ -314,6 +314,12 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       assert.equal(status.body.data.connected, true);
       assert.equal(JSON.stringify(status.body).includes("canvas-access-secret"), false);
       assert.equal(JSON.stringify(status.body).includes("canvas-refresh-secret"), false);
+ 
+      const changed = await as("supt1")("PATCH", `/api/integrations/connectors/${id}`, { clientSecret: "rotated-canvas-secret" });
+      assert.equal(changed.status, 200, JSON.stringify(changed.body));
+      assert.equal(changed.body.data.status, "pending_approval");
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_canvas_oauth_grants WHERE connector_id=$1", [id])).rows[0].n, 0,
+        "credential changes invalidate the previously authorized token grant");
 
       const replay = await fetch(`${server.base}/api/integrations/canvas/callback?code=replay&state=${encodeURIComponent(state)}`, {
         headers: { cookie: `${s.supt1.cookie}; ${stateCookie}` }, redirect: "manual"
