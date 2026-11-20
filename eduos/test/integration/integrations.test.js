@@ -73,8 +73,7 @@ function fakeCanvasOAuth() {
         token_type: "Bearer", expires_in: 3600, user: { id: 9876, name: "District Canvas Admin" } });
     if (form.get("grant_type") === "refresh_token" &&
         ["canvas-refresh-secret","canvas-refresh-rotated"].includes(form.get("refresh_token")))
-      return send(200, { access_token: "canvas-access-refreshed", refresh_token: "canvas-refresh-rotated",
-        token_type: "Bearer", expires_in: 3600 });
+      return send(200, { access_token: "canvas-access-refreshed", token_type: "Bearer", expires_in: 3600 });
     return send(400, { error: "invalid_grant" });
   });
   return new Promise(resolve => srv.listen(0, "127.0.0.1", () =>
@@ -326,7 +325,9 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
         "concurrent callers share one database-serialized refresh");
       const rotated = (await admin.query("SELECT access_token_enc,refresh_token_enc FROM integration_canvas_oauth_grants WHERE connector_id=$1",[id])).rows[0];
       assert.ok(!rotated.access_token_enc.includes("canvas-access-refreshed"));
-      assert.ok(!rotated.refresh_token_enc.includes("canvas-refresh-rotated"));
+      assert.ok(!rotated.refresh_token_enc.includes("canvas-refresh-secret"));
+      assert.equal(canvasFake.seen.find(x => x.grant_type === "refresh_token").refresh_token, "canvas-refresh-secret",
+        "Canvas refresh responses retain the original refresh token");
 
       const status = await as("supt1")("GET", `/api/integrations/connectors/${id}/canvas/status`);
       assert.equal(status.status, 200);
