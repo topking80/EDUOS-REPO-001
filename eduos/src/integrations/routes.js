@@ -23,7 +23,7 @@ import { planImport, loadPlanInputs, applyPlan } from "./sync.js";
 const MANAGERS = ["superintendent", "it_admin"];
 const validCanvasScopes = value => typeof value === "string" && value.trim().length > 0 &&
   value.trim().split(/\s+/).length <= 20 &&
-  value.trim().split(/\s+/).every(scope => /^url:GET\|\/api\/v1\/[A-Za-z0-9_/:.-]+$/.test(scope)) &&
+  value.trim().split(/\s+/).every(scope => /^url:GET\|\/api\/v1\/[A-Za-z0-9_/:.-]+$/.test(scope) && !scope.includes("..") && !scope.includes("//")) &&
   new Set(value.trim().split(/\s+/)).size === value.trim().split(/\s+/).length;
 const KINDS = { oneroster, edfi, powerschool, canvas };
 const COLS = `c.id, c.kind, c.name, c.base_url, c.token_url, c.client_id, c.scope, c.data_scope, c.status, c.created_at, c.updated_at,
