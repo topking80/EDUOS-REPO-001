@@ -268,9 +268,10 @@ export function registerIntegrationRoutes(app) {
     try{
       const data=await withTenantTransaction(req.actor,async c=>{
         const a=req.actor;
-        const connector=await one(c,"SELECT id,status,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
+        const connector=await one(c,"SELECT id,kind,status,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
         if(!connector)throw new HttpError(404,"connector_not_found");
         if(connector.status!=="active")throw new HttpError(409,"connector_not_approved");
+        if(connector.kind==="canvas")throw new HttpError(409,"canvas_sync_not_enabled",{next:"CANVAS-API-02"});
         const saved=await one(c,
           `INSERT INTO integration_sync_schedules(district_id,connector_id,interval_minutes,created_by,updated_by,config_version)
            VALUES($1,$2,$3,$4,$4,$5)
