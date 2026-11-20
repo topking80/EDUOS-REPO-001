@@ -25,6 +25,7 @@ test("scheduled jobs are claimed with database leases and SKIP LOCKED",()=>{
 
 test("only enabled, approved, unpaused and version-current schedules enqueue",()=>{
   assert.match(worker,/enabled=true AND paused_at IS NULL AND next_run_at<=now\(\)/);
+  assert.match(worker,/NOT EXISTS \(SELECT 1 FROM integration_sync_jobs/);
   assert.match(worker,/input\.config_version!==input\.connector_version/);
   assert.match(worker,/input\.config_version!==input\.schedule_version/);
   assert.match(worker,/v\.config_version!==input\.config_version/);
