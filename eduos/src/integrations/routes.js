@@ -25,6 +25,14 @@ const COLS = `c.id, c.kind, c.name, c.base_url, c.token_url, c.client_id, c.scop
 const FROM = `FROM integration_connectors c JOIN users uu ON uu.id=c.updated_by LEFT JOIN users ua ON ua.id=c.approved_by`;
 const urlOptions = () => ({ allowInsecureLoopback: config.integrationsAllowInsecureLoopback, allowedHosts: config.integrationsAllowedHosts });
 
+async function cancelScheduleJobs(client,districtId,scheduleId,reason){
+  return client.query(
+    `UPDATE integration_sync_jobs SET status='cancelled',lease_until=NULL,lease_token=NULL,
+       finished_at=now(),last_error=$3
+      WHERE district_id=$1 AND schedule_id=$2 AND status IN ('pending','processing')`,
+    [districtId,scheduleId,String(reason||"schedule_changed").slice(0,300)]);
+}
+
 const managerRole = (req,res,next) => {
   if (!MANAGERS.includes(req.actor?.role)) return res.status(403).json({ error: "integrations_access_denied" });
   next();
@@ -214,6 +222,7 @@ export function registerIntegrationRoutes(app) {
              enabled=false,next_run_at=NULL,paused_at=NULL,pause_reason=NULL,approved_by=NULL,approved_at=NULL
            RETURNING id,enabled,interval_minutes,config_version`,
           [a.districtId,connector.id,interval,a.userId,connector.config_version]);
+        await cancelScheduleJobs(c,a.districtId,saved.id,"schedule_reconfigured");
         await audit(c,req,"configure","integration_sync_schedule",saved.id,`interval_minutes=${interval}; requires separate approval`);
         return saved;
       });
@@ -257,6 +266,7 @@ export function registerIntegrationRoutes(app) {
             WHERE connector_id=$1 AND district_id=$2 RETURNING id,enabled,paused_at,pause_reason`,
           [req.params.id,req.actor.districtId,reason]);
         if(!s)throw new HttpError(404,"schedule_not_found");
+        await cancelScheduleJobs(c,req.actor.districtId,s.id,reason);
         await audit(c,req,"pause","integration_sync_schedule",s.id,reason);
         return s;
       });
@@ -271,6 +281,13 @@ export function registerIntegrationRoutes(app) {
         const changed=await rows(c,
           `UPDATE integration_sync_schedules SET paused_at=now(),pause_reason=$2,next_run_at=NULL,updated_at=now()
             WHERE district_id=$1 AND enabled=true AND paused_at IS NULL RETURNING id`,
+          [req.actor.districtId,reason]);
+        await c.query(
+          `UPDATE integration_sync_jobs j SET status='cancelled',lease_until=NULL,lease_token=NULL,
+             finished_at=now(),last_error=$2
+            FROM integration_sync_schedules s
+           WHERE j.schedule_id=s.id AND j.district_id=$1 AND s.district_id=$1
+             AND s.enabled=true AND s.paused_at IS NOT NULL AND j.status IN ('pending','processing')`,
           [req.actor.districtId,reason]);
         await audit(c,req,"pause_all","integration_sync_schedule",req.actor.districtId,`count=${changed.length}; ${reason}`);
         return {paused:changed.length};
