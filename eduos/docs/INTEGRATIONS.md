@@ -43,7 +43,12 @@ The adapter requests only active school enrollments using PowerSchool's
 expansion. Student records are requested only for schools already mapped by
 the district; unmapped school rosters are not downloaded. Records missing an
 explicit active enrollment status are rejected rather than assumed active. It
-does not request contacts, addresses, demographics or guardian data. The PowerSchool endpoint and response shape can vary by SIS release and
+does not request contacts, addresses, demographics or guardian data. The default
+aggregate download ceiling is 1,000,000 student records per sync, configurable
+with `POWERSCHOOL_MAX_STUDENTS` from 200,000 up to 5,000,000. The limit counts
+all downloaded records, including rejected records, across mapped schools.
+Increase it only after validating API throughput, worker memory, and database
+capacity for the district. The PowerSchool endpoint and response shape can vary by SIS release and
 plugin; validate against the district's actual supported REST API before
 production use. PowerSchool documents OAuth plugin credentials in its
 [administrator guide](https://ps.powerschool-docs.com/pssis-admin/latest/view-oauth-client-credentials).
