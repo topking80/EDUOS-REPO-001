@@ -21,6 +21,10 @@ import { registerCanvasOAuthRoutes } from "./canvas-oauth.js";
 import { planImport, loadPlanInputs, applyPlan } from "./sync.js";
 
 const MANAGERS = ["superintendent", "it_admin"];
+const validCanvasScopes = value => typeof value === "string" && value.trim().length > 0 &&
+  value.trim().split(/\s+/).length <= 20 &&
+  value.trim().split(/\s+/).every(scope => /^url:GET\|\/api\/v1\/[A-Za-z0-9_/:.-]+$/.test(scope)) &&
+  new Set(value.trim().split(/\s+/)).size === value.trim().split(/\s+/).length;
 const KINDS = { oneroster, edfi, powerschool, canvas };
 const COLS = `c.id, c.kind, c.name, c.base_url, c.token_url, c.client_id, c.scope, c.data_scope, c.status, c.created_at, c.updated_at,
   c.approved_at, c.disabled_at, c.last_sync_at, c.last_sync_status, uu.display_name AS updated_by_name, ua.display_name AS approved_by_name, c.updated_by`;
@@ -105,6 +109,19 @@ export function registerIntegrationRoutes(app) {
   app.post(base, requireSession, requireCsrf, manager, async (req, res, next) => {
     try {
       const f = readFields(req.body || {}, false);
+      if (f.kind === "canvas") {
+        if (!validCanvasScopes(f.scope)) throw new HttpError(400, "invalid_connector", { field: "scope" });
+        let origin;
+        try {
+          const u = new URL(f.base_url);
+          if (u.pathname !== "/" || u.search || u.hash || u.username || u.password ||
+              (u.protocol !== "https:" && !(config.integrationsAllowInsecureLoopback && u.hostname === "127.0.0.1")))
+            throw new Error("invalid_canvas_origin");
+          origin = u.origin;
+        } catch { throw new HttpError(400, "invalid_connector", { field: "baseUrl" }); }
+        if (f.token_url !== new URL("/login/oauth2/token", origin).toString())
+          throw new HttpError(400, "invalid_connector", { field: "tokenUrl" });
+      }
       const data = await withTenantTransaction(req.actor, async (c) => {
         const a = req.actor, id = crypto.randomUUID();
         if (await one(c, "SELECT 1 FROM integration_connectors WHERE district_id=$1 AND name=$2", [a.districtId, f.name])) throw new HttpError(409, "connector_name_taken");
@@ -128,6 +145,8 @@ export function registerIntegrationRoutes(app) {
         const a = req.actor;
         const cur = await one(c, "SELECT id,kind FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
         if (!cur) throw new HttpError(404, "connector_not_found");
+        if (cur.kind === "canvas" && "scope" in f && !validCanvasScopes(f.scope))
+          throw new HttpError(400, "invalid_connector", { field: "scope" });
         const sets = [], args = [cur.id];
         const add = (col, v) => { args.push(v); sets.push(`${col}=$${args.length}`); };
         for (const col of ["name", "base_url", "token_url", "client_id", "scope"]) if (col in f) add(col, f[col]);
