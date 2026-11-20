@@ -215,6 +215,14 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     const approval = await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/approve`);
     assert.equal(approval.status, 200, JSON.stringify(approval.body));
     assert.equal(approval.body.data.registrationStatus, "approved");
+    const approvalPrivileges = await appDb.query(
+      "SELECT has_column_privilege(current_user,'apps','lti_registration_status','UPDATE') AS can_write_status, " +
+      "has_column_privilege(current_user,'apps','lti_approved_config_hash','UPDATE') AS can_write_hash, " +
+      "has_function_privilege(current_user,'eduos_lti_approve_registration(uuid,text,uuid)','EXECUTE') AS can_approve");
+    assert.equal(approvalPrivileges.rows[0].can_write_status, false, "runtime cannot write approval state directly");
+    assert.equal(approvalPrivileges.rows[0].can_write_hash, false, "runtime cannot forge the approved fingerprint");
+    assert.equal(approvalPrivileges.rows[0].can_approve, true, "runtime may invoke the guarded approval function");
+    await assert.rejects(() => appDb.query("UPDATE apps SET lti_registration_status='approved'"), { code: "42501" });
     assert.equal((await as("it")("POST", "/api/apps", { name: "Bad LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "lti13", integrationConfig: { clientId: "c" } })).body.error, "invalid_lti_config");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { clientSecret: "x" } })).body.error, "integration_config_must_not_hold_secrets");
     await as("it")("POST", `/api/apps/${reg.body.data.id}/licenses`, {});
