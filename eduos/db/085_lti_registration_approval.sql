@@ -77,7 +77,7 @@ DECLARE tenant_id uuid := nullif(current_setting('app.district_id', true), '')::
         actor_role text := current_setting('app.role', true);
 BEGIN
   IF tenant_id IS NULL OR actor_id IS NULL OR actor_id <> p_actor
-     OR actor_role NOT IN ('superintendent','it_admin')
+     OR actor_role IS NULL OR actor_role NOT IN ('superintendent','it_admin')
      OR p_config_hash IS NULL OR p_config_hash !~ '^[A-Za-z0-9_-]{43}$' THEN
     RAISE EXCEPTION 'unauthorized LTI approval' USING ERRCODE = '42501';
   END IF;
