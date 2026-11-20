@@ -236,7 +236,7 @@ export function registerIntegrationRoutes(app) {
       const data=await withTenantTransaction(req.actor,async c=>{
         const a=req.actor;
         const s=await one(c,
-          `SELECT s.id,s.updated_by,s.config_version,x.status,x.config_version AS connector_version
+          `SELECT s.id,s.updated_by,s.config_version,x.status,x.config_version AS connector_version,x.approved_at AS connector_approved_at
              FROM integration_sync_schedules s JOIN integration_connectors x
                ON x.id=s.connector_id AND x.district_id=s.district_id
             WHERE s.connector_id=$1 AND s.district_id=$2 FOR UPDATE OF s,x`,
@@ -244,6 +244,10 @@ export function registerIntegrationRoutes(app) {
         if(!s)throw new HttpError(404,"schedule_not_found");
         if(s.status!=="active"||s.config_version!==s.connector_version)throw new HttpError(409,"connector_approval_stale");
         if(s.updated_by===a.userId)throw new HttpError(409,"approver_must_differ");
+        const preview=await one(c,
+          "SELECT id FROM integration_sync_runs WHERE connector_id=$1 AND district_id=$2 AND mode='preview' AND status='previewed' AND started_at >= $3 ORDER BY started_at DESC LIMIT 1",
+          [req.params.id,a.districtId,s.connector_approved_at]);
+        if(!preview)throw new HttpError(409,"schedule_requires_current_preview");
         const approved=await one(c,
           `UPDATE integration_sync_schedules SET enabled=true,paused_at=NULL,pause_reason=NULL,
              next_run_at=now(),approved_by=$2,approved_at=now(),updated_at=now()
