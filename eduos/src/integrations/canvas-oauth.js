@@ -142,14 +142,10 @@ export async function getCanvasAccessToken(actor, connectorId) {
   throw new IntegrationError("canvas_token_refresh_busy","A Canvas token refresh is still in progress");
 }
 
-export async function revokeCanvasToken(actor, connectorId) {
+export async function revokeCanvasToken(baseUrl, accessToken) {
+  if (!accessToken) return false;
   try {
-    const accessToken = await getCanvasAccessToken(actor, connectorId);
-    const connector = await withTenantTransaction(actor,c => one(c,
-      "SELECT base_url FROM integration_connectors WHERE id=$1 AND district_id=$2 AND kind='canvas' AND status='active'",
-      [connectorId,actor.districtId]));
-    if (!connector) return false;
-    const origin = canvasOrigin(connector.base_url);
+    const origin = canvasOrigin(baseUrl);
     const response = await outboundRequest(new URL("/login/oauth2/token",origin).toString(),{
       method:"DELETE",options:{...urlOptions(),timeoutMs:10_000},
       headers:{authorization:`Bearer ${accessToken}`,accept:"application/json"}
@@ -160,6 +156,7 @@ export async function revokeCanvasToken(actor, connectorId) {
     return false;
   }
 }
+
 export function registerCanvasOAuthRoutes(app) {
   app.post(`${BASE}/:id/canvas/authorize`, oauthStartLimiter, requireSession, requireCsrf, async (req, res, next) => {
     if (!requireManager(req, res)) return;
