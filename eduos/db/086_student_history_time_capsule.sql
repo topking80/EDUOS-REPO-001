@@ -149,6 +149,8 @@ CREATE TABLE student_time_capsule_items (
     REFERENCES student_time_capsules(district_id, school_id, student_id, id) ON DELETE CASCADE,
   FOREIGN KEY (district_id, school_id, student_id, entry_id)
     REFERENCES student_history_entries(district_id, school_id, student_id, id) ON DELETE RESTRICT,
+  FOREIGN KEY (district_id, entry_id, entry_revision_no)
+    REFERENCES student_history_entry_revisions(district_id, entry_id, revision_no) ON DELETE RESTRICT,
   FOREIGN KEY (district_id, school_id, student_id, entry_id, attachment_id)
     REFERENCES student_history_entry_attachments(district_id, school_id, student_id, entry_id, id) ON DELETE RESTRICT,
   UNIQUE (district_id, capsule_id, position),
