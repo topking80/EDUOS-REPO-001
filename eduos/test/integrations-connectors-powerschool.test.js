@@ -1,0 +1,35 @@
+// PowerSchool roster normalization and paging contract tests; no live SIS.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as powerschool from "../src/integrations/powerschool.js";
+
+test("PowerSchool school IDs are stable numeric DCIDs and names are bounded", () => {
+  assert.deepEqual(powerschool.normalizeSchool({ id: 12, name: "North High" }), {
+    school: { externalId: "12", name: "North High" },
+  });
+  assert.equal(powerschool.normalizeSchool({ id: "not-a-dcid" }).rejected.reason, "invalid_school_id");
+  assert.equal(powerschool.normalizeSchool({ id: 2, name: "N".repeat(200) }).school.name.length, 160);
+});
+
+test("PowerSchool student normalization maps active roster fields only", () => {
+  assert.deepEqual(powerschool.normalizeStudent({
+    id: 987, student_number: "00421", first_name: "Ada", last_name: "Lovelace",
+    grade_level: 11, enroll_status: 0,
+  }, "12").student, {
+    externalId: "987", localStudentNumber: "00421", displayName: "Ada Lovelace",
+    gradeLevel: "11", schoolExternalId: "12",
+  });
+  assert.equal(powerschool.normalizeStudent({ id: 1, student_number: "1", first_name: "A", enroll_status: -1 }, "12").skipped, true);
+  assert.equal(powerschool.normalizeStudent({ id: 2, student_number: "2" }, "12").rejected.reason, "missing_name");
+  assert.equal(powerschool.normalizeStudent({ id: 3, first_name: "A" }, "12").rejected.reason, "missing_student_number");
+  assert.equal(powerschool.normalizeStudent({ student_number: "4", first_name: "A" }, "12").rejected.reason, "missing_student_id");
+});
+
+test("PowerSchool nested name fields and missing grade normalize safely", () => {
+  assert.deepEqual(powerschool.normalizeStudent({
+    id: "44", student_number: 44, name: { first_name: "Grace", last_name: "Hopper" },
+  }, "9").student, {
+    externalId: "44", localStudentNumber: "44", displayName: "Grace Hopper",
+    gradeLevel: null, schoolExternalId: "9",
+  });
+});
