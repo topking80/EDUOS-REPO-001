@@ -74,9 +74,9 @@ test("runtime role gets only the operations required by TC-01 and no destructive
       : new RegExp(`GRANT SELECT, INSERT ON [^;]*\\b${table}\\b[^;]*TO eduos_app`);
     assert.match(grants, expectedGrant, `${table} has its required read/write grant`);
     const expectedRevoke = table === "student_history_entry_revisions"
-      ? "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_revisions FROM eduos_app"
-      : `REVOKE UPDATE, DELETE, TRUNCATE ON ${table} FROM eduos_app`;
-    assert.ok(grants.includes(expectedRevoke), `${table} blocks forbidden mutation`);
+      ? /REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON [^;]*student_history_entry_revisions[^;]*FROM eduos_app/
+      : new RegExp(`REVOKE UPDATE, DELETE, TRUNCATE ON [^;]*\\b${table}\\b[^;]*FROM eduos_app`);
+    assert.match(grants, expectedRevoke, `${table} blocks forbidden mutation`);
   }
   assert.ok(grants.includes("GRANT SELECT, INSERT ON student_time_capsule_recipients TO eduos_app"));
   assert.ok(grants.includes("GRANT UPDATE (entry_type, classification, title, body, occurred_at, school_year, audience, status, source_reference)"));
