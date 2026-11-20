@@ -339,6 +339,9 @@ GRANT UPDATE (update_cohort, cohort_set_by, cohort_set_at) ON edge_devices TO ed
 GRANT SELECT, INSERT, UPDATE ON integration_connectors TO eduos_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON integration_school_map TO eduos_app;
 GRANT SELECT, INSERT ON integration_sync_runs TO eduos_app;
+GRANT SELECT ON integration_service_actors TO eduos_app;
+GRANT SELECT, INSERT, UPDATE ON integration_sync_schedules, integration_sync_jobs TO eduos_app;
+REVOKE DELETE, TRUNCATE ON integration_service_actors, integration_sync_schedules, integration_sync_jobs FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON integration_connectors, integration_sync_runs FROM eduos_app;
 
 -- 041 AI gateway: the superintendent manages the district's AI policy; usage
