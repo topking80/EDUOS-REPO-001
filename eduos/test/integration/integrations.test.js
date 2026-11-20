@@ -289,6 +289,12 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       const id = added.body.data.id;
       assert.equal((await as("supt1")("POST", `/api/integrations/connectors/${id}/approve`)).body.error, "approver_must_differ");
       assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${id}/approve`)).status, 200);
+      const scheduleAttempt = await as("supt1")("PUT", `/api/integrations/connectors/${id}/schedule`, { intervalMinutes: 60 });
+      assert.equal(scheduleAttempt.status,409);
+      assert.equal(scheduleAttempt.body.error,"canvas_sync_not_enabled");
+      const syncAttempt = await as("supt1")("POST", `/api/integrations/connectors/${id}/sync`, { mode: "preview" });
+      assert.equal(syncAttempt.status,409);
+      assert.equal(syncAttempt.body.error,"canvas_sync_not_enabled");
 
       const started = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
       assert.equal(started.status, 200, JSON.stringify(started.body));
