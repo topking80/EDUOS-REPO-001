@@ -32,6 +32,11 @@ test("LTI authorization binds client, target and exact redirect; deployment is e
   assert.doesNotMatch(source, /searchParams\.set\("lti_deployment_id"/);
 });
 
+test("LTI authorization revalidates the live tool registration at callback time", () => {
+  assert.match(source, /validLtiConfig\(cfg, \{ allowInsecureLoopback: config\.nodeEnv !== "production" \}\)/);
+  assert.match(source, /lti_configuration_invalid/);
+});
+
 test("LTI authorization requires non-empty OIDC nonce and state", () => {
   assert.match(source, /typeof p\.nonce !== "string" \|\| p\.nonce\.length < 1/);
   assert.match(source, /typeof p\.state !== "string" \|\| p\.state\.length < 1/);
