@@ -130,10 +130,13 @@ export function launchClaims({ key, issuer, app, launch, user, school, nonce, no
   return claims;
 }
 
-export function ltiConfigFingerprint(cfg) {
-  if (!cfg || typeof cfg !== "object" || !Array.isArray(cfg.redirectUris))
-    throw new TypeError("invalid LTI registration configuration");
-  const registration = [cfg.clientId, cfg.deploymentId, cfg.loginUrl, [...cfg.redirectUris], cfg.targetLinkUri];
+export function ltiConfigFingerprint(cfg, dataSharingScope) {
+  if (!cfg || typeof cfg !== "object" || !Array.isArray(cfg.redirectUris) ||
+      !["none", "identity"].includes(dataSharingScope))
+    throw new TypeError("invalid LTI registration configuration or data-sharing scope");
+  // The approved fingerprint covers every setting that changes the student
+  // data exposed to a tool, not just its OIDC endpoints and client identity.
+  const registration = [cfg.clientId, cfg.deploymentId, cfg.loginUrl, [...cfg.redirectUris], cfg.targetLinkUri, dataSharingScope];
   return crypto.createHash("sha256").update(JSON.stringify(registration)).digest("base64url");
 }
 
