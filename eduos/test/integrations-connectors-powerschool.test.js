@@ -75,6 +75,37 @@ test("PowerSchool aggregate record ceiling includes records from every mapped sc
   }
 });
 
+test("PowerSchool fetched count includes rows excluded during normalization", async () => {
+  const server = http.createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    if (req.url.startsWith("/oauth/access_token")) {
+      res.end(JSON.stringify({ access_token: "test-token" }));
+    } else if (req.url.startsWith("/ws/v1/district/school")) {
+      res.end(JSON.stringify({ schools: { school: [{ id: 12, name: "North" }] } }));
+    } else if (req.url.includes("/student?")) {
+      res.end(JSON.stringify({ students: { student: [
+        { id: 1, student_number: "1", first_name: "Active", enroll_status: "A" },
+        { id: 2, student_number: "2", first_name: "Inactive", enroll_status: "W" },
+      ] } }));
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const roster = await powerschool.fetchRoster({
+      baseUrl, tokenUrl: `${baseUrl}/oauth/access_token`, clientId: "client",
+      clientSecret: "secret", mappedSchoolIds: ["12"], maxStudentRecords: 10,
+      options: { allowInsecureLoopback: true },
+    });
+    assert.equal(roster.students.length, 1);
+    assert.equal(roster.fetchedStudentRecords, 2);
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
 test("PowerSchool nested name fields and missing grade normalize safely", () => {
   assert.deepEqual(powerschool.normalizeStudent({
     id: "44", student_number: 44, name: { first_name: "Grace", last_name: "Hopper" }, enroll_status: "A",
