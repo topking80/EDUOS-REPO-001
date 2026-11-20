@@ -493,12 +493,22 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
 
     // Seed a private registry object as the database owner, then create its
     // metadata attachment as the scoped runtime role.
+    const activity = (await admin.query(`
+      INSERT INTO school_activities (district_id,school_id,kind,title,created_by)
+      VALUES ($1,$2,'club','TC-01 media fixture',$3)
+      RETURNING id
+    `, [ID.d1, ID.s1, USERS.t1[0]])).rows[0].id;
     const asset = (await admin.query(`
+      INSERT INTO activity_media_assets
+        (district_id,school_id,activity_id,media_kind,storage_key,mime_type,byte_size,uploaded_by)
+      VALUES ($1,$2,$3,'image','tc01/alice/history-image','image/jpeg',1024,$4)
+      RETURNING id
+    `, [ID.d1, ID.s1, activity, USERS.t1[0]])).rows[0].id;
+    await admin.query(`
       INSERT INTO private_media_objects
         (asset_id,district_id,school_id,storage_key,media_kind,mime_type,byte_size,scan_status,processing_status)
-      VALUES (gen_random_uuid(),$1,$2,'tc01/alice/history-image','image','image/jpeg',1024,'clean','processed')
-      RETURNING asset_id
-    `, [ID.d1, ID.s1])).rows[0].asset_id;
+      VALUES ($1,$2,$3,'tc01/alice/history-image','image','image/jpeg',1024,'clean','processed')
+    `, [asset, ID.d1, ID.s1]);
     await scoped(ID.d1, ID.s1, "parent", USERS.pa[0], async () => {
       await app.query(`
         INSERT INTO student_history_entry_attachments
