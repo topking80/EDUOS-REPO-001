@@ -29,7 +29,7 @@ test("schedules are independently approved and connector-version bound",()=>{
   assert.match(migration,/approved_by uuid REFERENCES users/);
   assert.match(migration,/approved_by<>updated_by/);
   assert.match(migration,/config_version integer NOT NULL CHECK \(config_version>=1\)/);
-  assert.match(migration,/CHECK \(NOT enabled OR paused_at IS NULL\)/);
+  assert.match(migration,/CHECK \(\(NOT enabled OR paused_at IS NOT NULL\) = \(next_run_at IS NULL\)\)/);
   assert.match(migration,/interval_minutes BETWEEN 15 AND 10080/);
 });
 
