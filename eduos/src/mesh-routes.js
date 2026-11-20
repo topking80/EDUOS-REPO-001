@@ -25,6 +25,19 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const validId = v => typeof v === "string" && UUID_RE.test(v);
 const text = (v, max) => typeof v === "string" && v.trim().length > 0 && v.trim().length <= max;
 const optText = (v, max) => v === undefined || v === null || (typeof v === "string" && v.length <= max);
+const SECRET_CONFIG_KEY_RE = /secret|password|private|credential|token|api[_-]?key|access[_-]?key/i;
+function hasSecretConfigKey(value) {
+  const pending = [value];
+  while (pending.length) {
+    const current = pending.pop();
+    if (!current || typeof current !== "object") continue;
+    for (const [key, child] of Object.entries(current)) {
+      if (SECRET_CONFIG_KEY_RE.test(key)) return true;
+      if (child && typeof child === "object") pending.push(child);
+    }
+  }
+  return false;
+}
 const httpUrl = v => typeof v === "string" && v.length <= 2048 && /^https?:\/\/[^\s]+$/.test(v) && (() => { try { return Boolean(new URL(v)); } catch { return false; } })();
 const isDate = v => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v + "T00:00:00Z"));
 
@@ -124,7 +137,7 @@ function validateAppBody(body, partial) {
   if (has("integrationConfig")) {
     const c = b.integrationConfig;
     if (c === null || typeof c !== "object" || Array.isArray(c) || JSON.stringify(c).length > 8192) return "invalid_integration_config";
-    if (/secret|password|private/i.test(JSON.stringify(Object.keys(c)))) return "integration_config_must_not_hold_secrets";
+    if (hasSecretConfigKey(c)) return "integration_config_must_not_hold_secrets";
   }
   if (!partial && b.integrationType === "lti13" && !validLtiConfig(b.integrationConfig)) return "invalid_lti_config";
   if (!partial && b.integrationType === "lti13" && !["none", "identity"].includes(b.dataSharingScope || "none")) return "unsupported_lti_data_scope";
