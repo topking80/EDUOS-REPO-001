@@ -23,6 +23,7 @@ test("only enabled, approved, unpaused and version-current schedules enqueue",()
   assert.match(worker,/input\.config_version!==input\.connector_version/);
   assert.match(worker,/input\.config_version!==input\.schedule_version/);
   assert.match(worker,/v\.config_version!==input\.config_version/);
+  assert.match(worker,/v\.job_version!==input\.config_version/);
   assert.match(worker,/v\.paused_at/);
 });
 
