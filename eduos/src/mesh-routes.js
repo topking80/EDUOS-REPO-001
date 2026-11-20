@@ -593,6 +593,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           return { error: "lti_configuration_invalid", status: 409 };
         if (typeof hint.c !== "string" || ltiConfigFingerprint(cfg) !== hint.c)
           return { error: "lti_registration_changed", status: 409 };
+        if (app.lti_registration_status !== "approved" || app.lti_approved_config_hash !== ltiConfigFingerprint(cfg))
+          return { error: "lti_approval_required", status: 409 };
         if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
         if (!["none", "identity"].includes(app.data_sharing_scope)) return { error: "unsupported_lti_data_scope", status: 403 };
         if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
