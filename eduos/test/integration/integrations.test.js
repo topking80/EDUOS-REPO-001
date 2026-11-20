@@ -349,12 +349,21 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
         headers: { cookie: `${s.supt1.cookie}; ${secondCookie}` }, redirect: "manual"
       });
       assert.equal(wrongUserReplay.status,400,"failed browser/user binding still consumes OAuth state");
+      const cancelStart = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
+      const cancelState = new URL(cancelStart.body.data.authorizationUrl).searchParams.get("state");
+      const cancelCookie = (cancelStart.headers.get("set-cookie") || "").match(/(eduos_canvas_state_[^=]+=[^;,]+)/)?.[1];
+      assert.ok(cancelCookie);
+
       const disconnected = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/disconnect`, {});
       assert.equal(disconnected.status, 200, JSON.stringify(disconnected.body));
       assert.equal(disconnected.body.data.connected, false);
       assert.equal(disconnected.body.data.canvasTokenRevoked, true);
       assert.equal(disconnected.body.data.reapprovalRequired, true);
       assert.equal(disconnected.body.data.canvasDeveloperKeyRevocationRequired, true);
+      const cancelledCallback = await fetch(`${server.base}/api/integrations/canvas/callback?code=cancelled&state=${encodeURIComponent(cancelState)}`, {
+        headers: { cookie: `${s.supt1.cookie}; ${cancelCookie}` }, redirect: "manual"
+      });
+      assert.equal(cancelledCallback.status,400,"disconnect cancels an OAuth callback already in progress");
       assert.ok(canvasFake.seen.some(x => x.grant_type === "revoke" && x.authorization === "Bearer canvas-access-refreshed"));
       assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_canvas_oauth_grants WHERE connector_id=$1", [id])).rows[0].n, 0);
 
