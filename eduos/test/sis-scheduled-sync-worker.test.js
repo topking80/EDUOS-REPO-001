@@ -47,7 +47,7 @@ test("district managers can separately approve schedules and pause all schedules
   assert.match(routes,/schedule\/pause/);
   assert.match(routes,/schedule\/resume/);
   assert.match(routes,/cancelScheduleJobs/);
-  assert.match(routes,/status IN \\('pending','processing'\\)/);
+  assert.match(routes,/status IN \('pending','processing'\)/);
 });
 
 test("scheduler is wired into API startup and has a standalone command",()=>{
