@@ -647,17 +647,28 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         "scope", "response_type", "response_mode", "prompt", "client_id",
         "redirect_uri", "login_hint", "lti_message_hint", "state", "nonce"
       ]);
-      const parsed = new Map();
+      const parsed = {};
+      const appendScalar = (previous, value) => previous === undefined ? value
+        : Array.isArray(previous) ? [...previous, value] : [previous, value];
       for (const [key, value] of new URLSearchParams(req.body.toString("utf8"))) {
         if (!allowedFormParameters.has(key)) return res.status(400).type("text/plain").send("LTI launch refused: invalid_request");
-        if (parsed.has(key)) {
-          const previous = parsed.get(key);
-          parsed.set(key, Array.isArray(previous) ? [...previous, value] : [previous, value]);
-        } else {
-          parsed.set(key, value);
+        // Assign only fixed protocol properties. Never use a request-controlled
+        // key as an object property, even after allowlist validation.
+        switch (key) {
+          case "scope": parsed.scope = appendScalar(parsed.scope, value); break;
+          case "response_type": parsed.response_type = appendScalar(parsed.response_type, value); break;
+          case "response_mode": parsed.response_mode = appendScalar(parsed.response_mode, value); break;
+          case "prompt": parsed.prompt = appendScalar(parsed.prompt, value); break;
+          case "client_id": parsed.client_id = appendScalar(parsed.client_id, value); break;
+          case "redirect_uri": parsed.redirect_uri = appendScalar(parsed.redirect_uri, value); break;
+          case "login_hint": parsed.login_hint = appendScalar(parsed.login_hint, value); break;
+          case "lti_message_hint": parsed.lti_message_hint = appendScalar(parsed.lti_message_hint, value); break;
+          case "state": parsed.state = appendScalar(parsed.state, value); break;
+          case "nonce": parsed.nonce = appendScalar(parsed.nonce, value); break;
+          default: return res.status(400).type("text/plain").send("LTI launch refused: invalid_request");
         }
       }
-      req.body = Object.fromEntries(parsed);
+      req.body = parsed;
       return ltiAuthorize(req, res, next);
     });
   });
