@@ -1969,7 +1969,7 @@ VIEWS.integrations = async () => {
           try { const r = await api.post(`/api/integrations/connectors/${c.id}/canvas/authorize`, {}); window.location.assign(r.data.authorizationUrl); }
           catch { toast("Couldn't start Canvas authorization."); }
         } }, "Connect Canvas") : null,
-        c.kind === "canvas" && c.status === "active" ? h("button", { class: "btn small", type: "button", onclick: async () => {
+        c.kind === "canvas" && c.status === "active" ? h("button", { class: "btn small", type: "button", onclick: async () => {\n          try { await api.post(`/api/integrations/connectors/\${c.id}/canvas/refresh`, {}); toast("Canvas connection is healthy."); }\n          catch (e) { toast(e.body?.error === "canvas_authorization_required" ? "Reconnect Canvas to continue." : "Couldn't refresh the Canvas connection."); }\n        } }, "Check connection") : null,\n        c.kind === "canvas" && c.status === "active" ? h("button", { class: "btn small", type: "button", onclick: async () => {
           try { const s = (await api.get(`/api/integrations/connectors/${c.id}/canvas/status`)).data;
             if (!s.connected) { toast("Canvas isn't connected yet."); return; }
             if (!(await ask({ title: "Disconnect Canvas?", text: "EduOS will delete its stored Canvas tokens. A district administrator must also revoke the developer key in Canvas if full revocation is required.", confirm: "Disconnect" }))) return;
