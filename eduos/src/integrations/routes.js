@@ -216,6 +216,7 @@ export function registerIntegrationRoutes(app) {
           baseUrl: conn.base_url, tokenUrl: conn.token_url, clientId: conn.client_id,
           clientSecret: secret, scope: conn.scope, options: urlOptions(),
           mappedSchoolIds: mapped.map((m) => m.external_id),
+          maxStudentRecords: config.powerschoolMaxStudents,
         });
       } catch (e) {
         // An unreadable secret means INTEGRATIONS_KEY changed: re-enter the secret.
