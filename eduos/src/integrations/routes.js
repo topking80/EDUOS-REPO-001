@@ -15,10 +15,11 @@ import { encryptSecret, decryptSecret } from "./secrets.js";
 import { checkUrl, IntegrationError } from "./http.js";
 import * as oneroster from "./oneroster.js";
 import * as edfi from "./edfi.js";
+import * as powerschool from "./powerschool.js";
 import { planImport, loadPlanInputs, applyPlan } from "./sync.js";
 
 const MANAGERS = ["superintendent", "it_admin"];
-const KINDS = { oneroster, edfi };
+const KINDS = { oneroster, edfi, powerschool };
 const COLS = `c.id, c.kind, c.name, c.base_url, c.token_url, c.client_id, c.scope, c.data_scope, c.status, c.created_at, c.updated_at,
   c.approved_at, c.disabled_at, c.last_sync_at, c.last_sync_status, uu.display_name AS updated_by_name, ua.display_name AS approved_by_name, c.updated_by`;
 const FROM = `FROM integration_connectors c JOIN users uu ON uu.id=c.updated_by LEFT JOIN users ua ON ua.id=c.approved_by`;
