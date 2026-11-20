@@ -162,7 +162,7 @@ async function processScheduledSisSyncLeased(job, { db = pool, tx = schedulerTen
       await c.query("SELECT pg_advisory_xact_lock(hashtext('integration-sync'),hashtext($1))",[input.connector_id]);
       const current=await c.query(
         `SELECT x.status,x.config_version,s.enabled,s.paused_at,s.config_version AS schedule_version,
-                j.status AS job_status,j.config_version AS job_version,j.lease_token,j.lease_until
+                j.status AS job_status,j.config_version AS job_version,j.lease_token,j.lease_until,s.approved_by AS schedule_approved_by,s.approved_at AS schedule_approved_at
            FROM integration_connectors x
            JOIN integration_sync_schedules s ON s.connector_id=x.id AND s.district_id=x.district_id
            JOIN integration_sync_jobs j ON j.schedule_id=s.id AND j.district_id=s.district_id
@@ -178,9 +178,9 @@ async function processScheduledSisSyncLeased(job, { db = pool, tx = schedulerTen
       const actor={districtId,userId:null,serviceActorId,role:"sis_scheduler",schoolId:null};
       const imported=await applyPlan(c,actor,{kind:input.kind,id:input.connector_id},runId,plan,job.id);
       await c.query(
-        `INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,started_at,finished_at,counts,rejected)
-         VALUES($1,$2,$3,'apply','completed',NULL,$4,now(),now(),$5::jsonb,$6::jsonb)`,
-        [runId,districtId,input.connector_id,serviceActorId,JSON.stringify({...plan.counts,imported}),JSON.stringify(plan.rejected)]);
+        `INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,schedule_id,scheduled_job_id,schedule_approved_by,schedule_approved_at,started_at,finished_at,counts,rejected)
+         VALUES($1,$2,$3,'apply','completed',NULL,$4,$5,$6,$7,$8,now(),now(),$9::jsonb,$10::jsonb)`,
+        [runId,districtId,input.connector_id,serviceActorId,input.schedule_id,job.id,v.schedule_approved_by,v.schedule_approved_at,JSON.stringify({...plan.counts,imported}),JSON.stringify(plan.rejected)]);
       await c.query("UPDATE integration_connectors SET last_sync_at=now(),last_sync_status='completed' WHERE id=$1",[input.connector_id]);
       await c.query(
         `INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
