@@ -48,8 +48,7 @@ CREATE TABLE integration_sync_schedules (
   UNIQUE(district_id,connector_id,id),
   FOREIGN KEY(district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
   CHECK (NOT enabled OR (approved_by IS NOT NULL AND approved_at IS NOT NULL AND approved_by<>updated_by)),
-  CHECK (NOT enabled OR paused_at IS NULL),
-  CHECK (enabled OR next_run_at IS NULL)
+  CHECK ((NOT enabled OR paused_at IS NOT NULL) = (next_run_at IS NULL))
 );
 CREATE INDEX integration_sync_schedules_due
   ON integration_sync_schedules(next_run_at,id)
