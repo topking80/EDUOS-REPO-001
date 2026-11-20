@@ -235,6 +235,14 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
       () => appDb.query("SELECT * FROM eduos_lti_approve_registration($1,$2,$3)", [reg.body.data.id, "A".repeat(43), USERS.pu[0]]),
       { code: "42501" });
     await appDb.query("ROLLBACK");
+    await appDb.query("BEGIN");
+    await appDb.query(
+      "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role','',true),set_config('app.school_id',$3,true)",
+      [ID.d1, USERS.pu[0], ID.s1]);
+    await assert.rejects(
+      () => appDb.query("SELECT * FROM eduos_lti_revoke_registration($1,$2)", [reg.body.data.id, USERS.pu[0]]),
+      { code: "42501" });
+    await appDb.query("ROLLBACK");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Bad LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "lti13", integrationConfig: { clientId: "c" } })).body.error, "invalid_lti_config");
     assert.equal((await as("it")("POST", "/api/apps", { name: "Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { clientSecret: "x" } })).body.error, "integration_config_must_not_hold_secrets");
     const changedConfig = { ...reg.body.data.integrationConfig, redirectUris: [...reg.body.data.integrationConfig.redirectUris, `${base}/alternate`] };
