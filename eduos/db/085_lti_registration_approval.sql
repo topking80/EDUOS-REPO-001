@@ -100,7 +100,7 @@ DECLARE tenant_id uuid := nullif(current_setting('app.district_id', true), '')::
         actor_role text := current_setting('app.role', true);
 BEGIN
   IF tenant_id IS NULL OR actor_id IS NULL OR actor_id <> p_actor
-     OR actor_role NOT IN ('superintendent','it_admin') THEN
+     OR actor_role IS NULL OR actor_role NOT IN ('superintendent','it_admin') THEN
     RAISE EXCEPTION 'unauthorized LTI revocation' USING ERRCODE = '42501';
   END IF;
   UPDATE apps SET lti_registration_status='revoked',lti_approved_config_hash=NULL,
