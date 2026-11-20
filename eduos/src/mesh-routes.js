@@ -70,7 +70,7 @@ async function learnerContext(client, actor) {
 
 const AVAILABLE_SQL = `
   SELECT a.id,a.name,a.vendor,a.description,a.category,a.launch_url,a.integration_type,a.data_sharing_scope,
-         a.dpa_status,a.coppa_compliant,a.owner_school_id,lic.id AS license_id,lic.seat_limit,lic.ends_on
+         a.dpa_status,a.coppa_compliant,a.owner_school_id,a.lti_registration_status,a.lti_approved_config_hash,lic.id AS license_id,lic.seat_limit,lic.ends_on
     FROM apps a
     JOIN LATERAL (
       SELECT l.id,l.seat_limit,l.ends_on FROM app_licenses l
@@ -292,6 +292,46 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     } catch (e) { if (e.code === "23505") return res.status(409).json({ error: "app_name_exists" }); next(e); }
   });
 
+  // LTI registrations require explicit district approval. Re-approval is
+  // required after any integration configuration change; revocation is immediate.
+  app.post("/api/apps/:appId/lti/approve", requireSession, requireCsrf, requirePermission("apps", "decide"), async (req, res, next) => {
+    if (!validId(req.params.appId)) return res.status(400).json({ error: "invalid_app_id" });
+    try {
+      const r = await withTenantTransaction(req.actor, async client => {
+        const found = await client.query("SELECT * FROM apps WHERE id=$1 FOR UPDATE", [req.params.appId]);
+        if (!found.rowCount) return fail(404, "app_not_found");
+        const a = found.rows[0];
+        if (a.integration_type !== "lti13" || a.status !== "active") return fail(409, "lti_registration_not_approvable");
+        if (!validLtiConfig(a.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
+        const fingerprint = ltiConfigFingerprint(a.integration_config);
+        const updated = await client.query(
+          "UPDATE apps SET lti_registration_status='approved',lti_approved_config_hash=$2,lti_approved_by=$3,lti_approved_at=now(),lti_revoked_by=NULL,lti_revoked_at=NULL WHERE id=$1 RETURNING *",
+          [a.id, fingerprint, req.actor.userId]);
+        await audit(client, req, "approve_lti_registration", "app", a.id, { configFingerprint: fingerprint }, a.owner_school_id);
+        return { status: 200, data: { id: a.id, registrationStatus: updated.rows[0].lti_registration_status, approvedAt: updated.rows[0].lti_approved_at } };
+      });
+      send(res, r);
+    } catch (e) { next(e); }
+  });
+
+  app.post("/api/apps/:appId/lti/revoke", requireSession, requireCsrf, requirePermission("apps", "decide"), async (req, res, next) => {
+    if (!validId(req.params.appId)) return res.status(400).json({ error: "invalid_app_id" });
+    try {
+      const r = await withTenantTransaction(req.actor, async client => {
+        const found = await client.query("SELECT * FROM apps WHERE id=$1 FOR UPDATE", [req.params.appId]);
+        if (!found.rowCount) return fail(404, "app_not_found");
+        const a = found.rows[0];
+        if (a.integration_type !== "lti13") return fail(409, "not_an_lti_registration");
+        const updated = await client.query(
+          "UPDATE apps SET lti_registration_status='revoked',lti_approved_config_hash=NULL,lti_approved_by=NULL,lti_approved_at=NULL,lti_revoked_by=$2,lti_revoked_at=now() WHERE id=$1 RETURNING *",
+          [a.id, req.actor.userId]);
+        await audit(client, req, "revoke_lti_registration", "app", a.id, { previousStatus: a.lti_registration_status }, a.owner_school_id);
+        return { status: 200, data: { id: a.id, registrationStatus: updated.rows[0].lti_registration_status, revokedAt: updated.rows[0].lti_revoked_at } };
+      });
+      send(res, r);
+    } catch (e) { next(e); }
+  });
+
   // ---- licenses ----
   app.post("/api/apps/:appId/licenses", requireSession, requireCsrf, requirePermission("apps", "read"), async (req, res, next) => {
     if (!validId(req.params.appId)) return res.status(400).json({ error: "invalid_app_id" });
@@ -457,9 +497,10 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         const a = rows[0];
         if (a.integration_type === "lti13" && !ltiKey) return fail(503, "lti_not_configured");
         const cfg = a.integration_type === "lti13"
-          ? (await client.query("SELECT integration_config FROM apps WHERE id=$1", [a.id])).rows[0].integration_config
+          ? (await client.query("SELECT integration_config,lti_registration_status,lti_approved_config_hash FROM apps WHERE id=$1", [a.id])).rows[0]
           : null;
-        if (a.integration_type === "lti13" && !validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
+        if (a.integration_type === "lti13" && !validLtiConfig(cfg.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
+        if (a.integration_type === "lti13" && (cfg.lti_registration_status !== "approved" || cfg.lti_approved_config_hash !== ltiConfigFingerprint(cfg.integration_config))) return fail(409, "lti_approval_required");
         const seat = (await client.query("SELECT eduos_claim_seat($1) AS r", [a.license_id])).rows[0].r;
         if (seat === "exhausted") return fail(409, "no_seats_available");
         if (seat !== "ok") return fail(409, "license_inactive");
@@ -469,11 +510,12 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           [req.actor.districtId, a.id, a.license_id, req.actor.userId, req.actor.schoolId || null, req.actor.role, a.integration_type, a.data_sharing_scope]);
         await audit(client, req, "launch", "app", a.id, { integrationType: a.integration_type, dataSharingScope: a.data_sharing_scope, launchId: launch.rows[0].id }, req.actor.schoolId || null);
         if (a.integration_type !== "lti13") return { status: 200, data: { url: a.launch_url, integrationType: a.integration_type } };
-        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(cfg) });
-        const u = new URL(cfg.loginUrl);
+        const ltiCfg = cfg.integration_config;
+        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg) });
+        const u = new URL(ltiCfg.loginUrl);
         u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
-        u.searchParams.set("target_link_uri", cfg.targetLinkUri); u.searchParams.set("lti_message_hint", hint);
-        u.searchParams.set("client_id", cfg.clientId);
+        u.searchParams.set("target_link_uri", ltiCfg.targetLinkUri); u.searchParams.set("lti_message_hint", hint);
+        u.searchParams.set("client_id", ltiCfg.clientId);
         return { status: 200, data: { url: u.href, integrationType: "lti13" } };
       });
       res.setHeader("Cache-Control", "no-store");
