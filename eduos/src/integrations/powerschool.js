@@ -55,7 +55,7 @@ export function studentRosterUrl(baseUrl, schoolId) {
     q: "school_enrollment.enroll_status==(A)",
     expansions: "school_enrollment",
   });
-  return `${baseUrl.replace(/\\/+$/, "")}/ws/v1/school/${encodeURIComponent(schoolId)}/student?${query}`;
+  return `${baseUrl.replace(/\/+$/, "")}/ws/v1/school/${encodeURIComponent(schoolId)}/student?${query}`;
 }
 
 async function collect(url, token, options, collection, item, maxRecords) {
