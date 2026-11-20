@@ -282,7 +282,7 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     try {
       const added = await as("supt1")("POST", "/api/integrations/connectors", {
         kind: "canvas", name: "District Canvas", baseUrl: canvasFake.base,
-        tokenUrl: `${canvasFake.base}/login/oauth2/token`, clientId: "canvas-client", clientSecret: "canvas-secret"
+        tokenUrl: `${canvasFake.base}/login/oauth2/token`, clientId: "canvas-client", clientSecret: "canvas-secret", scope: "url:GET|/api/v1/courses"
       });
       assert.equal(added.status, 201, JSON.stringify(added.body));
       const id = added.body.data.id;
@@ -294,6 +294,7 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       const authorization = new URL(started.body.data.authorizationUrl);
       assert.equal(authorization.pathname, "/login/oauth2/auth");
       assert.equal(authorization.searchParams.get("client_id"), "canvas-client");
+      assert.equal(authorization.searchParams.get("scope"), "url:GET|/api/v1/courses");
       assert.equal(authorization.searchParams.get("redirect_uri"), "http://localhost/api/integrations/canvas/callback");
       const state = authorization.searchParams.get("state");
       assert.ok(state && state.length >= 32);
