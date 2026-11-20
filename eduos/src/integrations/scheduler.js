@@ -4,7 +4,6 @@ import crypto from "node:crypto";
 import { pool } from "../db.js";
 import { config } from "../config.js";
 import { decryptSecret } from "./secrets.js";
-import { checkUrl } from "./http.js";
 import * as oneroster from "./oneroster.js";
 import * as edfi from "./edfi.js";
 import * as powerschool from "./powerschool.js";
@@ -95,7 +94,7 @@ export async function processScheduledSisSync(job, { db = pool, tx = schedulerTe
       `SELECT j.id,j.connector_id,j.schedule_id,j.config_version,j.attempts,j.lease_token,
               s.enabled,s.paused_at,s.config_version AS schedule_version,
               x.kind,x.status,x.config_version AS connector_version,x.base_url,x.token_url,
-              x.client_id,x.client_secret_enc,x.scope,x.id AS id
+              x.client_id,x.client_secret_enc,x.scope
          FROM integration_sync_jobs j
          JOIN integration_sync_schedules s ON s.id=j.schedule_id AND s.district_id=j.district_id
          JOIN integration_connectors x ON x.id=j.connector_id AND x.district_id=j.district_id
