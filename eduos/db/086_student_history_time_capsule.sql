@@ -206,8 +206,6 @@ CREATE INDEX student_time_capsule_events_history_idx
 -- snapshot deliberately excludes attachment storage keys and binary content.
 CREATE FUNCTION eduos_student_history_capture_revision() RETURNS trigger
 LANGUAGE plpgsql AS $$
-DECLARE
-  actor_id uuid := nullif(current_setting('app.user_id', true), '')::uuid;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     NEW.revision_no := 1;
