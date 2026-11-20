@@ -1,5 +1,6 @@
 // PowerSchool roster normalization and paging contract tests; no live SIS.
 import { test } from "node:test";
+import http from "node:http";
 import assert from "node:assert/strict";
 import * as powerschool from "../src/integrations/powerschool.js";
 
@@ -40,6 +41,38 @@ test("PowerSchool student normalization maps active roster fields only", () => {
   assert.equal(powerschool.normalizeStudent({ id: 3, first_name: "A", enroll_status: "A" }, "12").rejected.reason, "missing_student_number");
   assert.equal(powerschool.normalizeStudent({ id: 7, student_number: "7", first_name: "A" }, "12").rejected.reason, "missing_enrollment_status");
   assert.equal(powerschool.normalizeStudent({ student_number: "4", first_name: "A" }, "12").rejected.reason, "missing_student_id");
+});
+
+test("PowerSchool aggregate record ceiling includes records from every mapped school", async () => {
+  const studentRequests = [];
+  const server = http.createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    if (req.url.startsWith("/oauth/access_token")) {
+      res.end(JSON.stringify({ access_token: "test-token" }));
+    } else if (req.url.startsWith("/ws/v1/district/school")) {
+      res.end(JSON.stringify({ schools: { school: [{ id: 12, name: "North" }, { id: 13, name: "South" }] } }));
+    } else if (req.url.includes("/student?")) {
+      studentRequests.push(req.url);
+      res.end(JSON.stringify({ students: { student: [{
+        id: studentRequests.length, student_number: String(studentRequests.length),
+        first_name: "Student", enroll_status: "A",
+      }] } }));
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    await assert.rejects(powerschool.fetchRoster({
+      baseUrl, tokenUrl: `${baseUrl}/oauth/access_token`, clientId: "client",
+      clientSecret: "secret", mappedSchoolIds: ["12", "13"], maxStudentRecords: 1,
+      options: { allowInsecureLoopback: true },
+    }), error => error.code === "connector_too_many_records");
+    assert.equal(studentRequests.length, 1, "the second school's student endpoint is not fetched after the aggregate ceiling");
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
 });
 
 test("PowerSchool nested name fields and missing grade normalize safely", () => {
