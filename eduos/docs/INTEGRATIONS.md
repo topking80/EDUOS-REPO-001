@@ -112,7 +112,7 @@ encrypted connector secret field and never commit it to source control.
 
 EduOS stores access and refresh tokens encrypted and does not return them from
 its API. Expired access tokens are refreshed server-side with a database-backed
-lease so concurrent application instances do not race refresh-token rotation.
+lease so concurrent application instances do not issue duplicate refresh requests. Canvas reuses the existing refresh token.
 Invalid or revoked refresh grants require the district administrator to reconnect.
 Changing Canvas connector credentials or disabling the connector deletes the
 previous grant and pending authorization state. Disconnecting in EduOS also
