@@ -15,7 +15,7 @@ A connector URL, credential, scope, or school-map change returns the connector t
 
 ## Worker
 
-The API runs a guarded scheduler sweep every 60 seconds when `INTEGRATIONS_KEY` is configured and `SIS_SYNC_DISPATCH_ENABLED` is not `false`. Set `SIS_SYNC_DISPATCH_ENABLED=false` for a deployment-wide scheduler kill switch; manual connector sync remains available. A one-shot dispatch can also be run with:
+The API runs a guarded scheduler sweep every 60 seconds when `INTEGRATIONS_KEY` is configured and `SIS_SYNC_DISPATCH_ENABLED` is not `false`. Set `SIS_SYNC_DISPATCH_ENABLED=false` on every API/worker instance for a deployment-wide scheduler kill switch; manual connector sync remains available. This prevents new sweeps but does not interrupt an import transaction already underway, so use the district pause-all endpoint for an immediate district-level stop. A one-shot dispatch can also be run with:
 
 ```sh
 npm run sis:sync
