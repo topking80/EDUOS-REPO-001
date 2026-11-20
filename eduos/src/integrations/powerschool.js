@@ -29,7 +29,9 @@ export function normalizeStudent(s, schoolExternalId) {
   if (!externalId) return { rejected: { externalId: null, reason: "missing_student_id" } };
   // PowerSchool enroll_status 0 is active. When the provider omits it, the
   // school-scoped REST collection remains the source of enrollment membership.
-  if (s?.enroll_status !== undefined && Number(s.enroll_status) !== 0) return { skipped: true };
+  const enrollment = s?.school_enrollment && typeof s.school_enrollment === "object" ? s.school_enrollment : {};
+  const enrollmentStatus = s?.enroll_status ?? enrollment.enroll_status;
+  if (enrollmentStatus !== undefined && enrollmentStatus !== null && !["0", 0, "A", "active"].includes(enrollmentStatus)) return { skipped: true };
   const name = s?.name && typeof s.name === "object" ? s.name : {};
   const first = text(s?.first_name ?? name.first_name, 80);
   const last = text(s?.last_name ?? name.last_name, 80);
