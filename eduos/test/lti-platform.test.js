@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import {
   loadPlatformKey, assertPlatformRsaKey, makeHint, readHint, consumeHint, pairwiseSub,
-  launchClaims, validLtiConfig
+  launchClaims, validLtiConfig, ltiConfigFingerprint
 } from "../src/lti.js";
 
 const privatePem = () => crypto.generateKeyPairSync("rsa", {
@@ -100,6 +100,19 @@ test("launch claims limit identity and context to the approved data scope", () =
   assert.equal(identity.name, "Teacher");
   assert.equal(identity.email, "teacher@example.test");
   assert.equal(identity["https://purl.imsglobal.org/spec/lti/claim/context"], undefined);
+});
+
+test("LTI registration fingerprint changes when any trust-boundary setting changes", () => {
+  const cfg = { clientId: "client-a", deploymentId: "deployment-a", loginUrl: "https://tool.example/login", redirectUris: ["https://tool.example/callback"], targetLinkUri: "https://tool.example/launch" };
+  const fingerprint = ltiConfigFingerprint(cfg);
+  assert.equal(ltiConfigFingerprint({ ...cfg }), fingerprint);
+  for (const changed of [
+    { ...cfg, clientId: "client-b" },
+    { ...cfg, deploymentId: "deployment-b" },
+    { ...cfg, loginUrl: "https://other.example/login" },
+    { ...cfg, redirectUris: ["https://other.example/callback"] },
+    { ...cfg, targetLinkUri: "https://other.example/launch" }
+  ]) assert.notEqual(ltiConfigFingerprint(changed), fingerprint);
 });
 
 test("LTI tool configuration requires HTTPS endpoints and bounded redirect lists", () => {
