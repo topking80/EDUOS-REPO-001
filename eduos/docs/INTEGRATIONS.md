@@ -115,9 +115,7 @@ its API. Expired access tokens are refreshed server-side with a database-backed
 lease so concurrent application instances do not issue duplicate refresh requests. Canvas reuses the existing refresh token.
 Invalid or revoked refresh grants require the district administrator to reconnect.
 Changing Canvas connector credentials or disabling the connector deletes the
-previous grant and pending authorization state. Disconnecting in EduOS also
-deletes the locally stored tokens and pending authorization state. The district must also revoke or disable the developer
-key in Canvas when full revocation is required.
+previous grant and pending authorization state. Disconnecting in EduOS attempts Canvas's token DELETE endpoint, deletes the locally stored tokens and pending authorization state, and returns the connector to pending approval. A different district lead must approve it before reconnecting. The district should also revoke or disable the developer key in Canvas when full application revocation is required.
 
 **CANVAS-API-01 scope:** OAuth connection, token storage, status and local
 disconnect only. Course, enrollment and grade synchronization are not enabled
