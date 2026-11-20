@@ -1983,6 +1983,12 @@ VIEWS.integrations = async () => {
         h("button", { class: "btn small", type: "button", onclick: async () => {
           const secret = await ask({ title: `New client secret for ${c.name}`, text: "It's stored encrypted. The connector then needs approval again.", label: "Client secret", confirm: "Save", maxlength: 2000 });
           if (secret) try { const result = await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { clientSecret: secret }); toast(c.kind === "canvas" && result.data.canvasTokenRevoked === false ? "Saved; token revocation could not be confirmed. Disable the developer key in Canvas." : "Saved. It needs approval again."); reload(); } catch { toast("Could not save."); } } }, "Change secret"),
+        c.kind === "canvas" ? h("button", { class: "btn small", type: "button", onclick: async () => {
+          const value = await ask({ title: `Read-only Canvas scopes for ${c.name}`, text: "Use space-separated url:GET|/api/v1/... endpoint scopes. Changes revoke the old token and require approval.", label: "Scopes", confirm: "Save", maxlength: 1000 });
+          if (value) try { const result = await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { scope: value });
+            toast(result.data.canvasTokenRevoked === false ? "Scopes saved; revoke the developer key in Canvas because token revocation could not be confirmed." : "Scopes saved. A second district lead must approve again."); reload();
+          } catch { toast("Could not save Canvas scopes."); }
+        } }, "Change scopes") : null,
         c.status !== "disabled" ? h("button", { class: "btn small", type: "button", onclick: async () => {
           try { const result = await api.post(`/api/integrations/connectors/${c.id}/disable`, {});
             toast(c.kind === "canvas" && result.data.canvasTokenRevoked === false ? "Turned off locally; disable the Canvas developer key to revoke access." : "Turned off.");
