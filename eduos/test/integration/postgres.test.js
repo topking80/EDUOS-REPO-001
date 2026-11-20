@@ -383,6 +383,33 @@ describe("TC-01 student history and Time Capsule schema against real PostgreSQL"
     }
   };
 
+  it("TC-01: runtime grants exclude history approval and capsule lifecycle columns", async () => {
+    const denied = [
+      ["student_history_entries", "status"],
+      ["student_time_capsules", "status"],
+      ["student_time_capsules", "release_kind"],
+      ["student_time_capsules", "release_at"],
+      ["student_time_capsules", "milestone_key"],
+      ["student_time_capsules", "sealed_at"],
+      ["student_time_capsules", "released_at"],
+      ["student_time_capsules", "cancelled_at"]
+    ];
+    for (const [table, column] of denied) {
+      const result = await admin.query(
+        "SELECT has_column_privilege($1,$2,$3,'UPDATE') AS allowed",
+        [db.names.app, table, column]
+      );
+      assert.equal(result.rows[0].allowed, false, `${table}.${column} must be workflow-controlled`);
+    }
+    for (const [table, column] of [["student_history_entries", "title"], ["student_time_capsules", "title"]]) {
+      const result = await admin.query(
+        "SELECT has_column_privilege($1,$2,$3,'UPDATE') AS allowed",
+        [db.names.app, table, column]
+      );
+      assert.equal(result.rows[0].allowed, true, `${table}.${column} remains editable`);
+    }
+  });
+
   it("isolates history by district and originating school and captures immutable revisions", async () => {
     const alice = await scoped(ID.d1, ID.s1, "parent", USERS.pa[0], async () =>
       (await app.query(`
