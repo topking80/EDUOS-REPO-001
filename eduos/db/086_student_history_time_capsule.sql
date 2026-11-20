@@ -38,7 +38,7 @@ CREATE TABLE student_history_entries (
   updated_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
   FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
-  FOREIGN KEY (district_id, author_user_id) REFERENCES memberships(district_id, user_id),
+  FOREIGN KEY (district_id, author_user_id) REFERENCES district_users(district_id, user_id),
   UNIQUE (district_id, school_id, student_id, id)
 );
 
@@ -61,7 +61,7 @@ CREATE TABLE student_history_entry_revisions (
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
   FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
-  FOREIGN KEY (district_id, actor_user_id) REFERENCES memberships(district_id, user_id),
+  FOREIGN KEY (district_id, actor_user_id) REFERENCES district_users(district_id, user_id),
   FOREIGN KEY (district_id, school_id, student_id, entry_id)
     REFERENCES student_history_entries(district_id, school_id, student_id, id) ON DELETE CASCADE,
   UNIQUE (district_id, entry_id, revision_no)
@@ -116,7 +116,7 @@ CREATE TABLE student_time_capsules (
   updated_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
   FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
-  FOREIGN KEY (district_id, owner_user_id) REFERENCES memberships(district_id, user_id),
+  FOREIGN KEY (district_id, owner_user_id) REFERENCES district_users(district_id, user_id),
   UNIQUE (district_id, school_id, student_id, id),
   CHECK (
     (release_kind = 'scheduled' AND release_at IS NOT NULL AND milestone_key IS NULL)
@@ -174,7 +174,7 @@ CREATE TABLE student_time_capsule_recipients (
   FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
   FOREIGN KEY (district_id, school_id, student_id, capsule_id)
     REFERENCES student_time_capsules(district_id, school_id, student_id, id) ON DELETE CASCADE,
-  FOREIGN KEY (district_id, recipient_user_id) REFERENCES memberships(district_id, user_id),
+  FOREIGN KEY (district_id, recipient_user_id) REFERENCES district_users(district_id, user_id),
   UNIQUE (district_id, capsule_id, recipient_user_id)
 );
 CREATE INDEX student_time_capsule_recipients_user_idx
@@ -199,7 +199,7 @@ CREATE TABLE student_time_capsule_events (
   FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
   FOREIGN KEY (district_id, school_id, student_id, capsule_id)
     REFERENCES student_time_capsules(district_id, school_id, student_id, id) ON DELETE CASCADE,
-  FOREIGN KEY (district_id, actor_user_id) REFERENCES memberships(district_id, user_id)
+  FOREIGN KEY (district_id, actor_user_id) REFERENCES district_users(district_id, user_id)
 );
 CREATE INDEX student_time_capsule_events_history_idx
   ON student_time_capsule_events(district_id, capsule_id, occurred_at DESC);
