@@ -23,13 +23,14 @@ test("PowerSchool student normalization maps active roster fields only", () => {
   assert.equal(powerschool.normalizeStudent({ id: 5, student_number: "5", first_name: "A", school_enrollment: { enroll_status: "W" } }, "12").skipped, true);
   assert.ok(powerschool.normalizeStudent({ id: 6, student_number: "6", first_name: "A", school_enrollment: { enroll_status: "A" } }, "12").student);
   assert.equal(powerschool.normalizeStudent({ id: 2, student_number: "2" }, "12").rejected.reason, "missing_name");
-  assert.equal(powerschool.normalizeStudent({ id: 3, first_name: "A" }, "12").rejected.reason, "missing_student_number");
+  assert.equal(powerschool.normalizeStudent({ id: 3, first_name: "A", enroll_status: "A" }, "12").rejected.reason, "missing_student_number");
+  assert.equal(powerschool.normalizeStudent({ id: 7, student_number: "7", first_name: "A" }, "12").rejected.reason, "missing_enrollment_status");
   assert.equal(powerschool.normalizeStudent({ student_number: "4", first_name: "A" }, "12").rejected.reason, "missing_student_id");
 });
 
 test("PowerSchool nested name fields and missing grade normalize safely", () => {
   assert.deepEqual(powerschool.normalizeStudent({
-    id: "44", student_number: 44, name: { first_name: "Grace", last_name: "Hopper" },
+    id: "44", student_number: 44, name: { first_name: "Grace", last_name: "Hopper" }, enroll_status: "A",
   }, "9").student, {
     externalId: "44", localStudentNumber: "44", displayName: "Grace Hopper",
     gradeLevel: null, schoolExternalId: "9",
