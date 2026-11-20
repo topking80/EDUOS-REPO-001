@@ -92,6 +92,10 @@ test("launch claims limit identity and context to the approved data scope", () =
   assert.equal(minimal.name, undefined);
   assert.equal(minimal.email, undefined);
   assert.equal(minimal["https://purl.imsglobal.org/spec/lti/claim/context"], undefined);
+  const platformClaim = "https://purl.imsglobal.org/spec/lti/claim/tool_platform";
+  assert.equal(minimal[platformClaim].guid, launchClaims({ ...base, launch: { ...base.launch, districtId: "district-2" } })[platformClaim].guid);
+  assert.notEqual(minimal[platformClaim].guid, "district-1");
+
   const identity = launchClaims({ ...base, app: { ...base.app, data_sharing_scope: "identity" } });
   assert.equal(identity.name, "Teacher");
   assert.equal(identity.email, "teacher@example.test");
