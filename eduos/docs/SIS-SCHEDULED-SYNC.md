@@ -11,7 +11,7 @@ Scheduled sync is opt-in per connector. It is disabled until a district manager 
 - Pause every enabled schedule in a district: `POST /api/integrations/schedules/pause-all`.
 - Resume one approved schedule: `POST /api/integrations/connectors/:id/schedule/resume`.
 
-A connector URL, credential, scope, or school-map change returns the connector to pending approval and increments its config version. After re-approval, run a fresh preview before approving the schedule again. Scheduled work is cancelled unless the connector and schedule still have matching approved versions at the final import transaction.
+A connector URL, credential, scope, or school-map change returns the connector to pending approval and increments its config version. After re-approval, configure the schedule again and run a fresh preview before approving the schedule again. Connector changes automatically disable the prior schedule and cancel its outstanding jobs. Scheduled work is cancelled unless the connector and schedule still have matching approved versions at the final import transaction.
 
 ## Worker
 
