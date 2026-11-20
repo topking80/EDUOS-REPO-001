@@ -71,7 +71,11 @@ async function collect(url, token, options, collection, item, maxRecords) {
   throw new IntegrationError("connector_too_many_records", collection);
 }
 
-export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, scope, options }) {
+export function isMappedSchool(schoolId, mappedSchoolIds) {
+  return Array.isArray(mappedSchoolIds) && mappedSchoolIds.includes(String(schoolId));
+}
+
+export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, mappedSchoolIds = [] }) {
   const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope, options });
   const base = baseUrl.replace(/\/+$/, "");
   const schoolRows = await collect(`${base}/ws/v1/district/school`, token, options, "schools", "school", MAX_SCHOOLS);
@@ -81,6 +85,10 @@ export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, s
     if (!normalized.school) { rejected.push(normalized.rejected); continue; }
     schools.push(normalized.school);
     const schoolId = normalized.school.externalId;
+    // Do not download student records for unmapped schools. The caller supplies
+    // the district-approved mapping snapshot; the route rechecks config_version
+    // before import so a concurrent mapping change invalidates this sync.
+    if (!isMappedSchool(schoolId, mappedSchoolIds)) continue;
     const studentRows = await collect(studentRosterUrl(base, schoolId),
       token, options, "students", "student", MAX_STUDENTS - students.length);
     for (const rawStudent of studentRows) {
