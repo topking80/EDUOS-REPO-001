@@ -81,7 +81,7 @@ export function registerCanvasOAuthRoutes(app) {
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Referrer-Policy", "no-referrer");
       res.append("Set-Cookie", serialize(stateCookie(state), state, { ...COOKIE, maxAge: STATE_TTL_SECONDS }));
-      return res.redirect(302, authorize.toString());
+      return res.json({ data: { authorizationUrl: authorize.toString() } });
     } catch (e) { sendError(res, next, e); }
   });
 
