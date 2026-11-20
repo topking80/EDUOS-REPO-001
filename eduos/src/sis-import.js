@@ -30,11 +30,13 @@ export async function applySisBatch(client,actor,batch,requestId){
     [actor.districtId,sourceSystem.trim(),sourceBatchId.trim()]
   );
   if(duplicate.rowCount)return {status:409,error:"batch_already_imported",runId:duplicate.rows[0].id};
+  const serviceActorId = actor.serviceActorId || null;
+  if ((actor.userId == null) === (serviceActorId == null)) throw new TypeError("SIS import requires exactly one user or service actor");
   const run=await client.query(
-    `INSERT INTO sis_sync_runs(district_id,school_id,initiated_by,source_system,source_batch_id,status,
+    `INSERT INTO sis_sync_runs(district_id,school_id,initiated_by,initiated_by_service,source_system,source_batch_id,status,
       students_received,attendance_received,payload_sha256)
-     VALUES($1,$2,$3,$4,$5,'completed',$6,$7,$8) RETURNING id`,
-    [actor.districtId,schoolId,actor.userId,sourceSystem.trim(),sourceBatchId.trim(),students.length,attendance.length,payloadHash]
+     VALUES($1,$2,$3,$4,$5,$6,'completed',$7,$8,$9) RETURNING id`,
+    [actor.districtId,schoolId,actor.userId ?? null,serviceActorId,sourceSystem.trim(),sourceBatchId.trim(),students.length,attendance.length,payloadHash]
   );
   let studentCount=0,attendanceCount=0;
   const src=sourceSystem.trim();
@@ -89,9 +91,9 @@ export async function applySisBatch(client,actor,batch,requestId){
     [studentCount,attendanceCount,run.rows[0].id]
   );
   await client.query(
-    `INSERT INTO audit_events(district_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
-     VALUES($1,$2,$3,'sis_import','sis_sync_run',$4,'success',$5,$6)`,
-    [actor.districtId,actor.userId,actor.role,run.rows[0].id,
+    `INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
+     VALUES($1,$2,$3,$4,'sis_import','sis_sync_run',$5,'success',$6,$7)`,
+    [actor.districtId,actor.userId ?? null,serviceActorId,actor.role,run.rows[0].id,
      JSON.stringify({sourceSystem,students:studentCount,attendance:attendanceCount,payloadHash}),requestId]
   );
   return {status:201,data:{runId:run.rows[0].id,studentsUpserted:studentCount,attendanceImported:attendanceCount,payloadSha256:payloadHash}};

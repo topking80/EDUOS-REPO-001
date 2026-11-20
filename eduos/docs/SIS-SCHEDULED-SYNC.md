@@ -1,0 +1,30 @@
+# SIS-02: Scheduled roster synchronization
+
+Scheduled sync is opt-in per connector. It is disabled until a district manager configures an interval and a different district manager approves that schedule. Connector approval remains a separate prerequisite, and a successful preview must exist after the current connector approval before the schedule can be approved.
+
+## Controls
+
+- Configure: `PUT /api/integrations/connectors/:id/schedule` with `{"intervalMinutes":1440}` (15 minutes through 7 days).
+- Approve: `POST /api/integrations/connectors/:id/schedule/approve`.
+- Inspect: `GET /api/integrations/connectors/:id/schedule`.
+- Pause one connector: `POST /api/integrations/connectors/:id/schedule/pause`.
+- Pause every enabled schedule in a district: `POST /api/integrations/schedules/pause-all`.
+- Resume one approved schedule: `POST /api/integrations/connectors/:id/schedule/resume`.
+
+A connector URL, credential, scope, or school-map change returns the connector to pending approval and increments its config version. After re-approval, configure the schedule again and run a fresh preview before approving the schedule again. Connector changes automatically disable the prior schedule and cancel its outstanding jobs. Scheduled work is cancelled unless the connector and schedule still have matching approved versions at the final import transaction.
+
+## Worker
+
+The API runs a guarded scheduler sweep every 60 seconds when `INTEGRATIONS_KEY` is configured and `SIS_SYNC_DISPATCH_ENABLED` is not `false`. Set `SIS_SYNC_DISPATCH_ENABLED=false` on every API/worker instance for a deployment-wide scheduler kill switch; manual connector sync remains available. This prevents new sweeps but does not interrupt an import transaction already underway, so use the district pause-all endpoint for an immediate district-level stop. A one-shot dispatch can also be run with:
+
+```sh
+npm run sis:sync
+```
+
+The worker uses database row locks with `SKIP LOCKED`, per-job lease tokens, and a maximum of five attempts with exponential backoff. It processes each job within its district RLS context and imports through the same planner and SIS batch writer as manual connector sync.
+
+## Attribution and data scope
+
+Scheduled runs use the fixed `sis_scheduler` service principal. They do not create or impersonate a user. The human who approved the connector and the human who approved the schedule remain recorded separately. Each scheduled run snapshots its schedule ID, job ID, schedule approver, and approval time so later reconfiguration cannot rewrite historical provenance. Service-initiated runs appear in connector run history and SIS import history.
+
+This feature imports roster data only. It does not write grades, attendance, staff, course enrollments, or other data back to the external SIS. Live district-tenant validation is required before production enablement.
