@@ -65,24 +65,24 @@ test("history authors, revision actors, and capsule owners/recipients are distri
 
 test("runtime role gets only the operations required by TC-01 and no destructive privileges", () => {
   for (const table of ["student_history_entries", "student_time_capsules"]) {
-    assert.match(grants, new RegExp(`GRANT SELECT, INSERT ON [^;]*\\b${table}\\b[^;]*TO eduos_app`), `${table} has its required read/create grant`);
-    assert.match(grants, new RegExp(`REVOKE DELETE, TRUNCATE ON [^;]*\\b${table}\\b[^;]*FROM eduos_app`), `${table} blocks destructive access`);
+    assert.match(grants, new RegExp(`GRANT SELECT, INSERT ON [^;]*\b${table}\b[^;]*TO eduos_app`), `${table} has its required read/create grant`);
+    assert.match(grants, new RegExp(`REVOKE DELETE, TRUNCATE ON [^;]*\b${table}\b[^;]*FROM eduos_app`), `${table} blocks destructive access`);
   }
   for (const table of ["student_history_entry_revisions", "student_history_entry_attachments", "student_time_capsule_items", "student_time_capsule_events"]) {
     const expectedGrant = table === "student_history_entry_revisions"
       ? /GRANT SELECT ON [^;]*student_history_entry_revisions[^;]*TO eduos_app/
-      : new RegExp(`GRANT SELECT, INSERT ON [^;]*\\b${table}\\b[^;]*TO eduos_app`);
+      : new RegExp(`GRANT SELECT, INSERT ON [^;]*\b${table}\b[^;]*TO eduos_app`);
     assert.match(grants, expectedGrant, `${table} has its required read/write grant`);
     const expectedRevoke = table === "student_history_entry_revisions"
       ? /REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON [^;]*student_history_entry_revisions[^;]*FROM eduos_app/
-      : new RegExp(`REVOKE UPDATE, DELETE, TRUNCATE ON [^;]*\\b${table}\\b[^;]*FROM eduos_app`);
+      : new RegExp(`REVOKE UPDATE, DELETE, TRUNCATE ON [^;]*\b${table}\b[^;]*FROM eduos_app`);
     assert.match(grants, expectedRevoke, `${table} blocks forbidden mutation`);
   }
   assert.match(grants, /GRANT SELECT, INSERT ON student_time_capsules,\s*student_time_capsule_recipients TO eduos_app/);
   assert.ok(grants.includes("GRANT UPDATE (entry_type, classification, title, body, occurred_at, school_year, audience, source_reference)"));
-  assert.match(grants, /GRANT UPDATE \\(title, message, timezone, updated_at\\)\\s+ON student_time_capsules TO eduos_app/);
-  assert.doesNotMatch(grants, /GRANT UPDATE \\([^)]*\\bstatus\\b[^)]*\\)\\s+ON student_history_entries TO eduos_app/);
-  assert.doesNotMatch(grants, /GRANT UPDATE \\([^)]*\\b(status|release_kind|release_at|milestone_key|sealed_at|released_at|cancelled_at)\\b[^)]*\\)\\s+ON student_time_capsules TO eduos_app/);
+  assert.match(grants, /GRANT UPDATE \(title, message, timezone, updated_at\)\s+ON student_time_capsules TO eduos_app/);
+  assert.doesNotMatch(grants, /GRANT UPDATE \([^)]*\bstatus\b[^)]*\)\s+ON student_history_entries TO eduos_app/);
+  assert.doesNotMatch(grants, /GRANT UPDATE \([^)]*\b(status|release_kind|release_at|milestone_key|sealed_at|released_at|cancelled_at)\b[^)]*\)\s+ON student_time_capsules TO eduos_app/);
   assert.ok(grants.includes("REVOKE UPDATE (status) ON student_history_entries FROM eduos_app"));
   assert.ok(grants.includes("REVOKE UPDATE (status, release_kind, release_at, milestone_key, sealed_at, released_at, cancelled_at)"));
   assert.ok(!grants.includes("GRANT UPDATE ON student_history_entries TO eduos_app"));
