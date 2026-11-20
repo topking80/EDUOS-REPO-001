@@ -74,11 +74,11 @@ test("runtime role gets only the operations required by TC-01 and no destructive
   for (const table of ["student_history_entry_revisions", "student_history_entry_attachments", "student_time_capsule_items", "student_time_capsule_events"]) {
     const grant = table === "student_history_entry_revisions"
       ? "GRANT SELECT ON student_history_entry_revisions TO eduos_app;"
-      : `GRANT SELECT, INSERT ON ${table} TO eduos_app;`;
+      : "GRANT SELECT, INSERT ON student_history_entry_attachments, student_time_capsule_items, student_time_capsule_events TO eduos_app;";
     assert.ok(normalized.includes(grant), `${table} has its required read/write grant`);
     const revoke = table === "student_history_entry_revisions"
       ? "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_revisions FROM eduos_app;"
-      : `REVOKE UPDATE, DELETE, TRUNCATE ON ${table} FROM eduos_app;`;
+      : "REVOKE UPDATE, DELETE, TRUNCATE ON student_history_entry_attachments, student_time_capsule_items, student_time_capsule_events FROM eduos_app;";
     assert.ok(normalized.includes(revoke), `${table} blocks forbidden mutation`);
   }
   assert.ok(normalized.includes("GRANT SELECT, INSERT ON student_time_capsules, student_time_capsule_recipients TO eduos_app;"));
