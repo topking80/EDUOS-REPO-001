@@ -2,17 +2,20 @@
 // State is tenant-, connector-, config-version-, user- and browser-bound;
 // tokens are encrypted before persistence and never returned to the browser.
 import crypto from "node:crypto";
+import rateLimit from "express-rate-limit";
 import { parse, serialize } from "../cookies.js";
 import { config } from "../config.js";
 import { requireSession, requireCsrf } from "../auth.js";
 import { withTenantTransaction } from "../db.js";
 import { HttpError, audit, one, validId, sendError } from "../role-app-util.js";
 import { encryptSecret, decryptSecret } from "./secrets.js";
-import { checkUrl, request as outboundRequest } from "./http.js";
+import { checkUrl, request as outboundRequest, IntegrationError } from "./http.js";
 
 const MANAGERS = new Set(["superintendent", "it_admin"]);
 const BASE = "/api/integrations/connectors";
 const STATE_TTL_SECONDS = 600;
+const oauthStartLimiter = rateLimit({ windowMs: 60_000, limit: 10, standardHeaders: true, legacyHeaders: false });
+const oauthCallbackLimiter = rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false });
 const COOKIE = { httpOnly: true, secure: config.secureCookies, sameSite: "lax", path: "/" };
 const hash = value => crypto.createHash("sha256").update(String(value)).digest("hex");
 const stateCookie = state => `eduos_canvas_state_${hash(state).slice(0, 24)}`;
@@ -48,7 +51,7 @@ function tokenPayload(text) {
 }
 
 export function registerCanvasOAuthRoutes(app) {
-  app.post(`${BASE}/:id/canvas/authorize`, requireSession, requireCsrf, async (req, res, next) => {
+  app.post(`${BASE}/:id/canvas/authorize`, oauthStartLimiter, requireSession, requireCsrf, async (req, res, next) => {
     if (!requireManager(req, res)) return;
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
     try {
@@ -88,7 +91,7 @@ export function registerCanvasOAuthRoutes(app) {
   // Canvas returns the authorization response by top-level GET. The short-lived
   // HttpOnly SameSite=Lax cookie supplies the browser binding; the session and
   // database row bind the same attempt to one district, user and config version.
-  app.get("/api/integrations/canvas/callback", requireSession, async (req, res, next) => {
+  app.get("/api/integrations/canvas/callback", oauthCallbackLimiter, requireSession, async (req, res, next) => {
     const state = req.query?.state;
     if (typeof state !== "string" || state.length < 32 || state.length > 128)
       return res.status(400).type("text/plain").send("Invalid Canvas authorization response");
@@ -144,6 +147,7 @@ export function registerCanvasOAuthRoutes(app) {
       const token = tokenPayload(response.text);
       const userId = token?.user?.id ?? token?.user_id;
       if (typeof token?.access_token !== "string" || !token.access_token ||
+          String(token?.token_type || "").toLowerCase() !== "bearer" ||
           typeof token?.refresh_token !== "string" || !token.refresh_token ||
           !Number.isSafeInteger(token.expires_in) || token.expires_in < 60 || token.expires_in > 86400 ||
           (typeof userId !== "string" && typeof userId !== "number"))
@@ -173,7 +177,8 @@ export function registerCanvasOAuthRoutes(app) {
       });
       return res.redirect(303, "/app/?canvas=connected");
     } catch (e) {
-      if (e instanceof HttpError && e.status < 500) return res.status(e.status).type("text/plain").send("Canvas authorization was not accepted");
+      if (e instanceof HttpError) return res.status(e.status).type("text/plain").send("Canvas authorization was not accepted");
+      if (e instanceof IntegrationError) return res.status(502).type("text/plain").send("Canvas authorization could not be completed");
       sendError(res, next, e);
     }
   });
