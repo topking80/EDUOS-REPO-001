@@ -230,6 +230,7 @@ export async function processScheduledSisSync(job, deps = {}) {
 
 export async function dispatchScheduledSisSync({db=pool,maxJobsPerDistrict=20,log=console}={}) {
   if(!config.integrationsKey) return {skipped:"integrations_disabled",claimed:0};
+  if(!config.sisSyncDispatchEnabled) return {skipped:"sis_sync_dispatch_disabled",claimed:0};
   const tx=schedulerTenantTransaction(db);
   const districts=(await db.query("SELECT id FROM districts WHERE status='active' ORDER BY id")).rows;
   let claimed=0;
