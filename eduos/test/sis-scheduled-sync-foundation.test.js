@@ -41,7 +41,7 @@ test("durable jobs have bounded attempts, leases and tenant-composite references
 });
 
 test("runtime grants are least privilege for durable scheduler records",()=>{
-  assert.match(migration,/GRANT SELECT,INSERT,UPDATE ON integration_sync_schedules TO eduos_app/);
-  assert.match(migration,/GRANT SELECT,INSERT,UPDATE ON integration_sync_jobs TO eduos_app/);
-  assert.match(migration,/REVOKE DELETE,TRUNCATE ON integration_sync_schedules,integration_sync_jobs,integration_service_actors/);
+  assert.match(grants,/GRANT SELECT ON integration_service_actors TO eduos_app/);
+  assert.match(grants,/GRANT SELECT, INSERT, UPDATE ON integration_sync_schedules, integration_sync_jobs TO eduos_app/);
+  assert.match(grants,/REVOKE DELETE, TRUNCATE ON integration_service_actors, integration_sync_schedules, integration_sync_jobs FROM eduos_app/);
 });
