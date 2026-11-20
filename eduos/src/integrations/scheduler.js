@@ -53,7 +53,18 @@ async function enqueueDue(tx, districtId) {
 
 async function claimJob(tx, districtId) {
   return tx(districtId, async c => {
-    await c.query("UPDATE integration_sync_jobs SET status='failed',last_error='lease_expired_after_max_attempts',lease_until=NULL,lease_token=NULL,finished_at=now() WHERE district_id=$1 AND status='processing' AND lease_until<now() AND attempts>=$2",[districtId,SYNC_JOB_MAX_ATTEMPTS]);
+    const expired=await c.query("UPDATE integration_sync_jobs SET status='failed',last_error='lease_expired_after_max_attempts',lease_until=NULL,lease_token=NULL,finished_at=now() WHERE district_id=$1 AND status='processing' AND lease_until<now() AND attempts>=$2 RETURNING id,connector_id",[districtId,SYNC_JOB_MAX_ATTEMPTS]);
+    if(expired.rowCount){
+      const actor=(await c.query("SELECT id FROM integration_service_actors WHERE actor_key='sis_scheduler'")).rows[0];
+      if(actor){
+        for(const failed of expired.rows){
+          const runId=crypto.randomUUID();
+          await c.query("INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,started_at,finished_at,error) VALUES($1,$2,$3,'apply','failed',NULL,$4,now(),now(),'lease_expired_after_max_attempts')",[runId,districtId,failed.connector_id,actor.id]);
+          await c.query("UPDATE integration_connectors SET last_sync_at=now(),last_sync_status='failed' WHERE id=$1",[failed.connector_id]);
+          await c.query("INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id) VALUES($1,NULL,$2,'sis_scheduler','scheduled_sync','integration_connector',$3,'failure','lease_expired_after_max_attempts',$4)",[districtId,actor.id,failed.connector_id,failed.id]);
+        }
+      }
+    }
     const picked = await c.query(
       `SELECT id FROM integration_sync_jobs
         WHERE district_id=$1 AND attempts<$2
