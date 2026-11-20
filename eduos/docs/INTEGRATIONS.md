@@ -111,8 +111,12 @@ reviewed in Canvas by the district. Keep the developer key secret in EduOS's
 encrypted connector secret field and never commit it to source control.
 
 EduOS stores access and refresh tokens encrypted and does not return them from
-its API. Disconnecting in EduOS deletes the locally stored tokens and pending
-authorization state. The district must also revoke or disable the developer
+its API. Expired access tokens are refreshed server-side with a database-backed
+lease so concurrent application instances do not race refresh-token rotation.
+Invalid or revoked refresh grants require the district administrator to reconnect.
+Changing Canvas connector credentials or disabling the connector deletes the
+previous grant and pending authorization state. Disconnecting in EduOS also
+deletes the locally stored tokens and pending authorization state. The district must also revoke or disable the developer
 key in Canvas when full revocation is required.
 
 **CANVAS-API-01 scope:** OAuth connection, token storage, status and local
