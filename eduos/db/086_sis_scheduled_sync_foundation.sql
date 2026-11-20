@@ -74,6 +74,7 @@ CREATE TABLE integration_sync_jobs (
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY(district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
   FOREIGN KEY(district_id,connector_id,schedule_id) REFERENCES integration_sync_schedules(district_id,connector_id,id) ON DELETE CASCADE,
+  UNIQUE(district_id,connector_id,schedule_id,id),
   CHECK ((status='processing') = (lease_until IS NOT NULL AND lease_token IS NOT NULL)),
   CHECK (status<>'processing' OR attempts BETWEEN 1 AND 5)
 );
@@ -82,6 +83,31 @@ CREATE INDEX integration_sync_jobs_claim
   WHERE status IN ('pending','processing');
 CREATE UNIQUE INDEX integration_sync_jobs_one_active_per_schedule
   ON integration_sync_jobs(schedule_id) WHERE status IN ('pending','processing');
+
+-- Snapshot the schedule and its human approver on each scheduled run. Later
+-- schedule edits/re-approvals must not rewrite the provenance of prior runs.
+ALTER TABLE integration_sync_runs
+  ADD COLUMN schedule_id uuid,
+  ADD COLUMN scheduled_job_id uuid,
+  ADD COLUMN schedule_approved_by uuid,
+  ADD COLUMN schedule_approved_at timestamptz,
+  ADD CONSTRAINT integration_sync_runs_schedule_fk
+    FOREIGN KEY(district_id,connector_id,schedule_id)
+    REFERENCES integration_sync_schedules(district_id,connector_id,id),
+  ADD CONSTRAINT integration_sync_runs_job_fk
+    FOREIGN KEY(district_id,connector_id,schedule_id,scheduled_job_id)
+    REFERENCES integration_sync_jobs(district_id,connector_id,schedule_id,id),
+  ADD CONSTRAINT integration_sync_runs_schedule_approver_fk
+    FOREIGN KEY(district_id,schedule_approved_by)
+    REFERENCES memberships(district_id,user_id),
+  ADD CONSTRAINT integration_sync_runs_schedule_provenance_check
+    CHECK (
+      (started_by_service IS NULL AND schedule_id IS NULL AND scheduled_job_id IS NULL
+       AND schedule_approved_by IS NULL AND schedule_approved_at IS NULL)
+      OR
+      (started_by_service IS NOT NULL AND schedule_id IS NOT NULL AND scheduled_job_id IS NOT NULL
+       AND schedule_approved_by IS NOT NULL AND schedule_approved_at IS NOT NULL)
+    );
 
 DO $$
 DECLARE t text;
