@@ -262,7 +262,7 @@ export function registerCanvasOAuthRoutes(app) {
              canvas_user_name=EXCLUDED.canvas_user_name,access_token_enc=EXCLUDED.access_token_enc,
              refresh_token_enc=EXCLUDED.refresh_token_enc,expires_at=EXCLUDED.expires_at,
              granted_scope=EXCLUDED.granted_scope,authorized_by=EXCLUDED.authorized_by,
-             authorized_at=now(),updated_at=now()`,
+             authorized_at=now(),updated_at=now(),refresh_lease_token=NULL,refresh_lease_until=NULL`,
           [req.actor.districtId,result.connector.id,String(userId),typeof token.user?.name==="string"?token.user.name.slice(0,200):null,
             access,refresh,token.expires_in,typeof token.scope==="string"?token.scope.split(/\s+/).filter(Boolean):[],req.actor.userId]);
         await audit(c,req,"canvas_oauth_connect","integration_canvas_oauth_grant",result.connector.id,"Canvas OAuth grant stored; tokens encrypted");
