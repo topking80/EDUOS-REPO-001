@@ -184,8 +184,20 @@ describe("37.10.1 Timeline authorization foundation / RLS", { skip }, () => {
 
   it("rechecks current relationships and preserves family history after a school transfer", async () => {
     await admin.query("UPDATE students SET school_id=$2 WHERE id=$1", [ID.alice, ID.s2]);
-    assert.ok((await ids({ role: "parent", user: USERS.pa[0] })).includes(ENTRY.parentPrivate),
-      "active guardian retains historical access after school transfer");
+    // Model the real transfer boundary: the learner and both family memberships
+    // move to the new school, and subsequent requests carry the new school scope.
+    await admin.query(
+      "UPDATE memberships SET school_id=$3 WHERE district_id=$1 AND user_id=$2 AND role='parent' AND school_id=$4",
+      [ID.d1, USERS.pa[0], ID.s2, ID.s1]
+    );
+    await admin.query(
+      "UPDATE memberships SET school_id=$3 WHERE district_id=$1 AND user_id=$2 AND role='pupil' AND school_id=$4",
+      [ID.d1, USERS.pu[0], ID.s2, ID.s1]
+    );
+    assert.ok((await ids({ role: "parent", user: USERS.pa[0], school: ID.s2 })).includes(ENTRY.parentPrivate),
+      "active guardian retains historical access after membership moves to the new school");
+    assert.ok((await ids({ role: "pupil", user: USERS.pu[0], school: ID.s2 })).includes(ENTRY.parentFamily),
+      "learner retains family-visible history after membership moves to the new school");
     await admin.query("UPDATE course_enrollments SET status='dropped' WHERE course_id=$1 AND student_id=$2", [COURSE, ID.alice]);
     await admin.query("DELETE FROM teacher_student_rosters WHERE district_id=$1 AND teacher_user_id=$2 AND student_id=$3", [ID.d1, USERS.t1[0], ID.alice]);
     const teacherRows = await ids({ role: "teacher", user: USERS.t1[0] });
@@ -195,7 +207,7 @@ describe("37.10.1 Timeline authorization foundation / RLS", { skip }, () => {
       "UPDATE student_user_links SET status='disabled' WHERE district_id=$1 AND user_id=$2 AND student_id=$3 AND relationship='parent'",
       [ID.d1, USERS.pa[0], ID.alice]
     );
-    assert.deepEqual(await ids({ role: "parent", user: USERS.pa[0] }), [],
+    assert.deepEqual(await ids({ role: "parent", user: USERS.pa[0], school: ID.s2 }), [],
       "revoked guardian cannot read even entries they originally authored");
     await admin.query(
       "UPDATE memberships SET status='disabled' WHERE district_id=$1 AND user_id=$2 AND role='principal' AND school_id=$3",
