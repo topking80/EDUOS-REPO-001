@@ -19,7 +19,7 @@ function rows(body, collection, item) {
 
 export function normalizeSchool(s) {
   const id = text(s?.id ?? s?.dcid, 40);
-  if (!id || !/^\\d+$/.test(id)) return { rejected: { externalId: id, reason: "invalid_school_id" } };
+  if (!id || !/^\d+$/.test(id)) return { rejected: { externalId: id, reason: "invalid_school_id" } };
   return { school: { externalId: id, name: text(s?.name, 160) || text(s?.school_name, 160) || id } };
 }
 
@@ -50,7 +50,7 @@ export function studentRosterUrl(baseUrl, schoolId) {
     q: "school_enrollment.enroll_status==(A)",
     expansions: "school_enrollment",
   });
-  return `${baseUrl.replace(/\\/+$/, "")}/ws/v1/school/${encodeURIComponent(schoolId)}/student?${query}`;
+  return `${baseUrl.replace(/\/+$/, "")}/ws/v1/school/${encodeURIComponent(schoolId)}/student?${query}`;
 }
 
 async function collect(url, token, options, collection, item, maxRecords) {
@@ -73,7 +73,7 @@ export function isMappedSchool(schoolId, mappedSchoolIds) {
 
 export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, mappedSchoolIds = [], maxStudentRecords = 1_000_000 }) {
   const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope, options });
-  const base = baseUrl.replace(/\\/+$/, "");
+  const base = baseUrl.replace(/\/+$/, "");
   const schoolRows = await collect(`${base}/ws/v1/district/school`, token, options, "schools", "school", MAX_SCHOOLS);
   const schools = [], rejected = [], students = [];
   // Count raw downloaded records, including inactive and rejected rows.
