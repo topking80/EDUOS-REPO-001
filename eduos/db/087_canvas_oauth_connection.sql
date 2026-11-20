@@ -40,7 +40,7 @@ CREATE TABLE integration_canvas_oauth_grants (
   PRIMARY KEY (district_id,connector_id),
   CHECK ((refresh_lease_token IS NULL) = (refresh_lease_until IS NULL)),
   FOREIGN KEY (district_id,connector_id) REFERENCES integration_connectors(district_id,id) ON DELETE CASCADE,
-  FOREIGN KEY (district_id,authorized_by) REFERENCES district_users(district_id,user_id)
+  FOREIGN KEY (district_id,authorized_by) REFERENCES district_users(district_id,user_id) ON DELETE CASCADE
 );
 
 DO $canvas$ DECLARE t text; BEGIN
