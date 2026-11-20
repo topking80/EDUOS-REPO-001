@@ -4,6 +4,10 @@ import http from "node:http";
 import assert from "node:assert/strict";
 import * as powerschool from "../src/integrations/powerschool.js";
 
+test("PowerSchool roster ceiling is bounded to the in-memory safety limit", () => {
+  assert.equal(powerschool.MAX_STUDENT_RECORDS, 200_000);
+});
+
 test("PowerSchool school IDs are stable numeric DCIDs and names are bounded", () => {
   assert.deepEqual(powerschool.normalizeSchool({ id: 12, name: "North High" }), {
     school: { externalId: "12", name: "North High" },
