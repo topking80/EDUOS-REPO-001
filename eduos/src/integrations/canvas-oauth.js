@@ -214,7 +214,7 @@ export function registerCanvasOAuthRoutes(app) {
       // Commit consumption separately. Throwing inside the DELETE transaction
       // would roll it back and make denied/malformed states replayable.
       const consumed = await withTenantTransaction(req.actor, c => one(c,
-        "DELETE FROM integration_canvas_oauth_states WHERE state_hash=$1 AND district_id=$2 RETURNING connector_id,user_id,config_version,redirect_uri,expires_at",
+        "UPDATE integration_canvas_oauth_states SET consumed_at=now() WHERE state_hash=$1 AND district_id=$2 AND consumed_at IS NULL RETURNING id,connector_id,user_id,config_version,redirect_uri,expires_at",
         [hash(state), req.actor.districtId]));
       const cookies = parse(req.headers.cookie || "");
       const cookieValue = cookies[stateCookie(state)];
@@ -228,6 +228,10 @@ export function registerCanvasOAuthRoutes(app) {
         throw new HttpError(400, "canvas_authorization_code_invalid");
 
       const result = await withTenantTransaction(req.actor, async c => {
+        const stateStillValid = await one(c,
+          "SELECT id FROM integration_canvas_oauth_states WHERE id=$1 AND district_id=$2 AND connector_id=$3 AND consumed_at IS NOT NULL AND expires_at>now()",
+          [consumed.id,req.actor.districtId,consumed.connector_id]);
+        if (!stateStillValid) throw new HttpError(409,"canvas_authorization_cancelled");
         const connector = await one(c,
           "SELECT id,kind,status,base_url,token_url,client_id,client_secret_enc,scope,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",
           [consumed.connector_id, req.actor.districtId]);
@@ -238,7 +242,7 @@ export function registerCanvasOAuthRoutes(app) {
         const tokenUrl = new URL("/login/oauth2/token", origin).toString();
         if (connector.token_url !== tokenUrl) throw new HttpError(409, "canvas_token_url_mismatch");
         const clientSecret = decryptSecret(config.integrationsKey, req.actor.districtId, connector.id, connector.client_secret_enc);
-        return { connector, redirectUri: consumed.redirect_uri, tokenUrl, clientSecret, code: req.query.code };
+        return { connector, redirectUri: consumed.redirect_uri, tokenUrl, clientSecret, code: req.query.code, stateId: consumed.id };
       });
 
       const response = await outboundRequest(result.tokenUrl, {
@@ -284,6 +288,7 @@ export function registerCanvasOAuthRoutes(app) {
              authorized_at=now(),updated_at=now(),refresh_lease_token=NULL,refresh_lease_until=NULL`,
           [req.actor.districtId,result.connector.id,String(userId),typeof token.user?.name==="string"?token.user.name.slice(0,200):null,
             access,refresh,token.expires_in,typeof token.scope==="string"?token.scope.split(/\s+/).filter(Boolean):result.connector.scope.split(/\s+/).filter(Boolean),req.actor.userId]);
+        await c.query("DELETE FROM integration_canvas_oauth_states WHERE id=$1 AND district_id=$2",[result.stateId,req.actor.districtId]);
         await audit(c,req,"canvas_oauth_connect","integration_canvas_oauth_grant",result.connector.id,"Canvas OAuth grant stored; tokens encrypted");
       });
       return res.redirect(303, "/app/?canvas=connected");
