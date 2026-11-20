@@ -101,7 +101,7 @@ export async function getCanvasAccessToken(actor, connectorId) {
       const clientSecret = decryptSecret(config.integrationsKey,actor.districtId,connectorId,claim.connector.client_secret_enc);
       const response = await outboundRequest(tokenUrl,{
         method:"POST",options:{...urlOptions(),timeoutMs:10_000},
-        headers:{"content-type":"application/x-www-form-urlencoded",accept:"application/json"},
+        headers:{"content-type":"application/x-www-form-urlencoded",accept:"application/json+canvas-string-ids"},
         body:new URLSearchParams({grant_type:"refresh_token",refresh_token:oldRefresh,
           client_id:claim.connector.client_id,client_secret:clientSecret}).toString()
       });
@@ -211,7 +211,7 @@ export function registerCanvasOAuthRoutes(app) {
       // Commit consumption separately. Throwing inside the DELETE transaction
       // would roll it back and make denied/malformed states replayable.
       const consumed = await withTenantTransaction(req.actor, c => one(c,
-        "UPDATE integration_canvas_oauth_states SET consumed_at=now() WHERE state_hash=$1 AND district_id=$2 AND consumed_at IS NULL RETURNING id,connector_id,user_id,config_version,redirect_uri,expires_at",
+        "UPDATE integration_canvas_oauth_states SET consumed_at=now() WHERE state_hash=$1 AND district_id=$2 AND consumed_at IS NULL AND expires_at>now() RETURNING id,connector_id,user_id,config_version,redirect_uri,expires_at",
         [hash(state), req.actor.districtId]));
       const cookies = parse(req.headers.cookie || "");
       const cookieValue = cookies[stateCookie(state)];
@@ -245,7 +245,7 @@ export function registerCanvasOAuthRoutes(app) {
       const response = await outboundRequest(result.tokenUrl, {
         method: "POST",
         options: { ...urlOptions(), timeoutMs: 10_000 },
-        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json+canvas-string-ids" },
         body: new URLSearchParams({
           grant_type: "authorization_code",
           code: result.code,
@@ -262,7 +262,7 @@ export function registerCanvasOAuthRoutes(app) {
           String(token?.token_type || "").toLowerCase() !== "bearer" ||
           typeof token?.refresh_token !== "string" || !token.refresh_token ||
           !Number.isSafeInteger(token.expires_in) || token.expires_in < 60 || token.expires_in > 86400 ||
-          (typeof userId !== "string" && typeof userId !== "number")) {
+          (typeof userId !== "string" && !Number.isSafeInteger(userId))) {
         if (typeof token?.access_token === "string" && token.access_token)
           await revokeCanvasToken(result.connector.base_url,token.access_token);
         return res.status(502).type("text/plain").send("Canvas returned an incomplete authorization grant");
