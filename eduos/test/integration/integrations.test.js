@@ -57,6 +57,24 @@ function fakeServer() {
   return new Promise(r => srv.listen(0, "127.0.0.1", () => r({ base: `http://127.0.0.1:${srv.address().port}`, seen, ctl, close: () => new Promise(x => srv.close(x)) })));
 }
 
+
+function fakeCanvasOAuth() {
+  const seen = [];
+  const srv = http.createServer(async (req, res) => {
+    const send = (status, body) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    if (req.method !== "POST" || req.url !== "/login/oauth2/token") return send(404, {});
+    let body = ""; for await (const chunk of req) body += chunk;
+    const form = new URLSearchParams(body); seen.push(Object.fromEntries(form));
+    if (form.get("grant_type") !== "authorization_code" || form.get("client_id") !== "canvas-client" ||
+        form.get("client_secret") !== "canvas-secret" || form.get("redirect_uri") !== "https://eduos.test/api/integrations/canvas/callback")
+      return send(401, { error: "invalid_grant" });
+    return send(200, { access_token: "canvas-access-secret", refresh_token: "canvas-refresh-secret",
+      token_type: "Bearer", expires_in: 3600, user: { id: 9876, name: "District Canvas Admin" } });
+  });
+  return new Promise(resolve => srv.listen(0, "127.0.0.1", () =>
+    resolve({ base: `http://127.0.0.1:${srv.address().port}`, seen, close: () => new Promise(done => srv.close(done)) })));
+}
+
 describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () => {
   let db, idp, server, admin, fake, s = {}, or, ef, workerEnv;
   const as = name => client(server.base, s[name]);
@@ -250,6 +268,64 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     assert.equal(invalidated.body.data.pause_reason, "connector_configuration_changed");
     assert.equal(invalidated.body.data.approved_at, null, "old schedule approval is invalidated");
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_sync_jobs WHERE connector_id=$1 AND status IN ('pending','processing')", [or.id])).rows[0].n, 0);
+  });
+
+
+  it("Canvas OAuth is two-person approved, browser-bound, single-use, tenant-scoped and encrypted", async () => {
+    const canvasFake = await fakeCanvasOAuth();
+    try {
+      const added = await as("supt1")("POST", "/api/integrations/connectors", {
+        kind: "canvas", name: "District Canvas", baseUrl: canvasFake.base,
+        tokenUrl: `${canvasFake.base}/login/oauth2/token`, clientId: "canvas-client", clientSecret: "canvas-secret"
+      });
+      assert.equal(added.status, 201, JSON.stringify(added.body));
+      const id = added.body.data.id;
+      assert.equal((await as("supt1")("POST", `/api/integrations/connectors/${id}/approve`)).body.error, "approver_must_differ");
+      assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${id}/approve`)).status, 200);
+
+      const started = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
+      assert.equal(started.status, 200, JSON.stringify(started.body));
+      const authorization = new URL(started.body.data.authorizationUrl);
+      assert.equal(authorization.pathname, "/login/oauth2/auth");
+      assert.equal(authorization.searchParams.get("client_id"), "canvas-client");
+      assert.equal(authorization.searchParams.get("redirect_uri"), "https://eduos.test/api/integrations/canvas/callback");
+      const state = authorization.searchParams.get("state");
+      assert.ok(state && state.length >= 32);
+      const setCookie = started.headers.get("set-cookie") || "";
+      const stateCookie = setCookie.match(/(eduos_canvas_state_[^=]+=[^;,]+)/)?.[1];
+      assert.ok(stateCookie, "authorization state is browser-bound in an HttpOnly cookie");
+
+      const callback = await fetch(`${server.base}/api/integrations/canvas/callback?code=one-time-code&state=${encodeURIComponent(state)}`, {
+        headers: { cookie: `${s.supt1.cookie}; ${stateCookie}` }, redirect: "manual"
+      });
+      assert.equal(callback.status, 303, await callback.text());
+      assert.equal(callback.headers.get("location"), "/app/?canvas=connected");
+      assert.equal(canvasFake.seen.length, 1);
+      assert.equal(canvasFake.seen[0].grant_type, "authorization_code");
+      assert.equal(canvasFake.seen[0].client_secret, "canvas-secret");
+
+      const grant = (await admin.query("SELECT access_token_enc,refresh_token_enc,canvas_user_id FROM integration_canvas_oauth_grants WHERE connector_id=$1", [id])).rows[0];
+      assert.ok(grant);
+      assert.equal(grant.canvas_user_id, "9876");
+      assert.ok(!grant.access_token_enc.includes("canvas-access-secret"));
+      assert.ok(!grant.refresh_token_enc.includes("canvas-refresh-secret"));
+      const status = await as("supt1")("GET", `/api/integrations/connectors/${id}/canvas/status`);
+      assert.equal(status.status, 200);
+      assert.equal(status.body.data.connected, true);
+      assert.equal(JSON.stringify(status.body).includes("canvas-access-secret"), false);
+      assert.equal(JSON.stringify(status.body).includes("canvas-refresh-secret"), false);
+
+      const replay = await fetch(`${server.base}/api/integrations/canvas/callback?code=replay&state=${encodeURIComponent(state)}`, {
+        headers: { cookie: `${s.supt1.cookie}; ${stateCookie}` }, redirect: "manual"
+      });
+      assert.equal(replay.status, 400, "consumed OAuth state cannot be replayed");
+
+      const disconnected = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/disconnect`, {});
+      assert.equal(disconnected.status, 200, JSON.stringify(disconnected.body));
+      assert.equal(disconnected.body.data.connected, false);
+      assert.equal(disconnected.body.data.canvasDeveloperKeyRevocationRequired, true);
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_canvas_oauth_grants WHERE connector_id=$1", [id])).rows[0].n, 0);
+    } finally { await canvasFake.close(); }
   });
 
   it("another district sees none of it", async () => {
