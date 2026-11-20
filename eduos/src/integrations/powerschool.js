@@ -31,7 +31,11 @@ export function normalizeStudent(s, schoolExternalId) {
   // school-scoped REST collection remains the source of enrollment membership.
   const enrollment = s?.school_enrollment && typeof s.school_enrollment === "object" ? s.school_enrollment : {};
   const enrollmentStatus = s?.enroll_status ?? enrollment.enroll_status;
-  if (enrollmentStatus !== undefined && enrollmentStatus !== null && !["0", 0, "A", "active"].includes(enrollmentStatus)) return { skipped: true };
+  // Fail closed if the provider does not return the status despite the
+  // active-enrollment query; never guess that an unknown record is current.
+  if (enrollmentStatus === undefined || enrollmentStatus === null || enrollmentStatus === "")
+    return { rejected: { externalId, reason: "missing_enrollment_status" } };
+  if (!["0", 0, "A", "active"].includes(enrollmentStatus)) return { skipped: true };
   const name = s?.name && typeof s.name === "object" ? s.name : {};
   const first = text(s?.first_name ?? name.first_name, 80);
   const last = text(s?.last_name ?? name.last_name, 80);
