@@ -151,7 +151,7 @@ export function registerCanvasOAuthRoutes(app) {
       const redirectUri = callbackUri();
       const connector = await withTenantTransaction(req.actor, async c => {
         const row = await one(c,
-          "SELECT id,kind,status,base_url,token_url,client_id,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2",
+          "SELECT id,kind,status,base_url,token_url,client_id,scope,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2",
           [req.params.id, req.actor.districtId]);
         if (!row) throw new HttpError(404, "connector_not_found");
         if (row.kind !== "canvas") throw new HttpError(409, "not_a_canvas_connector");
@@ -171,7 +171,8 @@ export function registerCanvasOAuthRoutes(app) {
         client_id: connector.client_id,
         response_type: "code",
         redirect_uri: redirectUri,
-        state
+        state,
+        scope: connector.scope
       }).toString();
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Referrer-Policy", "no-referrer");
@@ -210,7 +211,7 @@ export function registerCanvasOAuthRoutes(app) {
 
       const result = await withTenantTransaction(req.actor, async c => {
         const connector = await one(c,
-          "SELECT id,kind,status,base_url,token_url,client_id,client_secret_enc,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",
+          "SELECT id,kind,status,base_url,token_url,client_id,client_secret_enc,scope,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",
           [consumed.connector_id, req.actor.districtId]);
         if (!connector || connector.kind !== "canvas" || connector.status !== "active" ||
             connector.config_version !== consumed.config_version)
@@ -264,7 +265,7 @@ export function registerCanvasOAuthRoutes(app) {
              granted_scope=EXCLUDED.granted_scope,authorized_by=EXCLUDED.authorized_by,
              authorized_at=now(),updated_at=now(),refresh_lease_token=NULL,refresh_lease_until=NULL`,
           [req.actor.districtId,result.connector.id,String(userId),typeof token.user?.name==="string"?token.user.name.slice(0,200):null,
-            access,refresh,token.expires_in,typeof token.scope==="string"?token.scope.split(/\s+/).filter(Boolean):[],req.actor.userId]);
+            access,refresh,token.expires_in,typeof token.scope==="string"?token.scope.split(/\s+/).filter(Boolean):result.connector.scope.split(/\s+/).filter(Boolean),req.actor.userId]);
         await audit(c,req,"canvas_oauth_connect","integration_canvas_oauth_grant",result.connector.id,"Canvas OAuth grant stored; tokens encrypted");
       });
       return res.redirect(303, "/app/?canvas=connected");
