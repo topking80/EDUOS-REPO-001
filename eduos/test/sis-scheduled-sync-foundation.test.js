@@ -39,6 +39,7 @@ test("durable jobs have bounded attempts, leases and tenant-composite references
   assert.match(migration,/lease_until timestamptz/);
   assert.match(migration,/lease_token uuid/);
   assert.match(migration,/FOREIGN KEY\(district_id,connector_id,schedule_id\)/);
+  assert.match(migration,/integration_sync_jobs_one_active_per_schedule/);
 });
 
 test("runtime grants are least privilege for durable scheduler records",()=>{
