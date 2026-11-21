@@ -64,7 +64,7 @@ test("history authors, revision actors, and capsule owners/recipients are distri
 });
 
 test("runtime role gets only the operations required by TC-01 and no destructive privileges", () => {
-  const normalized = grants.replace(/\\s+/g, " ");
+  const normalized = grants.replace(/\s+/g, " ");
   for (const table of ["student_history_entries", "student_time_capsules"]) {
     const readCreateGrant = table === "student_time_capsules"
       ? "GRANT SELECT, INSERT ON student_time_capsules, student_time_capsule_recipients TO eduos_app;"
