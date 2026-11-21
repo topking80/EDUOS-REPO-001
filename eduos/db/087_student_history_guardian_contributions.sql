@@ -143,7 +143,7 @@ BEGIN
                AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
                AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
           )
-        )', t || '_guardian_withdraw', t, t, t, t);
+        )', t || '_guardian_withdraw', t, t, t, t, t);
 
       EXECUTE format('CREATE POLICY %I ON %I FOR UPDATE
         USING (
