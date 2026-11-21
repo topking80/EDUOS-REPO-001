@@ -677,7 +677,8 @@ async function familyContributionsCard(k) {
   const list = h("div", { class: "stack", "aria-live": "polite" });
   const title = h("input", { type: "text", maxlength: 180, required: true, placeholder: "A family memory title" });
   const body = h("textarea", { maxlength: 12000, rows: 3, placeholder: "Share a memory or milestone (optional)" });
-  const occurredAt = h("input", { type: "datetime-local", required: true, value: new Date().toISOString().slice(0, 16) });
+  const localDateTime = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const occurredAt = h("input", { type: "datetime-local", required: true, value: localDateTime() });
   const refresh = async () => {
     const result = await safe(api.get(`/api/family/children/${k.id}/history-contributions`), { data: null });
     if (!result?.data) {
@@ -704,11 +705,11 @@ async function familyContributionsCard(k) {
     event.preventDefault();
     try {
       await api.post(`/api/family/children/${k.id}/history-contributions`, {
-        title: title.value, body: body.value, occurredAt: occurredAt.value
+        title: title.value, body: body.value, occurredAt: new Date(occurredAt.value).toISOString()
       });
       toast("Family memory sent to the school for review.");
       form.reset();
-      occurredAt.value = new Date().toISOString().slice(0, 16);
+      occurredAt.value = localDateTime();
       await refresh();
     } catch (error) { toast(error.message || "Could not submit this family memory."); }
   } },
