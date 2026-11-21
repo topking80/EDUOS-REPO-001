@@ -78,6 +78,17 @@ describe("TC-02 guardian history contributions against real PostgreSQL", { skip 
         await app.query("ROLLBACK TO SAVEPOINT denied_unlinked_guardian");
         await app.query("RELEASE SAVEPOINT denied_unlinked_guardian");
       }
+      await app.query("SAVEPOINT denied_wrong_school");
+      try {
+        await assert.rejects(app.query(`
+          INSERT INTO student_history_contributions
+            (district_id,school_id,student_id,guardian_user_id,title,body,occurred_at)
+          VALUES ($1,$2,$3,$4,'Wrong school','Must fail',now())
+        `, [ID.d1, ID.s1, ID.carol, USERS.p2s[0]]), error => error.code === "23514");
+      } finally {
+        await app.query("ROLLBACK TO SAVEPOINT denied_wrong_school");
+        await app.query("RELEASE SAVEPOINT denied_wrong_school");
+      }
       await app.query("SAVEPOINT denied_spoofed_guardian");
       try {
         await assert.rejects(app.query(`
