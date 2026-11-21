@@ -1,0 +1,88 @@
+-- TC-02: guardian-submitted family memories enter a moderated contribution queue.
+-- Approval creates a published family-memory history entry; submissions never
+-- mutate official records or bypass district-controlled storage policy.
+
+CREATE TABLE student_history_contributions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  district_id uuid NOT NULL REFERENCES districts(id) ON DELETE CASCADE,
+  school_id uuid NOT NULL,
+  student_id uuid NOT NULL,
+  guardian_user_id uuid NOT NULL,
+  title text NOT NULL CHECK (length(trim(title)) BETWEEN 1 AND 180),
+  body text NOT NULL DEFAULT '' CHECK (length(body) <= 12000),
+  occurred_at timestamptz NOT NULL,
+  status text NOT NULL DEFAULT 'submitted'
+    CHECK (status IN ('submitted','approved','rejected','withdrawn')),
+  reviewed_by uuid,
+  reviewed_at timestamptz,
+  review_note text CHECK (review_note IS NULL OR length(review_note) <= 1000),
+  history_entry_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
+  FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
+  FOREIGN KEY (district_id, guardian_user_id) REFERENCES district_users(district_id, user_id),
+  FOREIGN KEY (district_id, reviewed_by) REFERENCES district_users(district_id, user_id),
+  FOREIGN KEY (district_id, school_id, student_id, history_entry_id)
+    REFERENCES student_history_entries(district_id, school_id, student_id, id) ON DELETE RESTRICT,
+  CHECK (
+    (status = 'submitted' AND reviewed_by IS NULL AND reviewed_at IS NULL AND history_entry_id IS NULL)
+    OR (status = 'withdrawn' AND reviewed_by IS NULL AND reviewed_at IS NULL AND history_entry_id IS NULL)
+    OR (status = 'rejected' AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL AND history_entry_id IS NULL)
+    OR (status = 'approved' AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL AND history_entry_id IS NOT NULL)
+  ),
+  UNIQUE (district_id, school_id, student_id, id)
+);
+CREATE INDEX student_history_contributions_guardian_idx
+  ON student_history_contributions(district_id, guardian_user_id, created_at DESC);
+CREATE INDEX student_history_contributions_review_queue_idx
+  ON student_history_contributions(district_id, school_id, status, created_at)
+  WHERE status = 'submitted';
+
+CREATE TABLE student_history_contribution_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  district_id uuid NOT NULL REFERENCES districts(id) ON DELETE CASCADE,
+  school_id uuid NOT NULL,
+  student_id uuid NOT NULL,
+  contribution_id uuid NOT NULL,
+  actor_user_id uuid NOT NULL,
+  event_type text NOT NULL CHECK (event_type IN ('submitted','approved','rejected','withdrawn')),
+  detail text CHECK (detail IS NULL OR length(detail) <= 1000),
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (district_id, school_id, student_id, contribution_id)
+    REFERENCES student_history_contributions(district_id, school_id, student_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (district_id, actor_user_id) REFERENCES district_users(district_id, user_id)
+);
+CREATE INDEX student_history_contribution_events_idx
+  ON student_history_contribution_events(district_id, contribution_id, occurred_at);
+
+CREATE FUNCTION eduos_history_contribution_event_immutable() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  RAISE EXCEPTION 'student_history_contribution_events is append-only'
+    USING ERRCODE = '55000';
+END;
+$$;
+REVOKE ALL ON FUNCTION eduos_history_contribution_event_immutable() FROM PUBLIC;
+CREATE TRIGGER student_history_contribution_events_append_only
+  BEFORE UPDATE OR DELETE ON student_history_contribution_events
+  FOR EACH ROW EXECUTE FUNCTION eduos_history_contribution_event_immutable();
+
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['student_history_contributions','student_history_contribution_events'] LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+    EXECUTE format('CREATE POLICY %I ON %I USING (
+      district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
+      AND (school_id = nullif(current_setting(''app.school_id'', true), '''')
+        ::uuid OR current_setting(''app.role'', true) = ''superintendent'')
+    ) WITH CHECK (
+      district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
+      AND (school_id = nullif(current_setting(''app.school_id'', true), '''')
+        ::uuid OR current_setting(''app.role'', true) = ''superintendent'')
+    )', t || '_district_school_scope', t);
+  END LOOP;
+END;
+$$;
