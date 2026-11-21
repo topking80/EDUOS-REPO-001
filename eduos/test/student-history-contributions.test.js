@@ -10,8 +10,12 @@ const grants = readFileSync(new URL("../db/runtime_grants.template.sql", import.
 test("TC-02 contributions use forced RLS and an append-only decision log", () => {
   assert.ok(migration.includes("ALTER TABLE %I ENABLE ROW LEVEL SECURITY"));
   assert.ok(migration.includes("ALTER TABLE %I FORCE ROW LEVEL SECURITY"));
-  assert.ok(migration.includes("t || '_district_school_scope'"));
-  assert.ok(migration.includes("ARRAY['student_history_contributions','student_history_contribution_events']"));
+  assert.ok(migration.includes("t || '_read_scope'"));
+  assert.ok(migration.includes("t || '_guardian_insert'"));
+  assert.ok(migration.includes("t || '_review_update'"));
+  assert.ok(migration.includes("t || '_actor_insert'"));
+  assert.ok(migration.includes("FOR UPDATE"));
+  assert.ok(migration.includes("guardian_user_id <> nullif(current_setting(''app.user_id''"));
   assert.ok(migration.includes("student_history_contribution_events_append_only"));
   assert.ok(migration.includes("status IN ('submitted','approved','rejected','withdrawn')"));
   assert.ok(migration.includes("history_entry_id uuid"));
