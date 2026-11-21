@@ -3,6 +3,9 @@
 ## Scope
 Parents and guardians with an active, district-scoped relationship may submit a text family-memory contribution for a linked student. Submissions enter a pending moderation queue and are not student-history entries until approved by a principal in the originating school or a superintendent in the district.
 
+## Family portal
+The Family view includes a per-child Family memories panel. Guardians can submit a title, optional text, and occurrence date, see the status and any school review note, and withdraw their own pending submission. The panel never exposes another guardian's submission.
+
 ## API
 - `POST /api/family/children/:studentId/history-contributions` — submit title, body, and occurrence timestamp.
 - `GET /api/family/children/:studentId/history-contributions` — list only the caller's contributions for an actively linked child.
