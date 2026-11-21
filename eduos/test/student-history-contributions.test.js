@@ -55,9 +55,15 @@ test("approval is transactional and publishes only a family-memory history entry
   assert.ok(routes.includes('audit(client, req, status, "student_history_contribution"'));
 });
 
-test("reviewers are limited to principal and superintendent", () => {
+test("reviewers are limited to principal and superintendent and receive a pending review queue", () => {
   assert.ok(routes.includes('const canReview = role => role === "principal" || role === "superintendent"'));
   assert.ok(routes.includes("school_reviewer_required"));
+  assert.ok(routes.includes('app.get("/api/history-contributions"'));
+  assert.ok(routes.includes("c.status='submitted'"));
+  assert.ok(ui.includes("VIEWS.history = async () =>"));
+  assert.ok(ui.includes('["history", "Family history", "book"]'));
+  assert.ok(ui.includes('decide("approve")'));
+  assert.ok(ui.includes('decide("reject")'));
 });
 
 test("routes are registered and runtime grants do not grant table-wide UPDATE", () => {
