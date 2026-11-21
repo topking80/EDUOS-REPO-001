@@ -100,7 +100,7 @@ BEGIN
              AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
         ))
       )
-    )', t || '_district_school_scope', t, t, t, t);
+    )', t || '_district_school_scope', t, t, t, t, t);
   END LOOP;
 END;
 $$;
