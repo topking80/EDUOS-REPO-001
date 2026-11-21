@@ -54,6 +54,12 @@ for (const [prefix, bits] of [
   ["3fff::", 20]         // documentation, RFC 9637
 ]) blocked.addSubnet(prefix, bits, "ipv6");
 
+// IPv6 global-unicast allocations currently live in 2000::/3. Treat every
+// address outside that allocation as non-public by default; an exclusion-only
+// list silently accepted unallocated/reserved space such as 4000::/3.
+const globalUnicastV6 = new net.BlockList();
+globalUnicastV6.addSubnet("2000::", 3, "ipv6");
+
 const loopback = new net.BlockList();
 loopback.addSubnet("127.0.0.0", 8, "ipv4");
 loopback.addAddress("::1", "ipv6");
@@ -81,6 +87,7 @@ export function isBlockedAddress(address) {
   const ip = unwrapMapped(String(address));
   const family = net.isIP(ip);
   if (family === 0) return true;
+  if (family === 6 && !globalUnicastV6.check(ip, "ipv6")) return true;
   return blocked.check(ip, family === 4 ? "ipv4" : "ipv6");
 }
 
