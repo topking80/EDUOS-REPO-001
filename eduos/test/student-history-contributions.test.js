@@ -20,6 +20,8 @@ test("TC-02 contributions use forced RLS and an append-only decision log", () =>
   assert.ok(migration.includes("student_history_contribution_events_append_only"));
   assert.ok(migration.includes("event_type IN (''submitted'',''withdrawn'')"));
   assert.ok(migration.includes("event_type IN (''approved'',''rejected'')"));
+  assert.ok(migration.includes("c.guardian_user_id = nullif(current_setting(''app.user_id''"));
+  assert.ok(migration.includes("c.reviewed_by = nullif(current_setting(''app.user_id''"));
   assert.ok(migration.includes("status IN ('submitted','approved','rejected','withdrawn')"));
   assert.ok(migration.includes("history_entry_id uuid"));
   assert.ok(migration.includes("student_history_contributions_school_guard"));
