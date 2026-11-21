@@ -122,6 +122,22 @@ export function registerStudentHistoryContributionRoutes(app) {
       } catch (error) { sendError(res, next, error); }
     });
 
+  app.get("/api/history-contributions",
+    requireSession, wrap(async (client, req) => {
+      if (!canReview(req.actor.role)) throw new HttpError(403, "school_reviewer_required");
+      return (await client.query(`
+        SELECT c.id, c.student_id, c.school_id, s.display_name AS student_name,
+               c.title, c.body, c.occurred_at, c.created_at,
+               c.guardian_user_id, u.display_name AS guardian_name
+          FROM student_history_contributions c
+          JOIN students s ON s.id=c.student_id AND s.district_id=c.district_id
+          JOIN users u ON u.id=c.guardian_user_id
+         WHERE c.district_id=$1 AND c.status='submitted'
+         ORDER BY c.created_at, c.id
+         LIMIT 200
+      `, [req.actor.districtId])).rows;
+    }));
+
   app.get("/api/students/:studentId/history-contributions",
     requireSession, wrap(async (client, req) => {
       if (!canReview(req.actor.role)) throw new HttpError(403, "school_reviewer_required");
