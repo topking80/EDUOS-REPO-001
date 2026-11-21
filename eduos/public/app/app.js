@@ -673,6 +673,53 @@ async function openSession(id) {
 }
 
 // ---------------- family ----------------
+async function familyContributionsCard(k) {
+  const list = h("div", { class: "stack", "aria-live": "polite" });
+  const title = h("input", { type: "text", maxlength: 180, required: true, placeholder: "A family memory title" });
+  const body = h("textarea", { maxlength: 12000, rows: 3, placeholder: "Share a memory or milestone (optional)" });
+  const occurredAt = h("input", { type: "datetime-local", required: true, value: new Date().toISOString().slice(0, 16) });
+  const refresh = async () => {
+    const result = await safe(api.get(`/api/family/children/${k.id}/history-contributions`), { data: null });
+    if (!result?.data) {
+      list.replaceChildren(h("p", { class: "small muted" }, "Family memories are temporarily unavailable."));
+      return;
+    }
+    const items = result.data;
+    list.replaceChildren(...(items.length ? items.map(item => h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, item.title), chip(item.status)),
+      item.body ? h("p", {}, item.body) : null,
+      h("p", { class: "small muted" }, `Memory date: ${fmtDay(item.occurred_at)} · Submitted ${fmtTime(item.created_at)}`),
+      item.review_note ? h("p", { class: "small muted" }, `School note: ${item.review_note}`) : null,
+      item.status === "submitted" ? h("button", { class: "btn danger small", type: "button", onclick: async () => {
+        if (!confirm("Withdraw this pending family memory?")) return;
+        try {
+          await api.req("PATCH", `/api/family/children/${k.id}/history-contributions/${item.id}`, { decision: "withdraw" });
+          toast("Family memory withdrawn.");
+          await refresh();
+        } catch (error) { toast(error.message || "Could not withdraw this contribution."); }
+      } }, "Withdraw pending memory") : null
+    )) : [h("p", { class: "small muted" }, "No family memories submitted yet.")]));
+  };
+  const form = h("form", { class: "stack", onsubmit: async event => {
+    event.preventDefault();
+    try {
+      await api.post(`/api/family/children/${k.id}/history-contributions`, {
+        title: title.value, body: body.value, occurredAt: occurredAt.value
+      });
+      toast("Family memory sent to the school for review.");
+      form.reset();
+      occurredAt.value = new Date().toISOString().slice(0, 16);
+      await refresh();
+    } catch (error) { toast(error.message || "Could not submit this family memory."); }
+  } },
+    h("label", {}, h("span", {}, "Title"), title),
+    h("label", {}, h("span", {}, "Memory"), body),
+    h("label", {}, h("span", {}, "When did it happen?"), occurredAt),
+    h("p", { class: "small muted" }, "Submissions are private to your account until a school leader reviews them. Approved memories appear in the student's family history."),
+    h("button", { class: "btn primary", type: "submit" }, "Submit family memory"));
+  await refresh();
+  return h("section", { class: "card" }, h("details", {}, h("summary", {}, "Family memories"), form, list));
+}
 VIEWS.children = async () => {
   const [home, bus] = await Promise.all([api.get("/api/home"), safe(api.get("/api/transport/today"))]);
   const kids = home.data.children || [];
@@ -682,11 +729,13 @@ VIEWS.children = async () => {
     const summary = await safe(api.get(`/api/family/children/${k.id}/summary`));
     const days = (summary?.attendance || []).slice(0, 5);
     const ride = (bus?.data?.riders || []).find(r => r.id === k.id && r.direction === (new Date().getHours() < 12 ? "am" : "pm")) || (bus?.data?.riders || []).find(r => r.id === k.id);
+    const familyMemories = await familyContributionsCard(k);
     out.push(h("section", { class: "card", "aria-label": k.display_name },
       h("div", { class: "row" }, h("div", { class: "grow" }, h("h2", {}, k.display_name), h("p", { class: "small muted" }, `Grade ${k.grade_level} · ${k.school_name}`)),
         ride ? chip(ride.status) : null),
       h("div", { class: "stats" }, stat(k.absences_30d, "absences (30 days)", true), stat(k.due_7d, "due this week"), stat(k.overdue, "overdue", true), stat(k.to_acknowledge, "to acknowledge", true)),
       days.length ? h("div", {}, h("h3", {}, "Recent attendance"), h("div", { class: "btns" }, days.map(a => h("span", { class: `chip ${a.status}` }, `${fmtDay(a.event_date)}: ${STATUS_TEXT[a.status] || a.status}`)))) : null,
+      familyMemories,
       h("button", { class: "btn primary block", type: "button", "aria-label": `Grades & progress: ${k.display_name}`, onclick: () => openView("progress", { learnerId: k.id }) }, icon("book"), "Grades & progress"),
       ride ? h("button", { class: "btn block", type: "button", onclick: () => go("arrival") }, icon("bus"), `Bus: ${STATUS_TEXT[ride.status] || ride.status}`) : null));
   }
