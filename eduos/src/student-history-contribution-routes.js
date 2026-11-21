@@ -13,13 +13,14 @@ const wrap = fn => async (req, res, next) => {
   } catch (error) { sendError(res, next, error); }
 };
 async function linkedStudent(client, actor, studentId, lock = false) {
+  if (!validId(studentId)) throw new HttpError(400, "invalid_student_id");
   const student = await one(client, `
     SELECT s.id, s.school_id, s.display_name
       FROM students s
      WHERE s.id=$1 AND s.district_id=$2
        AND ($3::uuid IS NULL OR s.school_id=$3)
      ${lock ? "FOR UPDATE" : ""}
-  `, [studentId, actor.districtId, isDistrictLead(actor.role) ? null : actor.schoolId]);
+  `, [studentId, actor.districtId, (isDistrictLead(actor.role) || actor.role === "parent") ? null : actor.schoolId]);
   if (!student) throw new HttpError(404, "student_not_found");
   if (actor.role === "parent") {
     const link = await one(client, `
