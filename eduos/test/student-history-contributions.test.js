@@ -26,6 +26,8 @@ test("TC-02 contributions use forced RLS and an append-only decision log", () =>
   assert.ok(migration.includes("status IN ('submitted','approved','rejected','withdrawn')"));
   assert.ok(migration.includes("history_entry_id uuid"));
   assert.ok(migration.includes("student_history_contributions_school_guard"));
+  assert.ok(migration.includes("AS $school_guard$"));
+  assert.ok(migration.includes("$school_guard$;"));
   assert.ok(migration.includes("student history contribution school does not match student"));
   assert.ok(migration.includes("current_setting(''app.user_id'', true)"));
   assert.ok(migration.includes("l.relationship IN (''parent'',''guardian'')"));
