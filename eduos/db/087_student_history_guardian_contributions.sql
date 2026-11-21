@@ -57,7 +57,8 @@ BEGIN
 END;
 $school_guard$;
 REVOKE ALL ON FUNCTION eduos_history_contribution_school_guard() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION eduos_history_contribution_school_guard() TO eduos_app;
+-- Trigger execution is checked when the trigger is created; runtime-role grants
+-- are applied centrally by migrate.js for the configured EDUOS_APP_ROLE.
 CREATE TRIGGER student_history_contributions_school_guard
   BEFORE INSERT OR UPDATE OF district_id, school_id, student_id
   ON student_history_contributions
