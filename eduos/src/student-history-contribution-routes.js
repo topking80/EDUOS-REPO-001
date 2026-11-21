@@ -83,6 +83,45 @@ export function registerStudentHistoryContributionRoutes(app) {
       } catch (error) { sendError(res, next, error); }
     });
 
+  app.patch("/api/family/children/:studentId/history-contributions/:contributionId",
+    requireSession, requireCsrf, async (req, res, next) => {
+      const actor = req.actor, body = req.body || {};
+      if (actor.role !== "parent") return res.status(403).json({ error: "guardian_role_required" });
+      if (!validId(req.params.studentId) || !validId(req.params.contributionId) ||
+          body.decision !== "withdraw" || Object.keys(body).some(key => key !== "decision")) {
+        return res.status(400).json({ error: "invalid_contribution_withdrawal" });
+      }
+      try {
+        const result = await withTenantTransaction(actor, async client => {
+          const student = await linkedStudent(client, actor, req.params.studentId, true);
+          const contribution = await one(client, `
+            SELECT id, status FROM student_history_contributions
+             WHERE id=$1 AND district_id=$2 AND school_id=$3
+               AND student_id=$4 AND guardian_user_id=$5
+             FOR UPDATE
+          `, [req.params.contributionId, actor.districtId, student.school_id, student.id, actor.userId]);
+          if (!contribution || contribution.status !== "submitted")
+            throw new HttpError(404, "pending_contribution_not_found");
+          const updated = await one(client, `
+            UPDATE student_history_contributions
+               SET status='withdrawn', updated_at=now()
+             WHERE id=$1 AND status='submitted'
+             RETURNING id, status, updated_at
+          `, [contribution.id]);
+          if (!updated) throw new HttpError(409, "contribution_already_reviewed");
+          await client.query(`
+            INSERT INTO student_history_contribution_events
+              (district_id, school_id, student_id, contribution_id, actor_user_id, event_type)
+            VALUES ($1,$2,$3,$4,$5,'withdrawn')
+          `, [actor.districtId, student.school_id, student.id, contribution.id, actor.userId]);
+          await audit(client, req, "withdraw", "student_history_contribution", contribution.id);
+          return updated;
+        });
+        res.setHeader("Cache-Control", "no-store");
+        res.json({ data: result });
+      } catch (error) { sendError(res, next, error); }
+    });
+
   app.get("/api/students/:studentId/history-contributions",
     requireSession, wrap(async (client, req) => {
       if (!canReview(req.actor.role)) throw new HttpError(403, "school_reviewer_required");
