@@ -51,11 +51,17 @@ describe("TC-02 guardian history contributions against real PostgreSQL", { skip 
         VALUES ($1,$2,$3,$4,'Family memory','A school milestone',now())
         RETURNING id
       `, [ID.d1, ID.s2, ID.carol, USERS.p2s[0]]);
-      await assert.rejects(app.query(`
-        INSERT INTO student_history_contributions
-          (district_id,school_id,student_id,guardian_user_id,title,body,occurred_at)
-        VALUES ($1,$2,$3,$4,'Unlinked child','Must fail',now())
-      `, [ID.d1, ID.s1, ID.alice, USERS.p2s[0]]), error => error.code === "42501");
+      await app.query("SAVEPOINT denied_unlinked_guardian");
+      try {
+        await assert.rejects(app.query(`
+          INSERT INTO student_history_contributions
+            (district_id,school_id,student_id,guardian_user_id,title,body,occurred_at)
+          VALUES ($1,$2,$3,$4,'Unlinked child','Must fail',now())
+        `, [ID.d1, ID.s1, ID.alice, USERS.p2s[0]]), error => error.code === "42501");
+      } finally {
+        await app.query("ROLLBACK TO SAVEPOINT denied_unlinked_guardian");
+        await app.query("RELEASE SAVEPOINT denied_unlinked_guardian");
+      }
       const visible = await app.query(
         "SELECT count(*)::int AS n FROM student_history_contributions WHERE id=$1",
         [inserted.rows[0].id]
