@@ -12,6 +12,7 @@ test("TC-02 contributions use forced RLS and an append-only decision log", () =>
   assert.ok(migration.includes("ALTER TABLE %I FORCE ROW LEVEL SECURITY"));
   assert.ok(migration.includes("t || '_read_scope'"));
   assert.ok(migration.includes("t || '_guardian_insert'"));
+  assert.ok(migration.includes("t || '_guardian_withdraw'"));
   assert.ok(migration.includes("t || '_review_update'"));
   assert.ok(migration.includes("t || '_actor_insert'"));
   assert.ok(migration.includes("FOR UPDATE"));
