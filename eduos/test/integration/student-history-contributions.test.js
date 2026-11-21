@@ -18,8 +18,8 @@ describe("TC-02 guardian history contributions against real PostgreSQL", { skip 
     app = new pg.Client(db.appUrl); await app.connect();
     await admin.query(`
       INSERT INTO student_user_links(district_id,user_id,student_id,relationship,status)
-      VALUES ($1,$2,$3,'guardian','active')
-    `, [ID.d1, USERS.p2s[0], ID.carol]);
+      VALUES ($1,$2,$3,'guardian','active'),($1,$4,$3,'guardian','active')
+    `, [ID.d1, USERS.p2s[0], ID.carol, USERS.pb[0]]);
   });
   after(async () => {
     await app?.end();
@@ -107,6 +107,10 @@ describe("TC-02 guardian history contributions against real PostgreSQL", { skip 
       assert.equal(visible.rows[0].n, 1);
       return inserted.rows[0].id;
     });
+
+    const otherGuardianView = await scoped(ID.s2, "parent", USERS.pb[0], async () =>
+      app.query("SELECT count(*)::int AS n FROM student_history_contributions WHERE id=$1", [contribution]));
+    assert.equal(otherGuardianView.rows[0].n, 0, "a second guardian cannot read another guardian's submission");
 
     const hidden = await scoped(ID.s1, "principal", USERS.p1[0], async () => {
       const result = await app.query("SELECT count(*)::int AS n FROM student_history_contributions WHERE id=$1", [contribution]);
