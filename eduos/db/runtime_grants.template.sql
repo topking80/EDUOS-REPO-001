@@ -483,6 +483,13 @@ GRANT UPDATE (consent_status, updated_at) ON student_time_capsule_recipients TO 
 REVOKE DELETE, TRUNCATE ON student_time_capsules, student_time_capsule_recipients FROM eduos_app;
 
 
+-- TC-02 guardian family-memory contribution workflow.
+GRANT SELECT, INSERT ON student_history_contributions TO eduos_app;
+REVOKE DELETE, TRUNCATE ON student_history_contributions FROM eduos_app;
+GRANT UPDATE (status, reviewed_by, reviewed_at, review_note, history_entry_id, updated_at)
+  ON student_history_contributions TO eduos_app;
+GRANT SELECT, INSERT ON student_history_contribution_events TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON student_history_contribution_events FROM eduos_app;
 -- 088: student history and Time Capsule relationship rules (row-level
 -- security helpers; each checks the session's own membership).
 GRANT EXECUTE ON FUNCTION eduos_history_relation(uuid,uuid,uuid), eduos_history_user_is(uuid,uuid,uuid,uuid,text),

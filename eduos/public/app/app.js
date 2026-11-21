@@ -126,8 +126,8 @@ const ROLE_TABS = {
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
-  principal: [["overview", "School", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
-  superintendent: [["overview", "District", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
+  principal: [["overview", "School", "grid"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  superintendent: [["overview", "District", "grid"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
   it_admin: [["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
@@ -160,10 +160,11 @@ function renderTabs() {
 
 const VIEWS = {};
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
+  if (tab === "history") return "history";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
   if (tab === "staffing") return "staffing";
@@ -673,6 +674,82 @@ async function openSession(id) {
 }
 
 // ---------------- family ----------------
+async function familyContributionsCard(k) {
+  const list = h("div", { class: "stack", "aria-live": "polite" });
+  const title = h("input", { type: "text", maxlength: 180, required: true, placeholder: "A family memory title" });
+  const body = h("textarea", { maxlength: 12000, rows: 3, placeholder: "Share a memory or milestone (optional)" });
+  const localDateTime = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const occurredAt = h("input", { type: "datetime-local", required: true, value: localDateTime() });
+  const refresh = async () => {
+    const result = await safe(api.get(`/api/family/children/${k.id}/history-contributions`), { data: null });
+    if (!result?.data) {
+      list.replaceChildren(h("p", { class: "small muted" }, "Family memories are temporarily unavailable."));
+      return;
+    }
+    const items = result.data;
+    list.replaceChildren(...(items.length ? items.map(item => h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, item.title), chip(item.status)),
+      item.body ? h("p", {}, item.body) : null,
+      h("p", { class: "small muted" }, `Memory date: ${fmtDay(item.occurred_at)} · Submitted ${fmtTime(item.created_at)}`),
+      item.review_note ? h("p", { class: "small muted" }, `School note: ${item.review_note}`) : null,
+      item.status === "submitted" ? h("button", { class: "btn danger small", type: "button", onclick: async () => {
+        if (!await ask({ title: "Withdraw this family memory?", text: "This removes the pending submission from the school review queue.", confirm: "Withdraw", danger: true })) return;
+        try {
+          await api.req("PATCH", `/api/family/children/${k.id}/history-contributions/${item.id}`, { decision: "withdraw" });
+          toast("Family memory withdrawn.");
+          await refresh();
+        } catch (error) { toast(error.message || "Could not withdraw this contribution."); }
+      } }, "Withdraw pending memory") : null
+    )) : [h("p", { class: "small muted" }, "No family memories submitted yet.")]));
+  };
+  const form = h("form", { class: "stack", onsubmit: async event => {
+    event.preventDefault();
+    try {
+      await api.post(`/api/family/children/${k.id}/history-contributions`, {
+        title: title.value, body: body.value, occurredAt: new Date(occurredAt.value).toISOString()
+      });
+      toast("Family memory sent to the school for review.");
+      form.reset();
+      occurredAt.value = localDateTime();
+      await refresh();
+    } catch (error) { toast(error.message || "Could not submit this family memory."); }
+  } },
+    h("label", {}, h("span", {}, "Title"), title),
+    h("label", {}, h("span", {}, "Memory"), body),
+    h("label", {}, h("span", {}, "When did it happen?"), occurredAt),
+    h("p", { class: "small muted" }, "Submissions are visible to you and authorized school reviewers. Approved memories appear in the student's family history."),
+    h("button", { class: "btn primary", type: "submit" }, "Submit family memory"));
+  await refresh();
+  return h("section", { class: "card" }, h("details", {}, h("summary", {}, "Family memories"), form, list));
+}
+VIEWS.history = async () => {
+  const response = await api.get("/api/history-contributions");
+  const items = response.data || [];
+  const content = items.length ? items.map(item => {
+    const note = h("textarea", { rows: 2, maxlength: 1000, placeholder: "Optional note for the family" });
+    const decide = async decision => {
+      const action = decision === "approve" ? "Approve this family memory?" : "Reject this family memory?";
+      if (!await ask({ title: action, text: "This decision is recorded in the student history audit trail.", confirm: decision === "approve" ? "Approve" : "Reject", danger: decision === "reject" })) return;
+      try {
+        await api.req("PATCH", `/api/students/${item.student_id}/history-contributions/${item.id}`, { decision, note: note.value });
+        toast(decision === "approve" ? "Family memory approved." : "Family memory rejected.");
+        go("history", { push: false });
+      } catch (error) { toast(error.message || "Could not review this family memory."); }
+    };
+    return h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, item.title), chip("submitted")),
+      h("p", { class: "small muted" }, `${item.student_name} · from ${item.guardian_name} · ${fmtDay(item.occurred_at)} · submitted ${fmtTime(item.created_at)}`),
+      item.body ? h("p", {}, item.body) : h("p", { class: "small muted" }, "No additional memory text."),
+      h("label", {}, h("span", {}, "Review note (optional)"), note),
+      h("div", { class: "btns" },
+        h("button", { class: "btn primary", type: "button", onclick: () => decide("approve") }, "Approve"),
+        h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
+  }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
+  return [h("div", { class: "row" }, h("h2", { class: "grow" }, "Family history review"),
+    h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
+    h("p", { class: "small muted" }, "Review family-submitted memories before they appear in a student's family history."),
+    ...content];
+};
 VIEWS.children = async () => {
   const [home, bus] = await Promise.all([api.get("/api/home"), safe(api.get("/api/transport/today"))]);
   const kids = home.data.children || [];
@@ -682,11 +759,13 @@ VIEWS.children = async () => {
     const summary = await safe(api.get(`/api/family/children/${k.id}/summary`));
     const days = (summary?.attendance || []).slice(0, 5);
     const ride = (bus?.data?.riders || []).find(r => r.id === k.id && r.direction === (new Date().getHours() < 12 ? "am" : "pm")) || (bus?.data?.riders || []).find(r => r.id === k.id);
+    const familyMemories = await familyContributionsCard(k);
     out.push(h("section", { class: "card", "aria-label": k.display_name },
       h("div", { class: "row" }, h("div", { class: "grow" }, h("h2", {}, k.display_name), h("p", { class: "small muted" }, `Grade ${k.grade_level} · ${k.school_name}`)),
         ride ? chip(ride.status) : null),
       h("div", { class: "stats" }, stat(k.absences_30d, "absences (30 days)", true), stat(k.due_7d, "due this week"), stat(k.overdue, "overdue", true), stat(k.to_acknowledge, "to acknowledge", true)),
       days.length ? h("div", {}, h("h3", {}, "Recent attendance"), h("div", { class: "btns" }, days.map(a => h("span", { class: `chip ${a.status}` }, `${fmtDay(a.event_date)}: ${STATUS_TEXT[a.status] || a.status}`)))) : null,
+      familyMemories,
       h("button", { class: "btn primary block", type: "button", "aria-label": `Grades & progress: ${k.display_name}`, onclick: () => openView("progress", { learnerId: k.id }) }, icon("book"), "Grades & progress"),
       ride ? h("button", { class: "btn block", type: "button", onclick: () => go("arrival") }, icon("bus"), `Bus: ${STATUS_TEXT[ride.status] || ride.status}`) : null));
   }
