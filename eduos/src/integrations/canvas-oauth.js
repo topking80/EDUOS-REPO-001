@@ -50,6 +50,16 @@ function tokenPayload(text) {
   try { return JSON.parse(text); } catch { throw new HttpError(502, "canvas_token_response_invalid"); }
 }
 
+function decryptCanvasSecret(districtId, connectorId, ciphertext) {
+  try {
+    return decryptSecret(config.integrationsKey, districtId, connectorId, ciphertext);
+  } catch {
+    // Never expose cipher/authentication details or fall through to a generic
+    // 500. A damaged or mismatched grant must be re-authorized by the district.
+    throw new HttpError(409, "canvas_credentials_unreadable");
+  }
+}
+
 
 /**
  * Return a live Canvas bearer token for a district connector. Refresh is
@@ -70,7 +80,7 @@ export async function getCanvasAccessToken(actor, connectorId) {
         [connectorId,actor.districtId]);
       if (!grant) throw new HttpError(409,"canvas_authorization_required");
       if (new Date(grant.expires_at).getTime() > Date.now() + 60_000) {
-        return { accessToken: decryptSecret(config.integrationsKey,actor.districtId,`${connectorId}:canvas-access`,grant.access_token_enc) };
+        return { accessToken: decryptCanvasSecret(actor.districtId,`${connectorId}:canvas-access`,grant.access_token_enc) };
       }
       const leaseToken = crypto.randomUUID();
       const leased = await one(c,
@@ -97,8 +107,8 @@ export async function getCanvasAccessToken(actor, connectorId) {
       const origin = canvasOrigin(claim.connector.base_url);
       const tokenUrl = new URL("/login/oauth2/token",origin).toString();
       if (claim.connector.token_url !== tokenUrl) throw new HttpError(409,"canvas_token_url_mismatch");
-      const oldRefresh = decryptSecret(config.integrationsKey,actor.districtId,`${connectorId}:canvas-refresh`,claim.refreshTokenEnc);
-      const clientSecret = decryptSecret(config.integrationsKey,actor.districtId,connectorId,claim.connector.client_secret_enc);
+      const oldRefresh = decryptCanvasSecret(actor.districtId,`${connectorId}:canvas-refresh`,claim.refreshTokenEnc);
+      const clientSecret = decryptCanvasSecret(actor.districtId,connectorId,claim.connector.client_secret_enc);
       const response = await outboundRequest(tokenUrl,{
         method:"POST",options:{...urlOptions(),timeoutMs:10_000},
         headers:{"content-type":"application/x-www-form-urlencoded",accept:"application/json+canvas-string-ids"},
@@ -238,7 +248,7 @@ export function registerCanvasOAuthRoutes(app) {
         const origin = canvasOrigin(connector.base_url);
         const tokenUrl = new URL("/login/oauth2/token", origin).toString();
         if (connector.token_url !== tokenUrl) throw new HttpError(409, "canvas_token_url_mismatch");
-        const clientSecret = decryptSecret(config.integrationsKey, req.actor.districtId, connector.id, connector.client_secret_enc);
+        const clientSecret = decryptCanvasSecret(req.actor.districtId, connector.id, connector.client_secret_enc);
         return { connector, redirectUri: consumed.redirect_uri, tokenUrl, clientSecret, code: req.query.code, stateId: consumed.id };
       });
 
