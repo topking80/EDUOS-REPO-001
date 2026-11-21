@@ -76,34 +76,78 @@ BEGIN
     identity_column := CASE t WHEN 'student_history_contributions' THEN 'guardian_user_id' ELSE 'actor_user_id' END;
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
-    EXECUTE format('CREATE POLICY %I ON %I USING (
+
+    -- Reads are school-scoped for staff and limited to the current guardian's
+    -- own contributions/events for actively linked children.
+    EXECUTE format('CREATE POLICY %I ON %I FOR SELECT USING (
       district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
       AND (
         school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
         OR current_setting(''app.role'', true) = ''superintendent''
-        OR (current_setting(''app.role'', true) = ''parent'' AND EXISTS (
+        OR (current_setting(''app.role'', true) = ''parent''
+          AND %I = nullif(current_setting(''app.user_id'', true), '''')::uuid
+          AND EXISTS (
+            SELECT 1 FROM student_user_links l
+             WHERE l.district_id = %I.district_id
+               AND l.student_id = %I.student_id
+               AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
+               AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
+          ))
+      )
+    )', t || '_read_scope', t, identity_column, t, t);
+
+    IF t = 'student_history_contributions' THEN
+      -- Only a linked guardian can create a pending contribution. Review
+      -- decisions are a separate UPDATE capability for school leadership.
+      EXECUTE format('CREATE POLICY %I ON %I FOR INSERT WITH CHECK (
+        district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
+        AND current_setting(''app.role'', true) = ''parent''
+        AND guardian_user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
+        AND status = ''submitted'' AND reviewed_by IS NULL
+        AND reviewed_at IS NULL AND history_entry_id IS NULL AND review_note IS NULL
+        AND EXISTS (
           SELECT 1 FROM student_user_links l
            WHERE l.district_id = %I.district_id
              AND l.student_id = %I.student_id
              AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
              AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
-        ))
-      )
-    ) WITH CHECK (
-      district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
-      AND %I = nullif(current_setting(''app.user_id'', true), '''')::uuid
-      AND (
-        school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
-        OR current_setting(''app.role'', true) = ''superintendent''
-        OR (current_setting(''app.role'', true) = ''parent'' AND EXISTS (
-          SELECT 1 FROM student_user_links l
-           WHERE l.district_id = %I.district_id
-             AND l.student_id = %I.student_id
-             AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
-             AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
-        ))
-      )
-    )', t || '_district_school_scope', t, t, t, t, t, identity_column);
+        )
+      )', t || '_guardian_insert', t, t, t);
+
+      EXECUTE format('CREATE POLICY %I ON %I FOR UPDATE
+        USING (
+          district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
+          AND (school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
+            OR current_setting(''app.role'', true) = ''superintendent'')
+          AND current_setting(''app.role'', true) IN (''principal'',''superintendent'')
+          AND status = ''submitted''
+        )
+        WITH CHECK (
+          district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
+          AND (school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
+            OR current_setting(''app.role'', true) = ''superintendent'')
+          AND current_setting(''app.role'', true) IN (''principal'',''superintendent'')
+          AND reviewed_by = nullif(current_setting(''app.user_id'', true), '''')::uuid
+          AND status IN (''approved'',''rejected'') AND reviewed_at IS NOT NULL
+        )', t || '_review_update', t);
+    ELSE
+      -- Event inserts are always attributed to the authenticated actor.
+      EXECUTE format('CREATE POLICY %I ON %I FOR INSERT WITH CHECK (
+        district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
+        AND actor_user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
+        AND (
+          school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
+          OR current_setting(''app.role'', true) = ''superintendent''
+          OR (current_setting(''app.role'', true) = ''parent'' AND EXISTS (
+            SELECT 1 FROM student_user_links l
+             WHERE l.district_id = %I.district_id
+               AND l.student_id = %I.student_id
+               AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
+               AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
+          ))
+        )
+      )', t || '_actor_insert', t, t, t);
+    END IF;
   END LOOP;
 END;
 $$;
