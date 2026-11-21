@@ -117,7 +117,7 @@ function applyBranding(b) {
 
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
-  pupil: [["home", "Home", "home"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
+  pupil: [["home", "Home", "home"], ["portfolio", "My history", "book"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
   teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"]],
   parent: [["children", "Children", "child"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["messages", "Messages", "chat"]],
@@ -160,7 +160,7 @@ function renderTabs() {
 
 const VIEWS = {};
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
@@ -846,6 +846,73 @@ async function teacherItemsCard(k) {
     h("p", { class: "small muted" }, "Teachers' items appear here after the school approves them. Nothing is added to the history until you keep it."),
     ...(cards.length ? cards : [h("p", { class: "small muted" }, "Nothing waiting for you.")])));
 }
+
+// ---------------- TC-04 portfolio: a student's accepted history ----------------
+const PORTFOLIO_KIND = { official_record: "School record", family_memory: "Family memory", student_portfolio: "My work", teacher_artifact: "From a teacher", system_milestone: "Milestone" };
+const PORTFOLIO_TYPE = { achievement: "Achievement", project: "Project", coursework: "Coursework", reflection: "Reflection", event: "Event",
+  portfolio_artifact: "Portfolio piece", educator_note: "Teacher note", system_milestone: "Milestone" };
+VIEWS.portfolio = async () => {
+  const role = state.me.role;
+  if (role === "parent" && !state.learnerId) {
+    const kids = (await api.get("/api/home")).data.children || [];
+    if (!kids.length) return empty("No children are linked to your account yet.");
+    state.learnerId = kids[0].id;
+  }
+  const filters = state.portfolioFilters ||= {};
+  const query = extra => {
+    const p = new URLSearchParams();
+    if (role !== "pupil") p.set("studentId", state.learnerId);
+    for (const [k, v] of Object.entries({ ...filters, ...extra })) if (v) p.set(k, v);
+    return `/api/history/portfolio?${p}`;
+  };
+  const first = (await api.get(query())).data;
+  const f = first.facets;
+  const pick = (key, label, values, names) => {
+    const sel = h("select", { "aria-label": label, onchange: () => { filters[key] = sel.value || undefined; go("portfolio", { push: false }); } },
+      h("option", { value: "" }, label), ...values.map(v => h("option", { value: v, ...(filters[key] === v ? { selected: true } : {}) }, names?.[v] || v)));
+    return sel;
+  };
+  const search = h("input", { type: "search", maxlength: 100, placeholder: "Search titles and notes", "aria-label": "Search history", value: filters.q || "" });
+  const controls = h("form", { class: "btns", role: "search", onsubmit: event => { event.preventDefault(); filters.q = search.value.trim() || undefined; go("portfolio", { push: false }); } },
+    pick("year", "All school years", f.years), pick("kind", "All kinds", f.kinds, PORTFOLIO_KIND), pick("type", "All types", f.types, PORTFOLIO_TYPE),
+    search, h("button", { class: "btn", type: "submit" }, "Search"),
+    Object.values(filters).some(Boolean) ? h("button", { class: "btn", type: "button", onclick: () => { state.portfolioFilters = {}; go("portfolio", { push: false }); } }, "Clear") : null);
+
+  const list = h("div", { class: "stack" });
+  const sections = new Map();
+  const card = item => h("li", { class: "card" },
+    h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, PORTFOLIO_TYPE[item.entryType] || item.entryType)),
+    h("p", { class: "small muted" }, `${fmtDay(item.occurredAt)} · ${PORTFOLIO_KIND[item.kind] || item.kind}${item.authorName ? ` · ${item.authorName}` : ""}`),
+    item.body ? h("p", {}, item.body) : null);
+  const add = items => {
+    for (const item of items) {
+      let ul = sections.get(item.schoolYear);
+      if (!ul) {
+        const id = `year-${sections.size}`;
+        ul = h("ul", { class: "stack", "aria-labelledby": id });
+        sections.set(item.schoolYear, ul);
+        list.append(h("section", {}, h("h3", { id }, `School year ${item.schoolYear}`), ul));
+      }
+      ul.append(card(item));
+    }
+  };
+  add(first.items);
+  let cursor = first.nextCursor;
+  const more = h("button", { class: "btn block", type: "button", onclick: async () => {
+    more.disabled = true;
+    try {
+      const next = (await api.get(query({ cursor }))).data;
+      add(next.items); cursor = next.nextCursor;
+      if (!cursor) more.remove(); else more.disabled = false;
+    } catch (error) { more.disabled = false; toast(error.message || "Could not load more."); }
+  } }, "Show more");
+  const filtered = Object.values(filters).some(Boolean);
+  return [h("h2", {}, role === "pupil" ? "My history" : `${first.student.name}'s history`),
+    h("p", { class: "small muted" }, `${f.total} item${f.total === 1 ? "" : "s"} in the history. Only items that were accepted into it appear here.`),
+    f.total ? controls : null,
+    first.items.length ? list : empty(filtered ? "Nothing matches these filters." : "Nothing in the history yet."),
+    cursor ? more : null];
+};
 VIEWS.history = async () => {
   const response = await safe(api.get("/api/history-contributions"), null);
   const items = response?.data || [];
@@ -894,6 +961,7 @@ VIEWS.children = async () => {
       days.length ? h("div", {}, h("h3", {}, "Recent attendance"), h("div", { class: "btns" }, days.map(a => h("span", { class: `chip ${a.status}` }, `${fmtDay(a.event_date)}: ${STATUS_TEXT[a.status] || a.status}`)))) : null,
       familyMemories,
       fromTeachers,
+      h("button", { class: "btn block", type: "button", "aria-label": `History & portfolio: ${k.display_name}`, onclick: () => openView("portfolio", { learnerId: k.id, portfolioFilters: {} }) }, icon("book"), "History & portfolio"),
       h("button", { class: "btn primary block", type: "button", "aria-label": `Grades & progress: ${k.display_name}`, onclick: () => openView("progress", { learnerId: k.id }) }, icon("book"), "Grades & progress"),
       ride ? h("button", { class: "btn block", type: "button", onclick: () => go("arrival") }, icon("bus"), `Bus: ${STATUS_TEXT[ride.status] || ride.status}`) : null));
   }

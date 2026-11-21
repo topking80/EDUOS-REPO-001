@@ -106,6 +106,11 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       { id: "h1", studentId: "c1", studentName: "Alice A", entryType: "project", title: "Volcano project", body: "Built a model.", occurredAt: now, status: "draft", updatedAt: now,
         decisions: [{ decision: "submitted", reasonCode: null, note: null, by: "teacher", at: now }, { decision: "changes_requested", reasonCode: "needs_edits", note: "Add the date.", by: "school_lead", at: now }] },
       { id: "h2", studentId: "c1", studentName: "Alice A", entryType: "achievement", title: "Spelling bee", body: "", occurredAt: now, status: "published", updatedAt: now, decisions: [] }] };
+    // TC-04 portfolio.
+    case "/api/history/portfolio": return { data: { student: { id: "c1", name: "Alice A" }, nextCursor: "next",
+      items: [{ id: "p1", entryType: "project", kind: "teacher_artifact", title: "Volcano project", body: "Built a model.", occurredAt: now, schoolYear: "2026-27", source: "teacher", authorName: "Teacher S1" },
+        { id: "p2", entryType: "event", kind: "family_memory", title: "Family day", body: "", occurredAt: "2025-09-10T12:00:00Z", schoolYear: "2025-26", source: "guardian", authorName: "Parent A" }],
+      facets: { years: ["2026-27", "2025-26"], types: ["event", "project"], kinds: ["family_memory", "teacher_artifact"], total: 2 } } };
     case "/api/history-review": return { data: [{ id: "h3", studentId: "c1", studentName: "Alice A", entryType: "project", title: "Science fair", body: "Second place.", occurredAt: now, status: "submitted", authorName: "Teacher S1", updatedAt: now, decisions: [] }] };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
@@ -165,7 +170,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
   const failures = [];
   // 37.7.0: commerce screens opened from Clubs & Sports (not tabs of their own);
   // 37.7.1: district payment setup from Ticketing & revenue or Data links.
-  const SUBVIEWS = { parent: ["tickets"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
+  const SUBVIEWS = { parent: ["tickets", "portfolio"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
   for (const [role, roleTabList] of Object.entries(roleTabs)) {
     for (const tab of [...roleTabList, ...(SUBVIEWS[role] || [])]) {
       state.role = role;
@@ -190,7 +195,9 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           "principal/history": ["Teacher contributions", "Science fair", "Ask for changes", "Reject"],
           "vice_principal/history": ["Teacher contributions", "Science fair", "Ask for changes"],
           "superintendent/history": ["Teacher contributions", "Science fair"],
-          "parent/children": ["From teachers (1 to decide)", "Volcano project", "Keep in history", "Decline"] }[`${role}/${tab}`];
+          "parent/children": ["From teachers (1 to decide)", "Volcano project", "Keep in history", "Decline", "History & portfolio"],
+          "parent/portfolio": ["Alice A's history", "School year 2026-27", "Volcano project", "Search"],
+          "pupil/portfolio": ["My history", "School year 2026-27", "School year 2025-26", "Volcano project", "From a teacher", "Family day", "All school years", "Show more"] }[`${role}/${tab}`];
         for (const want of expect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
       } finally {
         page.close();
