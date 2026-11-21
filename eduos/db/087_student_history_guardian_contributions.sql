@@ -81,8 +81,8 @@ BEGIN
         OR current_setting(''app.role'', true) = ''superintendent''
         OR (current_setting(''app.role'', true) = ''parent'' AND EXISTS (
           SELECT 1 FROM student_user_links l
-           WHERE l.district_id = ${district_id}
-             AND l.student_id = ${student_id}
+           WHERE l.district_id = %I.district_id
+             AND l.student_id = %I.student_id
              AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
              AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
         ))
@@ -94,13 +94,13 @@ BEGIN
         OR current_setting(''app.role'', true) = ''superintendent''
         OR (current_setting(''app.role'', true) = ''parent'' AND EXISTS (
           SELECT 1 FROM student_user_links l
-           WHERE l.district_id = ${district_id}
-             AND l.student_id = ${student_id}
+           WHERE l.district_id = %I.district_id
+             AND l.student_id = %I.student_id
              AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
              AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
         ))
       )
-    )', t || '_district_school_scope', t);
+    )', t || '_district_school_scope', t, t, t, t);
   END LOOP;
 END;
 $$;
