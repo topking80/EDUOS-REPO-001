@@ -126,8 +126,8 @@ const ROLE_TABS = {
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
-  principal: [["overview", "School", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
-  superintendent: [["overview", "District", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
+  principal: [["overview", "School", "grid"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  superintendent: [["overview", "District", "grid"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
   it_admin: [["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
@@ -160,10 +160,11 @@ function renderTabs() {
 
 const VIEWS = {};
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
+  if (tab === "history") return "history";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
   if (tab === "staffing") return "staffing";
@@ -721,6 +722,34 @@ async function familyContributionsCard(k) {
   await refresh();
   return h("section", { class: "card" }, h("details", {}, h("summary", {}, "Family memories"), form, list));
 }
+VIEWS.history = async () => {
+  const response = await api.get("/api/history-contributions");
+  const items = response.data || [];
+  const content = items.length ? items.map(item => {
+    const note = h("textarea", { rows: 2, maxlength: 1000, placeholder: "Optional note for the family" });
+    const decide = async decision => {
+      const action = decision === "approve" ? "Approve this family memory?" : "Reject this family memory?";
+      if (!await ask({ title: action, text: "This decision is recorded in the student history audit trail.", confirm: decision === "approve" ? "Approve" : "Reject", danger: decision === "reject" })) return;
+      try {
+        await api.req("PATCH", `/api/students/${item.student_id}/history-contributions/${item.id}`, { decision, note: note.value });
+        toast(decision === "approve" ? "Family memory approved." : "Family memory rejected.");
+        go("history", { push: false });
+      } catch (error) { toast(error.message || "Could not review this family memory."); }
+    };
+    return h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, item.title), chip("submitted")),
+      h("p", { class: "small muted" }, `${item.student_name} · from ${item.guardian_name} · ${fmtDay(item.occurred_at)} · submitted ${fmtTime(item.created_at)}`),
+      item.body ? h("p", {}, item.body) : h("p", { class: "small muted" }, "No additional memory text."),
+      h("label", {}, h("span", {}, "Review note (optional)"), note),
+      h("div", { class: "btns" },
+        h("button", { class: "btn primary", type: "button", onclick: () => decide("approve") }, "Approve"),
+        h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
+  }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
+  return [h("div", { class: "row" }, h("h2", { class: "grow" }, "Family history review"),
+    h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
+    h("p", { class: "small muted" }, "Review family-submitted memories before they appear in a student's family history."),
+    ...content];
+};
 VIEWS.children = async () => {
   const [home, bus] = await Promise.all([api.get("/api/home"), safe(api.get("/api/transport/today"))]);
   const kids = home.data.children || [];
