@@ -51,6 +51,12 @@ describe("TC-02 guardian history contributions against real PostgreSQL", { skip 
         VALUES ($1,$2,$3,$4,'Family memory','A school milestone',now())
         RETURNING id
       `, [ID.d1, ID.s2, ID.carol, USERS.p2s[0]]);
+      const submittedEvent = await app.query(`
+        INSERT INTO student_history_contribution_events
+          (district_id,school_id,student_id,contribution_id,actor_user_id,event_type)
+        VALUES ($1,$2,$3,$4,$5,'submitted') RETURNING id
+      `, [ID.d1, ID.s2, ID.carol, inserted.rows[0].id, USERS.p2s[0]]);
+      assert.ok(submittedEvent.rows[0].id);
       await app.query("SAVEPOINT denied_guardian_self_approval");
       try {
         await assert.rejects(app.query(`
