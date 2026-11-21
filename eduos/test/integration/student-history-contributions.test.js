@@ -51,6 +51,22 @@ describe("TC-02 guardian history contributions against real PostgreSQL", { skip 
         VALUES ($1,$2,$3,$4,'Family memory','A school milestone',now())
         RETURNING id
       `, [ID.d1, ID.s2, ID.carol, USERS.p2s[0]]);
+      await app.query("SAVEPOINT denied_guardian_self_approval");
+      try {
+        await assert.rejects(app.query(`
+          UPDATE student_history_contributions
+             SET status='approved', reviewed_by=$2, reviewed_at=now()
+           WHERE id=$1
+        `, [inserted.rows[0].id, USERS.p2s[0]]), error => error.code === "42501");
+      } finally {
+        await app.query("ROLLBACK TO SAVEPOINT denied_guardian_self_approval");
+        await app.query("RELEASE SAVEPOINT denied_guardian_self_approval");
+      }
+      const withdrawn = await app.query(`
+        UPDATE student_history_contributions SET status='withdrawn', updated_at=now()
+         WHERE id=$1 RETURNING status
+      `, [inserted.rows[0].id]);
+      assert.equal(withdrawn.rows[0].status, "withdrawn");
       await app.query("SAVEPOINT denied_unlinked_guardian");
       try {
         await assert.rejects(app.query(`
