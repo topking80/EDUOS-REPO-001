@@ -159,7 +159,7 @@ BEGIN
           district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
           AND current_setting(''app.role'', true) = ''parent''
           AND guardian_user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
-          AND status = ''withdrawn' AND reviewed_by IS NULL
+          AND status = ''withdrawn'' AND reviewed_by IS NULL
           AND reviewed_at IS NULL AND history_entry_id IS NULL AND review_note IS NULL
           AND EXISTS (
             SELECT 1 FROM student_user_links l
