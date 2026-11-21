@@ -92,8 +92,21 @@ describe("TC-02 guardian history contributions against real PostgreSQL", { skip 
       return inserted.rows[0].id;
     });
 
-    const hidden = await scoped(ID.s1, "principal", USERS.p1[0], async () =>
-      app.query("SELECT count(*)::int AS n FROM student_history_contributions WHERE id=$1", [contribution]));
+    const hidden = await scoped(ID.s1, "principal", USERS.p1[0], async () => {
+      const result = await app.query("SELECT count(*)::int AS n FROM student_history_contributions WHERE id=$1", [contribution]);
+      await app.query("SAVEPOINT denied_staff_insert");
+      try {
+        await assert.rejects(app.query(`
+          INSERT INTO student_history_contributions
+            (district_id,school_id,student_id,guardian_user_id,title,body,occurred_at)
+          VALUES ($1,$2,$3,$4,'Staff bypass','Must fail',now())
+        `, [ID.d1, ID.s1, ID.alice, USERS.pa[0]]), error => error.code === "42501");
+      } finally {
+        await app.query("ROLLBACK TO SAVEPOINT denied_staff_insert");
+        await app.query("RELEASE SAVEPOINT denied_staff_insert");
+      }
+      return result;
+    });
     assert.equal(hidden.rows[0].n, 0);
   });
 
