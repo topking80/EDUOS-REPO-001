@@ -88,7 +88,15 @@ REVOKE DELETE, TRUNCATE ON schools, users, memberships, district_users FROM eduo
 -- usage is aggregated only through the two SECURITY DEFINER functions; launches
 -- are append-only.
 GRANT SELECT, INSERT, UPDATE ON district_settings TO eduos_app;
-GRANT SELECT, INSERT, UPDATE ON apps, app_licenses, app_assignments, app_requests TO eduos_app;
+GRANT SELECT, INSERT, UPDATE ON app_licenses, app_assignments, app_requests TO eduos_app;
+REVOKE INSERT, UPDATE ON apps FROM eduos_app;
+GRANT SELECT ON apps TO eduos_app;
+GRANT INSERT (district_id,owner_school_id,name,vendor,description,category,launch_url,integration_type,integration_config,
+              data_sharing_scope,dpa_status,dpa_expires_on,coppa_compliant,ferpa_school_official,created_by) ON apps TO eduos_app;
+GRANT UPDATE (owner_school_id,name,vendor,description,category,launch_url,integration_type,integration_config,
+              data_sharing_scope,dpa_status,dpa_expires_on,coppa_compliant,ferpa_school_official,status,updated_at) ON apps TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_lti_approve_registration(uuid,text,uuid) TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_lti_revoke_registration(uuid,uuid) TO eduos_app;
 GRANT SELECT ON app_seats TO eduos_app;
 GRANT SELECT, INSERT ON app_launches TO eduos_app;
 REVOKE DELETE, TRUNCATE ON district_settings, apps, app_licenses, app_assignments, app_requests, app_seats, app_launches FROM eduos_app;
@@ -447,6 +455,11 @@ GRANT SELECT, INSERT ON commerce_webhook_refund_cases TO eduos_app;
 GRANT UPDATE (last_seen_at, status, resolved_at, resolved_by, resolution_note)
   ON commerce_webhook_refund_cases TO eduos_app;
 REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
+
+
+-- LTI 1.3: replay ledger remains inaccessible; only the tenant-checked
+-- SECURITY DEFINER function may atomically claim a launch under tenant context.
+GRANT EXECUTE ON FUNCTION eduos_lti_consume_launch(uuid, text, timestamptz) TO eduos_app;
 
 -- 37.10.1 Timeline authorization foundation. Drafts remain append-only
 -- until the audited revision/publication transition service is added.

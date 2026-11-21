@@ -9,12 +9,13 @@ import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { loadPlatformKey, signJwt } from "../../src/lti.js";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 
 describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }, () => {
-  let db, idp, server, admin, appDb, sink, tool, s = {}, apps = {};
+  let db, idp, server, admin, appDb, sink, tool, previousPrivateKey, s = {}, apps = {};
   const hooks = [];
   const as = name => client(server.base, s[name]);
   before(async () => {
@@ -23,9 +24,13 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     sink = http.createServer((req, res) => { let b = ""; req.on("data", d => b += d); req.on("end", () => { try { hooks.push(JSON.parse(b)); } catch {} res.end("ok"); }); });
     await new Promise(r => sink.listen(0, "127.0.0.1", r));
     const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    ({ privateKey: previousPrivateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 }));
+    const subjectSecret = "integration-test-stable-lti-subject-key-32-bytes";
     const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app,
       WEBHOOK_SIGNING_KEY: "w".repeat(40), WEBHOOK_ALLOW_INSECURE_LOOPBACK: "true",
-      LTI_PLATFORM_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }) });
+      LTI_PLATFORM_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }),
+      LTI_PLATFORM_PRIVATE_KEY_PREVIOUS: previousPrivateKey.export({ type: "pkcs8", format: "pem" }),
+      LTI_PLATFORM_SUBJECT_KEY: subjectSecret });
     const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
@@ -201,16 +206,82 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     await new Promise(r => tool.listen(0, "127.0.0.1", r));
     const base = `http://127.0.0.1:${tool.address().port}`;
     const reg = await as("it")("POST", "/api/apps", { name: "LTI Lab", vendor: "Tool Co", launchUrl: `${base}/launch`, integrationType: "lti13", dataSharingScope: "none", coppaCompliant: true,
-      integrationConfig: { clientId: "tool-client", deploymentId: "dep-1", loginUrl: `${base}/login`, redirectUris: [`${base}/launch`] } });
+      integrationConfig: { clientId: "tool-client", deploymentId: "dep-1", loginUrl: `${base}/login`, redirectUris: [`${base}/launch`], targetLinkUri: `${base}/launch` } });
     assert.equal(reg.status, 201, JSON.stringify(reg.body));
-    assert.equal((await as("it")("POST", "/api/apps", { name: "Bad LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "lti13", integrationConfig: { clientId: "c" } })).body.error, "invalid_lti_config");
-    assert.equal((await as("it")("POST", "/api/apps", { name: "Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { clientSecret: "x" } })).body.error, "integration_config_must_not_hold_secrets");
+    assert.equal(reg.body.data.registrationStatus, "pending", "new LTI registrations require district approval");
+    // Establish launch entitlement first so the pending-approval response is
+    // tested independently of the app-availability authorization gate.
     await as("it")("POST", `/api/apps/${reg.body.data.id}/licenses`, {});
     await as("it")("POST", `/api/apps/${reg.body.data.id}/assignments`, { scope: "district" });
+    const blocked = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    assert.equal(blocked.status, 409); assert.equal(blocked.body.error, "lti_approval_required");
+    assert.equal((await as("p1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 403, "school principals cannot approve district LTI registrations");
+    const approval = await as("supt1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`);
+    assert.equal(approval.status, 200, JSON.stringify(approval.body));
+    assert.equal(approval.body.data.registrationStatus, "approved");
+    const approvalPrivileges = await appDb.query(
+      "SELECT has_column_privilege(current_user,'apps','lti_registration_status','UPDATE') AS can_write_status, " +
+      "has_column_privilege(current_user,'apps','lti_approved_config_hash','UPDATE') AS can_write_hash, " +
+      "has_function_privilege(current_user,'eduos_lti_approve_registration(uuid,text,uuid)','EXECUTE') AS can_approve");
+    assert.equal(approvalPrivileges.rows[0].can_write_status, false, "runtime cannot write approval state directly");
+    assert.equal(approvalPrivileges.rows[0].can_write_hash, false, "runtime cannot forge the approved fingerprint");
+    assert.equal(approvalPrivileges.rows[0].can_approve, true, "runtime may invoke the guarded approval function");
+    await assert.rejects(() => appDb.query("UPDATE apps SET lti_registration_status='approved'"), { code: "42501" });
+    await appDb.query("BEGIN");
+    await appDb.query(
+      "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role','pupil',true),set_config('app.school_id',$3,true)",
+      [ID.d1, USERS.pu[0], ID.s1]);
+    await assert.rejects(
+      () => appDb.query("SELECT * FROM eduos_lti_approve_registration($1,$2,$3)", [reg.body.data.id, "A".repeat(43), USERS.pu[0]]),
+      { code: "42501" });
+    await appDb.query("ROLLBACK");
+    await appDb.query("BEGIN");
+    await appDb.query(
+      "SELECT set_config('app.district_id',$1,true),set_config('app.user_id',$2,true),set_config('app.role','',true),set_config('app.school_id',$3,true)",
+      [ID.d1, USERS.pu[0], ID.s1]);
+    await assert.rejects(
+      () => appDb.query("SELECT * FROM eduos_lti_revoke_registration($1,$2)", [reg.body.data.id, USERS.pu[0]]),
+      { code: "42501" });
+    await appDb.query("ROLLBACK");
+    assert.equal((await as("it")("POST", "/api/apps", { name: "Bad LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "lti13", integrationConfig: { clientId: "c" } })).body.error, "invalid_lti_config");
+    assert.equal((await as("it")("POST", "/api/apps", { name: "Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { clientSecret: "x" } })).body.error, "integration_config_must_not_hold_secrets");
+    assert.equal((await as("it")("POST", "/api/apps", { name: "Nested Secret LTI", vendor: "x", launchUrl: `${base}/x`, integrationType: "link", integrationConfig: { settings: { credentials: { clientSecret: "x" } } } })).body.error, "integration_config_must_not_hold_secrets");
+    const changedConfig = { ...reg.body.data.integrationConfig, redirectUris: [...reg.body.data.integrationConfig.redirectUris, `${base}/alternate`] };
+    const changed = await as("it")("PATCH", `/api/apps/${reg.body.data.id}`, { integrationConfig: changedConfig });
+    assert.equal(changed.status, 200); assert.equal(changed.body.data.registrationStatus, "pending", "registration changes invalidate approval");
+    assert.equal((await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`)).status, 409);
+    assert.equal((await as("supt1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200, "district must reapprove changed registration");
     const launch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
     assert.equal(launch.status, 200, JSON.stringify(launch.body));
     const login1 = await fetch(launch.body.data.url, { redirect: "manual" });
-    const authorize = login1.headers.get("location");
+    let authorize = login1.headers.get("location");
+    const revoked = await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/revoke`);
+    assert.equal(revoked.status, 200); assert.equal(revoked.body.data.registrationStatus, "revoked");
+    assert.equal((await fetch(authorize)).status, 409, "revocation blocks an in-flight callback");
+    assert.equal((await as("supt1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200);
+    assert.equal((await fetch(authorize)).status, 409, "reapproval does not revive hints issued under an earlier approval");
+    const freshLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    assert.equal(freshLaunch.status, 200);
+    const freshLogin = await fetch(freshLaunch.body.data.url, { redirect: "manual" });
+    authorize = freshLogin.headers.get("location");
+    // Executable OIDC negative cases: reject malformed protocol parameters
+    // before consuming the valid one-time launch hint.
+    for (const [name, value] of [
+      ["scope", "openid profile"], ["response_type", "code"], ["response_mode", "query"],
+      ["prompt", "login"], ["client_id", "another-client"], ["nonce", ""], ["state", ""],
+      ["redirect_uri", "https://evil.example/callback"], ["unsupported_extension", "unexpected"]
+    ]) {
+      const invalid = new URL(authorize);
+      invalid.searchParams.set(name, value);
+      const denied = await fetch(invalid);
+      assert.equal(denied.status, 400, `OIDC rejects ${name}=${value}`);
+      assert.match(await denied.text(), /LTI launch refused/);
+    }
+    for (const name of ["scope", "response_type", "response_mode", "nonce", "state", "redirect_uri", "client_id"]) {
+      const missing = new URL(authorize);
+      missing.searchParams.delete(name);
+      assert.equal((await fetch(missing)).status, 400, `OIDC requires ${name}`);
+    }
     const page = await fetch(authorize);
     assert.equal(page.status, 200);
     const html = await page.text();
@@ -218,6 +289,14 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.match(page.headers.get("content-security-policy"), new RegExp(`form-action ${base.replace(/[.:/]/g, "\\$&")}`));
     const { payload, protectedHeader } = await jwtVerify(token, createRemoteJWKSet(new URL(`${server.base}/.well-known/jwks.json`)), { issuer: "http://localhost", audience: "tool-client" });
     assert.equal(protectedHeader.alg, "RS256"); assert.equal(payload.nonce, "n-1");
+    const jwksResponse = await fetch(`${server.base}/.well-known/jwks.json`);
+    const publishedJwks = await jwksResponse.json();
+    assert.equal(publishedJwks.keys.length, 2, "JWKS publishes active and previous verification keys");
+    assert.equal(protectedHeader.kid, publishedJwks.keys[0].kid, "new tokens use the active key");
+    const previousKey = loadPlatformKey(previousPrivateKey.export({ type: "pkcs8", format: "pem" }));
+    const previousToken = signJwt(previousKey, { iss: "http://localhost", aud: "tool-client", iat: 1000, exp: 2000, sub: "rotation-check" });
+    const previousVerified = await jwtVerify(previousToken, createRemoteJWKSet(new URL(`${server.base}/.well-known/jwks.json`)), { issuer: "http://localhost", audience: "tool-client", currentDate: new Date(1500 * 1000) });
+    assert.equal(previousVerified.payload.sub, "rotation-check", "relying parties can still verify a token signed by the previous key");
     assert.equal(payload["https://purl.imsglobal.org/spec/lti/claim/deployment_id"], "dep-1");
     assert.deepEqual(payload["https://purl.imsglobal.org/spec/lti/claim/roles"], ["http://purl.imsglobal.org/vocab/lis/v2/membership#Learner"]);
     assert.ok(!payload.name && !payload.email && !payload["https://purl.imsglobal.org/spec/lti/claim/context"], "scope 'none' sends no name, email or school");
@@ -227,6 +306,129 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.equal((await fetch(evil)).status, 400);
     const forged = new URL(authorize); forged.searchParams.set("lti_message_hint", forged.searchParams.get("lti_message_hint").replace(/^(.{10})(.)/, (_, a, c) => a + (c === "A" ? "B" : "A")));
     assert.equal((await fetch(forged)).status, 400);
+
+    // Reject OIDC parameter pollution across query and form transports.
+    const pollutionLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    assert.equal(pollutionLaunch.status, 200);
+    const pollutionInit = await fetch(pollutionLaunch.body.data.url, { redirect: "manual" });
+    const pollutionAuthorize = new URL(pollutionInit.headers.get("location"));
+    const pollutionForm = new URLSearchParams(pollutionAuthorize.searchParams);
+    const polluted = await fetch(`${server.base}/lti/authorize?scope=openid`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: pollutionForm
+    });
+    assert.equal(polluted.status, 400);
+    assert.match(await polluted.text(), /duplicate_request_parameters/);
+
+    // Prototype-sensitive and arbitrary form keys must be rejected before
+    // request fields are materialized into an object.
+    for (const key of ["__proto__", "constructor", "prototype", "unsupported_extension"]) {
+      const hostileForm = new URLSearchParams(authorize.searchParams);
+      hostileForm.set(key, "unexpected");
+      const hostile = await fetch(`${server.base}/lti/authorize`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: hostileForm.toString()
+      });
+      assert.equal(hostile.status, 400, `OIDC form rejects key ${key}`);
+      assert.match(await hostile.text(), /invalid_request/);
+    }
+
+    // OIDC response_mode=form_post must reject JSON even when the payload
+    // contains otherwise valid OIDC parameters.
+    const jsonPost = await fetch(`${server.base}/lti/authorize`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(pollutionForm))
+    });
+    assert.equal(jsonPost.status, 415);
+    assert.match(await jsonPost.text(), /unsupported_content_type/);
+
+    // Repeated URL-encoded protocol fields parse as arrays and must fail the
+    // scalar OIDC parameter validation rather than selecting one value.
+    const duplicateForm = new URLSearchParams(pollutionForm);
+    duplicateForm.append("scope", "openid");
+    const duplicated = await fetch(`${server.base}/lti/authorize`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: duplicateForm
+    });
+    assert.equal(duplicated.status, 400);
+    assert.match(await duplicated.text(), /invalid_request/);
+
+    // The route-specific URL-encoded parser has a 16KB ceiling. Oversized
+    // callback bodies must fail closed before OIDC validation or token issue.
+    const oversizedForm = new URLSearchParams(pollutionForm);
+    oversizedForm.set("state", "x".repeat(17 * 1024));
+    const oversized = await fetch(`${server.base}/lti/authorize`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: oversizedForm
+    });
+    const oversizedBody = await oversized.text();
+    assert.equal(oversized.status, 413, `oversized LTI form response: ${oversizedBody}`);
+    assert.match(oversizedBody, /payload_too_large/);
+
+    // Revocation-window regression tests: each scenario gets a fresh launch
+    // hint, then changes authoritative PostgreSQL state before the callback.
+    // Restore fixture state in finally so one assertion cannot poison later cases.
+    const expectRevokedCallback = async ({ revoke, restore, expected }) => {
+      const freshLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+      assert.equal(freshLaunch.status, 200, JSON.stringify(freshLaunch.body));
+      const initiation = await fetch(freshLaunch.body.data.url, { redirect: "manual" });
+      assert.equal(initiation.status, 302);
+      const callback = initiation.headers.get("location");
+      assert.ok(callback, "tool login initiation must produce an authorization request");
+      try {
+        await revoke({ launchUrl: freshLaunch.body.data.url });
+        const denied = await fetch(callback);
+        assert.equal(denied.status, 403, expected);
+        const body = await denied.text();
+        assert.match(body, /LTI launch refused/);
+        assert.match(body, new RegExp(expected));
+        assert.doesNotMatch(body, /id_token/, "revoked authority must not produce an ID token");
+      } finally {
+        await restore({ launchUrl: freshLaunch.body.data.url });
+      }
+    };
+
+    await expectRevokedCallback({
+      expected: "membership_inactive",
+      revoke: () => admin.query("UPDATE memberships SET status='disabled' WHERE user_id=$1 AND district_id=$2 AND role='pupil' AND school_id=$3", [USERS.pu[0], ID.d1, ID.s1]),
+      restore: () => admin.query("UPDATE memberships SET status='active' WHERE user_id=$1 AND district_id=$2 AND role='pupil' AND school_id=$3", [USERS.pu[0], ID.d1, ID.s1])
+    });
+
+    let revokedAssignmentId;
+    await expectRevokedCallback({
+      expected: "app_not_available",
+      revoke: async () => {
+        const r = await admin.query("UPDATE app_assignments SET revoked_at=now() WHERE district_id=$1 AND app_id=$2 AND revoked_at IS NULL RETURNING id", [ID.d1, reg.body.data.id]);
+        assert.ok(r.rowCount > 0, "fixture must have an active app assignment");
+        revokedAssignmentId = r.rows[0].id;
+      },
+      restore: () => admin.query("UPDATE app_assignments SET revoked_at=NULL, revoked_by=NULL WHERE id=$1", [revokedAssignmentId])
+    });
+
+    await expectRevokedCallback({
+      expected: "app_not_available|license_inactive",
+      revoke: async ({ launchUrl }) => {
+        const launchId = new URL(launchUrl).searchParams.get("login_hint");
+        const original = await admin.query("SELECT license_id FROM app_launches WHERE id=$1", [launchId]);
+        assert.equal(original.rowCount, 1, "original launch row must exist");
+        await admin.query("UPDATE app_licenses SET status='cancelled' WHERE id=$1", [original.rows[0].license_id]);
+      },
+      restore: async ({ launchUrl }) => {
+        const launchId = new URL(launchUrl).searchParams.get("login_hint");
+        const original = await admin.query("SELECT license_id FROM app_launches WHERE id=$1", [launchId]);
+        if (original.rowCount) await admin.query("UPDATE app_licenses SET status='active' WHERE id=$1", [original.rows[0].license_id]);
+      }
+    });
+
+    await expectRevokedCallback({
+      expected: "launch_not_found",
+      revoke: () => admin.query("UPDATE users SET status='disabled' WHERE id=$1", [USERS.pu[0]]),
+      restore: () => admin.query("UPDATE users SET status='active' WHERE id=$1", [USERS.pu[0]])
+    });
+
+    await expectRevokedCallback({
+      expected: "launch_not_found",
+      revoke: () => admin.query("UPDATE schools SET status='disabled' WHERE id=$1", [ID.s1]),
+      restore: () => admin.query("UPDATE schools SET status='active' WHERE id=$1", [ID.s1])
+    });
   });
 
   it("every role gets a home dashboard scoped like its list endpoints", async () => {
@@ -268,4 +470,30 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     const total = (await admin.query("SELECT count(*)::int AS n FROM audit_events WHERE district_id=$1", [ID.d1])).rows[0].n;
     assert.equal(csv.trim().split("\r\n").length - 1, total, "the export streams every audit event");
   });
+  it("EduOS launches the district's Canvas LMS destination through the approved app catalog", async () => {
+    const canvasUrl = "https://district.instructure.com/";
+    const reg = await as("it")("POST", "/api/apps", {
+      name: "Canvas LMS", vendor: "Instructure", description: "District learning management system",
+      category: "Learning Management System", launchUrl: canvasUrl, integrationType: "oidc_sso",
+      dataSharingScope: "identity", dpaStatus: "signed", coppaCompliant: true, ferpaSchoolOfficial: true
+    });
+    assert.equal(reg.status, 201, JSON.stringify(reg.body));
+    const id = reg.body.data.id;
+    assert.equal((await as("it")("POST", `/api/apps/${id}/licenses`, {})).status, 201);
+    assert.equal((await as("it")("POST", `/api/apps/${id}/assignments`, { scope: "district" })).status, 201);
+
+    const visible = await as("pu")("GET", "/api/my/apps");
+    assert.ok(visible.body.data.some(x => x.id === id && x.integrationType === "oidc_sso"));
+    const launched = await as("pu")("POST", `/api/apps/${id}/launch`);
+    assert.equal(launched.status, 200, JSON.stringify(launched.body));
+    assert.deepEqual(launched.body.data, { url: canvasUrl, integrationType: "oidc_sso" });
+
+    const events = await admin.query(
+      "SELECT action,detail FROM audit_events WHERE resource_type='app' AND resource_id=$1 AND action='launch'",
+      [id]
+    );
+    assert.equal(events.rowCount, 1);
+    assert.equal(JSON.parse(events.rows[0].detail).dataSharingScope, "identity");
+  });
+
 });

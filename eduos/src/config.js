@@ -45,6 +45,13 @@ export function parseNativeRedirectUris(value) {
   return uris;
 }
 
+const ltiPrivateKey = process.env.LTI_PLATFORM_PRIVATE_KEY || "";
+const ltiPreviousPrivateKey = process.env.LTI_PLATFORM_PRIVATE_KEY_PREVIOUS || "";
+const ltiSubjectKey = process.env.LTI_PLATFORM_SUBJECT_KEY || "";
+if (ltiPreviousPrivateKey && !ltiPrivateKey) throw new Error("LTI_PLATFORM_PRIVATE_KEY is required when a previous signing key is configured");
+if ((process.env.NODE_ENV || "development") === "production" && ltiPrivateKey && Buffer.byteLength(ltiSubjectKey) < 32)
+  throw new Error("Production LTI requires LTI_PLATFORM_SUBJECT_KEY with at least 32 bytes");
+
 export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 8080),
@@ -166,7 +173,12 @@ export const config = {
   // 32.3.0 school branding: mascot upload size and the public (sign-in page) branding endpoints.
   brandingUploadMaxBytes: Number(process.env.BRANDING_UPLOAD_MAX_KB || 2048) * 1024,
   publicBrandingRateLimit: Number(process.env.PUBLIC_BRANDING_RATE_LIMIT_PER_MIN || 300),
-  ltiPlatformKey: process.env.LTI_PLATFORM_PRIVATE_KEY || "",
+  ltiPlatformKey: ltiPrivateKey,
+  // Publish the previous platform public key during rotation so relying parties
+  // can validate still-live tokens. Keep the subject HMAC key stable across
+  // signing-key rotations to preserve pairwise subject identifiers.
+  ltiPlatformPreviousKey: ltiPreviousPrivateKey,
+  ltiSubjectKey,
   trustedProxyIps: (process.env.TRUSTED_PROXY_IPS || "").split(",").map(x => x.trim()).filter(Boolean),
   // 32.4.0 role apps. Christie runs the local deterministic tutor unless an
   // external provider is explicitly configured AND allowed; external
