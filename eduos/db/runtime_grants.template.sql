@@ -496,3 +496,10 @@ GRANT EXECUTE ON FUNCTION eduos_history_relation(uuid,uuid,uuid), eduos_history_
   eduos_history_entry_visible(uuid,uuid,uuid,text,text,text,uuid), eduos_history_entry_writable(uuid,uuid,uuid,text,text,text,text,uuid),
   eduos_history_entry_manageable(uuid,uuid,uuid,text,uuid), eduos_history_entry_access(uuid,text),
   eduos_capsule_role(uuid,uuid,uuid,uuid,uuid,text), eduos_capsule_access(uuid) TO eduos_app;
+
+-- 091 Time Capsule lifecycle. Seal, cancel, milestone release and the release
+-- sweep go through these functions; eduos_capsule_try_release and
+-- eduos_capsule_event are internal to them.
+GRANT EXECUTE ON FUNCTION eduos_capsule_is_draft(uuid), eduos_capsule_seal(uuid), eduos_capsule_cancel(uuid),
+  eduos_capsule_release_milestone(uuid), eduos_capsule_release_due(integer), eduos_capsule_contents(uuid),
+  eduos_capsule_invitations(), eduos_capsule_recipient_options(uuid), eduos_capsule_milestones_pending() TO eduos_app;

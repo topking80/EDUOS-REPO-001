@@ -141,6 +141,9 @@ export const config = {
   // API looks (0 = off) and how long a call must be in flight to count.
   commerceReconcileIntervalSeconds: Number(process.env.COMMERCE_RECONCILE_INTERVAL_SECONDS ?? 60),
   commerceReconcileStaleSeconds: Number(process.env.COMMERCE_RECONCILE_STALE_SECONDS ?? 90),
+  // Time Capsules: how often the API releases capsules whose date has come
+  // (0 = off, e.g. when cron runs src/capsule-release-cli.js instead).
+  capsuleReleaseIntervalSeconds: Number(process.env.CAPSULE_RELEASE_INTERVAL_SECONDS ?? 300),
   // Native mobile app sign-in (RFC 8252). Comma-separated redirect URIs the
   // EduOS app may return to after district sign-in, e.g.
   // "org.eduos.app:/oauth2redirect". Empty (default) disables native sign-in.
@@ -337,6 +340,7 @@ if (config.commerceSecretsKey && config.commerceSecretsKey.length < 32) {
 }
 intIn("COMMERCE_RECONCILE_INTERVAL_SECONDS", config.commerceReconcileIntervalSeconds, 0, 3600);
 intIn("COMMERCE_RECONCILE_STALE_SECONDS", config.commerceReconcileStaleSeconds, 10, 86400);
+intIn("CAPSULE_RELEASE_INTERVAL_SECONDS", config.capsuleReleaseIntervalSeconds, 0, 86400);
 intIn("POWERSCHOOL_MAX_STUDENTS", config.powerschoolMaxStudents, 1_000, 200_000);
 if (config.integrationsKey && config.integrationsKey.length < 32) {
   throw new Error("INTEGRATIONS_KEY must be at least 32 characters");

@@ -117,17 +117,17 @@ function applyBranding(b) {
 
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
-  pupil: [["home", "Home", "home"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
+  pupil: [["home", "Home", "home"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
   teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"]],
-  parent: [["children", "Children", "child"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["messages", "Messages", "chat"]],
-  vice_principal: [["operations", "Operations", "grid"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["messages", "Messages", "chat"]],
+  vice_principal: [["operations", "Operations", "grid"], ["capsules", "Time Capsules", "spark"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["messages", "Messages", "chat"]],
   counselor: [["guidance", "Counseling", "heart"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
-  principal: [["overview", "School", "grid"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
-  superintendent: [["overview", "District", "grid"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
+  principal: [["overview", "School", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  superintendent: [["overview", "District", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
   it_admin: [["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
@@ -160,11 +160,12 @@ function renderTabs() {
 
 const VIEWS = {};
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "capsule"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
   if (tab === "history") return "history";
+  if (tab === "capsule") return "capsules";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
   if (tab === "staffing") return "staffing";
@@ -722,6 +723,120 @@ async function familyContributionsCard(k) {
   await refresh();
   return h("section", { class: "card" }, h("details", {}, h("summary", {}, "Family memories"), form, list));
 }
+
+// ---------------- Time Capsules ----------------
+const MILESTONE_TEXT = { grade_5_completion: "Finishing grade 5", grade_8_completion: "Finishing grade 8", graduation: "Graduation", age_18: "Turning 18" };
+const CAPSULE_STATUS = { draft: "Draft", sealed: "Sealed, waiting for the milestone", scheduled: "Sealed", released: "Released", cancelled: "Cancelled" };
+const CONSENT_TEXT = { pending: "Hasn't answered", approved: "Accepted", denied: "Declined", withdrawn: "Withdrew" };
+const opensText = c => c.releaseKind === "milestone" ? `Opens at: ${MILESTONE_TEXT[c.milestone] || c.milestone}` : `Opens ${fmtDay(c.releaseAt)}`;
+VIEWS.capsules = async () => {
+  const role = state.me.role;
+  const [mine, invites, milestones, home] = await Promise.all([api.get("/api/history/capsules"), safe(api.get("/api/history/capsule-invitations"), { data: [] }),
+    safe(api.get("/api/history/capsule-milestones"), { data: [] }), role === "parent" ? safe(api.get("/api/home"), { data: {} }) : null]);
+  const out = [h("h2", {}, "Time Capsules")];
+  const answer = async (capsuleId, decision) => {
+    try { await api.post(`/api/history/capsule-invitations/${capsuleId}`, { decision }); toast({ approved: "Accepted.", denied: "Declined.", withdrawn: "Withdrawn." }[decision]); go("capsules", { push: false }); }
+    catch (error) { toast(error.message || "Could not save your answer."); }
+  };
+  const pendingInvites = (invites.data || []).filter(i => i.status !== "released" || i.consent !== "approved");
+  if (pendingInvites.length) out.push(h("section", { class: "card" }, h("h3", {}, "Capsules for you"),
+    h("p", { class: "small muted" }, "Someone has made a Time Capsule you can receive. You'll see what's inside only once it opens, and only if you accept."),
+    ...pendingInvites.map(i => h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", { class: "grow" }, `From ${i.from}`), h("span", { class: "chip" }, CONSENT_TEXT[i.consent] || i.consent)),
+      h("p", { class: "small muted" }, `For ${i.studentName} · ${opensText(i)}`),
+      i.status === "released" ? h("p", { class: "small muted" }, "This capsule has opened; you withdrew, so it's closed to you.")
+        : h("div", { class: "btns" },
+          i.consent !== "approved" ? h("button", { class: "btn primary", type: "button", onclick: () => answer(i.capsuleId, "approved") }, "Accept") : null,
+          i.consent === "pending" ? h("button", { class: "btn", type: "button", onclick: () => answer(i.capsuleId, "denied") }, "Decline") : null,
+          i.consent === "approved" ? h("button", { class: "btn", type: "button", onclick: () => answer(i.capsuleId, "withdrawn") }, "Withdraw") : null)))));
+  if ((milestones.data || []).length) out.push(h("section", { class: "card" }, h("h3", {}, "Milestones to confirm"),
+    h("p", { class: "small muted" }, "These capsules open when the student reaches the milestone. You see only the milestone, never what's inside."),
+    ...milestones.data.map(m => h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", { class: "grow" }, `${m.studentName}: ${MILESTONE_TEXT[m.milestone] || m.milestone}`)),
+      h("p", { class: "small muted" }, `From ${m.from} · ${m.accepted ? `${m.accepted} recipient${m.accepted === 1 ? "" : "s"} accepted` : "No recipient has accepted yet"}`),
+      h("button", { class: "btn primary", type: "button", disabled: !m.accepted, onclick: async () => {
+        if (!await ask({ title: `Confirm ${MILESTONE_TEXT[m.milestone] || m.milestone} for ${m.studentName}?`, text: "The capsule opens now for recipients who accepted. This is recorded.", confirm: "Confirm and open" })) return;
+        try { await api.post(`/api/history/capsules/${m.capsuleId}/release`); toast("Released."); go("capsules", { push: false }); }
+        catch (error) { toast(error.message || "Could not release this capsule."); }
+      } }, "Confirm milestone")))));
+  const capsules = mine.data || [];
+  const card = c => h("article", { class: "card" },
+    h("div", { class: "row" }, h("strong", { class: "grow" }, c.title), h("span", { class: "chip" }, CAPSULE_STATUS[c.status] || c.status)),
+    h("p", { class: "small muted" }, `For ${c.studentName} · ${opensText(c)}`),
+    h("button", { class: "btn", type: "button", onclick: () => openView("capsule", { capsuleId: c.id }) }, c.mine ? "Manage" : "Open"));
+  const received = capsules.filter(c => !c.mine);
+  if (received.length) out.push(h("section", { class: "card" }, h("h3", {}, "Opened for you"), ...received.map(card)));
+  const kids = home?.data?.children || [];
+  if (kids.length) {
+    const student = h("select", { required: true }, ...kids.map(k => h("option", { value: k.id, ...(state.learnerId === k.id ? { selected: true } : {}) }, k.display_name)));
+    const title = h("input", { type: "text", maxlength: 180, required: true, placeholder: "For Alice at 18" });
+    const message = h("textarea", { maxlength: 12000, rows: 3, placeholder: "A message for when it opens (optional)" });
+    const kind = h("select", {}, h("option", { value: "scheduled" }, "On a date"), h("option", { value: "milestone" }, "At a milestone"));
+    const date = h("input", { type: "date", required: true, min: new Date(Date.now() + 86400000).toISOString().slice(0, 10) });
+    const milestone = h("select", {}, ...Object.entries(MILESTONE_TEXT).map(([v, t]) => h("option", { value: v }, t)));
+    const dateRow = h("label", {}, h("span", {}, "Open on"), date), msRow = h("label", { hidden: true }, h("span", {}, "Milestone"), milestone);
+    kind.addEventListener("change", () => { const ms = kind.value === "milestone"; msRow.hidden = !ms; dateRow.hidden = ms; date.required = !ms; });
+    const form = h("form", { class: "stack", onsubmit: async event => {
+      event.preventDefault();
+      const ms = kind.value === "milestone";
+      try {
+        const r = await api.post("/api/history/capsules", { studentId: student.value, title: title.value, message: message.value, releaseKind: kind.value,
+          ...(ms ? { milestone: milestone.value } : { releaseAt: new Date(`${date.value}T09:00:00`).toISOString() }),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+        toast("Capsule started. Add memories and recipients, then seal it.");
+        openView("capsule", { capsuleId: r.data.id });
+      } catch (error) { toast(error.message || "Could not create the capsule."); }
+    } },
+      h("label", {}, h("span", {}, "For"), student), h("label", {}, h("span", {}, "Title"), title), h("label", {}, h("span", {}, "Message"), message),
+      h("label", {}, h("span", {}, "Opens"), kind), dateRow, msRow,
+      h("button", { class: "btn primary", type: "submit" }, "Start a capsule"));
+    out.push(h("section", { class: "card" }, h("details", {}, h("summary", {}, "Make a Time Capsule"), form)));
+  }
+  const made = capsules.filter(c => c.mine);
+  out.push(h("section", { class: "card" }, h("h3", {}, "Capsules you made"), ...(made.length ? made.map(card) : [h("p", { class: "small muted" }, "None yet.")])));
+  return out;
+};
+VIEWS.capsule = async () => {
+  if (!state.capsuleId) return empty("Choose a capsule from Time Capsules.");
+  const c = (await api.get(`/api/history/capsules/${state.capsuleId}`)).data;
+  const reload = () => go("capsule", { push: false });
+  const act = async (path, body, done) => { try { await api.post(path, body); toast(done); reload(); } catch (error) { toast(error.message || "That didn't work."); } };
+  const items = c.items.length ? h("ol", { class: "stack" }, c.items.map(i => h("li", { class: "card" },
+    i.withheld ? h("p", { class: "small muted" }, "This item was withdrawn from the history and is no longer shown.")
+      : [h("strong", {}, i.title), h("p", { class: "small muted" }, fmtDay(i.occurredAt)), i.body ? h("p", {}, i.body) : null])))
+    : h("p", { class: "small muted" }, "Nothing in it yet.");
+  const out = [h("div", { class: "row" }, h("h2", { class: "grow" }, c.title), h("span", { class: "chip" }, CAPSULE_STATUS[c.status] || c.status)),
+    h("p", { class: "small muted" }, `For ${c.studentName} · ${opensText(c)}`), c.message ? h("p", {}, c.message) : null, h("h3", {}, "Inside"), items];
+  if (c.mine && c.status === "draft") {
+    const [cands, opts] = await Promise.all([api.get(`/api/history/capsules/${c.id}/candidates`), api.get(`/api/history/capsule-recipient-options?studentId=${c.studentId}`)]);
+    const entry = h("select", { "aria-label": "History item to add" }, ...cands.data.map(e => h("option", { value: e.id }, `${e.title} (${fmtDay(e.occurredAt)})`)));
+    const named = new Set((c.recipients || []).map(r => r.userId));
+    const who = h("select", { "aria-label": "Recipient" }, ...opts.data.filter(o => !named.has(o.userId)).map(o => h("option", { value: `${o.userId}|${o.type}` }, `${o.name} (${o.type})`)));
+    out.push(h("section", { class: "card" }, h("h3", {}, "Add a memory"),
+      cands.data.length ? h("div", { class: "btns" }, entry, h("button", { class: "btn", type: "button", onclick: () => act(`/api/history/capsules/${c.id}/items`, { entryId: entry.value }, "Added.") }, "Add"))
+        : h("p", { class: "small muted" }, "No other history items to add. Items appear here once they're in the student's history.")),
+      h("section", { class: "card" }, h("h3", {}, "Who receives it"),
+        who.options.length ? h("div", { class: "btns" }, who, h("button", { class: "btn", type: "button", onclick: () => { const [userId, type] = who.value.split("|"); act(`/api/history/capsules/${c.id}/recipients`, { userId, type }, "Recipient added. They'll be asked to accept."); } }, "Add"))
+          : null));
+  }
+  if (c.mine) {
+    out.push(h("section", { class: "card" }, h("h3", {}, "Recipients"), (c.recipients || []).length
+      ? h("ul", {}, c.recipients.map(r => h("li", {}, `${r.name} (${r.type}): ${CONSENT_TEXT[r.consent] || r.consent}`)))
+      : h("p", { class: "small muted" }, "No one yet. Only people who accept will be able to open it.")));
+    const btns = [];
+    if (c.status === "draft") btns.push(h("button", { class: "btn primary", type: "button", onclick: async () => {
+      if (!await ask({ title: "Seal this capsule?", text: "After sealing you can't change its contents, message or recipients.", confirm: "Seal" })) return;
+      act(`/api/history/capsules/${c.id}/seal`, undefined, "Sealed.");
+    } }, "Seal"));
+    if (["draft", "sealed", "scheduled"].includes(c.status)) btns.push(h("button", { class: "btn danger", type: "button", onclick: async () => {
+      if (!await ask({ title: "Cancel this capsule?", text: "It will never open. This can't be undone.", confirm: "Cancel capsule", danger: true })) return;
+      act(`/api/history/capsules/${c.id}/cancel`, undefined, "Cancelled.");
+    } }, "Cancel capsule"));
+    if (btns.length) out.push(h("div", { class: "btns" }, btns));
+  }
+  out.push(h("button", { class: "btn", type: "button", onclick: () => go("capsules") }, "Back to Time Capsules"));
+  return out;
+};
 VIEWS.history = async () => {
   const response = await api.get("/api/history-contributions");
   const items = response.data || [];

@@ -37,7 +37,8 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: "s1", memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: [], canInitiate: false, canLead: false } };
-    case "/api/home": return { data: { school_name: "Maple", students: 4, absent_today: 1, open_cases: 0, overdue_follow_ups: 0, pending_invitations: 0, schools: 1, urgent_cases: 0, absences_7d: 1 } };
+    case "/api/home": if (role === "parent") return { data: { children: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_name: "Maple", absences_30d: 0, due_7d: 0, overdue: 0, to_acknowledge: 0 }] } };
+      return { data: { school_name: "Maple", students: 4, absent_today: 1, open_cases: 0, overdue_follow_ups: 0, pending_invitations: 0, schools: 1, urgent_cases: 0, absences_7d: 1 } };
     case "/api/attendance": return { data: [{ id: "e1", event_date: today(), status: "absent", display_name: "Bob B" }] };
     case "/api/attendance/day": return { data: { date: today(), counts: { present: 3, absent: 1, tardy: 0, excused: 0 }, exceptions: [{ student_id: "s1", status: "absent", display_name: "Bob B" }] } };
     case "/api/school-operations/command-center": return { data: { summary: [], work: [{ id: "w1", domain: "facilities", kind: "repair", status: "open", priority: "high", summary: "Gym door", escalation_level: 0, created_at: now }] } };
@@ -99,6 +100,20 @@ function mockApi(role, pathname, failWebhookLoads = false) {
           lastTest: p === "paypal" ? { at: now, ok: true, detail: "token_ok" } : null, updatedAt: now }]; })),
       methods: Object.values(METHODS).map(m => ({ id: m.id, label: m.label, description: m.description, processors: m.processors, setupProcessor: m.setupProcessor, checkout: !m.methodless,
         signup: m.signup || null, developer: m.developer || null, docs: m.docs || [], notes: m.notes || [], otherLinks: m.otherLinks || [], adapter: m.adapter, comingReason: m.comingReason || null })) } };
+    // Time Capsules: one invitation, one released to me, one draft of mine, one milestone to confirm.
+    case "/api/history/capsules": return { data: [
+      { id: "cap1", studentId: "c1", studentName: "Alice A", title: "For Alice at 18", status: "draft", releaseKind: "scheduled", releaseAt: "2034-06-01T13:00:00Z", mine: true },
+      { id: "cap2", studentId: "c1", studentName: "Alice A", title: "Kindergarten memories", status: "released", releaseKind: "milestone", milestone: "grade_5_completion", mine: false }] };
+    case "/api/history/capsule-invitations": return { data: [{ capsuleId: "cap3", studentId: "c1", studentName: "Alice A", from: "Grandma Rose", status: "scheduled",
+      releaseKind: "scheduled", releaseAt: "2030-01-01T00:00:00Z", consent: "pending" }] };
+    case "/api/history/capsule-milestones": return { data: role === "principal" ? [{ capsuleId: "cap4", studentId: "c1", studentName: "Alice A", from: "Parent A",
+      milestone: "graduation", sealedAt: now, accepted: 1 }] : [] };
+    case "/api/history/capsules/cap1": return { data: { id: "cap1", studentId: "c1", studentName: "Alice A", title: "For Alice at 18", message: "Open when you're grown.",
+      status: "draft", releaseKind: "scheduled", releaseAt: "2034-06-01T13:00:00Z", mine: true,
+      items: [{ position: 0, entryId: "e1", withheld: false, entryType: "reflection", kind: "family_memory", title: "The day you were born", body: "So happy.", occurredAt: now }],
+      recipients: [{ userId: "u9", name: "Pupil A", type: "student", consent: "pending" }], events: [] } };
+    case "/api/history/capsules/cap1/candidates": return { data: [{ id: "e2", title: "First day of school", entryType: "event", kind: "family_memory", occurredAt: now }] };
+    case "/api/history/capsule-recipient-options": return { data: [{ userId: "u9", name: "Pupil A", type: "student" }, { userId: "u1", name: "Smoke Test", type: "guardian" }] };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
       return { data: [] };
@@ -155,7 +170,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
   const failures = [];
   // 37.7.0: commerce screens opened from Clubs & Sports (not tabs of their own);
   // 37.7.1: district payment setup from Ticketing & revenue or Data links.
-  const SUBVIEWS = { parent: ["tickets"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
+  const SUBVIEWS = { parent: ["tickets", "capsule"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
   for (const [role, roleTabList] of Object.entries(roleTabs)) {
     for (const tab of [...roleTabList, ...(SUBVIEWS[role] || [])]) {
       state.role = role;
@@ -170,6 +185,12 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           : !text ? "blank"
           : hash !== `#/${tab}` ? `was sent to ${hash}` : null;
         if (problem) failures.push(`${role} #/${tab}: ${problem}`);
+        // Time Capsules: each screen shows its sample items and actions.
+        const capsuleExpect = { "parent/capsules": ["Capsules for you", "From Grandma Rose", "Accept", "Opened for you", "Kindergarten memories", "Make a Time Capsule", "Capsules you made", "For Alice at 18", "Manage"],
+          "pupil/capsules": ["Capsules for you", "Opened for you"],
+          "principal/capsules": ["Milestones to confirm", "Alice A: Graduation", "1 recipient accepted", "Confirm milestone"],
+          "parent/capsule": ["Choose a capsule from Time Capsules."] }[`${role}/${tab}`];
+        for (const want of capsuleExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
         if (["superintendent", "it_admin"].includes(role) && tab === "payments") {
           if (!text.includes("Payment webhook operations") || !text.includes("Late payment captures needing a refund") || !text.includes("Webhook events requiring investigation"))
             failures.push(`${role} #/payments: webhook operations panel is incomplete`);
@@ -179,6 +200,21 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         page.close();
       }
     }
+  }
+  // Time Capsules: open a draft from the list; its management controls render.
+  state.role = "parent";
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/capsules` });
+      await page.mainText();
+      await page.eval(`([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Manage") || {}).click?.()`);
+      let text = "";
+      for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Who receives it"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const want of ["For Alice at 18", "The day you were born", "Add a memory", "First day of school", "Who receives it", "Pupil A (student): Hasn't answered", "Seal", "Cancel capsule"])
+        if (!text.includes(want)) failures.push(`parent capsule detail: "${want}" is missing`);
+      if (page.errors.length) failures.push(`parent capsule detail: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   // Failed queue requests must be visibly different from genuinely empty queues.
   state.role = "superintendent";

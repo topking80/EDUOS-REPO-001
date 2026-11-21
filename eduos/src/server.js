@@ -44,6 +44,7 @@ import { registerLibraryCirculationRoutes } from "./library-circulation-routes.j
 import { registerLibraryIntelligenceRoutes } from "./library-intelligence-routes.js";
 import { registerClubsSportsRoutes } from "./clubs-sports-routes.js";
 import { registerStudentHistoryContributionRoutes } from "./student-history-contribution-routes.js";
+import { registerStudentHistoryCapsuleRoutes, startCapsuleReleaseSweep } from "./student-history-capsule-routes.js";
 import { registerSportsEligibilityRoutes } from "./sports-eligibility-routes.js";
 import { registerSchoolOperationsRoutes } from "./school-operations-routes.js";
 import { registerWellbeingRoutes } from "./wellbeing-routes.js";
@@ -1971,6 +1972,7 @@ registerLibraryCirculationRoutes(app);
 registerLibraryIntelligenceRoutes(app);
 registerClubsSportsRoutes(app);
 registerStudentHistoryContributionRoutes(app);
+registerStudentHistoryCapsuleRoutes(app);
 registerSportsEligibilityRoutes(app);
 registerSchoolOperationsRoutes(app);
 registerWellbeingRoutes(app);
@@ -2051,6 +2053,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
     startWebhookSweep();
     startSisSyncSweep();
     startCommerceReconcile();
+    startCapsuleReleaseSweep();
     if(config.nodeTier==="school"&&process.env.EDEN_AGENT!=="off")startAgent();
   });
 }
