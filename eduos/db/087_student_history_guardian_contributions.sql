@@ -70,7 +70,7 @@ CREATE TRIGGER student_history_contribution_events_append_only
 
 DO $$
 DECLARE t text;
-DECLARE identity_column text;
+        identity_column text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['student_history_contributions','student_history_contribution_events'] LOOP
     identity_column := CASE t WHEN 'student_history_contributions' THEN 'guardian_user_id' ELSE 'actor_user_id' END;
