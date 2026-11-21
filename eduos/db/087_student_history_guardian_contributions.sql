@@ -70,8 +70,10 @@ CREATE TRIGGER student_history_contribution_events_append_only
 
 DO $$
 DECLARE t text;
+DECLARE identity_column text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['student_history_contributions','student_history_contribution_events'] LOOP
+    identity_column := CASE t WHEN 'student_history_contributions' THEN 'guardian_user_id' ELSE 'actor_user_id' END;
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('CREATE POLICY %I ON %I USING (
@@ -89,6 +91,7 @@ BEGIN
       )
     ) WITH CHECK (
       district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
+      AND %I = nullif(current_setting(''app.user_id'', true), '''')::uuid
       AND (
         school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
         OR current_setting(''app.role'', true) = ''superintendent''
@@ -100,7 +103,7 @@ BEGIN
              AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
         ))
       )
-    )', t || '_district_school_scope', t, t, t, t, t);
+    )', t || '_district_school_scope', t, t, t, t, t, identity_column);
   END LOOP;
 END;
 $$;
