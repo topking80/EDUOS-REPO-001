@@ -42,7 +42,7 @@ CREATE INDEX student_history_contributions_review_queue_idx
 -- The base students table has a district/student key but no composite school
 -- key. Enforce the originating school explicitly rather than trusting callers.
 CREATE FUNCTION eduos_history_contribution_school_guard() RETURNS trigger
-LANGUAGE plpgsql SET search_path = public, pg_temp AS $
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $school_guard$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM students s
@@ -55,7 +55,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$;
+$school_guard$;
 REVOKE ALL ON FUNCTION eduos_history_contribution_school_guard() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION eduos_history_contribution_school_guard() TO eduos_app;
 CREATE TRIGGER student_history_contributions_school_guard
