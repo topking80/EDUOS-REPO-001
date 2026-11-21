@@ -6,7 +6,11 @@ Parents and guardians with an active, district-scoped relationship may submit a 
 ## Family portal
 The Family view includes a per-child Family memories panel. Guardians can submit a title, optional text, and occurrence date, see the status and any school review note, and withdraw their own pending submission. The panel never exposes another guardian's submission.
 
+## School review experience
+Principals and superintendents have a Family history review screen showing pending submissions within their RLS-enforced school or district scope. Reviewers can approve or reject a submission with an optional family-facing note; each decision is audited.
+
 ## API
+- `GET /api/history-contributions` — pending review queue for authorized school/district leads.
 - `POST /api/family/children/:studentId/history-contributions` — submit title, body, and occurrence timestamp.
 - `GET /api/family/children/:studentId/history-contributions` — list only the caller's contributions for an actively linked child.
 - `PATCH /api/family/children/:studentId/history-contributions/:contributionId` — withdraw the caller's pending submission.
