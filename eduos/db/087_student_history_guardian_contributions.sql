@@ -121,6 +121,7 @@ BEGIN
             OR current_setting(''app.role'', true) = ''superintendent'')
           AND current_setting(''app.role'', true) IN (''principal'',''superintendent'')
           AND status = ''submitted''
+          AND guardian_user_id <> nullif(current_setting(''app.user_id'', true), '''')::uuid
         )
         WITH CHECK (
           district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
