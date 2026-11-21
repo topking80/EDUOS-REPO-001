@@ -32,13 +32,14 @@
 --   student      student_portfolio, source student, private/student/family
 --   teacher      teacher_artifact, source teacher, draft/submitted only (a
 --                teacher can't publish; approval is a later TC step)
---   school_lead  official_record or teacher_artifact; and a family memory on
---                a guardian's behalf only when the named author is an active
---                guardian of that student (TC-02 approval)
+--   school_lead  official_record or teacher_artifact
 --   district     official_record
+-- A reviewer (school lead or district office) may publish a family memory in
+-- a guardian's name only when that guardian is actively linked to the student
+-- (TC-02 approval).
 -- system_milestone is never written by the runtime role.
 --
--- A principal publishing a family memory for a guardian (TC-02) can't read it
+-- A reviewer publishing a family memory for a guardian (TC-02) can't read it
 -- back afterwards, so that insert can't use RETURNING: the app makes the id.
 --
 -- Time Capsules are private to their owner. Recipients see one only after it
@@ -122,7 +123,7 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, p
       WHEN 'school_lead' THEN p_classification IN ('official_record','teacher_artifact') AND p_source IN ('school','teacher')
       WHEN 'district' THEN p_classification='official_record' AND p_source='district'
       ELSE false END)
-    OR (rel='school_lead' AND p_classification='family_memory' AND p_source='guardian' AND p_audience='family'
+    OR (rel IN ('school_lead','district') AND p_classification='family_memory' AND p_source='guardian' AND p_audience='family'
         AND p_status='published' AND p_author IS DISTINCT FROM eduos_ctx_user()
         AND public.eduos_history_user_is(p_district, p_school, p_student, p_author, 'guardian')))
   FROM (SELECT public.eduos_history_relation(p_district, p_school, p_student) AS rel) r

@@ -115,7 +115,7 @@ describe("student history and Time Capsule: who can see and write what", { skip 
     assert.equal(other, 0, "another parent can't touch it");
   });
 
-  it("TC-02 approval: a principal can publish a family memory only in the name of one of Alice's guardians, and can't read it back", async () => {
+  it("TC-02 approval: a reviewer can publish a family memory only in the name of one of Alice's guardians, and can't read it back", async () => {
     // The approver can't see family memories, so the id comes from the app, not RETURNING.
     const id = "c0000000-0000-4000-8000-0000000000aa";
     await as("p1", "principal", "s1", async c => {
@@ -129,6 +129,11 @@ describe("student history and Time Capsule: who can see and write what", { skip 
       VALUES($1,$2,$3,'reflection','family_memory','x','text',now(),'family','published','guardian',$4)`, [ID.d1, ID.s1, ID.alice, author]));
     await assert.rejects(approve("p1", "s1", USERS.pb[0]), RLS, "Parent Bob is not Alice's guardian");
     await assert.rejects(approve("p2", "s2", USERS.pa[0]), RLS, "only Alice's school");
+    // The district office reviews too (TC-02), under the same rule.
+    const asSupt = author => as("supt1", "superintendent", null, c => c.query(`INSERT INTO student_history_entries(district_id,school_id,student_id,entry_type,classification,title,body,occurred_at,audience,status,source_type,author_user_id)
+      VALUES($1,$2,$3,'reflection','family_memory','x','text',now(),'family','published','guardian',$4)`, [ID.d1, ID.s1, ID.alice, author]));
+    await asSupt(USERS.pa[0]);
+    await assert.rejects(asSupt(USERS.pb[0]), RLS);
   });
 
   it("a Time Capsule is private to its owner until it is released to a consenting recipient", async () => {
