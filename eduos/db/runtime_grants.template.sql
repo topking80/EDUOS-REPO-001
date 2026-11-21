@@ -448,12 +448,7 @@ GRANT UPDATE (last_seen_at, status, resolved_at, resolved_by, resolution_note)
   ON commerce_webhook_refund_cases TO eduos_app;
 REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
 
--- 37.10.1 Timeline authorization foundation. Drafts remain append-only
--- until the audited revision/publication transition service is added.
-GRANT SELECT, INSERT ON timeline_entries TO eduos_app;
-REVOKE UPDATE, DELETE, TRUNCATE ON timeline_entries FROM eduos_app;
-GRANT EXECUTE ON FUNCTION eduos_timeline_can_read(uuid,uuid,uuid,uuid,text,text,uuid),
-  eduos_timeline_can_insert(uuid,uuid,uuid,uuid,text,text,uuid,text) TO eduos_app;
+-- 37.10.1 timeline_entries was retired in 089 (student history uses student_history_entries).
 -- TC-01 student history and Time Capsule persistence foundation.
 -- Revisions and lifecycle events are append-only; media bytes remain in the
 -- private object store and are never exposed through these metadata tables.
