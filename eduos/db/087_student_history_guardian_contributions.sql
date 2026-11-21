@@ -193,15 +193,19 @@ BEGIN
         district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
         AND actor_user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
         AND (
-          school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
-          OR current_setting(''app.role'', true) = ''superintendent''
-          OR (current_setting(''app.role'', true) = ''parent'' AND EXISTS (
-            SELECT 1 FROM student_user_links l
-             WHERE l.district_id = %I.district_id
-               AND l.student_id = %I.student_id
-               AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
-               AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
-          ))
+          (current_setting(''app.role'', true) = ''parent''
+            AND event_type IN (''submitted'',''withdrawn'')
+            AND EXISTS (
+              SELECT 1 FROM student_user_links l
+               WHERE l.district_id = %I.district_id
+                 AND l.student_id = %I.student_id
+                 AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
+                 AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
+            ))
+          OR (current_setting(''app.role'', true) IN (''principal'',''superintendent'')
+            AND event_type IN (''approved'',''rejected'')
+            AND (school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
+              OR current_setting(''app.role'', true) = ''superintendent''))
         )
       )', t || '_actor_insert', t, t, t);
     END IF;
