@@ -2,11 +2,12 @@
 
 ## Inventory
 
-The migrations are the `db/NNN_*.sql` files listed, in order, in
-`src/migrate.js`. Each one is recorded in `schema_migrations` once applied.
-The API refuses to start if any listed migration is missing from that table.
-After the migrations, `src/migrate.js` re-applies the runtime role's grants
-(`db/runtime_grants.template.sql`) on every run.
+Numbered `db/NNN_*.sql` migration files are discovered and applied in
+lexicographic order by `src/db.js` and `src/migrate.js`. Each one is recorded
+in `schema_migrations` once applied. The API refuses to start if any discovered
+migration is missing from that table. After the migrations, `src/migrate.js`
+re-applies the runtime role's grants (`db/runtime_grants.template.sql`) on
+every run.
 
 ## Roles
 
