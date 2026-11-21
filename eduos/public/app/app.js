@@ -716,7 +716,7 @@ async function familyContributionsCard(k) {
     h("label", {}, h("span", {}, "Title"), title),
     h("label", {}, h("span", {}, "Memory"), body),
     h("label", {}, h("span", {}, "When did it happen?"), occurredAt),
-    h("p", { class: "small muted" }, "Submissions are private to your account until a school leader reviews them. Approved memories appear in the student's family history."),
+    h("p", { class: "small muted" }, "Submissions are visible to you and authorized school reviewers. Approved memories appear in the student's family history."),
     h("button", { class: "btn primary", type: "submit" }, "Submit family memory"));
   await refresh();
   return h("section", { class: "card" }, h("details", {}, h("summary", {}, "Family memories"), form, list));
