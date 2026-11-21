@@ -6,6 +6,7 @@ Parents and guardians with an active, district-scoped relationship may submit a 
 ## API
 - `POST /api/family/children/:studentId/history-contributions` — submit title, body, and occurrence timestamp.
 - `GET /api/family/children/:studentId/history-contributions` — list only the caller's contributions for an actively linked child.
+- `PATCH /api/family/children/:studentId/history-contributions/:contributionId` — withdraw the caller's pending submission.
 - `GET /api/students/:studentId/history-contributions` — school-lead review queue.
 - `PATCH /api/students/:studentId/history-contributions/:contributionId` — approve or reject a pending submission.
 
