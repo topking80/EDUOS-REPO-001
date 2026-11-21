@@ -39,6 +39,30 @@ CREATE INDEX student_history_contributions_review_queue_idx
   ON student_history_contributions(district_id, school_id, status, created_at)
   WHERE status = 'submitted';
 
+-- The base students table has a district/student key but no composite school
+-- key. Enforce the originating school explicitly rather than trusting callers.
+CREATE FUNCTION eduos_history_contribution_school_guard() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM students s
+     WHERE s.district_id = NEW.district_id
+       AND s.id = NEW.student_id
+       AND s.school_id = NEW.school_id
+  ) THEN
+    RAISE EXCEPTION 'student history contribution school does not match student'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$;
+REVOKE ALL ON FUNCTION eduos_history_contribution_school_guard() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION eduos_history_contribution_school_guard() TO eduos_app;
+CREATE TRIGGER student_history_contributions_school_guard
+  BEFORE INSERT OR UPDATE OF district_id, school_id, student_id
+  ON student_history_contributions
+  FOR EACH ROW EXECUTE FUNCTION eduos_history_contribution_school_guard();
+
 CREATE TABLE student_history_contribution_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   district_id uuid NOT NULL REFERENCES districts(id) ON DELETE CASCADE,
