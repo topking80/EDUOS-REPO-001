@@ -6,6 +6,7 @@ const migration = readFileSync(new URL("../db/087_student_history_guardian_contr
 const routes = readFileSync(new URL("../src/student-history-contribution-routes.js", import.meta.url), "utf8");
 const server = readFileSync(new URL("../src/server.js", import.meta.url), "utf8");
 const grants = readFileSync(new URL("../db/runtime_grants.template.sql", import.meta.url), "utf8").replace(/\s+/g, " ");
+const ui = readFileSync(new URL("../public/app/app.js", import.meta.url), "utf8");
 
 test("TC-02 contributions use forced RLS and an append-only decision log", () => {
   assert.ok(migration.includes("ALTER TABLE %I ENABLE ROW LEVEL SECURITY"));
@@ -63,4 +64,12 @@ test("routes are registered and runtime grants do not grant table-wide UPDATE", 
   assert.ok(grants.includes("GRANT UPDATE (status, reviewed_by, reviewed_at, review_note, history_entry_id, updated_at) ON student_history_contributions TO eduos_app;"));
   assert.ok(!grants.includes("GRANT SELECT, INSERT, UPDATE ON student_history_contributions"));
   assert.ok(grants.includes("REVOKE UPDATE, DELETE, TRUNCATE ON student_history_contribution_events FROM eduos_app;"));
+});
+
+test("family portal exposes moderated contribution submit and withdraw controls", () => {
+  assert.ok(ui.includes("familyContributionsCard"));
+  assert.ok(ui.includes("/api/family/children/${k.id}/history-contributions"));
+  assert.ok(ui.includes('api.req("PATCH"'));
+  assert.ok(ui.includes("Withdraw pending memory"));
+  assert.ok(ui.includes("Submit family memory"));
 });
