@@ -82,9 +82,7 @@ BEGIN
     EXECUTE format('CREATE POLICY %I ON %I FOR SELECT USING (
       district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
       AND (
-        school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
-        OR current_setting(''app.role'', true) = ''superintendent''
-        OR (current_setting(''app.role'', true) = ''parent''
+        (current_setting(''app.role'', true) = ''parent''
           AND %I = nullif(current_setting(''app.user_id'', true), '''')::uuid
           AND EXISTS (
             SELECT 1 FROM student_user_links l
@@ -93,6 +91,9 @@ BEGIN
                AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
                AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
           ))
+        OR (current_setting(''app.role'', true) IN (''principal'',''superintendent'')
+          AND (school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
+            OR current_setting(''app.role'', true) = ''superintendent''))
       )
     )', t || '_read_scope', t, identity_column, t, t);
 
