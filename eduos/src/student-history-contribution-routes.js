@@ -119,6 +119,8 @@ export function registerStudentHistoryContributionRoutes(app) {
           `, [req.params.contributionId, actor.districtId, student.school_id, student.id]);
           if (!contribution || contribution.status !== "submitted")
             throw new HttpError(404, "pending_contribution_not_found");
+          if (contribution.guardian_user_id === actor.userId)
+            throw new HttpError(403, "contribution_self_review_forbidden");
           let historyEntryId = null;
           if (body.decision === "approve") {
             const entry = await one(client, `
