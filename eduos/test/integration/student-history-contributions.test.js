@@ -111,6 +111,17 @@ describe("TC-02 guardian history contributions against real PostgreSQL", { skip 
         await app.query("ROLLBACK TO SAVEPOINT denied_spoofed_event_actor");
         await app.query("RELEASE SAVEPOINT denied_spoofed_event_actor");
       }
+      await app.query("SAVEPOINT denied_guardian_fake_approval_event");
+      try {
+        await assert.rejects(app.query(`
+          INSERT INTO student_history_contribution_events
+            (district_id,school_id,student_id,contribution_id,actor_user_id,event_type)
+          VALUES ($1,$2,$3,$4,$5,'approved')
+        `, [ID.d1, ID.s2, ID.carol, inserted.rows[0].id, USERS.p2s[0]]), error => error.code === "42501");
+      } finally {
+        await app.query("ROLLBACK TO SAVEPOINT denied_guardian_fake_approval_event");
+        await app.query("RELEASE SAVEPOINT denied_guardian_fake_approval_event");
+      }
       const visible = await app.query(
         "SELECT count(*)::int AS n FROM student_history_contributions WHERE id=$1",
         [inserted.rows[0].id]
