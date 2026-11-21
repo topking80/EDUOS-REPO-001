@@ -484,7 +484,7 @@ REVOKE DELETE, TRUNCATE ON student_time_capsules, student_time_capsule_recipient
 
 
 -- TC-02 guardian family-memory contribution workflow.
-GRANT SELECT, INSERT, UPDATE ON student_history_contributions TO eduos_app;
+GRANT SELECT, INSERT ON student_history_contributions TO eduos_app;
 REVOKE DELETE, TRUNCATE ON student_history_contributions FROM eduos_app;
 GRANT UPDATE (status, reviewed_by, reviewed_at, review_note, history_entry_id, updated_at)
   ON student_history_contributions TO eduos_app;
