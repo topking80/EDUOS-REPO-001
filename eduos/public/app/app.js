@@ -692,7 +692,7 @@ async function familyContributionsCard(k) {
       h("p", { class: "small muted" }, `Memory date: ${fmtDay(item.occurred_at)} · Submitted ${fmtTime(item.created_at)}`),
       item.review_note ? h("p", { class: "small muted" }, `School note: ${item.review_note}`) : null,
       item.status === "submitted" ? h("button", { class: "btn danger small", type: "button", onclick: async () => {
-        if (!confirm("Withdraw this pending family memory?")) return;
+        if (!await ask({ title: "Withdraw this family memory?", text: "This removes the pending submission from the school review queue.", confirm: "Withdraw", danger: true })) return;
         try {
           await api.req("PATCH", `/api/family/children/${k.id}/history-contributions/${item.id}`, { decision: "withdraw" });
           toast("Family memory withdrawn.");
