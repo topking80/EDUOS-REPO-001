@@ -17,6 +17,8 @@ test("TC-02 contributions use forced RLS and an append-only decision log", () =>
   assert.ok(migration.includes("history_entry_id uuid"));
   assert.ok(migration.includes("current_setting(''app.user_id'', true)"));
   assert.ok(migration.includes("l.relationship IN (''parent'',''guardian'')"));
+  assert.ok(migration.includes("identity_column := CASE t"));
+  assert.ok(migration.includes("AND %I = nullif(current_setting(''app.user_id''")));
 });
 
 test("guardian submission rechecks an active relationship and rejects unexpected fields", () => {
