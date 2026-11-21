@@ -1907,7 +1907,7 @@ VIEWS.node = async () => {
 // District data links (src/integrations/): OneRoster 1.2, Ed-Fi and PowerSchool connectors.
 // Read-only, off until the server has INTEGRATIONS_KEY, and each connector
 // needs a second district lead's approval before it can sync.
-const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API", powerschool: "PowerSchool SIS" };
+const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API", powerschool: "PowerSchool SIS", canvas: "Canvas LMS API" };
 const CONNECTOR_STATUS = { pending_approval: ["expected", "Needs approval"], active: ["present", "Active"], disabled: ["not_started", "Off"] };
 const REJECT_TEXT = { duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
   no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id", invalid_school_id: "invalid school id", missing_student_id: "no student id", missing_student_number: "no student number", missing_enrollment_status: "enrollment status unavailable" };
@@ -1916,7 +1916,7 @@ VIEWS.integrations = async () => {
   const { enabled, connectors = [], schools = [] } = r.data;
   const reload = () => go(state.tab, { push: false });
   const out = [h("h2", {}, "Data links"),
-    h("p", { class: "muted" }, "Bring student rosters in from your SIS or state system (OneRoster 1.2, Ed-Fi or PowerSchool). EduOS only reads from them, never sends student data out, and keeps working without them."),
+    h("p", { class: "muted" }, "Connect approved SIS and Canvas services. Canvas LMS launch from the app catalog remains separate; this optional Canvas API connection stores a district administrator grant. Course, enrollment and grade sync are not enabled yet."),
     staffDistrict() ? h("section", { class: "card", "aria-label": "Payment options" }, h("h2", {}, "Payment options"),
       h("p", { class: "small muted" }, "Connect the district's PayPal, Square or BTCPay Server account for ticket and marketplace payments."),
       h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Open payment setup")) : null];
@@ -1963,12 +1963,38 @@ VIEWS.integrations = async () => {
       h("div", { class: "row wrap" },
         c.status !== "active" && c.canApprove ? h("button", { class: "btn small primary", type: "button", onclick: () => act("approve", "Approved", "Couldn't approve.") }, "Approve") : null,
         c.status !== "active" && !c.canApprove ? h("span", { class: "muted small" }, "Waiting for another district lead to approve.") : null,
-        c.status === "active" ? [h("button", { class: "btn small", type: "button", onclick: () => sync("preview") }, "Preview"),
+        c.status === "active" && c.kind !== "canvas" ? [h("button", { class: "btn small", type: "button", onclick: () => sync("preview") }, "Preview"),
           h("button", { class: "btn small primary", type: "button", onclick: () => sync("apply") }, "Import")] : null,
+        c.status === "active" && c.kind === "canvas" ? h("button", { class: "btn small primary", type: "button", onclick: async () => {
+          try { const r = await api.post(`/api/integrations/connectors/${c.id}/canvas/authorize`, {}); window.location.assign(r.data.authorizationUrl); }
+          catch { toast("Couldn't start Canvas authorization."); }
+        } }, "Connect Canvas") : null,
+        c.kind === "canvas" && c.status === "active" ? h("button", { class: "btn small", type: "button", onclick: async () => {
+          try { await api.post(`/api/integrations/connectors/${c.id}/canvas/refresh`, {}); toast("Canvas connection is healthy."); }
+          catch (e) { toast(e.body?.error === "canvas_authorization_required" ? "Reconnect Canvas to continue." : "Canvas connection refresh failed."); }
+        } }, "Check connection") : null,
+        c.kind === "canvas" && c.status === "active" ? h("button", { class: "btn small", type: "button", onclick: async () => {
+          try { const s = (await api.get(`/api/integrations/connectors/${c.id}/canvas/status`)).data;
+            if (!s.connected) { toast("Canvas isn't connected yet."); return; }
+            if (!(await ask({ title: "Disconnect Canvas?", text: "EduOS will revoke the current Canvas token, delete stored tokens, and require a second district lead to approve before reconnecting. Disable the developer key in Canvas for full application revocation.", confirm: "Disconnect" }))) return;
+            const result = await api.post(`/api/integrations/connectors/${c.id}/canvas/disconnect`, {}); toast(result.data.canvasTokenRevoked ? "Canvas disconnected. A second district lead must approve before reconnecting." : "Local tokens deleted. Canvas token revocation could not be confirmed; disable the developer key in Canvas."); reload();
+          } catch { toast("Couldn't disconnect Canvas."); }
+        } }, "Disconnect Canvas") : null,
         h("button", { class: "btn small", type: "button", onclick: async () => {
           const secret = await ask({ title: `New client secret for ${c.name}`, text: "It's stored encrypted. The connector then needs approval again.", label: "Client secret", confirm: "Save", maxlength: 2000 });
-          if (secret) try { await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { clientSecret: secret }); toast("Saved. It needs approval again."); reload(); } catch { toast("Couldn't save."); } } }, "Change secret"),
-        c.status !== "disabled" ? h("button", { class: "btn small", type: "button", onclick: () => act("disable", "Turned off", "Couldn't turn it off.") }, "Turn off") : null),
+          if (secret) try { const result = await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { clientSecret: secret }); toast(c.kind === "canvas" && result.data.canvasTokenRevoked === false ? "Saved; token revocation could not be confirmed. Disable the developer key in Canvas." : "Saved. It needs approval again."); reload(); } catch { toast("Could not save."); } } }, "Change secret"),
+        c.kind === "canvas" ? h("button", { class: "btn small", type: "button", onclick: async () => {
+          const value = await ask({ title: `Read-only Canvas scopes for ${c.name}`, text: "Use space-separated url:GET|/api/v1/... endpoint scopes. Changes revoke the old token and require approval.", label: "Scopes", confirm: "Save", maxlength: 1000 });
+          if (value) try { const result = await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { scope: value });
+            toast(result.data.canvasTokenRevoked === false ? "Scopes saved; revoke the developer key in Canvas because token revocation could not be confirmed." : "Scopes saved. A second district lead must approve again."); reload();
+          } catch { toast("Could not save Canvas scopes."); }
+        } }, "Change scopes") : null,
+        c.status !== "disabled" ? h("button", { class: "btn small", type: "button", onclick: async () => {
+          try { const result = await api.post(`/api/integrations/connectors/${c.id}/disable`, {});
+            toast(c.kind === "canvas" && result.data.canvasTokenRevoked === false ? "Turned off locally; disable the Canvas developer key to revoke access." : "Turned off.");
+            reload();
+          } catch { toast("Could not turn it off."); }
+        } }, "Turn off") : null),
       slot);
   };
   out.push(h("section", { class: "card", "aria-label": "Connectors" }, h("h2", {}, "Connectors"),
@@ -1980,19 +2006,21 @@ VIEWS.integrations = async () => {
   const token = field("dl-token", "Token URL", { type: "url", maxlength: 2048 });
   const cid = field("dl-client", "Client ID", { maxlength: 300, autocomplete: "off" });
   const secret = field("dl-secret", "Client secret", { type: "password", maxlength: 2000, autocomplete: "new-password" });
+  const scope = field("dl-scope", "OAuth scopes (space-separated; required for Canvas)", { maxlength: 1000, required: false, placeholder: "url:GET|/api/v1/courses" });
   const hint = h("p", { class: "muted small" });
   const setHint = () => {
-    base.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/api/data" : kind.value === "powerschool" ? "https://district.powerschool.com" : "https://sis.district.org/ims/oneroster/rostering/v1p2";
-    token.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/oauth/token" : kind.value === "powerschool" ? "https://district.powerschool.com/oauth/access_token/" : "https://sis.district.org/oauth/token";
-    hint.textContent = kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : kind.value === "powerschool" ? "Use the district SIS origin and the OAuth token URL for its installed API plugin. EduOS reads district schools and each school’s students only; verify the plugin’s GET permissions and response contract with the district before enabling." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
+    base.el.placeholder = kind.value === "canvas" ? "https://district.instructure.com" : kind.value === "edfi" ? "https://edfi.district.org/api/data" : kind.value === "powerschool" ? "https://district.powerschool.com" : "https://sis.district.org/ims/oneroster/rostering/v1p2";
+    token.el.placeholder = kind.value === "canvas" ? "https://district.instructure.com/login/oauth2/token" : kind.value === "edfi" ? "https://edfi.district.org/oauth/token" : kind.value === "powerschool" ? "https://district.powerschool.com/oauth/access_token/" : "https://sis.district.org/oauth/token";
+    scope.el.placeholder = kind.value === "canvas" ? "url:GET|/api/v1/courses url:GET|/api/v1/courses/:course_id/enrollments" : "Optional vendor-specific scope";
+    hint.textContent = kind.value === "canvas" ? "Enter the Canvas tenant origin only and its matching /login/oauth2/token URL. Use the institution-issued Canvas developer key ID and secret. Supply only approved read-only url:GET|/api/v1/... endpoint scopes, and configure the developer key to enforce scopes. A second district lead must approve the connector before an administrator can authorize it. API data sync is not enabled in this phase." : kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : kind.value === "powerschool" ? "Use the district SIS origin and the OAuth token URL for its installed API plugin. EduOS reads district schools and each school’s students only; verify the plugin’s GET permissions and response contract with the district before enabling." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
   };
   kind.addEventListener("change", setHint); setHint();
   out.push(h("section", { class: "card", "aria-label": "Add a data link" }, h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
-      try { await api.post("/api/integrations/connectors", { kind: kind.value, name: name.el.value, baseUrl: base.el.value, tokenUrl: token.el.value, clientId: cid.el.value, clientSecret: secret.el.value });
+      try { await api.post("/api/integrations/connectors", { kind: kind.value, name: name.el.value, baseUrl: base.el.value, tokenUrl: token.el.value, clientId: cid.el.value, clientSecret: secret.el.value, scope: scope.el.value || null });
         toast("Added. Another district lead needs to approve it."); reload(); }
       catch (e2) { toast(e2.body?.error === "invalid_connector" ? `Check the ${e2.body.field}.` : e2.body?.error === "connector_name_taken" ? "That name is taken." : "Couldn't add it."); } } },
     h("h2", {}, "Add a data link"), h("label", { for: kind.id }, "Type"), kind, hint,
-    [name, base, token, cid, secret].map(x => [x.label, x.el]), h("button", { class: "btn", type: "submit" }, "Add"))));
+    [name, base, token, cid, secret, scope].map(x => [x.label, x.el]), h("button", { class: "btn", type: "submit" }, "Add"))));
   return out;
 };
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

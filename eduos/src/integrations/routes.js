@@ -16,10 +16,16 @@ import { checkUrl, IntegrationError } from "./http.js";
 import * as oneroster from "./oneroster.js";
 import * as edfi from "./edfi.js";
 import * as powerschool from "./powerschool.js";
+import * as canvas from "./canvas.js";
+import { registerCanvasOAuthRoutes, getCanvasAccessToken, revokeCanvasToken } from "./canvas-oauth.js";
 import { planImport, loadPlanInputs, applyPlan } from "./sync.js";
 
 const MANAGERS = ["superintendent", "it_admin"];
-const KINDS = { oneroster, edfi, powerschool };
+const validCanvasScopes = value => typeof value === "string" && value.trim().length > 0 &&
+  value.trim().split(/\s+/).length <= 20 &&
+  value.trim().split(/\s+/).every(scope => /^url:GET\|\/api\/v1\/[A-Za-z0-9_/:.-]+$/.test(scope) && !scope.includes("..") && !scope.includes("//")) &&
+  new Set(value.trim().split(/\s+/)).size === value.trim().split(/\s+/).length;
+const KINDS = { oneroster, edfi, powerschool, canvas };
 const COLS = `c.id, c.kind, c.name, c.base_url, c.token_url, c.client_id, c.scope, c.data_scope, c.status, c.created_at, c.updated_at,
   c.approved_at, c.disabled_at, c.last_sync_at, c.last_sync_status, uu.display_name AS updated_by_name, ua.display_name AS approved_by_name, c.updated_by`;
 const FROM = `FROM integration_connectors c JOIN users uu ON uu.id=c.updated_by LEFT JOIN users ua ON ua.id=c.approved_by`;
@@ -82,6 +88,7 @@ const shape = (c) => c && ({ id: c.id, kind: c.kind, name: c.name, baseUrl: c.ba
 export function registerIntegrationRoutes(app) {
   const syncLimiter = rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false, keyGenerator: (req) => `integration-sync:${req.actor?.userId}` });
   const base = "/api/integrations/connectors";
+  registerCanvasOAuthRoutes(app);
 
   app.get(base, requireSession, async (req, res, next) => {
     if (!MANAGERS.includes(req.actor.role)) return res.status(403).json({ error: "integrations_access_denied" });
@@ -103,6 +110,19 @@ export function registerIntegrationRoutes(app) {
   app.post(base, requireSession, requireCsrf, manager, async (req, res, next) => {
     try {
       const f = readFields(req.body || {}, false);
+      if (f.kind === "canvas") {
+        if (!validCanvasScopes(f.scope)) throw new HttpError(400, "invalid_connector", { field: "scope" });
+        let origin;
+        try {
+          const u = new URL(f.base_url);
+          if (u.pathname !== "/" || u.search || u.hash || u.username || u.password ||
+              (u.protocol !== "https:" && !(config.integrationsAllowInsecureLoopback && u.hostname === "127.0.0.1")))
+            throw new Error("invalid_canvas_origin");
+          origin = u.origin;
+        } catch { throw new HttpError(400, "invalid_connector", { field: "baseUrl" }); }
+        if (f.token_url !== new URL("/login/oauth2/token", origin).toString())
+          throw new HttpError(400, "invalid_connector", { field: "tokenUrl" });
+      }
       const data = await withTenantTransaction(req.actor, async (c) => {
         const a = req.actor, id = crypto.randomUUID();
         if (await one(c, "SELECT 1 FROM integration_connectors WHERE district_id=$1 AND name=$2", [a.districtId, f.name])) throw new HttpError(409, "connector_name_taken");
@@ -122,10 +142,33 @@ export function registerIntegrationRoutes(app) {
     try {
       const f = readFields(req.body || {}, true);
       if (f.kind) throw new HttpError(400, "invalid_connector", { field: "kind" });
+      const before = await withTenantTransaction(req.actor,c => one(c,
+        "SELECT kind,base_url,status FROM integration_connectors WHERE id=$1 AND district_id=$2",
+        [req.params.id,req.actor.districtId]));
+      if (!before) throw new HttpError(404,"connector_not_found");
+      let canvasAccessToken = null;
+      if (before.kind === "canvas" && before.status === "active") {
+        try { canvasAccessToken = await getCanvasAccessToken(req.actor,req.params.id); } catch { /* configuration update still proceeds */ }
+      }
       const data = await withTenantTransaction(req.actor, async (c) => {
         const a = req.actor;
-        const cur = await one(c, "SELECT id FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
+        const cur = await one(c, "SELECT id,kind,base_url,token_url FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId]);
         if (!cur) throw new HttpError(404, "connector_not_found");
+        if (cur.kind === "canvas") {
+          if ("scope" in f && !validCanvasScopes(f.scope))
+            throw new HttpError(400, "invalid_connector", { field: "scope" });
+          const baseUrl = f.base_url ?? cur.base_url, tokenUrl = f.token_url ?? cur.token_url;
+          let origin;
+          try {
+            const u = new URL(baseUrl);
+            if (u.pathname !== "/" || u.search || u.hash || u.username || u.password ||
+                (u.protocol !== "https:" && !(config.integrationsAllowInsecureLoopback && u.hostname === "127.0.0.1")))
+              throw new Error("invalid_canvas_origin");
+            origin = u.origin;
+          } catch { throw new HttpError(400, "invalid_connector", { field: "baseUrl" }); }
+          if (tokenUrl !== new URL("/login/oauth2/token", origin).toString())
+            throw new HttpError(400, "invalid_connector", { field: "tokenUrl" });
+        }
         const sets = [], args = [cur.id];
         const add = (col, v) => { args.push(v); sets.push(`${col}=$${args.length}`); };
         for (const col of ["name", "base_url", "token_url", "client_id", "scope"]) if (col in f) add(col, f[col]);
@@ -135,10 +178,21 @@ export function registerIntegrationRoutes(app) {
         await c.query(`UPDATE integration_connectors SET ${sets.join(", ")}, updated_at=now(), config_version=config_version+1, status='pending_approval', approved_by=NULL, approved_at=NULL WHERE id=$1`, args)
           .catch(e => { if (e.code === "23505") throw new HttpError(409, "connector_name_taken"); throw e; });
         await invalidateScheduleForConnector(c,a.districtId,cur.id,"connector_configuration_changed");
+        if (cur.kind === "canvas") {
+          await c.query("DELETE FROM integration_canvas_oauth_states WHERE district_id=$1 AND connector_id=$2",[a.districtId,cur.id]);
+          await c.query("DELETE FROM integration_canvas_oauth_grants WHERE district_id=$1 AND connector_id=$2",[a.districtId,cur.id]);
+        }
         await audit(c, req, "update", "integration_connector", cur.id, `changed=${Object.keys(f).map(k => k === "secret" ? "client_secret" : k).join(",")}; needs approval`);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [cur.id]));
       });
-      res.json({ data });
+      if (before.kind === "canvas") {
+        const canvasTokenRevoked = await revokeCanvasToken(before.base_url,canvasAccessToken);
+        await withTenantTransaction(req.actor,c => audit(c,req,"canvas_oauth_revoke_after_config_change","integration_connector",req.params.id,
+          "canvas_token_revoked="+canvasTokenRevoked));
+        res.json({data:{...data,canvasTokenRevoked}});
+      } else {
+        res.json({ data });
+      }
     } catch (e) { sendError(res, next, e); }
   });
 
@@ -163,15 +217,31 @@ export function registerIntegrationRoutes(app) {
   app.post(`${base}/:id/disable`, requireSession, requireCsrf, manager, async (req, res, next) => {
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
     try {
+      const existing = await withTenantTransaction(req.actor,c => one(c,"SELECT kind,base_url,status FROM integration_connectors WHERE id=$1 AND district_id=$2",[req.params.id,req.actor.districtId]));
+      if (!existing) throw new HttpError(404,"connector_not_found");
+      let canvasAccessToken = null;
+      if (existing.kind === "canvas" && existing.status === "active") {
+        try { canvasAccessToken = await getCanvasAccessToken(req.actor,req.params.id); } catch { /* local disable still proceeds */ }
+      }
       const data = await withTenantTransaction(req.actor, async (c) => {
         const r = await one(c, `UPDATE integration_connectors SET status='disabled', disabled_by=$3, disabled_at=now(), updated_by=$3, updated_at=now(), config_version=config_version+1
-          WHERE id=$1 AND district_id=$2 AND status<>'disabled' RETURNING id`, [req.params.id, req.actor.districtId, req.actor.userId]);
+          WHERE id=$1 AND district_id=$2 AND status<>'disabled' RETURNING id,kind`, [req.params.id, req.actor.districtId, req.actor.userId]);
         if (!r) throw new HttpError(404, "connector_not_found");
         await invalidateScheduleForConnector(c,req.actor.districtId,r.id,"connector_disabled");
-        await audit(c, req, "disable", "integration_connector", r.id);
+        if (r.kind === "canvas") {
+          await c.query("DELETE FROM integration_canvas_oauth_states WHERE district_id=$1 AND connector_id=$2",[req.actor.districtId,r.id]);
+          await c.query("DELETE FROM integration_canvas_oauth_grants WHERE district_id=$1 AND connector_id=$2",[req.actor.districtId,r.id]);
+        }
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [r.id]));
       });
-      res.json({ data });
+      if (existing.kind === "canvas") {
+        const canvasTokenRevoked = await revokeCanvasToken(existing.base_url,canvasAccessToken);
+        await withTenantTransaction(req.actor,c => audit(c,req,"disable","integration_connector",req.params.id,"canvas_token_revoked="+canvasTokenRevoked));
+        res.json({data:{...data,canvasTokenRevoked}});
+      } else {
+        await withTenantTransaction(req.actor,c => audit(c,req,"disable","integration_connector",req.params.id));
+        res.json({data});
+      }
     } catch (e) { sendError(res, next, e); }
   });
 
@@ -227,9 +297,10 @@ export function registerIntegrationRoutes(app) {
     try{
       const data=await withTenantTransaction(req.actor,async c=>{
         const a=req.actor;
-        const connector=await one(c,"SELECT id,status,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
+        const connector=await one(c,"SELECT id,kind,status,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
         if(!connector)throw new HttpError(404,"connector_not_found");
         if(connector.status!=="active")throw new HttpError(409,"connector_not_approved");
+        if(connector.kind==="canvas")throw new HttpError(409,"canvas_sync_not_enabled",{next:"CANVAS-API-02"});
         const saved=await one(c,
           `INSERT INTO integration_sync_schedules(district_id,connector_id,interval_minutes,created_by,updated_by,config_version)
            VALUES($1,$2,$3,$4,$4,$5)
@@ -370,6 +441,7 @@ export function registerIntegrationRoutes(app) {
       conn = await withTenantTransaction(a, (c) => one(c, "SELECT * FROM integration_connectors WHERE id=$1 AND district_id=$2", [req.params.id, a.districtId]));
       if (!conn) throw new HttpError(404, "connector_not_found");
       if (conn.status !== "active") throw new HttpError(409, "connector_not_approved");
+      if (conn.kind === "canvas") throw new HttpError(409, "canvas_sync_not_enabled", { next: "CANVAS-API-02" });
       let roster;
       try {
         const [secret, mapped] = await Promise.all([
