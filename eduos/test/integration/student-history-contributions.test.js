@@ -62,6 +62,28 @@ describe("TC-02 guardian history contributions against real PostgreSQL", { skip 
         await app.query("ROLLBACK TO SAVEPOINT denied_unlinked_guardian");
         await app.query("RELEASE SAVEPOINT denied_unlinked_guardian");
       }
+      await app.query("SAVEPOINT denied_spoofed_guardian");
+      try {
+        await assert.rejects(app.query(`
+          INSERT INTO student_history_contributions
+            (district_id,school_id,student_id,guardian_user_id,title,body,occurred_at)
+          VALUES ($1,$2,$3,$4,'Spoofed identity','Must fail',now())
+        `, [ID.d1, ID.s2, ID.carol, USERS.pb[0]]), error => error.code === "42501");
+      } finally {
+        await app.query("ROLLBACK TO SAVEPOINT denied_spoofed_guardian");
+        await app.query("RELEASE SAVEPOINT denied_spoofed_guardian");
+      }
+      await app.query("SAVEPOINT denied_spoofed_event_actor");
+      try {
+        await assert.rejects(app.query(`
+          INSERT INTO student_history_contribution_events
+            (district_id,school_id,student_id,contribution_id,actor_user_id,event_type)
+          VALUES ($1,$2,$3,$4,$5,'submitted')
+        `, [ID.d1, ID.s2, ID.carol, inserted.rows[0].id, USERS.pb[0]]), error => error.code === "42501");
+      } finally {
+        await app.query("ROLLBACK TO SAVEPOINT denied_spoofed_event_actor");
+        await app.query("RELEASE SAVEPOINT denied_spoofed_event_actor");
+      }
       const visible = await app.query(
         "SELECT count(*)::int AS n FROM student_history_contributions WHERE id=$1",
         [inserted.rows[0].id]
