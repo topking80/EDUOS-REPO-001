@@ -339,6 +339,222 @@ describe("EduOS session hardening against real PostgreSQL", { skip }, () => {
   });
 });
 
+
+describe("TC-01 student history and Time Capsule schema against real PostgreSQL", { skip }, () => {
+  let db, admin, app;
+  before(async () => {
+    db = await createDatabase();
+    const env = baseEnv({ EDUOS_APP_ROLE: db.names.app });
+    const migrated = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
+    assert.equal(migrated.code, 0, migrated.out);
+    await seed(db.adminUrl, "https://tc01.integration.test");
+    admin = new pg.Client(db.adminUrl); await admin.connect();
+    app = new pg.Client(db.appUrl); await app.connect();
+  });
+  after(async () => {
+    await app?.end();
+    await admin?.end();
+    await db?.drop();
+  });
+
+  const expectDenied = async work => {
+    await app.query("SAVEPOINT expected_denial");
+    try {
+      await assert.rejects(work(), error => error.code === "42501");
+    } finally {
+      await app.query("ROLLBACK TO SAVEPOINT expected_denial");
+      await app.query("RELEASE SAVEPOINT expected_denial");
+    }
+  };
+
+  const scoped = async (districtId, schoolId, role, userId, work) => {
+    await app.query("BEGIN");
+    try {
+      await app.query(
+        "SELECT set_config('app.district_id',$1,true), set_config('app.school_id',$2,true), set_config('app.role',$3,true), set_config('app.user_id',$4,true)",
+        [districtId, schoolId || "", role, userId || ""]
+      );
+      const value = await work();
+      await app.query("COMMIT");
+      return value;
+    } catch (error) {
+      await app.query("ROLLBACK");
+      throw error;
+    }
+  };
+
+  it("TC-01: runtime grants exclude history approval and capsule lifecycle columns", async () => {
+    const denied = [
+      ["student_history_entries", "status"],
+      ["student_time_capsules", "status"],
+      ["student_time_capsules", "release_kind"],
+      ["student_time_capsules", "release_at"],
+      ["student_time_capsules", "milestone_key"],
+      ["student_time_capsules", "sealed_at"],
+      ["student_time_capsules", "released_at"],
+      ["student_time_capsules", "cancelled_at"]
+    ];
+    for (const [table, column] of denied) {
+      const result = await admin.query(
+        "SELECT has_column_privilege($1,$2,$3,'UPDATE') AS allowed",
+        [db.names.app, table, column]
+      );
+      assert.equal(result.rows[0].allowed, false, `${table}.${column} must be workflow-controlled`);
+    }
+    for (const [table, column] of [["student_history_entries", "title"], ["student_time_capsules", "title"]]) {
+      const result = await admin.query(
+        "SELECT has_column_privilege($1,$2,$3,'UPDATE') AS allowed",
+        [db.names.app, table, column]
+      );
+      assert.equal(result.rows[0].allowed, true, `${table}.${column} remains editable`);
+    }
+  });
+
+  it("isolates history by district and originating school and captures immutable revisions", async () => {
+    const alice = await scoped(ID.d1, ID.s1, "parent", USERS.pa[0], async () =>
+      (await app.query(`
+        INSERT INTO student_history_entries
+          (district_id, school_id, student_id, entry_type, classification, title, occurred_at, source_type, author_user_id)
+        VALUES ($1,$2,$3,'achievement','student_portfolio','Alice milestone',now(),'guardian',$4)
+        RETURNING id, revision_no
+      `, [ID.d1, ID.s1, ID.alice, USERS.pa[0]])).rows[0]);
+    await scoped(ID.d1, ID.s2, "parent", USERS.p2s[0], async () =>
+      app.query(`
+        INSERT INTO student_history_entries
+          (district_id, school_id, student_id, entry_type, classification, title, occurred_at, source_type, author_user_id)
+        VALUES ($1,$2,$3,'event','family_memory','Carol school event',now(),'guardian',$4)
+      `, [ID.d1, ID.s2, ID.carol, USERS.p2s[0]]));
+    await scoped(ID.d2, ID.sd2, "superintendent", USERS.supt2[0], async () =>
+      app.query(`
+        INSERT INTO student_history_entries
+          (district_id, school_id, student_id, entry_type, classification, title, occurred_at, source_type, author_user_id)
+        VALUES ($1,$2,$3,'achievement','student_portfolio','Xavier milestone',now(),'school',$4)
+      `, [ID.d2, ID.sd2, ID.xavier, USERS.supt2[0]]));
+    assert.equal(alice.revision_no, 1);
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM student_history_entry_revisions WHERE entry_id=$1", [alice.id])).rows[0].n, 1);
+
+    const schoolOne = await scoped(ID.d1, ID.s1, "teacher", USERS.t1[0], async () => {
+      const visible = await app.query("SELECT id FROM student_history_entries ORDER BY id");
+      assert.deepEqual(visible.rows.map(row => row.id), [alice.id]);
+      const changed = await app.query("UPDATE student_history_entries SET title='Alice milestone revised' WHERE id=$1 RETURNING revision_no", [alice.id]);
+      assert.equal(changed.rows[0].revision_no, 2);
+      await expectDenied(() => app.query("INSERT INTO student_history_entries (district_id,school_id,student_id,entry_type,classification,title,occurred_at,source_type) VALUES ($1,$2,$3,'event','family_memory','cross-school attempt',now(),'guardian')", [ID.d1, ID.s2, ID.carol]));
+      await expectDenied(() => app.query("UPDATE student_history_entries SET student_id=$1 WHERE id=$2", [ID.carol, alice.id]));
+      return visible.rows.length;
+    });
+    assert.equal(schoolOne, 1);
+
+    const districtWide = await scoped(ID.d1, "", "superintendent", USERS.supt1[0], async () =>
+      (await app.query("SELECT count(*)::int AS n FROM student_history_entries")).rows[0].n);
+    assert.equal(districtWide, 2);
+    const otherDistrict = await scoped(ID.d2, ID.sd2, "superintendent", USERS.supt2[0], async () =>
+      (await app.query("SELECT count(*)::int AS n FROM student_history_entries")).rows[0].n);
+    assert.equal(otherDistrict, 1);
+
+    const revisions = await admin.query(
+      "SELECT revision_no, snapshot->>'title' AS title, actor_user_id FROM student_history_entry_revisions WHERE entry_id=$1 ORDER BY revision_no",
+      [alice.id]
+    );
+    assert.deepEqual(revisions.rows.map(row => [row.revision_no, row.title]), [
+      [1, "Alice milestone"], [2, "Alice milestone revised"]
+    ]);
+    assert.equal(revisions.rows[1].actor_user_id, USERS.t1[0]);
+
+    const capsuleRefs = {};
+    await scoped(ID.d1, ID.s1, "parent", USERS.pa[0], async () => {
+      const capsule = (await app.query(`
+        INSERT INTO student_time_capsules
+          (district_id, school_id, student_id, owner_user_id, title, release_kind, release_at)
+        VALUES ($1,$2,$3,$4,'Graduation capsule','scheduled',now()+interval '1 day')
+        RETURNING id
+      `, [ID.d1, ID.s1, ID.alice, USERS.pa[0]])).rows[0];
+      capsuleRefs.id = capsule.id;
+      await app.query(`
+        INSERT INTO student_time_capsule_items
+          (district_id, school_id, student_id, capsule_id, entry_id, entry_revision_no, position)
+        VALUES ($1,$2,$3,$4,$5,2,0)
+      `, [ID.d1, ID.s1, ID.alice, capsule.id, alice.id]);
+      await app.query(`
+        INSERT INTO student_time_capsule_recipients
+          (district_id, school_id, student_id, capsule_id, recipient_user_id, recipient_type)
+        VALUES ($1,$2,$3,$4,$5,'student')
+      `, [ID.d1, ID.s1, ID.alice, capsule.id, USERS.pu[0]]);
+      await app.query(`
+        INSERT INTO student_time_capsule_events
+          (district_id, school_id, student_id, capsule_id, actor_user_id, event_type)
+        VALUES ($1,$2,$3,$4,$5,'created')
+      `, [ID.d1, ID.s1, ID.alice, capsule.id, USERS.pa[0]]);
+      await expectDenied(() => app.query("INSERT INTO student_history_entry_revisions (district_id,school_id,student_id,entry_id,revision_no,snapshot) VALUES ($1,$2,$3,$4,99,'{}'::jsonb)", [ID.d1, ID.s1, ID.alice, alice.id]));
+      await expectDenied(() => app.query("UPDATE student_history_entry_revisions SET revision_no=9 WHERE entry_id=$1", [alice.id]));
+      await expectDenied(() => app.query("DELETE FROM student_history_entries WHERE id=$1", [alice.id]));
+    });
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM student_time_capsule_items WHERE entry_id=$1", [alice.id])).rows[0].n, 1);
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM student_time_capsule_events")).rows[0].n, 1);
+
+    // Seed a private registry object as the database owner, then create its
+    // metadata attachment as the scoped runtime role.
+    const activity = (await admin.query(`
+      INSERT INTO school_activities (district_id,school_id,kind,title,created_by)
+      VALUES ($1,$2,'club','TC-01 media fixture',$3)
+      RETURNING id
+    `, [ID.d1, ID.s1, USERS.t1[0]])).rows[0].id;
+    const asset = (await admin.query(`
+      INSERT INTO activity_media_assets
+        (district_id,school_id,activity_id,media_kind,storage_key,mime_type,byte_size,uploaded_by)
+      VALUES ($1,$2,$3,'image','tc01/alice/history-image','image/jpeg',1024,$4)
+      RETURNING id
+    `, [ID.d1, ID.s1, activity, USERS.t1[0]])).rows[0].id;
+    await admin.query(`
+      INSERT INTO private_media_objects
+        (asset_id,district_id,school_id,storage_key,media_kind,mime_type,byte_size,scan_status,processing_status)
+      VALUES ($1,$2,$3,'tc01/alice/history-image','image','image/jpeg',1024,'clean','processed')
+    `, [asset, ID.d1, ID.s1]);
+    await scoped(ID.d1, ID.s1, "parent", USERS.pa[0], async () => {
+      await app.query(`
+        INSERT INTO student_history_entry_attachments
+          (district_id,school_id,student_id,entry_id,asset_id,caption)
+        VALUES ($1,$2,$3,$4,$5,'Alice history image')
+      `, [ID.d1, ID.s1, ID.alice, alice.id, asset]);
+    });
+
+    // Child rows must inherit the same school and district isolation as their
+    // parent records; valid foreign keys must not make them visible cross-scope.
+    const hiddenAtOtherSchool = await scoped(ID.d1, ID.s2, "principal", USERS.p2s[0], async () => {
+      const counts = {};
+      for (const table of ["student_history_entry_attachments", "student_time_capsule_items",
+        "student_time_capsule_recipients", "student_time_capsule_events"]) {
+        counts[table] = (await app.query(`SELECT count(*)::int AS n FROM ${table} WHERE student_id=$1`, [ID.alice])).rows[0].n;
+      }
+      await expectDenied(() => app.query(`
+        INSERT INTO student_time_capsule_items
+          (district_id,school_id,student_id,capsule_id,entry_id,entry_revision_no,position)
+        VALUES ($1,$2,$3,$4,$5,2,9)
+      `, [ID.d1, ID.s1, ID.alice, capsuleRefs.id, alice.id]));
+      return counts;
+    });
+    assert.deepEqual(hiddenAtOtherSchool, {
+      student_history_entry_attachments: 0,
+      student_time_capsule_items: 0,
+      student_time_capsule_recipients: 0,
+      student_time_capsule_events: 0
+    });
+    const hiddenAtOtherDistrict = await scoped(ID.d2, ID.sd2, "superintendent", USERS.supt2[0], async () => {
+      const counts = {};
+      for (const table of ["student_history_entry_attachments", "student_time_capsule_items",
+        "student_time_capsule_recipients", "student_time_capsule_events"]) {
+        counts[table] = (await app.query(`SELECT count(*)::int AS n FROM ${table} WHERE student_id=$1`, [ID.alice])).rows[0].n;
+      }
+      return counts;
+    });
+    assert.deepEqual(hiddenAtOtherDistrict, {
+      student_history_entry_attachments: 0,
+      student_time_capsule_items: 0,
+      student_time_capsule_recipients: 0,
+      student_time_capsule_events: 0
+    });
+  });
+});
+
 describe("EduOS API against an unmigrated database (32.0.54)", { skip }, () => {
   it("refuses to start instead of failing on the first request", async () => {
     const db = await createDatabase();
