@@ -23,6 +23,8 @@ test("guardian submission rechecks an active relationship and rejects unexpected
   assert.ok(routes.includes("status='active'"));
   assert.ok(routes.includes("Object.keys(body).some"));
   assert.ok(routes.includes("requireCsrf"));
+  assert.ok(routes.includes("invalid_contribution_withdrawal"));
+  assert.ok(routes.includes("status='withdrawn'"));
   assert.ok(routes.includes("student_history_contribution_events"));
   assert.ok(routes.includes('if (!validId(studentId)) throw new HttpError(400, "invalid_student_id")'));
 });
