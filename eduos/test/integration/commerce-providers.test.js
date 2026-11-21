@@ -1263,6 +1263,14 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
   });
 
   it("provider retries are idempotent and conflicting event IDs are rejected", async () => {
+    // Earlier crash-recovery tests deliberately restart the API with the
+    // commerce sweep enabled. Stop that worker before these inbox-state and
+    // processor-boundary assertions: otherwise it can claim a newly inserted
+    // event between the receive and read, and its transaction can contaminate
+    // the pg_stat_activity probe in the following test.
+    await server.stop();
+    server = await startServer(serverEnv);
+
     const checkout = await buy("pa", "webhook-provider-retry", "paypal");
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
     const pid = checkout.body.data.payment.id;
