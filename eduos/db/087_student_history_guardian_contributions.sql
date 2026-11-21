@@ -201,11 +201,23 @@ BEGIN
                  AND l.student_id = %I.student_id
                  AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
                  AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
+            )
+            AND EXISTS (
+              SELECT 1 FROM student_history_contributions c
+               WHERE c.id = contribution_id
+                 AND c.guardian_user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
+                 AND c.status = CASE event_type WHEN ''submitted'' THEN ''submitted'' ELSE ''withdrawn'' END
             ))
           OR (current_setting(''app.role'', true) IN (''principal'',''superintendent'')
             AND event_type IN (''approved'',''rejected'')
             AND (school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
-              OR current_setting(''app.role'', true) = ''superintendent''))
+              OR current_setting(''app.role'', true) = ''superintendent'')
+            AND EXISTS (
+              SELECT 1 FROM student_history_contributions c
+               WHERE c.id = contribution_id
+                 AND c.reviewed_by = nullif(current_setting(''app.user_id'', true), '''')::uuid
+                 AND c.status = event_type
+            ))
         )
       )', t || '_actor_insert', t, t, t);
     END IF;
