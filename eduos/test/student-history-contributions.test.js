@@ -29,6 +29,7 @@ test("guardian submission rechecks an active relationship and rejects unexpected
 
 test("approval is transactional and publishes only a family-memory history entry", () => {
   assert.ok(routes.includes('contribution.status !== "submitted"'));
+  assert.ok(routes.includes("contribution_self_review_forbidden"));
   assert.ok(routes.includes("'reflection','family_memory'"));
   assert.ok(routes.includes("'family','published','guardian'"));
   assert.ok(routes.includes("FOR UPDATE"));
