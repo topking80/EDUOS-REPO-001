@@ -76,12 +76,30 @@ BEGIN
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('CREATE POLICY %I ON %I USING (
       district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
-      AND (school_id = nullif(current_setting(''app.school_id'', true), '''')
-        ::uuid OR current_setting(''app.role'', true) = ''superintendent'')
+      AND (
+        school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
+        OR current_setting(''app.role'', true) = ''superintendent''
+        OR (current_setting(''app.role'', true) = ''parent'' AND EXISTS (
+          SELECT 1 FROM student_user_links l
+           WHERE l.district_id = ${district_id}
+             AND l.student_id = ${student_id}
+             AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
+             AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
+        ))
+      )
     ) WITH CHECK (
       district_id = nullif(current_setting(''app.district_id'', true), '''')::uuid
-      AND (school_id = nullif(current_setting(''app.school_id'', true), '''')
-        ::uuid OR current_setting(''app.role'', true) = ''superintendent'')
+      AND (
+        school_id = nullif(current_setting(''app.school_id'', true), '''')::uuid
+        OR current_setting(''app.role'', true) = ''superintendent''
+        OR (current_setting(''app.role'', true) = ''parent'' AND EXISTS (
+          SELECT 1 FROM student_user_links l
+           WHERE l.district_id = ${district_id}
+             AND l.student_id = ${student_id}
+             AND l.user_id = nullif(current_setting(''app.user_id'', true), '''')::uuid
+             AND l.status = ''active'' AND l.relationship IN (''parent'',''guardian'')
+        ))
+      )
     )', t || '_district_school_scope', t);
   END LOOP;
 END;
