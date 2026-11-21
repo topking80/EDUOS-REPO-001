@@ -1,4 +1,5 @@
 // TC-02: parent/guardian family-memory contributions with school review.
+import { randomUUID } from "node:crypto";
 import { requireSession, requireCsrf } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { audit, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
@@ -178,15 +179,17 @@ export function registerStudentHistoryContributionRoutes(app) {
             throw new HttpError(403, "contribution_self_review_forbidden");
           let historyEntryId = null;
           if (body.decision === "approve") {
-            const entry = await one(client, `
+            // The id is made here, not read back: a reviewer can publish a
+            // family memory in the guardian's name but can't read family
+            // memories (db/088), so RETURNING would be refused.
+            historyEntryId = randomUUID();
+            await client.query(`
               INSERT INTO student_history_entries
-                (district_id, school_id, student_id, entry_type, classification,
+                (id, district_id, school_id, student_id, entry_type, classification,
                  title, body, occurred_at, audience, status, source_type, author_user_id)
-              VALUES ($1,$2,$3,'reflection','family_memory',$4,$5,$6,'family','published','guardian',$7)
-              RETURNING id
-            `, [actor.districtId, student.school_id, student.id, contribution.title,
+              VALUES ($1,$2,$3,$4,'reflection','family_memory',$5,$6,$7,'family','published','guardian',$8)
+            `, [historyEntryId, actor.districtId, student.school_id, student.id, contribution.title,
               contribution.body, contribution.occurred_at, contribution.guardian_user_id]);
-            historyEntryId = entry.id;
           }
           const status = body.decision === "approve" ? "approved" : "rejected";
           const updated = await one(client, `
