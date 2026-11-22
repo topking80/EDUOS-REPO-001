@@ -249,7 +249,7 @@ export function registerIntegrationRoutes(app) {
     if(!validId(req.params.id))return res.status(400).json({error:"invalid_connector_id"});
     try {
       const data=await withTenantTransaction(req.actor,c=>one(c,
-        `SELECT s.id,s.enabled,s.interval_minutes,s.next_run_at,s.paused_at,s.pause_reason,
+        `SELECT s.id,s.enabled,s.interval_minutes,s.incremental,s.full_sync_hours,s.next_run_at,s.paused_at,s.pause_reason,
                 s.config_version,s.approved_at,u.display_name AS approved_by,
                 s.updated_at,uu.display_name AS updated_by
            FROM integration_sync_schedules s
@@ -266,6 +266,10 @@ export function registerIntegrationRoutes(app) {
     const interval=req.body?.intervalMinutes;
     if(!Number.isInteger(interval)||interval<15||interval>10080)
       return res.status(400).json({error:"invalid_schedule_interval",minimumMinutes:15,maximumMinutes:10080});
+    // SIS-06: read only changes between full syncs (at least every fullSyncHours).
+    const incremental=req.body?.incremental??false, fullSyncHours=req.body?.fullSyncHours??24;
+    if(typeof incremental!=="boolean"||!Number.isInteger(fullSyncHours)||fullSyncHours<1||fullSyncHours>168)
+      return res.status(400).json({error:"invalid_schedule_options",fullSyncHours:{minimum:1,maximum:168}});
     try{
       const data=await withTenantTransaction(req.actor,async c=>{
         const a=req.actor;
@@ -273,15 +277,16 @@ export function registerIntegrationRoutes(app) {
         if(!connector)throw new HttpError(404,"connector_not_found");
         if(connector.status!=="active")throw new HttpError(409,"connector_not_approved");
         const saved=await one(c,
-          `INSERT INTO integration_sync_schedules(district_id,connector_id,interval_minutes,created_by,updated_by,config_version)
-           VALUES($1,$2,$3,$4,$4,$5)
+          `INSERT INTO integration_sync_schedules(district_id,connector_id,interval_minutes,created_by,updated_by,config_version,incremental,full_sync_hours)
+           VALUES($1,$2,$3,$4,$4,$5,$6,$7)
            ON CONFLICT(district_id,connector_id) DO UPDATE SET interval_minutes=EXCLUDED.interval_minutes,
+             incremental=EXCLUDED.incremental,full_sync_hours=EXCLUDED.full_sync_hours,
              updated_by=EXCLUDED.updated_by,updated_at=now(),config_version=EXCLUDED.config_version,
              enabled=false,next_run_at=NULL,paused_at=NULL,pause_reason=NULL,approved_by=NULL,approved_at=NULL
-           RETURNING id,enabled,interval_minutes,config_version`,
-          [a.districtId,connector.id,interval,a.userId,connector.config_version]);
+           RETURNING id,enabled,interval_minutes,config_version,incremental,full_sync_hours`,
+          [a.districtId,connector.id,interval,a.userId,connector.config_version,incremental,fullSyncHours]);
         await cancelScheduleJobs(c,a.districtId,saved.id,"schedule_reconfigured");
-        await audit(c,req,"configure","integration_sync_schedule",saved.id,`interval_minutes=${interval}; requires separate approval`);
+        await audit(c,req,"configure","integration_sync_schedule",saved.id,`interval_minutes=${interval}; incremental=${incremental}; full_sync_hours=${fullSyncHours}; requires separate approval`);
         return saved;
       });
       res.status(200).json({data});

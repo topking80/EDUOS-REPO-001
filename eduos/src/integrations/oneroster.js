@@ -87,3 +87,27 @@ export async function fetchClasses({ baseUrl, tokenUrl, clientId, clientSecret, 
     enrollments: await collect(base, "/enrollments", "enrollments", token, options),
   });
 }
+
+// ---- SIS-06 incremental reads (OneRoster 1.2 filter on dateLastModified) ----
+// Ten minutes of overlap absorbs clock differences between EduOS and the SIS;
+// re-reading a student is harmless (imports upsert).
+const OVERLAP_MS = 10 * 60 * 1000;
+export const supportsIncremental = true;
+
+/** Taken before a full read: the next incremental read starts here. */
+export async function startWatermark({ now = new Date() } = {}) { return { since: now.toISOString() }; }
+
+export async function fetchRosterChanges({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, watermark, now = new Date() }) {
+  const since = Date.parse(watermark?.since);
+  if (!Number.isFinite(since)) throw new IntegrationError("incremental_watermark_invalid");
+  const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope: scope || DEFAULT_SCOPE, options });
+  const base = baseUrl.replace(/\/+$/, "");
+  const from = new Date(since - OVERLAP_MS).toISOString();
+  const orgs = await collect(base, "/schools", "orgs", token, options);
+  const users = await collect(base, `/students?filter=${encodeURIComponent(`dateLastModified>'${from}'`)}`, "users", token, options);
+  const schools = orgs.filter(o => o?.sourcedId && (!o.status || o.status === "active"))
+    .map(o => ({ externalId: String(o.sourcedId).slice(0, 255), name: text(o.name, 160) || String(o.sourcedId) }));
+  const students = [], rejected = [];
+  for (const u of users) { const r = normalizeStudent(u); if (r.student) students.push(r.student); else if (r.rejected) rejected.push(r.rejected); }
+  return { roster: { schools, students, rejected }, watermark: { since: now.toISOString() }, changesSince: from };
+}

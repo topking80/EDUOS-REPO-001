@@ -33,7 +33,15 @@ function fakeServer() {
       if (url.pathname.endsWith("/schools")) return send(200, { orgs: page([{ sourcedId: "or-s1", name: "S1", type: "school", status: "active" },
         { sourcedId: "or-s2", name: "S2", type: "school", status: "active" }, { sourcedId: "or-x", name: "Somewhere Else", type: "school" }]) });
       if (url.pathname.endsWith("/students") && ctl.hold) { ctl.arrived?.(); await ctl.hold; }
-      if (url.pathname.endsWith("/students")) return send(200, { users: page([
+      // SIS-06: honour OneRoster's dateLastModified filter (or refuse it, when told to).
+      const filter = url.searchParams.get("filter");
+      if (url.pathname.endsWith("/students") && filter) {
+        if (ctl.rejectFilter) return send(400, { error: "filter not supported" });
+        ctl.filters = [...(ctl.filters || []), filter];
+        const since = Date.parse(/dateLastModified>'([^']+)'/.exec(filter)?.[1]);
+        return send(200, { users: page((ctl.newStudents || []).filter(u => Date.parse(u.dateLastModified) > since)) });
+      }
+      if (url.pathname.endsWith("/students")) return send(200, { users: page([...(ctl.newStudents || []),
         { sourcedId: "u-alice", identifier: "S1-A", givenName: "Alice", familyName: "Anders", grades: ["04"], roles: [{ roleType: "primary", role: "student", org: { sourcedId: "or-s1" } }] },
         { sourcedId: "u-dan", identifier: "S1-D", givenName: "Dan", familyName: "D", grades: ["03"], roles: [{ roleType: "primary", role: "student", org: { sourcedId: "or-s1" } }] },
         { sourcedId: "u-dup", identifier: "S1-D", givenName: "Dup", familyName: "D", roles: [{ roleType: "primary", role: "student", org: { sourcedId: "or-s1" } }] },
@@ -53,6 +61,24 @@ function fakeServer() {
       { sourcedId: "en-2", role: "teacher", user: { sourcedId: "tch-2" }, class: { sourcedId: "cls-1" } },
       { sourcedId: "en-3", role: "student", user: { sourcedId: "u-alice" }, class: { sourcedId: "cls-1" } },
       ...(ctl.dropDan ? [] : [{ sourcedId: "en-4", role: "student", user: { sourcedId: "u-dan" }, class: { sourcedId: "cls-1" } }])]) });
+    // SIS-06: Ed-Fi Change Queries.
+    if (url.pathname === "/api/changeQueries/v1/availableChangeVersions") {
+      if (auth !== "Bearer tok-edfi-client") return send(401, {});
+      if (ctl.edfiNoChangeQueries) return send(404, {});
+      return send(200, { oldestChangeVersion: 0, newestChangeVersion: ctl.edfiVersion ?? 10 });
+    }
+    if (url.pathname.startsWith("/api/data/ed-fi/") && (url.searchParams.has("minChangeVersion") || url.searchParams.has("studentUniqueId"))) {
+      if (auth !== "Bearer tok-edfi-client") return send(401, {});
+      const r = url.pathname.split("/").pop(), min = Number(url.searchParams.get("minChangeVersion")), max = Number(url.searchParams.get("maxChangeVersion"));
+      const id = url.searchParams.get("studentUniqueId");
+      const all = { students: [{ studentUniqueId: "E-100", firstName: "Fay", lastSurname: "F", changeVersion: 1 }, ...(ctl.edfiStudents || [])],
+        studentSchoolAssociations: [{ studentReference: { studentUniqueId: "E-100" }, schoolReference: { schoolId: 255901 }, entryDate: "2026-08-20", changeVersion: 1,
+          entryGradeLevelDescriptor: "uri://ed-fi.org/GradeLevelDescriptor#Second grade" }, ...(ctl.edfiAssoc || [])] }[r] || [];
+      const key = x => x.studentUniqueId || x.studentReference?.studentUniqueId;
+      if (id) return send(200, page(all.filter(x => key(x) === id)));
+      ctl.edfiWindows = [...(ctl.edfiWindows || []), `${r}:${min}-${max}`];
+      return send(200, page(all.filter(x => x.changeVersion >= min && x.changeVersion <= max)));
+    }
     if (url.pathname.startsWith("/api/data/ed-fi/")) {
       if (auth !== "Bearer tok-edfi-client") return send(401, {});
       const r = url.pathname.split("/").pop();
@@ -326,6 +352,74 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
 
     const audit = (await admin.query("SELECT action, detail FROM audit_events WHERE resource_type='integration_staff_map' AND resource_id=$1", [c.id])).rows;
     assert.match(audit[0].detail, /tch-2=>.*needs approval/);
+  });
+
+  it("SIS-06: scheduled syncs read only changes between full syncs, and fall back to full when the source can't answer", async () => {
+    const runSchedule = async () => {
+      await admin.query("UPDATE integration_sync_schedules SET next_run_at=now()-interval '1 second' WHERE enabled AND paused_at IS NULL");
+      const r = await run(["src/integrations/scheduler-cli.js"], { ...workerEnv, DATABASE_URL: db.appUrl });
+      assert.equal(r.code, 0, r.out);
+    };
+    const lastRun = async id => (await admin.query("SELECT counts FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL ORDER BY started_at DESC LIMIT 1", [id])).rows[0]?.counts;
+    const setUp = async (body, mapping) => {
+      const c = (await as("supt1")("POST", "/api/integrations/connectors", body)).body.data;
+      await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/school-map`, { mappings: [mapping] });
+      assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/approve`)).status, 200);
+      assert.equal((await sync("supt1", c.id, "preview")).status, 200);
+      const sched = await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/schedule`, { intervalMinutes: 60, incremental: true, fullSyncHours: 24 });
+      assert.equal(sched.status, 200, JSON.stringify(sched.body));
+      assert.deepEqual([sched.body.data.incremental, sched.body.data.full_sync_hours], [true, 24]);
+      assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/schedule/approve`)).status, 200);
+      return c;
+    };
+
+    // OneRoster.
+    const c = await setUp({ kind: "oneroster", name: "Incremental OneRoster", baseUrl: `${fake.base}/ims/oneroster/rostering/v1p2`,
+      tokenUrl: `${fake.base}/oauth/token`, clientId: "or-client", clientSecret: SECRET }, { externalId: "or-s1", schoolId: ID.s1 });
+    await runSchedule();
+    assert.deepEqual((await lastRun(c.id)).sync, { mode: "full", reason: "no_previous_full_sync" }, "the first run is full");
+    const wm = (await admin.query("SELECT sync_watermark, last_full_sync_at FROM integration_connectors WHERE id=$1", [c.id])).rows[0];
+    assert.ok(wm.sync_watermark.since && wm.last_full_sync_at);
+
+    fake.ctl.newStudents = [{ sourcedId: "u-new", identifier: "S1-NEW", givenName: "Nia", familyName: "New", dateLastModified: new Date().toISOString(),
+      roles: [{ roleType: "primary", role: "student", org: { sourcedId: "or-s1" } }] }];
+    await runSchedule();
+    const inc = await lastRun(c.id);
+    assert.equal(inc.sync.mode, "incremental", JSON.stringify(inc));
+    assert.equal(inc.studentsFetched, 1, "only the changed student was read");
+    assert.match(fake.ctl.filters.at(-1), /^dateLastModified>'\d{4}-/);
+    assert.equal((await student("S1-NEW")).display_name, "Nia New");
+
+    fake.ctl.rejectFilter = true;
+    await runSchedule();
+    const fb = await lastRun(c.id);
+    assert.deepEqual(fb.sync, { mode: "full", reason: "incremental_failed:connector_http_error" }, "their server refused the filter: full sync instead");
+    assert.ok(fb.studentsFetched > 1);
+    fake.ctl.rejectFilter = false; fake.ctl.newStudents = [];
+
+    // Ed-Fi Change Queries.
+    fake.ctl.edfiVersion = 10;
+    const e = await setUp({ kind: "edfi", name: "Incremental Ed-Fi", baseUrl: `${fake.base}/api/data`, tokenUrl: `${fake.base}/oauth/token`,
+      clientId: "edfi-client", clientSecret: EDFI_SECRET }, { externalId: "255901", schoolId: ID.s1 });
+    await runSchedule();
+    assert.equal((await lastRun(e.id)).sync.mode, "full");
+    assert.equal((await admin.query("SELECT sync_watermark FROM integration_connectors WHERE id=$1", [e.id])).rows[0].sync_watermark.changeVersion, 10);
+    // A new student enrolls (version 11); only versions 11-12 are read.
+    fake.ctl.edfiVersion = 12;
+    fake.ctl.edfiStudents = [{ studentUniqueId: "E-102", firstName: "Hal", lastSurname: "H", changeVersion: 11 }];
+    fake.ctl.edfiAssoc = [{ studentReference: { studentUniqueId: "E-102" }, schoolReference: { schoolId: 255901 }, entryDate: "2026-11-01", changeVersion: 12,
+      entryGradeLevelDescriptor: "uri://ed-fi.org/GradeLevelDescriptor#Third grade" }];
+    await runSchedule();
+    const einc = await lastRun(e.id);
+    assert.equal(einc.sync.mode, "incremental", JSON.stringify(einc));
+    assert.deepEqual(fake.ctl.edfiWindows.slice(-2), ["students:11-12", "studentSchoolAssociations:11-12"]);
+    assert.deepEqual(await student("E-102"), { display_name: "Hal H", grade_level: "3", school_id: ID.s1 });
+    assert.equal((await admin.query("SELECT sync_watermark FROM integration_connectors WHERE id=$1", [e.id])).rows[0].sync_watermark.changeVersion, 12);
+    // Nothing changed: an incremental run that imports nothing, and succeeds.
+    await runSchedule();
+    const none = await lastRun(e.id);
+    assert.deepEqual([none.sync.mode, none.studentsFetched], ["incremental", 0], JSON.stringify(none));
+    fake.ctl.edfiStudents = []; fake.ctl.edfiAssoc = [];
   });
 
   it("another district sees none of it", async () => {

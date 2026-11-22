@@ -120,3 +120,64 @@ export async function fetchClasses({ baseUrl, tokenUrl, clientId, clientSecret, 
     studentSections: await collect(base, "studentSectionAssociations", token, options),
   });
 }
+
+// ---- SIS-06 incremental reads (Ed-Fi Change Queries) ----
+// Change Queries live beside the data API: …/api/data[/v3] -> …/api/changeQueries/v1.
+export const supportsIncremental = true;
+const MAX_CHANGED_STUDENTS = 5000;
+export function changeQueriesBase(baseUrl) {
+  const b = baseUrl.replace(/\/+$/, "");
+  const m = /^(.*)\/data(?:\/v3)?$/.exec(b);
+  return m ? `${m[1]}/changeQueries/v1` : null;
+}
+async function newestChangeVersion(baseUrl, token, options) {
+  const cq = changeQueriesBase(baseUrl);
+  if (!cq) throw new IntegrationError("incremental_unsupported", "base URL doesn't end in /data or /data/v3");
+  const v = Number((await getJson(`${cq}/availableChangeVersions`, token, options))?.newestChangeVersion);
+  if (!Number.isSafeInteger(v) || v < 0) throw new IntegrationError("connector_bad_response", "availableChangeVersions");
+  return v;
+}
+async function collectQuery(base, resource, query, token, options) {
+  const out = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const items = await getJson(`${base}/ed-fi/${resource}?${query}&limit=${PAGE}&offset=${page * PAGE}`, token, options);
+    if (!Array.isArray(items)) throw new IntegrationError("connector_bad_response", `${resource}: not an array`);
+    out.push(...items);
+    if (items.length < PAGE) return out;
+  }
+  throw new IntegrationError("connector_too_many_records", resource);
+}
+
+/** Taken before a full read: the next incremental read starts after this change version. */
+export async function startWatermark({ baseUrl, tokenUrl, clientId, clientSecret, scope, options }) {
+  const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope, options });
+  return { changeVersion: await newestChangeVersion(baseUrl, token, options) };
+}
+
+export async function fetchRosterChanges({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, watermark }) {
+  const from = Number(watermark?.changeVersion);
+  if (!Number.isSafeInteger(from) || from < 0) throw new IntegrationError("incremental_watermark_invalid");
+  const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope, options });
+  const base = baseUrl.replace(/\/+$/, "");
+  const newest = await newestChangeVersion(base, token, options);
+  const schools = (await collect(base, "schools", token, options)).filter(s => s?.schoolId !== undefined && s?.schoolId !== null)
+    .map(s => ({ externalId: String(s.schoolId), name: text(s.nameOfInstitution, 160) || String(s.schoolId) }));
+  if (newest <= from) return { roster: { schools, students: [], rejected: [] }, watermark: { changeVersion: from }, changesSince: from };
+  const window = `minChangeVersion=${from + 1}&maxChangeVersion=${newest}`;
+  const changedStudents = await collectQuery(base, "students", window, token, options);
+  const changedAssoc = await collectQuery(base, "studentSchoolAssociations", window, token, options);
+  const ids = new Set([...changedStudents.map(s => s?.studentUniqueId), ...changedAssoc.map(a => a?.studentReference?.studentUniqueId)].filter(v => typeof v === "string" && v));
+  if (ids.size > MAX_CHANGED_STUDENTS) throw new IntegrationError("incremental_too_many_changes", String(ids.size));
+  const byId = new Map(changedStudents.filter(s => s?.studentUniqueId).map(s => [s.studentUniqueId, s]));
+  const students = [], rejected = [];
+  for (const id of ids) {
+    const q = `studentUniqueId=${encodeURIComponent(id)}`;
+    const s = byId.get(id) || (await collectQuery(base, "students", q, token, options))[0];
+    if (!s) continue; // deleted at the source: imports never delete
+    // The student's whole current enrollment picture, not just what changed.
+    const assoc = currentSchools(await collectQuery(base, "studentSchoolAssociations", q, token, options));
+    const r = normalizeStudent(s, assoc.get(id));
+    if (r.student) students.push(r.student); else if (r.rejected) rejected.push(r.rejected);
+  }
+  return { roster: { schools, students, rejected }, watermark: { changeVersion: newest }, changesSince: from };
+}
