@@ -5,7 +5,7 @@
 | Phase | State |
 | --- | --- |
 | CANVAS-API-01 OAuth connection and token lifecycle | Implemented (PR #86), migration `096` |
-| CANVAS-API-02 Read-only courses and enrollments | Next |
+| CANVAS-API-02 Read-only courses and enrollments into teacher rosters | Implemented; manual sync only (see INTEGRATIONS.md) |
 | CANVAS-API-03 Read-only grade retrieval and preview | Not started; needs the district source-of-truth policy first |
 | CANVAS-API-04 Grade write-back | Not planned without written district authorization |
 

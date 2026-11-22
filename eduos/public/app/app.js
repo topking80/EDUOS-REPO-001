@@ -2326,7 +2326,7 @@ const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API", powersch
 const CONNECTOR_STATUS = { pending_approval: ["expected", "Needs approval"], active: ["present", "Active"], disabled: ["not_started", "Off"] };
 const ROSTER_TEACHER_TEXT = { no_matching_eduos_teacher: "No EduOS teacher at that school has this email", ambiguous_email: "More than one EduOS teacher has this email",
   no_email: "Their SIS record has no email", not_in_staff_list: "Not in their staff list", matched_teacher_not_at_school: "The matched teacher doesn't teach at that school" };
-const REJECT_TEXT = { student_not_imported: "a student in a class isn't in EduOS", student_at_another_eduos_school: "a student in a class is at another EduOS school", duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
+const REJECT_TEXT = { no_sis_user_id: "Canvas student without a SIS ID", no_matching_eduos_student: "No EduOS student with that SIS ID", student_not_imported: "a student in a class isn't in EduOS", student_at_another_eduos_school: "a student in a class is at another EduOS school", duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
   no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id", invalid_school_id: "invalid school id", missing_student_id: "no student id", missing_student_number: "no student number", missing_enrollment_status: "enrollment status unavailable" };
 VIEWS.integrations = async () => {
   const r = await api.get("/api/integrations/connectors");
@@ -2350,10 +2350,15 @@ VIEWS.integrations = async () => {
     const reasons = {};
     for (const x of res.rejected || []) reasons[x.reason] = (reasons[x.reason] || 0) + 1;
     return h("div", { class: "stack" },
-      h("p", { class: "notice" }, res.mode === "apply"
+      // CANVAS-API-02: Canvas runs change rosters only, never students.
+      c.kind === "canvas"
+        ? h("p", { class: "notice" }, res.mode === "apply" ? "Canvas class rosters updated. No students were created or changed."
+          : "Preview of Canvas class rosters. Nothing has changed yet, in EduOS or in Canvas.")
+        : h("p", { class: "notice" }, res.mode === "apply"
         ? `Imported ${Object.values(k.imported || {}).reduce((a, b) => a + b, 0)} students.`
         : `Preview: ${k.toImport} students would be added or updated. Nothing has changed yet.`),
-      h("ul", { class: "list" }, kv("Students found", String(k.studentsFetched)), kv("At schools not linked yet", String(k.notMapped)),
+      h("ul", { class: "list" }, c.kind === "canvas" ? kv("Canvas students with a SIS ID", String(k.canvasStudents))
+          : [kv("Students found", String(k.studentsFetched)), kv("At schools not linked yet", String(k.notMapped))],
         Object.entries(reasons).map(([r, n]) => kv(`Skipped: ${REJECT_TEXT[r] || r}`, String(n)))),
       k.rosters ? h("section", { class: "stack", "aria-label": "Class rosters" }, h("h3", {}, "Class rosters"),
         h("ul", { class: "list" }, kv("Classes found", String(k.rosters.sectionsFetched)), kv("Teacher–student links", String(k.rosters.rosterLinks)),
@@ -2422,13 +2427,13 @@ VIEWS.integrations = async () => {
             toast(result.data.canvasTokenRevoked === false ? "Scopes saved; revoke the developer key in Canvas because token revocation could not be confirmed." : "Scopes saved. A second district lead must approve again."); reload();
           } catch { toast("Could not save Canvas scopes."); }
         } }, "Change scopes") : null,
-        c.kind !== "canvas" ? h("button", { class: "btn small", type: "button", onclick: async () => {
+        h("button", { class: "btn small", type: "button", onclick: async () => {
           const on = c.dataScope?.includes("class_rosters");
           if (!await ask({ title: on ? "Stop importing class rosters?" : "Also import class rosters?", text: on
             ? "Rosters it already created stay until you remove them. It needs approval again."
             : "Teachers, classes and enrollments become teacher rosters, which decide which students each teacher can see. Teachers are matched to existing EduOS teachers by email; no accounts are created. It needs approval again.", confirm: on ? "Stop" : "Turn on" })) return;
           try { await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { classRosters: !on }); toast("Saved. It needs approval again."); reload(); } catch { toast("Couldn't save."); } } },
-          c.dataScope?.includes("class_rosters") ? "Stop class rosters" : "Add class rosters") : null,
+          c.dataScope?.includes("class_rosters") ? "Stop class rosters" : "Add class rosters"),
         c.status !== "disabled" ? h("button", { class: "btn small", type: "button", onclick: async () => {
           try { const result = await api.post(`/api/integrations/connectors/${c.id}/disable`, {});
             toast(c.kind === "canvas" && result.data.canvasTokenRevoked === false ? "Turned off locally; disable the Canvas developer key to revoke access." : "Turned off.");
@@ -2452,15 +2457,18 @@ VIEWS.integrations = async () => {
   const setHint = () => {
     base.el.placeholder = kind.value === "canvas" ? "https://district.instructure.com" : kind.value === "edfi" ? "https://edfi.district.org/api/data" : kind.value === "powerschool" ? "https://district.powerschool.com" : "https://sis.district.org/ims/oneroster/rostering/v1p2";
     token.el.placeholder = kind.value === "canvas" ? "https://district.instructure.com/login/oauth2/token" : kind.value === "edfi" ? "https://edfi.district.org/oauth/token" : kind.value === "powerschool" ? "https://district.powerschool.com/oauth/access_token/" : "https://sis.district.org/oauth/token";
-    scope.el.placeholder = kind.value === "canvas" ? "url:GET|/api/v1/courses url:GET|/api/v1/courses/:course_id/enrollments" : "Optional vendor-specific scope";
-    hint.textContent = kind.value === "canvas" ? "Enter the Canvas tenant origin only and its matching /login/oauth2/token URL. Use the institution-issued Canvas developer key ID and secret. Supply only approved read-only url:GET|/api/v1/... endpoint scopes, and configure the developer key to enforce scopes. A second district lead must approve the connector before an administrator can authorize it. API data sync is not enabled in this phase." : kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : kind.value === "powerschool" ? "Use the district SIS origin and the OAuth token URL for its installed API plugin. EduOS reads district schools and each school’s students only; verify the plugin’s GET permissions and response contract with the district before enabling." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
-    rostersRow.hidden = kind.value === "canvas"; // Canvas course rosters come with CANVAS-API-02
+    scope.el.placeholder = kind.value === "canvas" ? "url:GET|/api/v1/accounts url:GET|/api/v1/accounts/:account_id/sub_accounts url:GET|/api/v1/accounts/:account_id/courses url:GET|/api/v1/courses/:course_id/enrollments" : "Optional vendor-specific scope";
+    hint.textContent = kind.value === "canvas" ? "Enter the Canvas tenant origin only and its matching /login/oauth2/token URL. Use the institution-issued Canvas developer key ID and secret. Required read-only scopes: url:GET|/api/v1/accounts, url:GET|/api/v1/accounts/:account_id/sub_accounts, url:GET|/api/v1/accounts/:account_id/courses, and url:GET|/api/v1/courses/:course_id/enrollments. Configure the developer key to enforce these scopes. A second district lead must approve the connector before an administrator can authorize it. After approval and OAuth consent, preview the school mapping and roster changes before applying; Canvas never creates or changes students." : kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : kind.value === "powerschool" ? "Use the district SIS origin and the OAuth token URL for its installed API plugin. EduOS reads district schools and each school’s students only; verify the plugin’s GET permissions and response contract with the district before enabling." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
+    rostersText.textContent = kind.value === "canvas"
+      ? "Read Canvas courses and enrollments into teacher rosters (read-only; students are matched by SIS ID, teachers by email; nobody is created)."
+      : "Also import class rosters (teachers, classes and enrollments). Teachers are matched to existing EduOS teachers; no accounts are created.";
   };
-  const rostersRow = h("label", { for: rostersBox.id, class: "row" }, rostersBox, h("span", {}, "Also import class rosters (teachers, classes and enrollments). Teachers are matched to existing EduOS teachers; no accounts are created."));
+  const rostersText = h("span", {});
+  const rostersRow = h("label", { for: rostersBox.id, class: "row" }, rostersBox, rostersText);
   kind.addEventListener("change", setHint); setHint();
   out.push(h("section", { class: "card", "aria-label": "Add a data link" }, h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
       try { await api.post("/api/integrations/connectors", { kind: kind.value, name: name.el.value, baseUrl: base.el.value, tokenUrl: token.el.value, clientId: cid.el.value, clientSecret: secret.el.value, scope: scope.el.value || null,
-        ...(kind.value === "canvas" ? {} : { classRosters: rostersBox.checked }) });
+        classRosters: rostersBox.checked });
         toast("Added. Another district lead needs to approve it."); reload(); }
       catch (e2) { toast(e2.body?.error === "invalid_connector" ? `Check the ${e2.body.field}.` : e2.body?.error === "connector_name_taken" ? "That name is taken." : "Couldn't add it."); } } },
     h("h2", {}, "Add a data link"), h("label", { for: kind.id }, "Type"), kind, hint,

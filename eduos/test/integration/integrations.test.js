@@ -95,9 +95,33 @@ function fakeServer() {
 
 
 function fakeCanvasOAuth() {
-  const seen = [];
+  const seen = [], api = [], ctl = {};
   const srv = http.createServer(async (req, res) => {
-    const send = (status, body) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    const send = (status, body, headers = {}) => { res.writeHead(status, { "content-type": "application/json", ...headers }); res.end(JSON.stringify(body)); };
+    // CANVAS-API-02: a small read-only Canvas REST API.
+    if (req.url.startsWith("/api/v1/")) {
+      const u = new URL(req.url, "http://x");
+      api.push({ method: req.method, path: u.pathname, auth: req.headers.authorization });
+      if (!/^Bearer canvas-access-/.test(req.headers.authorization || "")) return send(401, { errors: [{ message: "Invalid access token." }] });
+      if (req.method !== "GET") return send(405, {});
+      const page = (list, size = 2) => {
+        const n = Number(u.searchParams.get("page") || 1), slice = list.slice((n - 1) * size, n * size);
+        const next = n * size < list.length ? new URL(req.url, `http://127.0.0.1:${srv.address().port}`) : null;
+        if (next) next.searchParams.set("page", String(n + 1));
+        return send(200, slice, next ? { link: `<${next}>; rel="next"` } : {});
+      };
+      if (u.pathname === "/api/v1/accounts") return page([{ id: "1", name: "District" }]);
+      if (u.pathname === "/api/v1/accounts/1/sub_accounts") return page([{ id: "20", name: "Lincoln High" }, { id: "21", name: "Elsewhere" }]);
+      if (u.pathname === "/api/v1/accounts/20/courses") return page([{ id: "500", name: "Algebra I", workflow_state: "available" }, { id: "501", name: "Last year", workflow_state: "completed" }]);
+      if (u.pathname === "/api/v1/courses/500/enrollments") return page(ctl.enrollments ?? [
+        { type: "TeacherEnrollment", user_id: "7", enrollment_state: "active", user: { name: "T One", login_id: "T1@d1.test" } },
+        { type: "StudentEnrollment", user_id: "40", enrollment_state: "active", user: { name: "Alice", sis_user_id: "S1-A" } },
+        { type: "StudentEnrollment", user_id: "41", enrollment_state: "active", user: { name: "Bob", sis_user_id: "S1-B" } },
+        { type: "StudentEnrollment", user_id: "42", enrollment_state: "active", user: { name: "No SIS" } },
+        { type: "StudentEnrollment", user_id: "43", enrollment_state: "active", user: { name: "Unknown", sis_user_id: "S-404" } },
+        { type: "ObserverEnrollment", user_id: "44", enrollment_state: "active", user: { name: "Parent", sis_user_id: "P-1" } }]);
+      return send(404, {});
+    }
     if (req.url !== "/login/oauth2/token") return send(404, {});
     if (req.method === "DELETE") { seen.push({ grant_type: "revoke", authorization: req.headers.authorization }); return send(200, {}); }
     if (req.method !== "POST") return send(405, {});
@@ -115,7 +139,7 @@ function fakeCanvasOAuth() {
     return send(400, { error: "invalid_grant" });
   });
   return new Promise(resolve => srv.listen(0, "127.0.0.1", () =>
-    resolve({ base: `http://127.0.0.1:${srv.address().port}`, seen, close: () => new Promise(done => srv.close(done)) })));
+    resolve({ base: `http://127.0.0.1:${srv.address().port}`, seen, api, ctl, close: () => new Promise(done => srv.close(done)) })));
 }
 
 describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () => {
@@ -458,16 +482,14 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       const id = added.body.data.id;
       assert.equal((await as("supt1")("POST", `/api/integrations/connectors/${id}/approve`)).body.error, "approver_must_differ");
       assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${id}/approve`)).status, 200);
-      const rosters = await as("supt1")("PATCH", `/api/integrations/connectors/${id}`, { classRosters: true });
-      assert.deepEqual([rosters.status, rosters.body.field], [400, "classRosters"], "SIS class rosters can't be switched on for Canvas");
       const writeScope = await as("supt1")("PATCH", `/api/integrations/connectors/${id}`, { scope: "url:POST|/api/v1/courses" });
       assert.equal(writeScope.status,400,"Canvas connector rejects write scopes");
       const scheduleAttempt = await as("supt1")("PUT", `/api/integrations/connectors/${id}/schedule`, { intervalMinutes: 60 });
       assert.equal(scheduleAttempt.status,409);
-      assert.equal(scheduleAttempt.body.error,"canvas_sync_not_enabled");
+      assert.equal(scheduleAttempt.body.error,"canvas_scheduled_sync_not_supported");
       const syncAttempt = await as("supt1")("POST", `/api/integrations/connectors/${id}/sync`, { mode: "preview" });
       assert.equal(syncAttempt.status,409);
-      assert.equal(syncAttempt.body.error,"canvas_sync_not_enabled");
+      assert.equal(syncAttempt.body.error,"canvas_class_rosters_not_approved","reading courses needs its own approved data scope");
 
       const started = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
       assert.equal(started.status, 200, JSON.stringify(started.body));
@@ -564,6 +586,83 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       });
       assert.equal(replay.status, 400, "consumed OAuth state cannot be replayed");
 
+    } finally { await canvasFake.close(); }
+  });
+
+  it("CANVAS-API-02: Canvas courses and enrollments become teacher rosters, read-only, after approval", async () => {
+    const canvasFake = await fakeCanvasOAuth();
+    const authorize = async id => {
+      const started = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
+      assert.equal(started.status, 200, JSON.stringify(started.body));
+      const state = new URL(started.body.data.authorizationUrl).searchParams.get("state");
+      const cookie = (started.headers.get("set-cookie") || "").match(/(eduos_canvas_state_[^=]+=[^;,]+)/)[1];
+      const cb = await fetch(`${server.base}/api/integrations/canvas/callback?code=c&state=${encodeURIComponent(state)}`, { headers: { cookie: `${s.supt1.cookie}; ${cookie}` }, redirect: "manual" });
+      assert.equal(cb.status, 303, await cb.text());
+    };
+    const rosterOf = async id => (await admin.query(`SELECT u.email, st.local_student_number AS num, (r.source_connector_id=$2) AS canvas
+        FROM teacher_student_rosters r JOIN users u ON u.id=r.teacher_user_id JOIN students st ON st.id=r.student_id
+       WHERE r.district_id=$1 AND u.email='t1@d1.test' ORDER BY 2`, [ID.d1, id])).rows.map(r => `${r.num}:${r.canvas ? "canvas" : "other"}`);
+    // Syncs run as the second superintendent: the sync route allows 20 runs a minute per
+    // user, and earlier tests in this file use supt1's.
+    try {
+      // Start from just the hand-entered t1:S1-A link (earlier tests' SIS links removed).
+      await admin.query("DELETE FROM teacher_student_rosters WHERE district_id=$1 AND source_connector_id IS NOT NULL", [ID.d1]);
+      await admin.query(`INSERT INTO teacher_student_rosters(district_id,school_id,teacher_user_id,student_id,created_by)
+        SELECT $1,$2,$3,st.id,$4 FROM students st WHERE st.district_id=$1 AND st.local_student_number='S1-A' ON CONFLICT DO NOTHING`, [ID.d1, ID.s1, USERS.t1[0], USERS.p1[0]]);
+      const studentsBefore = (await admin.query("SELECT count(*)::int AS n FROM students")).rows[0].n;
+      const scope = "url:GET|/api/v1/accounts url:GET|/api/v1/accounts/:account_id/sub_accounts url:GET|/api/v1/accounts/:account_id/courses url:GET|/api/v1/courses/:course_id/enrollments";
+      const c = (await as("supt1")("POST", "/api/integrations/connectors", { kind: "canvas", name: "Canvas courses", baseUrl: canvasFake.base,
+        tokenUrl: `${canvasFake.base}/login/oauth2/token`, clientId: "canvas-client", clientSecret: "canvas-secret", scope })).body.data;
+      assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/approve`)).status, 200);
+      await authorize(c.id);
+      // Approved and connected, but nobody approved reading courses yet.
+      assert.equal((await sync("supt1b", c.id, "preview")).body.error, "canvas_class_rosters_not_approved");
+      // Turning it on is a configuration change: tokens are dropped, and it needs approval and consent again.
+      const on = await as("supt1")("PATCH", `/api/integrations/connectors/${c.id}`, { classRosters: true });
+      assert.equal(on.status, 200, JSON.stringify(on.body));
+      assert.deepEqual(on.body.data.dataScope, ["students", "class_rosters"]);
+      assert.equal((await sync("supt1b", c.id, "preview")).body.error, "connector_not_approved");
+      assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/approve`)).status, 200);
+      assert.equal((await sync("supt1b", c.id, "preview")).body.error, "canvas_authorization_required", "consent was revoked with the change");
+      await authorize(c.id);
+
+      // Nothing mapped yet: the preview lists Canvas sub-accounts to map.
+      const first = await sync("supt1b", c.id, "preview");
+      assert.equal(first.status, 200, JSON.stringify(first.body));
+      assert.deepEqual(first.body.data.externalSchools.map(x => `${x.externalId}:${x.name}`), ["1:District", "20:Lincoln High", "21:Elsewhere"]);
+      assert.equal(first.body.data.counts.rosters.sectionsFetched, 0);
+      await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/school-map`, { mappings: [{ externalId: "20", schoolId: ID.s1 }] });
+      assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/approve`)).status, 200);
+
+      const p = await sync("supt1b", c.id, "preview");
+      assert.equal(p.status, 200, JSON.stringify(p.body));
+      assert.deepEqual(await rosterOf(c.id), ["S1-A:other"], "a preview changes nothing");
+      const r = p.body.data.counts.rosters;
+      assert.deepEqual([r.sectionsFetched, r.toAdd, r.keptManual, r.teachersUnmatched], [1, 1, 1, 0], `Algebra I only; Bob added, Alice already on a hand-entered roster: ${JSON.stringify(p.body.data)}`);
+      assert.deepEqual(p.body.data.rejected.map(x => `${x.externalId}:${x.reason}`).sort(), ["42:no_sis_user_id", "43:no_matching_eduos_student"]);
+      assert.ok(canvasFake.api.some(x => x.path === "/api/v1/courses/500/enrollments"), "enrollments were paged");
+      assert.ok(canvasFake.api.filter(x => x.path === "/api/v1/courses/500/enrollments").length >= 3, "three pages of two");
+      assert.ok(!canvasFake.api.some(x => x.path.includes("/courses/501/")), "completed courses aren't read");
+
+      const a = await sync("supt1b", c.id, "apply");
+      assert.equal(a.status, 200, JSON.stringify(a.body));
+      assert.deepEqual(await rosterOf(c.id), ["S1-A:other", "S1-B:canvas"]);
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM students")).rows[0].n, studentsBefore, "Canvas never creates students");
+
+      // Bob leaves the course: only the Canvas link goes.
+      canvasFake.ctl.enrollments = [{ type: "TeacherEnrollment", user_id: "7", user: { login_id: "t1@d1.test" } },
+        { type: "StudentEnrollment", user_id: "40", user: { sis_user_id: "S1-A" } }];
+      assert.equal((await sync("supt1b", c.id, "apply")).body.data.counts.rosters.toRemove, 1);
+      assert.deepEqual(await rosterOf(c.id), ["S1-A:other"]);
+      // Canvas returns no enrollments at all: refuse rather than empty the rosters.
+      canvasFake.ctl.enrollments = [{ type: "StudentEnrollment", user_id: "41", user: { sis_user_id: "S1-B" } }];
+      await sync("supt1b", c.id, "apply");
+      assert.deepEqual(await rosterOf(c.id), ["S1-A:other"], "no teacher matched: nothing to link");
+
+      assert.equal((await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/schedule`, { intervalMinutes: 60 })).body.error, "canvas_scheduled_sync_not_supported");
+      assert.ok(canvasFake.api.length > 0 && canvasFake.api.every(x => x.method === "GET"), "nothing is ever written to Canvas");
+      const runs = (await admin.query("SELECT mode, status FROM integration_sync_runs WHERE connector_id=$1 ORDER BY started_at", [c.id])).rows;
+      assert.ok(runs.some(x => x.mode === "apply" && x.status === "completed"));
     } finally { await canvasFake.close(); }
   });
 

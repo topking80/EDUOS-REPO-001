@@ -183,7 +183,45 @@ Invalid or revoked refresh grants require the district administrator to reconnec
 Changing Canvas connector credentials or disabling the connector deletes the
 previous grant and pending authorization state. Disconnecting in EduOS attempts Canvas's token DELETE endpoint, deletes the locally stored tokens and pending authorization state, and returns the connector to pending approval. A different district lead must approve it before reconnecting. The district should also revoke or disable the developer key in Canvas when full application revocation is required.
 
-**CANVAS-API-01 scope:** OAuth connection, token storage, status and local
-disconnect only. Course, enrollment and grade synchronization are not enabled
-by this phase. The existing roster sync endpoint explicitly refuses Canvas
-connectors until the read-only Canvas adapter is implemented and reviewed.
+### Canvas courses and enrollments (CANVAS-API-02)
+
+A Canvas connector can turn Canvas courses into EduOS teacher rosters. It is
+read-only: nothing is written to Canvas, and **no student is created or
+changed in EduOS**. The SIS stays the student system of record.
+
+1. Add the Canvas connector with **class rosters** switched on (or switch it on
+   later; that drops the Canvas tokens and needs approval and consent again).
+   The developer key needs these scopes:
+   `url:GET|/api/v1/accounts`, `url:GET|/api/v1/accounts/:account_id/sub_accounts`,
+   `url:GET|/api/v1/accounts/:account_id/courses`,
+   `url:GET|/api/v1/courses/:course_id/enrollments`.
+2. A second district lead approves, then the district administrator connects
+   Canvas (OAuth consent).
+3. **Preview** lists the Canvas sub-accounts. Map each to an EduOS school; the
+   mapping needs approval like any other.
+4. **Preview** again shows the rosters it would add and remove, then **Apply**.
+
+Matching:
+
+- **Courses:** available courses in each mapped sub-account (and below it).
+  Completed or deleted courses are ignored.
+- **Students:** only by Canvas **SIS user ID** equal to an EduOS student
+  number at the same school. Students without a SIS ID, or with no matching
+  EduOS student, are listed as skipped, never created.
+- **Teachers:** teacher enrollments only (not TAs or observers), matched to the
+  one EduOS teacher at that school whose email equals their Canvas login ID or
+  email, or to the teacher a district lead picked by hand.
+- **Observers** (parents) are never read into rosters.
+
+The SIS-04 rules apply: only roster links this connector created are added or
+removed, hand-entered links are never touched, and a run where Canvas returns
+no enrollments for the mapped courses refuses to empty the rosters. Pages
+follow Canvas's `Link` header only on the same origin, with caps on pages,
+courses (5,000) and enrollments (250,000). Canvas throttling gets one short
+retry.
+
+Canvas syncs run by hand for now. A scheduled Canvas sync would need the OAuth
+grant outside a user's session, so schedules are refused
+(`canvas_scheduled_sync_not_supported`).
+
+Grades are not read (CANVAS-API-03).

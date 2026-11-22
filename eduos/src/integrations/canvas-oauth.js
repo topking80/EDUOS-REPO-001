@@ -88,6 +88,9 @@ export async function getCanvasAccessToken(actor, connectorId) {
            refresh_lease_until=now()+interval '30 seconds'
           WHERE district_id=$1 AND connector_id=$2
             AND (refresh_lease_until IS NULL OR refresh_lease_until<=now())
+            -- Re-checked under the row lock: another request may have refreshed
+            -- (and released its lease) since this one read the expired token.
+            AND expires_at<=now()+interval '60 seconds'
           RETURNING refresh_token_enc`,
         [actor.districtId,connectorId,leaseToken]);
       if (!leased) return { waiting: true };
