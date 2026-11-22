@@ -26,6 +26,8 @@ function svg(tag, attrs = {}, ...kids) {
 }
 const ICONS = {
   apps: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6",
+  more: "M5 12h.01M12 12h.01M19 12h.01",
+  chevron: "M9 6l6 6-6 6",
   home: "M3 11l9-8 9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z",
   chat: "M4 4h16v12H8l-4 4z",
   path: "M5 19c0-6 14-4 14-10a4 4 0 0 0-8 0M5 19h4M12 5h0",
@@ -167,15 +169,44 @@ function renderTop() {
   for (const n of [...top.childNodes]) if (n.nodeType === Node.TEXT_NODE) n.remove(); // replaceChildren() turns a null slot into "null"
 }
 const tabsFor = () => ROLE_TABS[state.me?.role] || [];
+// UI-03: on a phone the bar shows at most five items: the role's four everyday
+// tabs, then "More" for the rest. The desktop rail still lists every tab.
+const PHONE_TABS = {
+  pupil: ["home", "courses", "christie", "library"],
+  teacher: ["classes", "grading", "courses", "messages"],
+  parent: ["children", "pickup", "messages", "alerts"],
+  vice_principal: ["operations", "attendance", "safety", "messages"],
+  principal: ["overview", "history", "messages", "alerts"],
+  superintendent: ["overview", "apps", "alerts", "integrations"]
+};
+// Short names where the full one doesn't fit a phone tab (the full name stays the accessible name).
+const PHONE_LABEL = { history: "History", capsules: "Capsules", activities: "Clubs", contributions: "Items", integrations: "Data", library: "Library" };
+function phoneSplit() {
+  const all = tabsFor();
+  if (all.length <= 5) return { main: all, extra: [] };
+  const pick = PHONE_TABS[state.me?.role] || all.slice(0, 4).map(t => t[0]);
+  return { main: all.filter(t => pick.includes(t[0])), extra: all.filter(t => !pick.includes(t[0])) };
+}
 function renderTabs() {
   const nav = document.getElementById("tabs");
   const cur = parentTab(state.tab);
-  nav.replaceChildren(...tabsFor().map(([id, label, ic]) => h("a", { href: `#/${id}`, "aria-current": cur === id ? "page" : false }, icon(ic), h("span", {}, label))));
+  const { extra } = phoneSplit();
+  const inMore = cur === "more" || extra.some(t => t[0] === cur);
+  nav.replaceChildren(...tabsFor().map(([id, label, ic]) => h("a", { href: `#/${id}`, class: extra.some(t => t[0] === id) ? "phone-extra" : false, "aria-current": cur === id ? "page" : false }, icon(ic),
+      PHONE_LABEL[id] ? [h("span", { class: "full" }, label), h("span", { class: "short", "aria-hidden": "true" }, PHONE_LABEL[id])] : h("span", {}, label))),
+    extra.length ? h("a", { href: "#/more", class: "phone-more", "aria-current": inMore ? "page" : false }, icon("more"), h("span", {}, "More")) : null);
+  for (const n of [...nav.childNodes]) if (n.nodeType === Node.TEXT_NODE) n.remove();
   // When the bar scrolls (many tabs on a narrow screen), keep the current tab in view.
   nav.querySelector('[aria-current="page"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
 }
 
 const VIEWS = {};
+VIEWS.more = () => {
+  const { extra } = phoneSplit(), list = extra.length ? extra : tabsFor();
+  return h("section", { class: "card" }, h("h2", {}, "More"),
+    h("ul", { class: "morelist" }, [...list, ["me", "Account", "me"]].map(([id, label, ic]) =>
+      h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
+};
 // 32.6.0: screens opened from a tab keep that tab highlighted.
 const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule"];
 function parentTab(tab) {
@@ -2833,8 +2864,12 @@ for (const view of ["home", "classes", "children"]) {
   VIEWS[view] = async () => {
     const [out, card] = await Promise.all([inner(), appsCard()]);
     if (!card) return out;
-    const arr = Array.isArray(out) ? [...out] : [out];
-    arr.splice(Math.min(1, arr.length), 0, card);
+    const arr = (Array.isArray(out) ? [...out] : [out]).filter(Boolean);
+    // UI-03: a pupil sees apps right after "up next"; a teacher's class numbers and
+    // action centre come first; a family's children come first.
+    const after = Math.max(...["stats", "action-center"].map(c => arr.findIndex(n => n?.classList?.contains(c))));
+    const at = view === "home" ? 1 : view === "classes" && after >= 0 ? after + 1 : arr.length;
+    arr.splice(Math.min(at, arr.length), 0, card);
     return arr;
   };
 }
@@ -3657,7 +3692,7 @@ async function boot() {
   if (ret && /^[0-9a-f-]{36}$/i.test(ret)) state.cmReturn = { id: ret, cancelled: qs.get("commerce_cancel") === "1" };
   if (ret) history.replaceState(history.state, "", location.pathname + location.hash);
   if (liveIncidents().length) return go("safety", { push: false }); // opening the app during an alert always shows it first
-  go(tabsFor().some(t => t[0] === want) || ["me", "sos", "safety", "pickup", ...SUBVIEWS].includes(want) ? want : tabsFor()[0][0], { push: false });
+  go(tabsFor().some(t => t[0] === want) || ["me", "more", "sos", "safety", "pickup", ...SUBVIEWS].includes(want) ? want : tabsFor()[0][0], { push: false });
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkSafety(); });
 window.addEventListener("popstate", () => { const t = location.hash.replace(/^#\//, ""); if (state.me && t) go(t, { push: false }); });

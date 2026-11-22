@@ -176,11 +176,34 @@ html:not([data-eduos-mode="demo"]) .eduos-demo-only{display:none}
   #eduos-api-data .api-launcher.young{grid-template-columns:1fr 1fr}
   #eduos-api-data .api-big{min-width:0;width:100%}
 }
+/* UI-03: on a phone the header is one line (school, sign-in state, Menu); the actions open under it. */
+#eduos-api-menu{display:none}
+@media(max-width:640px){
+  #eduos-api-bridge{flex-wrap:wrap;gap:8px;padding:8px 12px}
+  #eduos-api-bridge>.api-left:first-child{flex:1 1 auto;min-width:0;gap:8px;flex-wrap:nowrap}
+  #eduos-api-bridge>.api-left:first-child>b,#eduos-api-actor{display:none}
+  #eduos-api-menu{display:inline-block;margin-left:auto}
+  #eduos-api-bridge .api-pill{white-space:nowrap;font-size:10px;padding:3px 8px}
+  #eduos-api-bridge .eb-brand-chip{min-width:0;overflow:hidden}
+  #eduos-api-bridge .eb-brand-chip span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  #eduos-api-bridge .eb-brand-chip small{display:none}
+  #eduos-api-bridge>.api-left:nth-child(2){display:none;width:100%}
+  #eduos-api-bridge.menu-open>.api-left:nth-child(2){display:flex}
+  #eduos-api-bridge>.api-left:nth-child(2)>*{flex:1 1 auto;text-align:center}
+  #eduos-api-data .eb-banner{padding:10px 12px;gap:10px}
+  #eduos-api-data .eb-banner img{width:44px;height:44px;border-radius:12px}
+  #eduos-api-data .eb-banner .api-hello{font-size:19px;line-height:1.25}
+  #eduos-api-data .eb-banner p{font-size:12px}
+}
 @media(prefers-reduced-motion:reduce){#eduos-api-data *{transition:none!important}}`;
     document.head.appendChild(css);
     const bar=document.createElement("div");bar.id="eduos-api-bridge";bar.innerHTML=`
 <div class="api-left"><b>EduOS Connected Services</b><span id="eduos-api-state" class="api-pill">Checking session…</span><span id="eduos-api-actor">Local demonstration workspace</span></div>
 <div class="api-left"><button id="eduos-api-connect" class="primary">District sign-in</button><button id="eduos-api-refresh" disabled>Refresh records</button><a id="eduos-api-app" class="api-linkbtn" href="/app/">EduOS app</a><button id="eduos-api-logout" hidden>Sign out</button><select id="eduos-api-membership" hidden aria-label="Switch role or school"></select><button id="eduos-api-toggle">Server workspace</button></div>`;
+    const menu=document.createElement("button");menu.id="eduos-api-menu";menu.type="button";menu.textContent="Menu";
+    menu.setAttribute("aria-expanded","false");menu.setAttribute("aria-controls","eduos-api-actions");
+    bar.children[1].id="eduos-api-actions";bar.children[0].appendChild(menu);
+    menu.onclick=()=>menu.setAttribute("aria-expanded",String(bar.classList.toggle("menu-open")));
     document.body.prepend(bar);
     const panel=document.createElement("section");panel.id="eduos-api-data";panel.innerHTML=`<h1 class="api-title">EduOS workspace</h1><div id="eduos-api-content" aria-live="polite">Sign in to load authorized records.</div><div class="api-muted">Server permissions come from the authenticated account.<span class="eduos-demo-only"> The legacy persona selector below is a synthetic demo and does not grant server access.</span></div>`;
     bar.insertAdjacentElement("afterend",panel);

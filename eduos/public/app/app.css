@@ -101,6 +101,20 @@ textarea { min-height: 88px; resize: vertical; }
 .tabs a svg { width: 24px; height: 24px; }
 .tabs a[aria-current="page"] { color: var(--accent); }
 .tabs a[aria-current="page"]::before { content: ""; position: absolute; top: -6px; width: 28px; height: 3px; border-radius: 3px; background: var(--accent); }
+/* UI-03: five items at most on a phone (four tabs + More); labels stay on one line. */
+.tabs a span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; padding: 0 2px; }
+@media (max-width: 1023.98px) {
+  .tabs { overflow-x: visible; }
+  .tabs a { flex: 1 1 0; min-width: 0; }
+  .tabs a.phone-extra { display: none; }
+  .tabs a span.full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+@media (min-width: 1024px) { .tabs a span.short { display: none; } }
+.morelist { list-style: none; margin: 0; padding: 0; }
+.morelist li + li { border-top: 1px solid var(--line); }
+.morelist a { display: flex; align-items: center; gap: 14px; min-height: 52px; color: var(--text); text-decoration: none; font-weight: 600; }
+.morelist a svg { width: 22px; height: 22px; flex: none; color: var(--muted); }
+.morelist a span { flex: 1; }
 
 /* mastery ring */
 .ring { position: relative; width: 128px; height: 128px; flex: none; }
@@ -287,6 +301,7 @@ code.token { display: block; margin-top: 6px; padding: 8px; word-break: break-al
   .tabs a svg { width: 20px; height: 20px; flex: none; }
   .tabs a[aria-current="page"] { background: var(--surface-2); }
   .tabs a[aria-current="page"]::before { top: 10px; bottom: 10px; left: 0; width: 3px; height: auto; }
+  .tabs a.phone-more { display: none; }
   .top { position: sticky; z-index: 25; margin-left: -232px; padding-left: calc(232px + 16px); }
   main { max-width: 960px; padding: 8px 32px 40px; }
 }
