@@ -20,7 +20,10 @@ import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { pageOf, pageSql, paged } from "./paging.js";
 import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig, ltiConfigFingerprint,
-  newBrowserBinding, browserBindingMatches, bindingCookieName, AUTO_SUBMIT_SCRIPT, AUTO_SUBMIT_SCRIPT_HASH } from "./lti.js";
+  newBrowserBinding, browserBindingMatches, bindingCookieName, AUTO_SUBMIT_SCRIPT, AUTO_SUBMIT_SCRIPT_HASH,
+  DEEP_LINK_TTL_MS, decodeJwt, verifyToolJwt, acceptContentItems } from "./lti.js";
+import { request as outboundRequest } from "./integrations/http.js";
+import crypto from "node:crypto";
 import { getCookie, serialize as serializeCookie } from "./cookies.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -85,7 +88,8 @@ async function learnerContext(client, actor) {
 
 const AVAILABLE_SQL = `
   SELECT a.id,a.name,a.vendor,a.description,a.category,a.launch_url,a.integration_type,a.data_sharing_scope,
-         a.dpa_status,a.coppa_compliant,a.owner_school_id,a.lti_registration_status,a.lti_approved_config_hash,lic.id AS license_id,lic.seat_limit,lic.ends_on
+         a.dpa_status,a.coppa_compliant,a.owner_school_id,a.lti_registration_status,a.lti_approved_config_hash,lic.id AS license_id,lic.seat_limit,lic.ends_on,
+         (a.integration_type='lti13' AND a.integration_config ? 'deepLinkingUrl') AS deep_linking
     FROM apps a
     JOIN LATERAL (
       SELECT l.id,l.seat_limit,l.ends_on FROM app_licenses l
@@ -500,7 +504,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
       const { ctx, rows } = await withTenantTransaction(req.actor, client => availableApps(client, req.actor));
       res.setHeader("Cache-Control", "no-store");
       res.json({ data: rows.map(r => ({ id: r.id, name: r.name, vendor: r.vendor, description: r.description, category: r.category,
-        integrationType: r.integration_type, dataSharingScope: r.data_sharing_scope, coppaCompliant: r.coppa_compliant })),
+        integrationType: r.integration_type, deepLinking: Boolean(r.deep_linking), dataSharingScope: r.data_sharing_scope, coppaCompliant: r.coppa_compliant })),
         learner: { youngestGrade: ctx.youngest, youngLearner: ctx.youngest !== null && ctx.youngest <= YOUNG_LEARNER_MAX_GRADE } });
     } catch (e) { next(e); }
   });
@@ -518,6 +522,13 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           : null;
         if (a.integration_type === "lti13" && !validLtiConfig(cfg.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
         if (a.integration_type === "lti13" && (cfg.lti_registration_status !== "approved" || cfg.lti_approved_config_hash !== ltiConfigFingerprint(cfg.integration_config, a.data_sharing_scope))) return fail(409, "lti_approval_required");
+        // LTI-02: open a link a teacher placed on an assignment (visible to this user by RLS).
+        const contentLinkId = req.body?.contentLinkId ?? null;
+        if (contentLinkId !== null) {
+          if (a.integration_type !== "lti13" || !validId(contentLinkId)) return fail(400, "invalid_content_link");
+          const link = await client.query("SELECT id FROM lti_content_links WHERE id=$1 AND app_id=$2", [contentLinkId, a.id]);
+          if (!link.rowCount) return fail(404, "content_not_available");
+        }
         const seat = (await client.query("SELECT eduos_claim_seat($1) AS r", [a.license_id])).rows[0].r;
         if (seat === "exhausted") return fail(409, "no_seats_available");
         if (seat !== "ok") return fail(409, "license_inactive");
@@ -532,12 +543,52 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         // through the tool must present this cookie (see /lti/authorize).
         const binding = newBrowserBinding();
         res.append("Set-Cookie", serializeCookie(bindingCookieName(launch.rows[0].id), binding.value, ltiBindingCookie(300)));
-        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg, a.data_sharing_scope), v: new Date(cfg.lti_approved_at).toISOString(), b: binding.hash });
+        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg, a.data_sharing_scope), v: new Date(cfg.lti_approved_at).toISOString(), b: binding.hash, ...(contentLinkId ? { k: contentLinkId } : {}) });
         const u = new URL(ltiCfg.loginUrl);
         u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
         u.searchParams.set("target_link_uri", ltiCfg.targetLinkUri); u.searchParams.set("lti_message_hint", hint);
         u.searchParams.set("client_id", ltiCfg.clientId);
         return { status: 200, data: { url: u.href, integrationType: "lti13" } };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      send(res, r);
+    } catch (e) { next(e); }
+  });
+
+  // LTI-02: a teacher opens a tool to choose content for one of their assignments.
+  app.post("/api/apps/:appId/deep-link", requireSession, requireCsrf, requirePermission("apps", "launch"), async (req, res, next) => {
+    if (!validId(req.params.appId) || !validId(req.body?.assignmentId)) return res.status(400).json({ error: "invalid_request" });
+    if (!["teacher", "principal"].includes(req.actor.role)) return res.status(403).json({ error: "deep_linking_teachers_only" });
+    try {
+      const r = await withTenantTransaction(req.actor, async client => {
+        const { rows } = await availableApps(client, req.actor, req.params.appId);
+        if (!rows.length) return fail(403, "app_not_available");
+        const a = rows[0];
+        if (a.integration_type !== "lti13") return fail(409, "not_an_lti_tool");
+        if (!ltiKey) return fail(503, "lti_not_configured");
+        const cfg = (await client.query("SELECT integration_config,lti_registration_status,lti_approved_config_hash,lti_approved_at FROM apps WHERE id=$1", [a.id])).rows[0];
+        if (!validLtiConfig(cfg.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
+        if (cfg.lti_registration_status !== "approved" || cfg.lti_approved_config_hash !== ltiConfigFingerprint(cfg.integration_config, a.data_sharing_scope)) return fail(409, "lti_approval_required");
+        if (!cfg.integration_config.deepLinkingUrl) return fail(409, "deep_linking_not_registered");
+        const can = (await client.query("SELECT eduos_can_manage_assignment($1) AS ok", [req.body.assignmentId])).rows[0];
+        if (!can?.ok) return fail(403, "assignment_not_manageable");
+        const seat = (await client.query("SELECT eduos_claim_seat($1) AS r", [a.license_id])).rows[0].r;
+        if (seat === "exhausted") return fail(409, "no_seats_available");
+        if (seat !== "ok") return fail(409, "license_inactive");
+        const launch = await client.query(
+          `INSERT INTO app_launches(district_id,app_id,license_id,user_id,school_id,role,integration_type,shared_scope)
+           VALUES($1,$2,$3,$4,$5,$6,'lti13',$7) RETURNING id`,
+          [req.actor.districtId, a.id, a.license_id, req.actor.userId, req.actor.schoolId || null, req.actor.role, a.data_sharing_scope]);
+        await audit(client, req, "deep_link_start", "app", a.id, { launchId: launch.rows[0].id, assignmentId: req.body.assignmentId }, req.actor.schoolId || null);
+        const ltiCfg = cfg.integration_config, binding = newBrowserBinding();
+        res.append("Set-Cookie", serializeCookie(bindingCookieName(launch.rows[0].id), binding.value, ltiBindingCookie(300)));
+        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null,
+          c: ltiConfigFingerprint(ltiCfg, a.data_sharing_scope), v: new Date(cfg.lti_approved_at).toISOString(), b: binding.hash, m: "dl", g: req.body.assignmentId });
+        const u = new URL(ltiCfg.loginUrl);
+        u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
+        u.searchParams.set("target_link_uri", ltiCfg.deepLinkingUrl); u.searchParams.set("lti_message_hint", hint);
+        u.searchParams.set("client_id", ltiCfg.clientId);
+        return { status: 200, data: { url: u.href } };
       });
       res.setHeader("Cache-Control", "no-store");
       send(res, r);
@@ -637,13 +688,37 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
         // Claim the launch atomically in the same tenant transaction as the
         // authorization checks. This prevents replay across processes/restarts.
+        // LTI-02: Deep Linking request (teacher choosing content) or a placed content link.
+        let assignment = null, content = null;
+        if (hint.m === "dl") {
+          if (!["teacher", "principal"].includes(launch.role) || !cfg.deepLinkingUrl) return { error: "deep_linking_not_allowed", status: 403 };
+          assignment = (await client.query("SELECT id,title,eduos_can_manage_assignment(id) AS ok FROM assignments WHERE id=$1", [hint.g])).rows[0];
+          if (!assignment?.ok) return { error: "assignment_not_manageable", status: 403 };
+        } else if (hint.k !== undefined) {
+          if (!validId(hint.k)) return { error: "invalid_or_expired_launch", status: 400 };
+          content = (await client.query("SELECT id,title,url,custom FROM lti_content_links WHERE id=$1 AND app_id=$2", [hint.k, app.id])).rows[0];
+          if (!content) return { error: "content_not_available", status: 403 };
+        }
         const consumed = await consumeHintDurably(client, hint.d, hint.l, new Date(hint.exp));
         if (!consumed) return { error: "launch_already_used", status: 409 };
-        return { app, launch, user, school };
+        return { app, launch, user, school, assignment, content };
       });
       if (result.error) return deny(result.status, result.error);
       const ctx = result;
-      const idToken = signJwt(ltiKey, launchClaims({ key: ltiKey, issuer, app: ctx.app, launch: { role: ctx.launch.role, districtId: hint.d }, user: ctx.user, school: ctx.school, nonce: p.nonce }));
+      let deepLinking = null;
+      if (ctx.assignment) {
+        // The data claim comes back inside the tool's signed response: it says
+        // which launch, user and assignment the content is for, and is bound to
+        // this browser and accepted once.
+        const dataId = crypto.randomUUID(), dataBinding = newBrowserBinding();
+        const data = makeHint(ltiKey, { t: "dld", i: dataId, l: hint.l, a: hint.a, u: hint.u, d: hint.d, r: hint.r, s: hint.s ?? null, g: ctx.assignment.id,
+          c: hint.c, v: hint.v, b: dataBinding.hash }, Date.now(), DEEP_LINK_TTL_MS);
+        res.append("Set-Cookie", serializeCookie(`eduos_ltidl_${dataId.replace(/-/g, "")}`, dataBinding.value,
+          { ...ltiBindingCookie(DEEP_LINK_TTL_MS / 1000), path: "/lti/deep-link/return" }));
+        deepLinking = { returnUrl: `${issuer}/lti/deep-link/return`, data, title: `Add to: ${String(ctx.assignment.title).slice(0, 120)}` };
+      }
+      const content = ctx.content ? { id: ctx.content.id, title: ctx.content.title, url: ctx.content.url, custom: ctx.content.custom } : null;
+      const idToken = signJwt(ltiKey, launchClaims({ key: ltiKey, issuer, app: ctx.app, launch: { role: ctx.launch.role, districtId: hint.d }, user: ctx.user, school: ctx.school, nonce: p.nonce, deepLinking, content }));
       const esc = v => String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       const target = new URL(p.redirect_uri);
       res.setHeader("Cache-Control", "no-store");
@@ -697,6 +772,123 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
       return ltiAuthorize(req, res, next);
     });
   });
+  // LTI-02: the tool's Deep Linking response (form POST of a JWT signed by the tool).
+  const jwksCache = new Map(); // jwksUrl -> { keys, until }
+  async function toolJwks(url, { refresh = false } = {}) {
+    const hit = jwksCache.get(url);
+    if (hit && hit.until > Date.now() && !refresh) return hit.keys;
+    const r = await outboundRequest(url, { options: { allowInsecureLoopback: config.nodeEnv !== "production", allowedHosts: config.integrationsAllowedHosts, timeoutMs: 10_000 } });
+    if (r.status !== 200) throw Object.assign(new Error("tool_jwks_unavailable"), { code: "tool_jwks_unavailable" });
+    let keys; try { keys = JSON.parse(r.text); } catch { keys = null; }
+    if (!keys || !Array.isArray(keys.keys) || keys.keys.length > 20) throw Object.assign(new Error("tool_jwks_invalid"), { code: "tool_jwks_invalid" });
+    jwksCache.set(url, { keys, until: Date.now() + 5 * 60_000 });
+    return keys;
+  }
+  const deepLinkPage = (status, heading, lines = []) => (res) => {
+    const esc = v => String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    res.status(status).setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.type("html").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(heading)}</title></head>
+<body><main style="font:16px system-ui;max-width:40rem;margin:2rem auto"><h1 style="font-size:1.25rem">${esc(heading)}</h1>${lines.map(l => `<p>${esc(l)}</p>`).join("")}
+<p>You can close this window and return to EduOS.</p></main></body></html>`);
+  };
+  const expressRawDeepLink = express.raw({ type: "application/x-www-form-urlencoded", limit: "64kb" });
+  app.post("/lti/deep-link/return", (req, res, next) => {
+    if (!req.is("application/x-www-form-urlencoded")) return deepLinkPage(415, "Content wasn't added", ["The tool sent an unsupported response."])(res);
+    expressRawDeepLink(req, res, async error => {
+      if (error) return next(error);
+      const refuse = (code, status = 400) => deepLinkPage(status, "Content wasn't added", [`Reason: ${code.replace(/_/g, " ")}.`])(res);
+      try {
+        if (!ltiKey) return refuse("lti_not_configured", 503);
+        let jwt = null;
+        for (const [k, v] of new URLSearchParams(req.body.toString("utf8"))) { if (k !== "JWT" || jwt !== null) return refuse("invalid_request"); jwt = v; }
+        const decoded = decodeJwt(jwt);
+        const dataClaim = decoded?.payload?.["https://purl.imsglobal.org/spec/lti-dl/claim/data"];
+        const data = typeof dataClaim === "string" ? readHint(ltiKey, dataClaim) : null;
+        if (!data || data.t !== "dld" || !validId(data.i) || !validId(data.d) || !validId(data.u) || !validId(data.a) || !validId(data.g)) return refuse("invalid_or_expired_request");
+        if (!browserBindingMatches(getCookie(req.headers.cookie, `eduos_ltidl_${data.i.replace(/-/g, "")}`), data.b)) return refuse("browser_mismatch", 403);
+        const actor = { districtId: data.d, userId: data.u, role: data.r, schoolId: data.s ?? null };
+        const appRow = await withTenantTransaction(actor, c => c.query(
+          "SELECT id,name,integration_type,integration_config,data_sharing_scope,lti_registration_status,lti_approved_config_hash,lti_approved_at FROM apps WHERE id=$1 AND status='active'", [data.a]));
+        const app_ = appRow.rows[0], cfg = app_?.integration_config;
+        if (!app_ || app_.integration_type !== "lti13" || !validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" }) || !cfg.jwksUrl)
+          return refuse("tool_not_available", 409);
+        const fp = ltiConfigFingerprint(cfg, app_.data_sharing_scope);
+        if (fp !== data.c || app_.lti_registration_status !== "approved" || app_.lti_approved_config_hash !== fp || new Date(app_.lti_approved_at).toISOString() !== data.v)
+          return refuse("tool_approval_changed", 409);
+        let claims;
+        try {
+          try { claims = verifyToolJwt(jwt, await toolJwks(cfg.jwksUrl), { clientId: cfg.clientId, issuer }); }
+          catch (e) { if (e.code !== "jwt_key_not_found") throw e; claims = verifyToolJwt(jwt, await toolJwks(cfg.jwksUrl, { refresh: true }), { clientId: cfg.clientId, issuer }); }
+        } catch (e) { return refuse(e.code || "jwt_invalid", 400); }
+        if (claims["https://purl.imsglobal.org/spec/lti/claim/message_type"] !== "LtiDeepLinkingResponse" ||
+            claims["https://purl.imsglobal.org/spec/lti/claim/version"] !== "1.3.0" ||
+            claims["https://purl.imsglobal.org/spec/lti/claim/deployment_id"] !== cfg.deploymentId ||
+            claims["https://purl.imsglobal.org/spec/lti-dl/claim/data"] !== dataClaim) return refuse("response_claims_invalid");
+        let items;
+        try { items = acceptContentItems(claims["https://purl.imsglobal.org/spec/lti-dl/claim/content_items"], cfg, { allowInsecureLoopback: config.nodeEnv !== "production" }); }
+        catch (e) { return refuse(e.code || "content_items_invalid"); }
+        const outcome = await withTenantTransaction(actor, async client => {
+          const member = await client.query("SELECT 1 FROM memberships WHERE user_id=$1 AND district_id=$2 AND role=$3 AND school_id IS NOT DISTINCT FROM $4::uuid AND status='active'",
+            [data.u, data.d, data.r, data.s ?? null]);
+          if (!member.rowCount) return { error: "membership_inactive" };
+          const asg = (await client.query("SELECT id,title,eduos_can_manage_assignment(id) AS ok FROM assignments WHERE id=$1", [data.g])).rows[0];
+          if (!asg?.ok) return { error: "assignment_not_manageable" };
+          // The tool must still be assigned and licensed for this teacher.
+          if (!(await availableApps(client, actor, data.a)).rows.length) return { error: "app_not_available" };
+          try { await client.query("INSERT INTO lti_deep_link_returns(district_id,data_id,app_id) VALUES($1,$2,$3)", [data.d, data.i, data.a]); }
+          catch (e) { if (e.code === "23505") return { error: "response_already_used" }; throw e; }
+          for (const it of items.accepted)
+            await client.query(`INSERT INTO lti_content_links(district_id,assignment_id,app_id,title,description,url,custom,created_by)
+              VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`, [data.d, asg.id, data.a, it.title, it.text, it.url, JSON.stringify(it.custom), data.u]);
+          await client.query(`INSERT INTO audit_events(district_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,detail,school_id)
+              VALUES($1,$2,$3,'deep_link_return','assignment',$4,'success',$5,$6)`,
+            [data.d, data.u, data.r, asg.id, JSON.stringify({ appId: data.a, added: items.accepted.length, skipped: items.skipped.length,
+              lineItemsIgnored: items.accepted.filter(x => x.lineItemIgnored).length }), data.s ?? null]);
+          return { title: asg.title };
+        });
+        if (outcome.error) return refuse(outcome.error, 409);
+        res.append("Set-Cookie", serializeCookie(`eduos_ltidl_${data.i.replace(/-/g, "")}`, "", { ...ltiBindingCookie(0), path: "/lti/deep-link/return" }));
+        const msg = typeof claims["https://purl.imsglobal.org/spec/lti-dl/claim/msg"] === "string" ? claims["https://purl.imsglobal.org/spec/lti-dl/claim/msg"].slice(0, 300) : null;
+        const lines = [`${items.accepted.length} ${items.accepted.length === 1 ? "activity was" : "activities were"} added to "${outcome.title}".`];
+        if (items.skipped.length) lines.push(`${items.skipped.length} item${items.skipped.length === 1 ? " was" : "s were"} not added (only links to ${app_.name}'s own site are accepted).`);
+        if (items.accepted.some(x => x.lineItemIgnored)) lines.push("Grade passback isn't turned on, so grades from this tool won't come back to EduOS.");
+        if (msg) lines.push(`${app_.name} says: ${msg}`);
+        return deepLinkPage(200, items.accepted.length ? "Added" : "Nothing was added", lines)(res);
+      } catch (e) { next(e); }
+    });
+  });
+
+  // Links on the assignments of one course (or one assignment) that this user can see.
+  app.get("/api/lti/content-links", requireSession, async (req, res, next) => {
+    const { courseId = null, assignmentId = null } = req.query || {};
+    if ((courseId === null) === (assignmentId === null) || (courseId !== null && !validId(courseId)) || (assignmentId !== null && !validId(assignmentId)))
+      return res.status(400).json({ error: "courseId_or_assignmentId_required" });
+    try {
+      const rows = await withTenantTransaction(req.actor, client => client.query(
+        `SELECT l.id,l.assignment_id AS "assignmentId",l.app_id AS "appId",a.name AS "appName",l.title,l.description,l.created_at AS "createdAt",
+                eduos_can_manage_assignment(l.assignment_id) AS "canRemove"
+           FROM lti_content_links l JOIN apps a ON a.id=l.app_id JOIN assignments x ON x.id=l.assignment_id
+          WHERE ($1::uuid IS NULL OR x.course_id=$1::uuid) AND ($2::uuid IS NULL OR l.assignment_id=$2::uuid)
+          ORDER BY l.created_at LIMIT 500`, [courseId, assignmentId]));
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data: rows.rows });
+    } catch (e) { next(e); }
+  });
+  app.delete("/api/lti/content-links/:id", requireSession, requireCsrf, async (req, res, next) => {
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+    try {
+      const r = await withTenantTransaction(req.actor, async client => {
+        const gone = await client.query("DELETE FROM lti_content_links WHERE id=$1 RETURNING assignment_id", [req.params.id]);
+        if (!gone.rowCount) return fail(404, "content_link_not_found");
+        await audit(client, req, "remove_content_link", "assignment", gone.rows[0].assignment_id, { contentLinkId: req.params.id });
+        return { status: 200, data: { removed: true } };
+      });
+      send(res, r);
+    } catch (e) { next(e); }
+  });
+
   app.get("/.well-known/jwks.json", (_req, res) => { res.setHeader("Cache-Control", "public, max-age=300"); res.json(ltiKey ? ltiKey.jwks : { keys: [] }); });
 
   // ---- requests (principal/teacher -> district) ----

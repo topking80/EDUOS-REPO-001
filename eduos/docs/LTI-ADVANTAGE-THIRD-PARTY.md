@@ -56,10 +56,13 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 - Add end-to-end tests against independent LTI 1.3 reference fixtures and more than one standards-conformant tool implementation where available; do not use production student data in test fixtures.
 - Keep provider-specific setup notes optional and do not make any competing LMS a required integration target.
 
-### Phase 3 — Deep Linking
-- Support signed Deep Linking requests and validated responses.
-- Permit only district-approved resource types and approved EduOS destinations.
-- Test malicious URLs, unapproved content, replay, and cross-tenant references.
+### Phase 3 — Deep Linking (LTI-02, implemented)
+- [x] A registration opts in with `deepLinkingUrl` and the tool's `jwksUrl` (both required together). Registrations without them keep their existing approval fingerprint; adding or changing them needs approval again.
+- [x] Teachers and principals start Deep Linking from an assignment they can manage (`POST /api/apps/:id/deep-link`). It uses the same governed, browser-bound launch: availability, licence seat, approval and callback-time re-checks. The request carries `deep_linking_settings` with `accept_types: ["ltiResourceLink"]`, a return URL on EduOS and an encrypted `data` claim. That claim names the launch, user, assignment and approved registration, lasts 30 minutes, and is bound to the teacher's browser by a cookie scoped to the return path.
+- [x] The response (`POST /lti/deep-link/return`) must be an RS256 JWT signed by a key in the tool's registered JWKS, fetched through the SSRF-safe outbound client and cached for 5 minutes, with one refetch for an unknown `kid`. It must have issuer = client ID, audience = EduOS, a current `iat`/`exp`, a nonce, the right message type, version and deployment, and the exact `data` claim. It's accepted once (`lti_deep_link_returns`), from the same browser, while the teacher can still manage the assignment and the tool is still approved and available.
+- [x] Accepted content is limited to LTI resource links on the tool's own host (its registered target link URI): up to 20 per response, with bounded title, text and string `custom` parameters. Other types, other hosts and bad custom values are counted as skipped. Requested line items are ignored, since AGS isn't implemented, and the teacher is told.
+- [x] Links are stored in `lti_content_links` (097) under row-level security that reuses `eduos_can_see_assignment` / `eduos_can_manage_assignment`. Students see them on the course page and open them through a normal launch (`contentLinkId`), which sends the link's own `resource_link`, target URL and custom parameters. Only someone who can manage the assignment can remove a link.
+- [x] Tests cover forged signatures, another key with the same `kid`, missing browser binding, wrong deployment, replay, off-host URLs, draft assignments, and removal by a student.
 
 ### Phase 4 — NRPS
 - Implement membership endpoint and OAuth scope enforcement.
@@ -85,7 +88,7 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 
 ## Current limitations
 
-Phase 1 (Core resource-link launch) is implemented and tested against a local test tool. Not yet done: Deep Linking, NRPS and AGS (Phases 3–5), and interoperability testing against independent, standards-conformant tools and the IMS reference implementation (Phase 2). No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+Phase 1 (Core resource-link launch) and Phase 3 (Deep Linking) are implemented and tested against local test tools. Not yet done: NRPS and AGS (Phases 4–5), and interoperability testing against independent, standards-conformant tools and the IMS reference implementation (Phase 2). No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
 
 ## Signing-key rotation procedure
 

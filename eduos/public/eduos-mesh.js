@@ -161,6 +161,8 @@
           <label>Client ID<input name="ltiClientId" maxlength="200"></label><label>Deployment ID<input name="ltiDeploymentId" maxlength="200"></label>
           <label class="wide">Tool login URL<input name="ltiLoginUrl" type="url"></label><label class="wide">Redirect URL<input name="ltiRedirectUri" type="url"></label>
           <label class="wide">Target link URL (where the tool opens; blank means the launch address)<input name="ltiTargetLinkUri" type="url"></label>
+          <label class="wide">Deep Linking URL (optional: lets teachers add the tool's activities to assignments)<input name="ltiDeepLinkingUrl" type="url"></label>
+          <label class="wide">Tool public key set (JWKS) URL (needed with Deep Linking)<input name="ltiJwksUrl" type="url"></label>
           <p class="wide">A new LTI tool stays off until a different district administrator approves it. Changing its settings or student data needs approval again.</p></fieldset>
         <label class="wide">Description<textarea name="description" maxlength="2000" rows="2"></textarea></label>
         <div class="wide"><button class="primary" type="submit">Add app</button></div>
@@ -243,7 +245,8 @@
         coppaCompliant: form.elements.coppaCompliant.checked, ferpaSchoolOfficial: form.elements.ferpaSchoolOfficial.checked };
       if (v.category) body.category = v.category; if (v.description) body.description = v.description; if (v.dpaExpiresOn) body.dpaExpiresOn = v.dpaExpiresOn;
       if (form.elements.ownerSchoolId) body.ownerSchoolId = v.ownerSchoolId || null;
-      if (v.integrationType === "lti13") body.integrationConfig = { clientId: v.ltiClientId, deploymentId: v.ltiDeploymentId, loginUrl: v.ltiLoginUrl, redirectUris: [v.ltiRedirectUri], targetLinkUri: v.ltiTargetLinkUri || v.launchUrl };
+      if (v.integrationType === "lti13") body.integrationConfig = { clientId: v.ltiClientId, deploymentId: v.ltiDeploymentId, loginUrl: v.ltiLoginUrl, redirectUris: [v.ltiRedirectUri], targetLinkUri: v.ltiTargetLinkUri || v.launchUrl,
+        ...(v.ltiDeepLinkingUrl || v.ltiJwksUrl ? { deepLinkingUrl: v.ltiDeepLinkingUrl, jwksUrl: v.ltiJwksUrl } : {}) };
       const r = await post(ctx, "/api/apps", body); st.open = r.data.id;
       ctx.notify(`${r.data.name} was added. Next: add a license and choose who can use it.`); await ctx.openTab("apps"); return true;
     }
