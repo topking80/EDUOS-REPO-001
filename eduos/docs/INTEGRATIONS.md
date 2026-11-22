@@ -70,10 +70,50 @@ production use. PowerSchool documents OAuth plugin credentials in its
 Every change, approval and sync is in the audit log; each sync's counts and
 skipped records are kept in its history.
 
+## Class rosters (optional)
+
+A connector can also import **who teaches whom**: the SIS's teachers, class
+sections and enrollments become teacher rosters in EduOS. Rosters decide which
+students a teacher can see (including student history and Time Capsules), so:
+
+- It's **off** unless a district lead turns it on ("Also import class rosters",
+  or "Add class rosters" on an existing connector), and turning it on or off
+  needs a **different** lead's approval, like any connector change.
+- **No accounts are created.** An SIS teacher becomes the one active EduOS
+  teacher at that school with the same email (case doesn't matter). If no
+  teacher, or more than one, matches, the preview lists them; add them as
+  teachers in EduOS, or match them by hand to an existing teacher. A manual
+  match also needs approval again.
+- Students in a class must already be in EduOS at that same school (the same
+  sync imports them first). A student at another EduOS school isn't linked.
+- Only roster links **this connector created** are added or removed. Rosters
+  a person entered by hand are never changed, and a pair already on a
+  hand-entered roster is left as it is. Links at a school that's no longer
+  linked to the connector are left alone.
+- If the SIS returns no class enrollments at all for the linked schools, the
+  import stops and nothing is removed: that's more likely an outage than every
+  class emptying overnight.
+- **Preview** is a full dry run: it imports the students, plans the rosters,
+  and rolls everything back, so its counts are what an import would do.
+- Scheduled syncs import rosters the same way, as the scheduler's service
+  identity, under the schedule a district lead approved.
+
+What's read: OneRoster `/classes`, `/teachers` and `/enrollments` (active
+records; teacher and student roles only); Ed-Fi `sections`, `staffs`,
+`staffSectionAssociations` and `studentSectionAssociations` (associations
+that haven't ended; the staff member's work email is preferred); PowerSchool
+`/ws/v1/school/{id}/section`, `/ws/v1/school/{id}/staff` and
+`/ws/v1/section/{id}/section_enrollment` for linked schools (the section's lead
+teacher; dropped and exited students are skipped). PowerSchool field names vary
+by version and plugin: preview against the district's sandbox before turning
+class rosters on there.
+
+EduOS courses (lessons, assignments) are still created by teachers; the SIS
+sections only decide rosters.
+
 ## Not yet
 
-- Staff accounts, class enrollments and attendance from these systems.
-- Scheduled syncs (a district lead runs each one).
+- Staff accounts and attendance from these systems.
 - Connectors to private-network servers.
 - A live PowerSchool district test-instance certification. The adapter's
   contract tests do not establish compatibility with every PowerSchool release,
