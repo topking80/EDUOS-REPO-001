@@ -734,6 +734,9 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
         body: new URLSearchParams({ grant_type: "client_credentials", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
           client_assertion: sign({ iss: "g-client", sub: "g-client", aud: `http://localhost/lti/token/${ID.d1}/${appId}`, iat: now, exp: now + 300, jti: crypto.randomUUID() }), scope }) });
       assert.equal((await token("https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly")).status, 400, "no class lists for this tool");
+      const scoreOnly = await (await token("https://purl.imsglobal.org/spec/lti-ags/scope/score")).json();
+      assert.equal((await fetch(`${server.base}${li.pathname}`, { headers: { authorization: `Bearer ${scoreOnly.access_token}` } })).status, 401,
+        "score-only tokens cannot read line items");
       const t = await (await token("https://purl.imsglobal.org/spec/lti-ags/scope/score https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly")).json();
       const auth = { authorization: `Bearer ${t.access_token}` };
       const item = await (await fetch(`${server.base}${li.pathname}`, { headers: auth })).json();
