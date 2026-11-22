@@ -234,7 +234,7 @@ ${hcRules('html[data-eduos-theme="high_contrast"]')}
 
   // ---------- designer ----------
   const isSchool = () => st.scope && st.scope !== "district";
-  const working = v => { const w = v.draft || v.published || {}; return { mascotName: w.mascotName ?? null, motto: w.motto ?? null, primary: w.primary ?? null, secondary: w.secondary ?? null, accent: w.accent ?? null, font: w.font ?? null, tiles: w.tiles ? JSON.parse(JSON.stringify(w.tiles)) : null, mascotUploadId: w.mascotUploadId ?? null }; };
+  const working = v => { const w = v.draft || v.published || {}; return { mascotName: w.mascotName ?? null, motto: w.motto ?? null, primary: w.primary ?? null, secondary: w.secondary ?? null, accent: w.accent ?? null, font: w.font ?? null, appAppearance: w.appAppearance ?? null, tiles: w.tiles ? JSON.parse(JSON.stringify(w.tiles)) : null, mascotUploadId: w.mascotUploadId ?? null }; };
   const effWork = () => M.effective(st.work, st.view.inherited);
   const draftBody = () => { const { mascotUploadId, ...rest } = st.work; return rest; };
   async function load(ctx) {
@@ -343,6 +343,8 @@ ${hcRules('html[data-eduos-theme="high_contrast"]')}
           <label for="eb-mascotName">Mascot name</label><input type="text" id="eb-mascotName" data-eb-field="mascotName" maxlength="60" value="${esc(w.mascotName || "")}" placeholder="${esc(isSchool() ? (v.inherited.mascotName || "e.g. Otters") : "e.g. Otters")}">
           <label for="eb-motto">Motto (optional)</label><input type="text" id="eb-motto" data-eb-field="motto" maxlength="120" value="${esc(w.motto || "")}">
           <label for="eb-font">Font</label><select id="eb-font" data-eb-field="font">${isSchool() ? `<option value="">Use the district font</option>` : ""}${Object.entries(M.FONT_NAMES).map(([k, n]) => `<option value="${k}"${(w.font || (isSchool() ? "" : "system")) === k ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>
+          <label for="eb-appAppearance">EduOS app appearance</label><select id="eb-appAppearance" data-eb-field="appAppearance">${isSchool() ? `<option value="">Use the district setting</option>` : ""}${Object.entries(M.APPEARANCE_NAMES).map(([k, n]) => `<option value="${k}"${(w.appAppearance || (isSchool() ? "" : "dark")) === k ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>
+          <p class="api-muted">How the EduOS app looks for this school. Colours are adjusted automatically so text stays readable on either background.</p>
         </fieldset>
         <fieldset><legend>Mascot image</legend>
           <div class="eb-mascot-now">${v.mascot ? `<img src="${esc(v.mascot[96])}" alt="Current mascot">` : `<span class="api-muted">No mascot yet${isSchool() ? " (the district's is used if it has one)" : ""}.</span>`}</div>

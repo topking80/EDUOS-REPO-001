@@ -125,6 +125,20 @@ describe("EduOS 32.3.0 school branding against real PostgreSQL", { skip }, () =>
     assert.equal((await as("p2")("PUT", `/api/branding/${ID.s2}/draft`, { font: "Comic Sans" })).body.error, "invalid_font");
   });
 
+  it("a school chooses the app's light or dark appearance; empty inherits the district's", async () => {
+    assert.equal((await as("p2")("PUT", `/api/branding/${ID.s2}/draft`, { appAppearance: "sepia" })).body.error, "invalid_app_appearance");
+    assert.equal((await as("supt1")("PUT", "/api/branding/district/draft", { appAppearance: "device" })).status, 200);
+    assert.equal((await as("supt1")("POST", "/api/branding/district/publish")).status, 200);
+    assert.equal((await as("p2")("GET", "/api/branding/current")).body.data.branding.appAppearance, "device", "S2 inherits the district's choice");
+    const saved = await as("p2")("PUT", `/api/branding/${ID.s2}/draft`, { appAppearance: "light" });
+    assert.equal(saved.status, 200); assert.equal(saved.body.data.draft.appAppearance, "light");
+    assert.equal((await as("p2")("GET", "/api/branding/current")).body.data.branding.appAppearance, "device", "a draft changes nothing yet");
+    assert.equal((await as("p2")("POST", `/api/branding/${ID.s2}/publish`)).status, 200);
+    assert.equal((await as("p2")("GET", "/api/branding/current")).body.data.branding.appAppearance, "light");
+    assert.equal((await as("t1")("GET", "/api/branding/current")).body.data.branding.appAppearance, "device", "S1 is unaffected");
+    assert.equal((await as("p2")("PUT", `/api/branding/${ID.s2}/draft`, { appAppearance: null })).status, 200, "a school can go back to the district setting");
+  });
+
   it("uploads are re-encoded, stripped, cropped and sanitized; bad files are refused", async () => {
     const jpg = await sharp({ create: { width: 640, height: 400, channels: 3, background: "#123a6b" } }).jpeg()
       .withMetadata({ exif: { IFD0: { Artist: "secret-exif-marker" } } }).toBuffer();
