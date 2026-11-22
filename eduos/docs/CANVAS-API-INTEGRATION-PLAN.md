@@ -1,5 +1,19 @@
 # Canvas API integration plan
 
+**Status**
+
+| Phase | State |
+| --- | --- |
+| CANVAS-API-01 OAuth connection and token lifecycle | Implemented (PR #86), migration `096` |
+| CANVAS-API-02 Read-only courses and enrollments | Next |
+| CANVAS-API-03 Read-only grade retrieval and preview | Not started; needs the district source-of-truth policy first |
+| CANVAS-API-04 Grade write-back | Not planned without written district authorization |
+
+Separately, EduOS launching Canvas from the app catalog is in
+[CANVAS-LMS-LAUNCH.md](CANVAS-LMS-LAUNCH.md), and EduOS as an LTI 1.3
+platform for other tools is in
+[LTI-ADVANTAGE-THIRD-PARTY.md](LTI-ADVANTAGE-THIRD-PARTY.md).
+
 ## Purpose and direction
 
 EduOS launches the district's Canvas LMS from the approved app catalog. Canvas is the destination for that launch. This document covers a separate, optional API connection so EduOS can exchange approved academic data with the district's Canvas tenant.
