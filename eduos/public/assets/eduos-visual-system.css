@@ -1,0 +1,44 @@
+/* EDUOS artwork-led visual system — GUI-01
+   Uses the project's district atlas, deep-ocean palette and warm campus accents.
+   Kept additive so existing workspace behavior and page-specific styles remain intact. */
+:root{
+  --eduos-ocean:#102b43;
+  --eduos-ocean-2:#173b57;
+  --eduos-blue:#245b72;
+  --eduos-teal:#20a4a8;
+  --eduos-amber:#f1b15b;
+  --eduos-paper:#edf3f5;
+  --eduos-ink:#173047;
+  --eduos-muted:#60788a;
+  --eduos-line:#d8e4e8;
+  --eduos-radius:18px;
+}
+body{background:linear-gradient(145deg,#edf3f5 0%,#f5f7f8 46%,#e8f0f2 100%);color:var(--eduos-ink)}
+.app>aside{background:linear-gradient(180deg,#102b43 0%,#12334b 58%,#173b57 100%);border-right:1px solid #ffffff12}
+.app>aside .brand{border-bottom-color:#ffffff24}
+.app>aside .logo{background:linear-gradient(135deg,var(--eduos-amber),#df8c42);box-shadow:0 5px 18px #061b2b66}
+.app>aside .district{background:linear-gradient(135deg,#1a4960ed,#17384fee),url('/assets/eduos-district-campus-atlas.svg') center/cover;border:1px solid #8cc3c755;border-radius:16px;box-shadow:0 12px 28px #071a2b33}
+.app>aside .district b{color:#fff}
+.app>aside .nav a,.app>aside .nav button{border-radius:11px}
+.app>aside .nav a[aria-current="page"],.app>aside .nav button[aria-current="page"]{background:#ffffff18;box-shadow:inset 3px 0 0 var(--eduos-amber)}
+.main>.top{background:#ffffffed;border-bottom:1px solid var(--eduos-line);box-shadow:0 5px 22px #12334b08;backdrop-filter:blur(14px)}
+.main>.top .crumb{color:var(--eduos-muted)}
+.main>.top .crumb b{color:var(--eduos-ocean)}
+.main>.top .pill{border-color:#d4e1e5}
+.main>.top .avatar{background:linear-gradient(135deg,var(--eduos-blue),var(--eduos-teal));color:white}
+.ecosystem-hero{position:relative;isolation:isolate;min-height:190px;margin:22px 26px 0;padding:28px 34px;display:flex;align-items:center;overflow:hidden;border-radius:22px;background:linear-gradient(105deg,#102b43 0%,#173b57 55%,#245b72 100%);color:#f6fafb;box-shadow:0 16px 38px #102b4326}
+.ecosystem-hero:before{content:"";position:absolute;inset:0;z-index:-1;background:radial-gradient(ellipse at 15% 10%,#3c82904d,transparent 52%),linear-gradient(90deg,#102b43 0%,#102b43ed 42%,#102b4355 72%,#102b4320 100%)}
+.ecosystem-hero__copy{position:relative;z-index:2;max-width:58%}
+.ecosystem-hero__eyebrow{margin:0 0 9px;color:var(--eduos-amber);font-size:10px;font-weight:850;letter-spacing:.19em;text-transform:uppercase}
+.ecosystem-hero h1{margin:0;color:#fff;font-size:clamp(22px,2.4vw,32px);line-height:1.12;letter-spacing:-.035em}
+.ecosystem-hero__summary{max-width:520px;margin:10px 0 0;color:#d3e5eb;font-size:13px;line-height:1.55}
+.ecosystem-hero__tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:15px}
+.ecosystem-hero__tags span{padding:5px 9px;border:1px solid #d4edf02b;border-radius:999px;background:#ffffff0c;color:#e5f2f3;font-size:10px;font-weight:700}
+.ecosystem-hero__art{position:absolute;z-index:1;top:0;right:0;width:49%;height:100%;object-fit:cover;object-position:center 47%;opacity:.92;mask-image:linear-gradient(90deg,transparent 0%,#000 28%)}
+#content{padding-top:22px}
+#content .card,#content .panel,#content .metric-card{border-radius:var(--eduos-radius)}
+#content button.primary,.ecosystem-hero__action{background:linear-gradient(135deg,#24647a,#1b8490);border-color:#1b8490;box-shadow:0 5px 14px #1a687522}
+@media(max-width:900px){.ecosystem-hero{margin:16px 16px 0;min-height:170px;padding:24px}.ecosystem-hero__copy{max-width:68%}.ecosystem-hero__art{width:48%;opacity:.7}}
+@media(max-width:620px){.ecosystem-hero{margin:12px 12px 0;min-height:156px;padding:20px 18px;border-radius:17px}.ecosystem-hero__copy{max-width:100%}.ecosystem-hero__art{width:66%;opacity:.25;mask-image:linear-gradient(90deg,transparent,#000 90%)}.ecosystem-hero h1{font-size:23px}.ecosystem-hero__summary{max-width:92%;font-size:12px}.ecosystem-hero__tags{gap:5px}.ecosystem-hero__tags span{font-size:9px}#content{padding-top:14px}}
+@media(prefers-reduced-motion:no-preference){.ecosystem-hero{animation:eduosHeroIn .45s ease-out both}@keyframes eduosHeroIn{from{opacity:.65;transform:translateY(7px)}to{opacity:1;transform:none}}}
+@media(prefers-reduced-motion:reduce){.ecosystem-hero{animation:none}}
