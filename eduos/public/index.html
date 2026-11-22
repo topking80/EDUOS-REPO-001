@@ -5,6 +5,8 @@
 <meta name="theme-color" content="#101a2b">
 <title>EduOS District Edition 37.7.2 | Transportation-to-Arrival Reconciliation</title>
 <script src="/eduos-mode.js"></script>
+<link rel="stylesheet" href="/assets/eduos-visual-system.css">
+<link rel="stylesheet" href="/assets/eduos-dashboard.css">
 <style>
 :root{--nav:#101a2b;--nav2:#192a42;--bg:#f2f5f9;--panel:#fff;--ink:#17283e;--muted:#66778c;--line:#e3e9f0;--blue:#2878bd;--bluebg:#eaf3fb;--green:#16835d;--greenbg:#e8f6ef;--amber:#a96712;--amberbg:#fff4e4;--red:#b43d3d;--redbg:#fff0ef;--shadow:0 10px 30px #1b35500c}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}button,input,select{font:inherit}button{cursor:pointer}
@@ -154,6 +156,15 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 </aside>
 <main class="main">
  <header class="top"><div><div class="crumb">EduOS / <b id="crumb">Command Center</b></div><div class="workspace-path" id="workspacePath" aria-live="polite">District Superintendent / Executive / Home</div><div class="top-left-actions"><button class="btn" id="workspaceHome" data-page="home" type="button" hidden>Role home</button><button class="btn" id="workspaceInbox" data-page="mywork" type="button" hidden>My Work</button></div></div><div class="topright"><span class="pill">● DEMO MODE</span><span class="pill" id="roleLabel">District Superintendent</span><button class="btn" id="workflowBell" data-act="workflow-open" data-page="mywork" type="button">Inbox<span class="wf-badge" id="workflowCount">0</span></button><button class="btn" data-act="tour-start">Guided tour</button><span class="pill" id="dateLabel">2026–27</span><div class="avatar" id="personaAvatar">DS</div></div></header>
+ <section class="ecosystem-hero" aria-labelledby="ecosystemTitle">
+  <div class="ecosystem-hero__copy">
+   <p class="ecosystem-hero__eyebrow">EDUOS · ONE CONNECTED LEARNING ECOSYSTEM</p>
+   <h1 id="ecosystemTitle">Every school. Every learner. Connected.</h1>
+   <p class="ecosystem-hero__summary">A shared district environment connecting campuses, classrooms, families, and each student’s learning journey.</p>
+   <div class="ecosystem-hero__tags" aria-label="Connected parts of the district"><span>District</span><span>Schools</span><span>Classrooms</span><span>Families</span><span>Students</span></div>
+  </div>
+  <img class="ecosystem-hero__art" src="/assets/eduos-district-campus-atlas.svg" alt="Illustrated EDUOS district campus showing connected schools, shared services, athletics, and green spaces" fetchpriority="high">
+ </section>
  <div class="content" id="content" tabindex="-1" aria-label="Workspace content"></div>
 </main>
 </div>

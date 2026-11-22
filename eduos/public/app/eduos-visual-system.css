@@ -1,0 +1,13 @@
+/* EDUOS mobile artwork-led tokens — aligned with district atlas and mascot artwork. */
+:root{
+  --eduos-ocean:#102b43;
+  --eduos-blue:#245b72;
+  --eduos-teal:#20a4a8;
+  --eduos-amber:#f1b15b;
+  --eduos-paper:#edf3f5;
+  --accent:var(--eduos-amber);
+  --school:var(--eduos-blue);
+}
+.top{background:linear-gradient(115deg,#102b43,#173b57)!important;border-bottom:1px solid #ffffff20}
+.top .brand,.top strong{color:#f5f9fb}
+button:focus-visible,a:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--eduos-amber);outline-offset:3px}
