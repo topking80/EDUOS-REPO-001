@@ -20,7 +20,7 @@ function platformKey() {
 
 function toolKey() {
   const pair = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const jwk = { ...crypto.createPublicKey(pair.publicKey).export({ format: "jwk" }), kid: "independent-tool-key", alg: "RS256", use: "sig" };
+  const jwk = { ...pair.publicKey.export({ format: "jwk" }), kid: "independent-tool-key", alg: "RS256", use: "sig" };
   return { privateKey: pair.privateKey, jwks: { keys: [jwk] } };
 }
 
