@@ -746,6 +746,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
 
       // Teacher review (district default): the score waits.
       assert.equal((await score(8)).status, 204);
+      assert.equal((await score(11, 10)).status, 400, "a score cannot exceed its maximum");
       assert.equal(await sub(), undefined, "nothing reaches the gradebook before review");
       assert.equal((await score(8, 10, "someone-else")).status, 422);
       assert.equal((await score(1, 10, claims.sub, { timestamp: new Date(Date.now() - 3_600_000).toISOString() })).status, 204, "older scores are accepted but ignored");
