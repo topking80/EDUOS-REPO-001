@@ -1127,6 +1127,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
 
   // A teacher turns grade passback on for one placed activity.
   app.put("/api/lti/content-links/:id/grades", requireSession, requireCsrf, async (req, res, next) => {
+    if (req.actor.role !== "teacher") return res.status(403).json({ error: "teacher_required" });
     if (!validId(req.params.id) || typeof req.body?.enabled !== "boolean") return res.status(400).json({ error: "invalid_request" });
     try {
       const r = await withTenantTransaction(req.actor, async c => {
@@ -1151,6 +1152,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
 
   // Teachers review tool scores: record into the gradebook, or dismiss.
   app.get("/api/lti/scores", requireSession, async (req, res, next) => {
+    if (req.actor.role !== "teacher") return res.status(403).json({ error: "teacher_required" });
     if (!validId(req.query?.assignmentId)) return res.status(400).json({ error: "invalid_assignment_id" });
     try {
       const rows = await withTenantTransaction(req.actor, c => c.query(`SELECT s.id,s.student_id AS "studentId",st.display_name AS "studentName",l.title AS activity,a.name AS "appName",
@@ -1164,6 +1166,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     } catch (e) { next(e); }
   });
   app.post("/api/lti/scores/:id/:action", requireSession, requireCsrf, async (req, res, next) => {
+    if (req.actor.role !== "teacher") return res.status(403).json({ error: "teacher_required" });
     if (!validId(req.params.id) || !["record", "dismiss"].includes(req.params.action)) return res.status(404).json({ error: "not_found" });
     try {
       const r = await withTenantTransaction(req.actor, async c => {
