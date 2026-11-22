@@ -92,6 +92,7 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
+let mockSchool = "s1", switches = [];
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   if (withCourse) switch (pathname) {
@@ -114,10 +115,16 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/apps": return { data: [{ id: "app3", name: "New LTI Tool", vendor: "Tool Co", integrationType: "lti13", registrationStatus: "pending" }] };
     case "/api/app-requests": return { data: [{ id: "r1", status: "pending" }] };
     case "/api/my/apps": return { data: [{ id: "a1", name: "Reading Room", category: "Reading", integrationType: "link" }, { id: "a2", name: "MathQuest", category: "Math", integrationType: "lti13" }] };
-    case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: "s1", memberships: [] };
+    case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: mockSchool, memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: [], canInitiate: false, canLead: false } };
-    case "/api/home": if (role === "parent") return { data: { children: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_name: "Maple", absences_30d: 0, due_7d: 0, overdue: 0, to_acknowledge: 0 }] } };
+    case "/api/home": if (role === "parent") return { data: { children: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", absences_30d: 0, due_7d: 0, overdue: 0, to_acknowledge: 0 },
+      { id: "c2", display_name: "Ben A", grade_level: "7", school_id: "s2", school_name: "Oak Middle", absences_30d: 1, due_7d: 2, overdue: 0, to_acknowledge: 0 }] } };
+    // UI-04: a family with children at two schools and an account at each.
+    case "/api/family/children": return { data: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", relationship: "parent" },
+      { id: "c2", display_name: "Ben A", grade_level: "7", school_id: "s2", school_name: "Oak Middle", relationship: "parent" }] };
+    case "/api/memberships": return { data: [{ id: "00000000-0000-4000-8000-0000000a0001", role: "parent", district_id: "d1", district_name: "Riverside", school_id: "s1", school_name: "Maple" },
+      { id: "00000000-0000-4000-8000-0000000a0002", role: "parent", district_id: "d1", district_name: "Riverside", school_id: "s2", school_name: "Oak Middle" }] };
       return { data: { school_name: "Maple", students: 4, absent_today: 1, open_cases: 0, overdue_follow_ups: 0, pending_invitations: 0, schools: 1, urgent_cases: 0, absences_7d: 1 } };
     case "/api/attendance": return { data: [{ id: "e1", event_date: today(), status: "absent", display_name: "Bob B" }] };
     case "/api/attendance/day": return { data: { date: today(), counts: { present: 3, absent: 1, tardy: 0, excused: 0 }, exceptions: [{ student_id: "s1", status: "absent", display_name: "Bob B" }] } };
@@ -238,6 +245,11 @@ function startServer() {
         state.endpointOps.revoked++;
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
+      }
+      if (pathname === "/api/session/membership" && req.method === "POST") {
+        let raw = ""; req.on("data", c => { raw += c; });
+        return req.on("end", () => { const id = JSON.parse(raw || "{}").membershipId; switches.push(id); mockSchool = id.endsWith("0002") ? "s2" : "s1";
+          res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ role: state.role, schoolId: mockSchool, csrfToken: "smoke2" })); });
       }
       // GETs, and a connector sync (preview), answer from the sample data; other writes just succeed.
       const body = req.method === "GET" || /^\/api\/integrations\/connectors\/[^/]+\/sync$/.test(pathname) ? mockApi(state.role, pathname, state.failWebhookLoads) : { data: {} };
@@ -386,6 +398,35 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       } finally { page.close(); }
     }
     appearance = "dark";
+  }
+  // UI-04: a family picks a child; a child at another school moves the app there.
+  {
+    state.role = "parent"; mockSchool = "s1"; switches = [];
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/children` });
+      await page.mainText();
+      const chips = await page.eval(`[...document.querySelectorAll(".familybar .famchip")].map(b => b.textContent + "|" + b.getAttribute("aria-pressed"))`);
+      if (JSON.stringify(chips) !== JSON.stringify(["Everyone2 schools|true", "AliceMaple|false", "BenOak Middle|false"])) failures.push(`family bar chips: ${JSON.stringify(chips)}`);
+      await axeScan(page, "parent #/children (family bar)", a11y);
+      await page.eval(`[...document.querySelectorAll(".famchip")].find(b => b.textContent.startsWith("Ben")).click()`);
+      let cards = [];
+      for (let i = 0; i < 40; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        cards = await page.eval(`[...document.querySelectorAll("#main section.card[aria-label$=' A']")].map(c => c.getAttribute("aria-label"))`);
+        if (switches.length && JSON.stringify(cards) === '["Ben A"]') break;
+      }
+      if (switches.length !== 1 || mockSchool !== "s2") failures.push(`choosing Ben didn't switch to his school (switches: ${JSON.stringify(switches)})`);
+      if (JSON.stringify(cards) !== '["Ben A"]') failures.push(`after choosing Ben the children screen shows ${JSON.stringify(cards)}`);
+      const pressed = await page.eval(`document.querySelector('.famchip[aria-pressed="true"]')?.textContent`);
+      if (!/^Ben/.test(pressed || "")) failures.push(`Ben's chip isn't marked as chosen (${pressed})`);
+      // Everyone: both children again, and no further school switch.
+      await page.eval(`[...document.querySelectorAll(".famchip")].find(b => b.textContent.startsWith("Everyone")).click()`);
+      for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 100)); cards = await page.eval(`[...document.querySelectorAll("#main section.card[aria-label$=' A']")].map(c => c.getAttribute("aria-label"))`); if (cards.length === 2) break; }
+      if (cards.length !== 2 || switches.length !== 1) failures.push(`Everyone: ${JSON.stringify(cards)}, switches ${switches.length}`);
+      if (page.errors.length) failures.push(`family bar: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); mockSchool = "s1"; }
   }
   // LTI-02: tool links on a course assignment, for a pupil (open) and a teacher (open, remove, add).
   withCourse = true;

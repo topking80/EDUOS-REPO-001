@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { parse, serialize } from "./cookies.js";
 import { config } from "./config.js";
-import { pool } from "./db.js";
+import { pool, withTenantTransaction } from "./db.js";
 import { getOidcMetadata, randomSecret, sha256, verifiedEmailFromClaims, verifyIdToken } from "./oidc.js";
 
 // Secure whenever the public origin is HTTPS (not only NODE_ENV=production).
@@ -406,13 +406,21 @@ export function issueCsrfToken(req, res) {
 export async function listMemberships(req, res, next) {
   try {
     const result = await pool.query(
-      `SELECT m.id, m.district_id, m.school_id, sc.name AS school_name, m.role, m.is_default
+      `SELECT m.id, m.district_id, d.name AS district_name, m.school_id, sc.name AS school_name, m.role, m.is_default
          FROM memberships m JOIN districts d ON d.id=m.district_id AND d.status='active'
          LEFT JOIN schools sc ON sc.id=m.school_id
         WHERE m.user_id=$1 AND m.status='active'
         ORDER BY m.is_default DESC, m.role, sc.name`,
       [req.actor.userId]
     );
+    // Schools are RLS-scoped to the session's district: name this district's
+    // schools inside it (other districts' memberships keep the district name).
+    const here = [...new Set(result.rows.filter(r => r.district_id === req.actor.districtId && r.school_id).map(r => r.school_id))];
+    if (here.length) {
+      const names = await withTenantTransaction(req.actor, c => c.query("SELECT id,name FROM schools WHERE id=ANY($1::uuid[])", [here]));
+      const byId = new Map(names.rows.map(r => [r.id, r.name]));
+      for (const r of result.rows) if (!r.school_name && byId.has(r.school_id)) r.school_name = byId.get(r.school_id);
+    }
     res.setHeader("Cache-Control", "no-store");
     res.json({ data: result.rows.map(r => ({ ...r,
       current: r.district_id === req.actor.districtId && r.role === req.actor.role && (r.school_id || null) === (req.actor.schoolId || null) })) });

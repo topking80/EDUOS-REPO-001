@@ -22,7 +22,7 @@ export const USERS = {
   teacher: { id: id(205), sub: "demo-teacher", name: "Jordan Lee", role: "teacher", school: "elementary" },
   teacher2: { id: id(206), sub: "demo-teacher-2", name: "Priya Natarajan", role: "teacher", school: "elementary" },
   parent: { id: id(207), sub: "demo-parent", name: "Alex Morgan", role: "parent", school: "elementary",
-    note: "Linked guardian of Ava Morgan" },
+    note: "Linked guardian of Ava Morgan (elementary) and Lucas Wright (middle school)" },
   parentInvitee: { id: id(208), sub: "demo-parent-invitee", name: "Taylor Brooks", role: "parent", school: "elementary",
     note: "Provisioned but not yet linked: use for the guardian invitation flow" },
   pupil: { id: id(209), sub: "demo-student", name: "Ava Morgan", role: "pupil", school: "elementary" },
@@ -54,7 +54,9 @@ export const ROSTERS = [
   ["teacher", "ava"], ["teacher", "noah"], ["teacher", "liam"], ["teacher", "sofia"],
   ["teacher2", "mia"], ["teacher2", "ethan"]
 ];
-export const LINKS = [["parent", "ava", "parent"], ["pupil", "ava", "pupil"], ["pupilYoung", "leo", "pupil"]];
+export const LINKS = [["parent", "ava", "parent"], ["parent", "lucas", "guardian"], ["pupil", "ava", "pupil"], ["pupilYoung", "leo", "pupil"]];
+// UI-04: Alex Morgan also has a family account at the middle school (Lucas goes there).
+export const EXTRA_MEMBERSHIPS = [["parent", "middle", "parent"]];
 
 // 32.2.0 district resource mesh: apps bought once and shared across schools.
 // Launch URLs use the reserved .example domain; the LTI app needs the local

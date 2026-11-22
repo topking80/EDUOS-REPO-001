@@ -34,10 +34,11 @@ const shots = JSON.parse(process.env.SHOTS || "null") || {
 };
 for (const key of roles) {
   const u = USERS[key];
-  const s = await login(server.base, idp, u.sub, { email: u.email, email_verified: true });
-  const [name, value] = s.cookie.split(";")[0].split("=");
   for (const [w, h, tag] of [[1280, 900, "desktop"], [390, 844, "phone"]]) {
     for (const path of [...shots.site, ...shots.app]) {
+      // A fresh sign-in for each screenshot: a CLICK may switch (and retire) the session.
+      const s = await login(server.base, idp, u.sub, { email: u.email, email_verified: true });
+      const [name, value] = s.cookie.split(";")[0].split("=");
       const page = await Page.open(chrome.port);
       try {
         await page.send("Network.enable");
@@ -49,6 +50,14 @@ for (const key of roles) {
         const file = `${OUT}/${key}-${tag}-${path.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "") || "root"}.png`;
         fs.writeFileSync(file, Buffer.from(data, "base64"));
         console.log(file);
+        // CLICK="text": tap the first button containing the text, then screenshot again (…-after.png).
+        if (process.env.CLICK) {
+          await page.eval(`[...document.querySelectorAll("button")].find(b => b.textContent.includes(${JSON.stringify(process.env.CLICK)}))?.click()`);
+          await new Promise(r => setTimeout(r, 3000));
+          const after = (await page.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: tag === "desktop" })).result.data;
+          fs.writeFileSync(file.replace(/\.png$/, "-after.png"), Buffer.from(after, "base64"));
+          console.log(file.replace(/\.png$/, "-after.png"));
+        }
       } finally { page.close(); }
     }
   }
