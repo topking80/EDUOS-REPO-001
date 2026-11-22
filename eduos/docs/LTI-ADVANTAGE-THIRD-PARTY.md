@@ -95,7 +95,7 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 
 ## Current limitations
 
-Phase 1 (Core resource-link launch) and Phase 3 (Deep Linking) are implemented. Cross-library JOSE interoperability tests are automated in CI, but end-to-end interoperability against independent standards-conformant tools and the IMS reference implementation remains outstanding. NRPS and AGS (Phases 4–5) are not implemented. No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. These capabilities must ship in separately testable increments behind district-controlled feature flags.
+Phases 1 (Core resource-link launch), 3 (Deep Linking) and 4 (NRPS class-list sharing) are implemented and covered by repository tests. Cross-library JOSE interoperability tests are automated in CI, but end-to-end interoperability against independent standards-conformant tools and the IMS reference implementation remains outstanding. AGS (Phase 5) is not implemented. No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. These capabilities must ship in separately testable increments behind district-controlled feature flags.
 
 ## Signing-key rotation procedure
 
