@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { ROLE_PERMISSIONS, canPerform, isDistrictRole, isGrantable } from "../src/policy.js";
-import { loadPlatformKey, signJwt, makeHint, readHint, consumeHint, launchClaims, validLtiConfig, pairwiseSub } from "../src/lti.js";
+import { loadPlatformKey, signJwt, makeHint, readHint, launchClaims, validLtiConfig, pairwiseSub } from "../src/lti.js";
 import { FLOW_EVENT_TYPES, serverFlowEvent } from "../src/flow-events.js";
 
 Object.assign(process.env, { DATABASE_URL: process.env.DATABASE_URL || "postgres://u:p@localhost/x", PUBLIC_ORIGIN: process.env.PUBLIC_ORIGIN || "http://localhost",
@@ -77,7 +77,11 @@ test("LTI: JWKS, RS256 signature, scope-limited claims and pairwise subject", ()
   const ident = launchClaims({ ...base, app: { ...app, data_sharing_scope: "identity" } });
   assert.equal(ident.name, "Pupil A"); assert.ok(!ident["https://purl.imsglobal.org/spec/lti/claim/context"]);
   const roster = launchClaims({ ...base, app: { ...app, data_sharing_scope: "roster_full" } });
-  assert.equal(roster["https://purl.imsglobal.org/spec/lti/claim/context"].id, school.id);
+  assert.ok(!roster["https://purl.imsglobal.org/spec/lti/claim/context"]);
+  for (const scope of ["roster_basic", "roster_full", "grades", "attendance", "unknown"]) {
+    const claims = launchClaims({ ...base, app: { ...app, data_sharing_scope: scope } });
+    assert.ok(!claims.name && !claims.email && !claims["https://purl.imsglobal.org/spec/lti/claim/context"], scope);
+  }
   const jwt = signJwt(key, none);
   const [h, b, sig] = jwt.split(".");
   const pub = crypto.createPublicKey({ key: key.jwks.keys[0], format: "jwk" });
@@ -95,11 +99,9 @@ test("LTI: hints are signed, expire, and are single-use; configs are validated",
   assert.equal(readHint(key, `${tampered}.${mac}`, 2000), null);
   assert.equal(readHint(loadPlatformKey(crypto.generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" })), hint, 2000), null, "other platform key");
   assert.equal(readHint(key, body, 2000), null);
-  const id = crypto.randomUUID();
-  assert.equal(consumeHint(id), true); assert.equal(consumeHint(id), false);
-  assert.equal(validLtiConfig({ clientId: "c", deploymentId: "d", loginUrl: "https://t/login", redirectUris: ["https://t/launch"] }), true);
-  assert.equal(validLtiConfig({ clientId: "c", deploymentId: "d", loginUrl: "javascript:alert(1)", redirectUris: ["https://t/launch"] }), false);
-  assert.equal(validLtiConfig({ clientId: "c", deploymentId: "d", loginUrl: "https://t/login", redirectUris: [] }), false);
+  assert.equal(validLtiConfig({ clientId: "c", deploymentId: "d", loginUrl: "https://t/login", redirectUris: ["https://t/launch"], targetLinkUri: "https://t/launch" }), true);
+  assert.equal(validLtiConfig({ clientId: "c", deploymentId: "d", loginUrl: "javascript:alert(1)", redirectUris: ["https://t/launch"], targetLinkUri: "https://t/launch" }), false);
+  assert.equal(validLtiConfig({ clientId: "c", deploymentId: "d", loginUrl: "https://t/login", redirectUris: [], targetLinkUri: "https://t/launch" }), false);
   assert.throws(() => loadPlatformKey(crypto.generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ type: "pkcs8", format: "pem" })));
 });
 

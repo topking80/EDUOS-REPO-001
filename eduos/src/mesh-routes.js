@@ -19,12 +19,27 @@ import { requirePermission, isDistrictRole, canPerform } from "./policy.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { pageOf, pageSql, paged } from "./paging.js";
-import { loadPlatformKey, signJwt, makeHint, readHint, consumeHint, launchClaims, validLtiConfig } from "./lti.js";
+import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig, ltiConfigFingerprint,
+  newBrowserBinding, browserBindingMatches, bindingCookieName, AUTO_SUBMIT_SCRIPT, AUTO_SUBMIT_SCRIPT_HASH } from "./lti.js";
+import { getCookie, serialize as serializeCookie } from "./cookies.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validId = v => typeof v === "string" && UUID_RE.test(v);
 const text = (v, max) => typeof v === "string" && v.trim().length > 0 && v.trim().length <= max;
 const optText = (v, max) => v === undefined || v === null || (typeof v === "string" && v.length <= max);
+const SECRET_CONFIG_KEY_RE = /secret|password|private|credential|token|api[_-]?key|access[_-]?key/i;
+function hasSecretConfigKey(value) {
+  const pending = [value];
+  while (pending.length) {
+    const current = pending.pop();
+    if (!current || typeof current !== "object") continue;
+    for (const [key, child] of Object.entries(current)) {
+      if (SECRET_CONFIG_KEY_RE.test(key)) return true;
+      if (child && typeof child === "object") pending.push(child);
+    }
+  }
+  return false;
+}
 const httpUrl = v => typeof v === "string" && v.length <= 2048 && /^https?:\/\/[^\s]+$/.test(v) && (() => { try { return Boolean(new URL(v)); } catch { return false; } })();
 const isDate = v => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v + "T00:00:00Z"));
 
@@ -70,7 +85,7 @@ async function learnerContext(client, actor) {
 
 const AVAILABLE_SQL = `
   SELECT a.id,a.name,a.vendor,a.description,a.category,a.launch_url,a.integration_type,a.data_sharing_scope,
-         a.dpa_status,a.coppa_compliant,a.owner_school_id,lic.id AS license_id,lic.seat_limit,lic.ends_on
+         a.dpa_status,a.coppa_compliant,a.owner_school_id,a.lti_registration_status,a.lti_approved_config_hash,lic.id AS license_id,lic.seat_limit,lic.ends_on
     FROM apps a
     JOIN LATERAL (
       SELECT l.id,l.seat_limit,l.ends_on FROM app_licenses l
@@ -95,7 +110,7 @@ async function availableApps(client, actor, appId = null) {
 function appOut(r, actor) {
   const out = {
     id: r.id, name: r.name, vendor: r.vendor, description: r.description, category: r.category, launchUrl: r.launch_url,
-    integrationType: r.integration_type, dataSharingScope: r.data_sharing_scope, dpaStatus: r.dpa_status, dpaExpiresOn: r.dpa_expires_on,
+    integrationType: r.integration_type, registrationStatus: r.lti_registration_status || "not_required", dataSharingScope: r.data_sharing_scope, dpaStatus: r.dpa_status, dpaExpiresOn: r.dpa_expires_on,
     coppaCompliant: r.coppa_compliant, ferpaSchoolOfficial: r.ferpa_school_official, status: r.status,
     ownerSchoolId: r.owner_school_id, ownerSchoolName: r.owner_school_name ?? null, createdAt: r.created_at, updatedAt: r.updated_at
   };
@@ -124,9 +139,10 @@ function validateAppBody(body, partial) {
   if (has("integrationConfig")) {
     const c = b.integrationConfig;
     if (c === null || typeof c !== "object" || Array.isArray(c) || JSON.stringify(c).length > 8192) return "invalid_integration_config";
-    if (/secret|password|private/i.test(JSON.stringify(Object.keys(c)))) return "integration_config_must_not_hold_secrets";
+    if (hasSecretConfigKey(c)) return "integration_config_must_not_hold_secrets";
   }
   if (!partial && b.integrationType === "lti13" && !validLtiConfig(b.integrationConfig)) return "invalid_lti_config";
+  if (!partial && b.integrationType === "lti13" && !["none", "identity"].includes(b.dataSharingScope || "none")) return "unsupported_lti_data_scope";
   return null;
 }
 
@@ -137,7 +153,7 @@ function managesApp(actor, app) {
 }
 
 export function registerMeshRoutes(app, { emitServerFlow }) {
-  const ltiKey = loadPlatformKey(config.ltiPlatformKey);
+  const ltiKey = loadPlatformKey(config.ltiPlatformKey, config.ltiPlatformPreviousKey, config.ltiSubjectKey);
   const issuer = config.publicOrigin.replace(/\/$/, "");
 
   // ---- district settings (caps; NULL = unlimited) ----
@@ -272,7 +288,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!managesApp(req.actor, cur)) return fail(403, "cannot_manage_app");
         const nextType = b.integrationType ?? cur.integration_type;
         const nextCfg = b.integrationConfig ?? cur.integration_config;
+        const nextScope = b.dataSharingScope ?? cur.data_sharing_scope;
         if (nextType === "lti13" && !validLtiConfig(nextCfg)) return fail(400, "invalid_lti_config");
+        if (nextType === "lti13" && !["none", "identity"].includes(nextScope)) return fail(400, "unsupported_lti_data_scope");
         const map = { name: "name", vendor: "vendor", description: "description", category: "category", launchUrl: "launch_url", integrationType: "integration_type",
           dataSharingScope: "data_sharing_scope", dpaStatus: "dpa_status", dpaExpiresOn: "dpa_expires_on", coppaCompliant: "coppa_compliant",
           ferpaSchoolOfficial: "ferpa_school_official", ownerSchoolId: "owner_school_id", status: "status" };
@@ -287,6 +305,48 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
       });
       send(res, r);
     } catch (e) { if (e.code === "23505") return res.status(409).json({ error: "app_name_exists" }); next(e); }
+  });
+
+  // LTI registrations require explicit district approval. Re-approval is
+  // required after any integration configuration change; revocation is immediate.
+  app.post("/api/apps/:appId/lti/approve", requireSession, requireCsrf, requirePermission("apps", "decide"), async (req, res, next) => {
+    if (!validId(req.params.appId)) return res.status(400).json({ error: "invalid_app_id" });
+    try {
+      const r = await withTenantTransaction(req.actor, async client => {
+        const found = await client.query("SELECT * FROM apps WHERE id=$1 FOR UPDATE", [req.params.appId]);
+        if (!found.rowCount) return fail(404, "app_not_found");
+        const a = found.rows[0];
+        if (a.integration_type !== "lti13" || a.status !== "active") return fail(409, "lti_registration_not_approvable");
+        // Two-person rule (also enforced in PostgreSQL): the registrant can't approve.
+        if (a.created_by === req.actor.userId) return fail(409, "lti_second_approver_required");
+        if (!validLtiConfig(a.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
+        const fingerprint = ltiConfigFingerprint(a.integration_config, a.data_sharing_scope);
+        const updated = await client.query(
+          "SELECT * FROM eduos_lti_approve_registration($1,$2,$3)",
+          [a.id, fingerprint, req.actor.userId]);
+        await audit(client, req, "approve_lti_registration", "app", a.id, { configFingerprint: fingerprint }, a.owner_school_id);
+        return { status: 200, data: { id: a.id, registrationStatus: updated.rows[0].registration_status, approvedAt: updated.rows[0].approved_at } };
+      });
+      send(res, r);
+    } catch (e) { next(e); }
+  });
+
+  app.post("/api/apps/:appId/lti/revoke", requireSession, requireCsrf, requirePermission("apps", "decide"), async (req, res, next) => {
+    if (!validId(req.params.appId)) return res.status(400).json({ error: "invalid_app_id" });
+    try {
+      const r = await withTenantTransaction(req.actor, async client => {
+        const found = await client.query("SELECT * FROM apps WHERE id=$1 FOR UPDATE", [req.params.appId]);
+        if (!found.rowCount) return fail(404, "app_not_found");
+        const a = found.rows[0];
+        if (a.integration_type !== "lti13") return fail(409, "not_an_lti_registration");
+        const updated = await client.query(
+          "SELECT * FROM eduos_lti_revoke_registration($1,$2)",
+          [a.id, req.actor.userId]);
+        await audit(client, req, "revoke_lti_registration", "app", a.id, { previousStatus: a.lti_registration_status }, a.owner_school_id);
+        return { status: 200, data: { id: a.id, registrationStatus: updated.rows[0].registration_status, revokedAt: updated.rows[0].revoked_at } };
+      });
+      send(res, r);
+    } catch (e) { next(e); }
   });
 
   // ---- licenses ----
@@ -453,6 +513,11 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!rows.length) return fail(403, "app_not_available");
         const a = rows[0];
         if (a.integration_type === "lti13" && !ltiKey) return fail(503, "lti_not_configured");
+        const cfg = a.integration_type === "lti13"
+          ? (await client.query("SELECT integration_config,data_sharing_scope,lti_registration_status,lti_approved_config_hash,lti_approved_at FROM apps WHERE id=$1", [a.id])).rows[0]
+          : null;
+        if (a.integration_type === "lti13" && !validLtiConfig(cfg.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
+        if (a.integration_type === "lti13" && (cfg.lti_registration_status !== "approved" || cfg.lti_approved_config_hash !== ltiConfigFingerprint(cfg.integration_config, a.data_sharing_scope))) return fail(409, "lti_approval_required");
         const seat = (await client.query("SELECT eduos_claim_seat($1) AS r", [a.license_id])).rows[0].r;
         if (seat === "exhausted") return fail(409, "no_seats_available");
         if (seat !== "ok") return fail(409, "license_inactive");
@@ -462,12 +527,16 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           [req.actor.districtId, a.id, a.license_id, req.actor.userId, req.actor.schoolId || null, req.actor.role, a.integration_type, a.data_sharing_scope]);
         await audit(client, req, "launch", "app", a.id, { integrationType: a.integration_type, dataSharingScope: a.data_sharing_scope, launchId: launch.rows[0].id }, req.actor.schoolId || null);
         if (a.integration_type !== "lti13") return { status: 200, data: { url: a.launch_url, integrationType: a.integration_type } };
-        const cfg = (await client.query("SELECT integration_config FROM apps WHERE id=$1", [a.id])).rows[0].integration_config;
-        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null });
-        const u = new URL(cfg.loginUrl);
+        const ltiCfg = cfg.integration_config;
+        // Bind the launch to this browser: the OIDC request that comes back
+        // through the tool must present this cookie (see /lti/authorize).
+        const binding = newBrowserBinding();
+        res.append("Set-Cookie", serializeCookie(bindingCookieName(launch.rows[0].id), binding.value, ltiBindingCookie(300)));
+        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg, a.data_sharing_scope), v: new Date(cfg.lti_approved_at).toISOString(), b: binding.hash });
+        const u = new URL(ltiCfg.loginUrl);
         u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
-        u.searchParams.set("target_link_uri", cfg.targetLinkUri || a.launch_url); u.searchParams.set("lti_message_hint", hint);
-        u.searchParams.set("client_id", cfg.clientId); u.searchParams.set("lti_deployment_id", cfg.deploymentId);
+        u.searchParams.set("target_link_uri", ltiCfg.targetLinkUri); u.searchParams.set("lti_message_hint", hint);
+        u.searchParams.set("client_id", ltiCfg.clientId);
         return { status: 200, data: { url: u.href, integrationType: "lti13" } };
       });
       res.setHeader("Cache-Control", "no-store");
@@ -475,46 +544,159 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     } catch (e) { next(e); }
   });
 
+  // The tool returns the browser to /lti/authorize from its own site, possibly
+  // as a form POST, so the binding cookie must be SameSite=None (which browsers
+  // only accept with Secure). Plain-HTTP development falls back to Lax.
+  function ltiBindingCookie(maxAge) {
+    const secure = Boolean(config.secureCookies);
+    return { httpOnly: true, secure, sameSite: secure ? "none" : "lax", path: "/lti/authorize", maxAge };
+  }
+
   // LTI 1.3 OIDC authentication request from the tool (GET or form POST).
   const ltiAuthorize = async (req, res, next) => {
-    const p = { ...(req.query || {}), ...(typeof req.body === "object" && req.body ? req.body : {}) };
     const deny = (status, error) => res.status(status).type("text/plain").send(`LTI launch refused: ${error}`);
+    const query = req.query || {};
+    const body = typeof req.body === "object" && req.body ? req.body : {};
+    // OIDC parameters must arrive through exactly one transport. Mixing query
+    // and form parameters creates ambiguous precedence (parameter pollution).
+    if (req.method === "POST" && Object.keys(query).length) return deny(400, "duplicate_request_parameters");
+    const p = req.method === "POST" ? body : query;
     if (!ltiKey) return deny(503, "lti_not_configured");
-    if (p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" || typeof p.nonce !== "string" || p.nonce.length > 256 ||
-        typeof p.redirect_uri !== "string" || typeof p.client_id !== "string" || (p.state !== undefined && (typeof p.state !== "string" || p.state.length > 2048)))
+    // Accept only the LTI/OIDC parameters this endpoint implements. Silently
+    // ignoring extension or misspelled parameters can create divergent
+    // validation between the platform and relying party.
+    const allowedParameters = new Set([
+      "scope", "response_type", "response_mode", "prompt", "client_id",
+      "redirect_uri", "login_hint", "lti_message_hint", "state", "nonce"
+    ]);
+    if (!p || typeof p !== "object" || Array.isArray(p) ||
+        Object.keys(p).some(name => !allowedParameters.has(name)) ||
+        (p.prompt !== undefined && p.prompt !== "none") ||
+        p.scope !== "openid" || p.response_type !== "id_token" || p.response_mode !== "form_post" ||
+        typeof p.nonce !== "string" || p.nonce.length < 1 || p.nonce.length > 256 ||
+        typeof p.state !== "string" || p.state.length < 1 || p.state.length > 2048 ||
+        typeof p.redirect_uri !== "string" || typeof p.client_id !== "string" ||
+        typeof p.login_hint !== "string" || typeof p.lti_message_hint !== "string")
       return deny(400, "invalid_request");
     const hint = readHint(ltiKey, p.lti_message_hint);
     if (!hint || p.login_hint !== hint.l) return deny(400, "invalid_or_expired_launch");
+    // Only the browser that started the launch may complete it. Without this, a
+    // copied lti_message_hint (it passes through the tool and the address bar)
+    // would let someone else receive this user's id_token.
+    const bindingName = validId(hint.l) ? bindingCookieName(hint.l) : null;
+    if (!bindingName || !browserBindingMatches(getCookie(req.headers.cookie, bindingName), hint.b))
+      return deny(403, "launch_browser_mismatch");
     // The signed hint is bound to one user, app, launch row and tenant, expires
     // in 5 minutes and is accepted once.
     try {
       const actor = { districtId: hint.d, userId: hint.u, role: hint.r, schoolId: hint.s };
-      const ctx = await withTenantTransaction(actor, async client => {
+      if (!validId(hint.d) || !validId(hint.l) || !validId(hint.a) || !validId(hint.u) ||
+          (hint.s !== null && hint.s !== undefined && !validId(hint.s)) ||
+          !Number.isFinite(hint.exp) || hint.exp <= Date.now()) return deny(400, "invalid_or_expired_launch");
+      const result = await withTenantTransaction(actor, async client => {
+        // Re-check the user's live district membership before honoring a signed
+        // hint; disabling a membership must revoke in-flight launch authority.
+        const membership = await client.query(
+          "SELECT 1 FROM memberships WHERE user_id=$1 AND district_id=$2 AND role=$3 AND school_id IS NOT DISTINCT FROM $4::uuid AND status='active'",
+          [hint.u, hint.d, hint.r, hint.s || null]
+        );
+        if (!membership.rowCount) return { error: "membership_inactive", status: 403 };
+        // Re-check current catalog assignment, license, DPA and learner eligibility
+        // at callback time; a launch hint must not outlive a revoked entitlement.
+        const current = await availableApps(client, actor, hint.a);
+        if (!current.rows.length) return { error: "app_not_available", status: 403 };
         const app = (await client.query("SELECT * FROM apps WHERE id=$1 AND status='active'", [hint.a])).rows[0];
-        const launch = (await client.query("SELECT id,role,school_id FROM app_launches WHERE id=$1 AND user_id=$2 AND app_id=$3", [hint.l, hint.u, hint.a])).rows[0];
+        const launch = (await client.query("SELECT id,role,school_id,license_id FROM app_launches WHERE id=$1 AND user_id=$2 AND app_id=$3", [hint.l, hint.u, hint.a])).rows[0];
         const user = (await client.query("SELECT id,display_name,email,status FROM users WHERE id=$1", [hint.u])).rows[0];
-        const school = hint.s ? (await client.query("SELECT id,name FROM schools WHERE id=$1", [hint.s])).rows[0] : null;
+        const school = hint.s ? (await client.query("SELECT id,name FROM schools WHERE id=$1 AND status='active'", [hint.s])).rows[0] : null;
+        if (!app || !launch || !user || user.status !== "active" || (hint.s && !school))
+          return { error: "launch_not_found", status: 403 };
+        if (launch.role !== hint.r || (launch.school_id || null) !== (hint.s || null))
+          return { error: "launch_context_changed", status: 403 };
+        // The license whose seat was claimed at launch must still be active;
+        // a replacement license must not silently revive a revoked launch.
+        const license = await client.query(
+          "SELECT 1 FROM app_licenses WHERE id=$1 AND app_id=$2 AND status='active' AND starts_on<=current_date AND (ends_on IS NULL OR ends_on>=current_date)",
+          [launch.license_id, hint.a]
+        );
+        if (!license.rowCount) return { error: "license_inactive", status: 403 };
+        const cfg = app.integration_config || {};
+        // Revalidate the live registration at callback time as well as launch
+        // initiation: configuration may have changed while the browser was
+        // completing the OIDC round-trip.
+        if (!validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" }))
+          return { error: "lti_configuration_invalid", status: 409 };
+        if (typeof hint.c !== "string" || ltiConfigFingerprint(cfg, app.data_sharing_scope) !== hint.c)
+          return { error: "lti_registration_changed", status: 409 };
+        if (app.lti_registration_status !== "approved" || app.lti_approved_config_hash !== ltiConfigFingerprint(cfg, app.data_sharing_scope))
+          return { error: "lti_approval_required", status: 409 };
+        if (!app.lti_approved_at || hint.v !== new Date(app.lti_approved_at).toISOString())
+          return { error: "lti_approval_changed", status: 409 };
+        if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
+        if (!["none", "identity"].includes(app.data_sharing_scope)) return { error: "unsupported_lti_data_scope", status: 403 };
+        if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
+        // Claim the launch atomically in the same tenant transaction as the
+        // authorization checks. This prevents replay across processes/restarts.
+        const consumed = await consumeHintDurably(client, hint.d, hint.l, new Date(hint.exp));
+        if (!consumed) return { error: "launch_already_used", status: 409 };
         return { app, launch, user, school };
       });
-      if (!ctx.app || !ctx.launch || !ctx.user || ctx.user.status !== "active") return deny(403, "launch_not_found");
-      const cfg = ctx.app.integration_config || {};
-      if (ctx.app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return deny(400, "client_mismatch");
-      if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return deny(400, "redirect_uri_not_registered");
-      if (!consumeHint(hint.l)) return deny(409, "launch_already_used");
+      if (result.error) return deny(result.status, result.error);
+      const ctx = result;
       const idToken = signJwt(ltiKey, launchClaims({ key: ltiKey, issuer, app: ctx.app, launch: { role: ctx.launch.role, districtId: hint.d }, user: ctx.user, school: ctx.school, nonce: p.nonce }));
       const esc = v => String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       const target = new URL(p.redirect_uri);
       res.setHeader("Cache-Control", "no-store");
-      res.setHeader("Content-Security-Policy", `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action ${target.origin}; frame-ancestors 'self'; base-uri 'none'`);
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.append("Set-Cookie", serializeCookie(bindingName, "", ltiBindingCookie(0)));
+      // Only the fixed auto-submit script may run (hash, not 'unsafe-inline').
+      res.setHeader("Content-Security-Policy", `default-src 'none'; script-src '${AUTO_SUBMIT_SCRIPT_HASH}'; style-src 'unsafe-inline'; form-action ${target.origin}; frame-ancestors 'self'; base-uri 'none'`);
       res.type("html").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Opening app…</title></head>
 <body><main><h1 style="font:16px system-ui">Opening ${esc(ctx.app.name)}…</h1>
 <form id="lti" method="post" action="${esc(p.redirect_uri)}"><input type="hidden" name="id_token" value="${esc(idToken)}">${p.state !== undefined ? `<input type="hidden" name="state" value="${esc(p.state)}">` : ""}
 <noscript><button type="submit">Continue to ${esc(ctx.app.name)}</button></noscript></form></main>
-<script>document.getElementById("lti").submit()</script></body></html>`);
+<script>${AUTO_SUBMIT_SCRIPT}</script></body></html>`);
     } catch (e) { next(e); }
   };
   app.get("/lti/authorize", ltiAuthorize);
-  app.post("/lti/authorize", (req, res, next) => (req.is("application/x-www-form-urlencoded") ? expressUrlencoded(req, res, () => ltiAuthorize(req, res, next)) : ltiAuthorize(req, res, next)));
+  app.post("/lti/authorize", (req, res, next) => {
+    // LTI response_mode=form_post requires an URL-encoded form body. Do not
+    // accept JSON or other parsers' output as an alternate OIDC transport.
+    if (!req.is("application/x-www-form-urlencoded")) return res.status(415).type("text/plain").send("LTI launch refused: unsupported_content_type");
+    return expressRawUrlencoded(req, res, error => {
+      if (error) return next(error);
+      // Reject unknown names before constructing an object from request data.
+      // Map avoids user-controlled property writes; Object.fromEntries receives
+      // only protocol keys from this fixed allowlist and preserves duplicate values.
+      const allowedFormParameters = new Set([
+        "scope", "response_type", "response_mode", "prompt", "client_id",
+        "redirect_uri", "login_hint", "lti_message_hint", "state", "nonce"
+      ]);
+      const parsed = {};
+      const appendScalar = (previous, value) => previous === undefined ? value
+        : Array.isArray(previous) ? [...previous, value] : [previous, value];
+      for (const [key, value] of new URLSearchParams(req.body.toString("utf8"))) {
+        if (!allowedFormParameters.has(key)) return res.status(400).type("text/plain").send("LTI launch refused: invalid_request");
+        // Assign only fixed protocol properties. Never use a request-controlled
+        // key as an object property, even after allowlist validation.
+        switch (key) {
+          case "scope": parsed.scope = appendScalar(parsed.scope, value); break;
+          case "response_type": parsed.response_type = appendScalar(parsed.response_type, value); break;
+          case "response_mode": parsed.response_mode = appendScalar(parsed.response_mode, value); break;
+          case "prompt": parsed.prompt = appendScalar(parsed.prompt, value); break;
+          case "client_id": parsed.client_id = appendScalar(parsed.client_id, value); break;
+          case "redirect_uri": parsed.redirect_uri = appendScalar(parsed.redirect_uri, value); break;
+          case "login_hint": parsed.login_hint = appendScalar(parsed.login_hint, value); break;
+          case "lti_message_hint": parsed.lti_message_hint = appendScalar(parsed.lti_message_hint, value); break;
+          case "state": parsed.state = appendScalar(parsed.state, value); break;
+          case "nonce": parsed.nonce = appendScalar(parsed.nonce, value); break;
+          default: return res.status(400).type("text/plain").send("LTI launch refused: invalid_request");
+        }
+      }
+      req.body = parsed;
+      return ltiAuthorize(req, res, next);
+    });
+  });
   app.get("/.well-known/jwks.json", (_req, res) => { res.setHeader("Cache-Control", "public, max-age=300"); res.json(ltiKey ? ltiKey.jwks : { keys: [] }); });
 
   // ---- requests (principal/teacher -> district) ----
@@ -595,6 +777,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
   });
 }
 
-// Small form parser for the LTI OIDC POST variant (no other route needs it).
+// Bounded raw parser for the LTI OIDC POST variant. Parsing raw bytes first
+// makes the 16KB cap apply before protocol-field validation and also covers
+// chunked requests without relying on Content-Length.
 import express from "express";
-const expressUrlencoded = express.urlencoded({ extended: false, limit: "16kb" });
+const expressRawUrlencoded = express.raw({ type: "application/x-www-form-urlencoded", limit: "16kb" });
