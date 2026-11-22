@@ -20,6 +20,11 @@ const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app, EDU
 const m = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl });
 if (m.code) throw new Error(m.out);
 await seedDemo({ databaseUrl: db.ownerUrl, issuer: idp.issuer, env });
+// APPEARANCE=light|dark|device: what the published school themes choose for the app.
+if (process.env.APPEARANCE) {
+  const pg = (await import("pg")).default, c = new pg.Client(db.adminUrl);
+  await c.connect(); await c.query("UPDATE branding_profiles SET app_appearance=$1 WHERE status='published'", [process.env.APPEARANCE]); await c.end();
+}
 const server = await startServer({ ...env, DATABASE_URL: db.appUrl });
 const chrome = await startChrome({ after() {} });
 

@@ -93,18 +93,30 @@ const toHex = rgb => "#" + rgb.map(v => Math.round(Math.max(0, Math.min(255, v))
 const lum = rgb => { const [r, g, b] = rgb.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
 const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
-const SURFACE = hex("#141a29"), WHITE = [255, 255, 255], INK = hex("#0b0f19");
-function readableOn(bg, color) { let c = color; for (let t = 0; t <= 1.0001 && contrast(c, bg) < 4.5; t += 0.05) c = mix(color, WHITE, t); return c; }
+const SURFACE = hex("#141a29"), LIGHT_SURFACE = hex("#ffffff"), WHITE = [255, 255, 255], BLACK = [0, 0, 0], INK = hex("#0b0f19");
+// Lightens a colour (dark surface) or darkens it (light surface) until it reaches AA as text on bg.
+function readableOn(bg, color, toward = WHITE) { let c = color; for (let t = 0; t <= 1.0001 && contrast(c, bg) < 4.5; t += 0.05) c = mix(color, toward, t); return c; }
 const onFill = rgb => (contrast(rgb, WHITE) >= 4.5 ? "#ffffff" : "#0b0f19");
 function applyBranding(b) {
   const root = document.documentElement.style;
   const primary = hex(b?.branding?.primary) || hex("#2f6fbf");
   const accent = hex(b?.branding?.accent) || hex("#f6c445");
   root.setProperty("--school", toHex(primary)); root.setProperty("--on-school", onFill(primary));
-  // An accent that is too dark for the dark theme is lightened until AA holds.
-  const acc = readableOn(SURFACE, accent);
+  // UI-02: the school's theme chooses the app's appearance (dark, light, or the device's setting).
+  const mode = b?.branding?.appAppearance || "dark";
+  const prefersLight = typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: light)").matches;
+  const light = mode === "light" || (mode === "device" && prefersLight);
+  document.documentElement.dataset.appearance = light ? "light" : "dark";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", light ? toHex(primary) : "#0b0f19");
+  if (mode === "device" && !applyBranding.watching && typeof matchMedia === "function") {
+    applyBranding.watching = true;
+    matchMedia("(prefers-color-scheme: light)").addEventListener?.("change", () => applyBranding(state.brand));
+  }
+  // An accent or school colour that is too dark (dark theme) or too light (light theme) is adjusted until AA holds.
+  const surface = light ? LIGHT_SURFACE : SURFACE, toward = light ? BLACK : WHITE;
+  const acc = readableOn(surface, accent, toward);
   root.setProperty("--accent", toHex(acc)); root.setProperty("--on-accent", contrast(acc, INK) >= 4.5 ? "#0b0f19" : "#ffffff");
-  root.setProperty("--ink", toHex(readableOn(SURFACE, primary)));
+  root.setProperty("--ink", toHex(readableOn(surface, primary, toward)));
   const fonts = { rounded: `"Nunito", "Varela Round", ui-rounded, system-ui, sans-serif`, slab: `"Roboto Slab", "Rockwell", Georgia, serif`, system: `system-ui, -apple-system, "Segoe UI", Roboto, sans-serif` };
   root.setProperty("--font", fonts[b?.branding?.font] || fonts.system);
   if (b?.publicKey) {
@@ -2794,10 +2806,26 @@ async function appsCard({ title = "Your apps", limit = 12 } = {}) {
   const r = await safe(api.get("/api/my/apps"));
   const list = Array.isArray(r?.data) ? r.data : [];
   if (!list.length) return null;
-  return h("section", { class: "card", "aria-label": title }, h("h2", {}, title),
-    h("div", { class: "apptiles" }, list.slice(0, limit).map(a => h("button", { class: "apptile", type: "button",
+  // UI-02: each school's tile design from its theme (same as the full site's launcher).
+  const M = window.EduOSBrandModel, brand = state.brand?.branding;
+  const tile = (a, i) => {
+    const s = M && brand ? M.tileStyle(brand, `app:${a.id}`, i + 3, { name: a.name, category: a.category }) : null;
+    if (s?.hidden) return null;
+    const ico = h("span", { class: `apptile-ico ${s ? `shape-${s.shape}` : ""}`, "aria-hidden": "true" });
+    if (s) {
+      // Glyph paths and colours come from the validated theme model, not from user text.
+      ico.innerHTML = s.glyphMode === "color"
+        ? `<span class="disc" style="background:${s.disc}">${M.glyphSvg(s.glyph, s.glyphFg, 18)}</span>` : M.glyphSvg(s.glyph, s.glyphFg, 24);
+      const m = state.brand?.mascot;
+      if (s.badge && m) ico.append(h("img", { class: "badge", src: m["48"] || Object.values(m)[0], alt: "" }));
+    } else ico.append(icon("apps"));
+    return h("button", { class: `apptile${s ? ` branded shape-${s.shape}` : ""}`, type: "button",
+      style: s ? `background:${s.bg};color:${s.label};border-color:${s.border ? "#5a6f86" : "transparent"}` : false,
       onclick: () => openToolTab(`/api/apps/${a.id}/launch`, {}, e => TOOL_ERRORS[e] || "Couldn't open it.") },
-      icon("apps"), h("span", { class: "name" }, a.name), a.category ? h("span", { class: "small muted" }, a.category) : null))),
+      ico, h("span", { class: "name" }, s?.labelText || a.name), a.category ? h("span", { class: "small cat" }, a.category) : null);
+  };
+  return h("section", { class: "card", "aria-label": title }, h("h2", {}, title),
+    h("div", { class: "apptiles" }, list.slice(0, limit).map(tile)),
     list.length > limit ? h("p", { class: "small" }, h("a", { href: "/#tab=apps" }, `All ${list.length} apps`)) : null);
 }
 for (const view of ["home", "classes", "children"]) {

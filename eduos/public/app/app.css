@@ -302,3 +302,34 @@ code.token { display: block; margin-top: 6px; padding: 8px; word-break: break-al
 .action-center .chip{flex:none;min-width:42px;justify-content:center;font-variant-numeric:tabular-nums;}
 .action-center .btns{margin-top:10px;}
 @media(min-width:700px){.action-center .action-item{padding:14px 0;}}
+/* UI-02: app tiles drawn from the school's theme (colours set inline from the theme model). */
+.apptile .apptile-ico { position: relative; display: inline-grid; place-items: center; width: 34px; height: 34px; }
+.apptile .apptile-ico svg { width: 24px; height: 24px; }
+.apptile .apptile-ico .disc { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; }
+.apptile .apptile-ico .disc svg { width: 18px; height: 18px; }
+.apptile .apptile-ico .badge { position: absolute; right: -8px; bottom: -6px; width: 20px; height: 20px; border-radius: 50%; border: 2px solid currentColor; background: #fff; }
+.apptile.branded { border-width: 1px; border-style: solid; }
+.apptile.branded .cat { color: inherit; opacity: .92; font-weight: 600; }
+.apptile.branded:hover { filter: brightness(1.06); }
+.apptile.shape-rounded { border-radius: 16px; } .apptile.shape-circle { border-radius: 28px; } .apptile.shape-square { border-radius: 4px; }
+.apptile .cat { color: var(--muted); }
+
+/* UI-02: light appearance, chosen in the school's theme. School colours are
+   darkened in app.js until text reaches AA on these surfaces. */
+html[data-appearance="light"] {
+  --bg: #f3f6fa; --surface: #ffffff; --surface-2: #eef2f7; --line: #d3dbe6;
+  --text: #0f1a2a; --muted: #4a5a70; --danger: #b42318; --ok: #1b7a46; --warn: #8a5300;
+  color-scheme: light;
+}
+html[data-appearance="light"] .top { background: var(--school) !important; color: var(--on-school); border-bottom: 1px solid rgba(0,0,0,.12); }
+html[data-appearance="light"] .top .who .school { color: inherit; opacity: .9; }
+html[data-appearance="light"] .top .iconbtn { background: rgba(255,255,255,.95); border-color: transparent; color: #0f1a2a; }
+html[data-appearance="light"] .tabs { background: rgba(255,255,255,.97); }
+html[data-appearance="light"] .chip.boarded, html[data-appearance="light"] .chip.present, html[data-appearance="light"] .chip.mastered { background: #e6f4ec; border-color: #b4dcc4; }
+html[data-appearance="light"] .chip.alighted { background: #e8effb; color: #1d4ed8; border-color: #c2d3f1; }
+html[data-appearance="light"] .chip.not_riding, html[data-appearance="light"] .chip.absent { background: #fdecea; border-color: #f2c1bb; }
+html[data-appearance="light"] .chip.expected, html[data-appearance="light"] .chip.tardy, html[data-appearance="light"] .chip.not_started { background: #fff4d6; border-color: #ecd08a; }
+html[data-appearance="light"] .btn.danger { background: #fdecea; border-color: #f2c1bb; }
+html[data-appearance="light"] .iconbtn.sos, html[data-appearance="light"] .sos-inline.active { color: #a3231b; border-color: #e9a59d; }
+html[data-appearance="light"] .dialog.danger { border-color: #d9534f; }
+html[data-appearance="light"] .top .mascot.initials { background: rgba(255,255,255,.22); color: var(--on-school); }

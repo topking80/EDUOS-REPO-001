@@ -26,7 +26,7 @@ import { processMascot, ImageRejected, defaultIconSvg, renderPng, ICON_SIZES } f
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validId = v => typeof v === "string" && UUID_RE.test(v);
 const ANON_USER = "00000000-0000-0000-0000-000000000000";
-const FIELDS = { mascotName: "mascot_name", motto: "motto", primary: "primary_color", secondary: "secondary_color", accent: "accent_color", font: "font" };
+const FIELDS = { mascotName: "mascot_name", motto: "motto", primary: "primary_color", secondary: "secondary_color", accent: "accent_color", font: "font", appAppearance: "app_appearance" };
 const send = (res, r) => res.status(r.status).json(r.error ? { error: r.error, ...(r.extra || {}) } : { data: r.data });
 const fail = (status, error, extra) => ({ status, error, extra });
 const audit = (client, req, action, id, detail, schoolId = null) => client.query(
@@ -40,7 +40,7 @@ const mascotUrls = id => id ? Object.fromEntries(ICON_SIZES.map(s => [s, assetUr
 export function toApi(r) {
   if (!r) return null;
   return { id: r.id, schoolId: r.school_id, status: r.status, version: r.version, mascotName: r.mascot_name, motto: r.motto,
-    primary: r.primary_color, secondary: r.secondary_color, accent: r.accent_color, font: r.font, mascotUploadId: r.mascot_upload_id,
+    primary: r.primary_color, secondary: r.secondary_color, accent: r.accent_color, font: r.font, appAppearance: r.app_appearance, mascotUploadId: r.mascot_upload_id,
     tiles: r.tiles && r.tiles.preset ? r.tiles : null, basedOnVersion: r.based_on_version, updatedAt: r.updated_at,
     publishedAt: r.published_at, publishedByName: r.published_by_name ?? undefined };
 }
@@ -55,6 +55,7 @@ export function validateDraftInput(body, { isSchool }) {
     if (v !== undefined && !nullable(v) && !(typeof v === "string" && /^#[0-9a-f]{6}$/.test(v.toLowerCase()))) return `invalid_${k}`;
   }
   if (body.font !== undefined && body.font !== null && !(body.font in M.FONTS)) return "invalid_font";
+  if (body.appAppearance !== undefined && body.appAppearance !== null && !M.APPEARANCES.includes(body.appAppearance)) return "invalid_app_appearance";
   if (body.mascotName !== undefined && body.mascotName !== null && !(typeof body.mascotName === "string" && body.mascotName.trim().length >= 1 && body.mascotName.trim().length <= 60 && !/[<>]/.test(body.mascotName))) return "invalid_mascot_name";
   if (body.motto !== undefined && body.motto !== null && !(typeof body.motto === "string" && body.motto.trim().length >= 1 && body.motto.trim().length <= 120 && !/[<>]/.test(body.motto))) return "invalid_motto";
   if (body.tiles !== undefined && body.tiles !== null) { const e = M.validateTiles(body.tiles); if (e) return e; }
@@ -200,10 +201,10 @@ export function registerBrandingRoutes(app, { emitServerFlow }) {
     const [d] = await profiles(client, scope.schoolId, ["draft"]);
     if (d) return d;
     const [p] = await profiles(client, scope.schoolId, ["published"]);
-    const r = await client.query(`INSERT INTO branding_profiles(district_id,school_id,status,mascot_name,motto,primary_color,secondary_color,accent_color,font,mascot_upload_id,tiles,based_on_version,created_by,updated_by)
-       VALUES($1,$2,'draft',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) RETURNING *`,
+    const r = await client.query(`INSERT INTO branding_profiles(district_id,school_id,status,mascot_name,motto,primary_color,secondary_color,accent_color,font,mascot_upload_id,tiles,based_on_version,created_by,updated_by,app_appearance)
+       VALUES($1,$2,'draft',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13) RETURNING *`,
       [req.actor.districtId, scope.schoolId, p?.mascot_name ?? null, p?.motto ?? null, p?.primary_color ?? null, p?.secondary_color ?? null, p?.accent_color ?? null,
-       p?.font ?? null, p?.mascot_upload_id ?? null, p?.tiles ?? {}, p?.version ?? null, req.actor.userId]);
+       p?.font ?? null, p?.mascot_upload_id ?? null, p?.tiles ?? {}, p?.version ?? null, req.actor.userId, p?.app_appearance ?? null]);
     return r.rows[0];
   }
 
@@ -272,9 +273,9 @@ export function registerBrandingRoutes(app, { emitServerFlow }) {
     const src = (await client.query(`SELECT * FROM branding_profiles WHERE ${sameScope} AND version=$2`, [scope.schoolId, version])).rows[0];
     if (!src) return fail(404, "version_not_found");
     await client.query(`DELETE FROM branding_profiles WHERE ${sameScope} AND status='draft'`, [scope.schoolId]);
-    const r = await client.query(`INSERT INTO branding_profiles(district_id,school_id,status,mascot_name,motto,primary_color,secondary_color,accent_color,font,mascot_upload_id,tiles,based_on_version,created_by,updated_by)
-       VALUES($1,$2,'draft',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) RETURNING id`,
-      [req.actor.districtId, scope.schoolId, src.mascot_name, src.motto, src.primary_color, src.secondary_color, src.accent_color, src.font, src.mascot_upload_id, src.tiles, version, req.actor.userId]);
+    const r = await client.query(`INSERT INTO branding_profiles(district_id,school_id,status,mascot_name,motto,primary_color,secondary_color,accent_color,font,mascot_upload_id,tiles,based_on_version,created_by,updated_by,app_appearance)
+       VALUES($1,$2,'draft',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13) RETURNING id`,
+      [req.actor.districtId, scope.schoolId, src.mascot_name, src.motto, src.primary_color, src.secondary_color, src.accent_color, src.font, src.mascot_upload_id, src.tiles, version, req.actor.userId, src.app_appearance]);
     await audit(client, req, "restore", r.rows[0].id, { version }, scope.schoolId);
     return { status: 200, data: await view(client, scope) };
   }));
@@ -319,7 +320,7 @@ export function registerBrandingRoutes(app, { emitServerFlow }) {
       const base = `/api/public/branding/${req.params.districtId}/${req.params.schoolId}`;
       res.setHeader("Cache-Control", "public, max-age=300");
       res.json({ data: { schoolName: b.school.name, districtName: b.districtName, mascotName: b.eff.mascotName, motto: b.eff.motto,
-        primary: b.eff.primary, secondary: b.eff.secondary, accent: b.eff.accent, font: b.eff.font, version: b.version,
+        primary: b.eff.primary, secondary: b.eff.secondary, accent: b.eff.accent, font: b.eff.font, appAppearance: b.eff.appAppearance, version: b.version,
         icons: Object.fromEntries([512, 192, 180, 32].map(s => [s, `${base}/icon-${s}.png?v=${b.version}`])), manifest: `${base}/manifest.webmanifest?v=${b.version}` } });
     } catch (e) { next(e); }
   });
