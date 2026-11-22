@@ -25,7 +25,15 @@ jobs:
           docker run --rm --entrypoint=promtool \
             --volume "$PWD/monitoring:/etc/prometheus:ro" \
             prom/prometheus:v3.5.0 \
-            check rules /etc/prometheus/eduos-alerts.yml
+            check rules /etc/prometheus/eduos-alerts.yml /etc/prometheus/eduos-slo.yml
+      # CMP-05: SLO rules, run against synthetic traffic (healthy, outage, slow,
+      # quiet hours, unreachable); each case lists which alerts must fire.
+      - name: Unit-test the SLO rules with promtool
+        run: |
+          docker run --rm --entrypoint=promtool \
+            --volume "$PWD/monitoring:/etc/prometheus:ro" --workdir /etc/prometheus \
+            prom/prometheus:v3.5.0 \
+            test rules eduos-slo.test.yml
 
   source-and-container-security:
     runs-on: ubuntu-24.04
