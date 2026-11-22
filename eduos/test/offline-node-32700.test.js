@@ -23,6 +23,12 @@ test("offline queue: encrypted with a non-extractable AES-GCM key, capped, expir
   assert.doesNotMatch(app, /localStorage/, "nothing in localStorage");
   assert.match(app, /"idempotency-key"/); assert.match(app, /"x-eduos-queued-at"/);
 });
+test("offline queue: a saved change belongs to the profile it was made in (UI-05)", () => {
+  assert.match(app, /JSON\.stringify\(\{ path, body, profile: profileKey\(\) \}\)/, "each change is saved with its profile, inside the encrypted payload");
+  assert.match(app, /if \(profile && profile !== profileKey\(\)\) \{ held\+\+; continue; \}/, "changes from another profile are held, not sent");
+  assert.match(app, /const profileKey = \(\) => state\.me \? `\$\{state\.me\.districtId\}\|\$\{state\.me\.schoolId \|\| ""\}\|\$\{state\.me\.role\}`/, "district, school and role");
+  assert.match(app, /Switch back to it to send/, "the person is told how to send held changes");
+});
 test("service worker: shell only, current-release cache name, never /api or /auth", () => {
   assert.match(sw, new RegExp(`eduos-app-shell-${RELEASE_RE}"`));
   assert.match(sw, /url\.pathname\.startsWith\("\/api\/"\) \|\| url\.pathname\.startsWith\("\/auth\/"\)\) return;/);

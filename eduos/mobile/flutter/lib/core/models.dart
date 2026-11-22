@@ -41,12 +41,23 @@ class Brand {
   String get placeName => schoolName ?? districtName ?? 'EduOS';
 }
 
+/// One profile the person can use: a role at a school (or district office) in a district.
 class Membership {
-  const Membership({required this.id, required this.role, this.schoolId, this.schoolName});
-  factory Membership.fromJson(Json j) =>
-      Membership(id: str(j['id']), role: str(j['role']), schoolId: strOrNull(j['school_id']), schoolName: strOrNull(j['school_name']));
+  const Membership({required this.id, required this.role, this.schoolId, this.schoolName, this.districtId, this.districtName, this.current = false});
+  factory Membership.fromJson(Json j) => Membership(
+        id: str(j['id']),
+        role: str(j['role']),
+        schoolId: strOrNull(j['school_id']),
+        schoolName: strOrNull(j['school_name']),
+        districtId: strOrNull(j['district_id']),
+        districtName: strOrNull(j['district_name']),
+        current: boolean(j['current']),
+      );
   final String id, role;
-  final String? schoolId, schoolName;
+  final String? schoolId, schoolName, districtId, districtName;
+
+  /// The profile this session is using (the server decides, district included).
+  final bool current;
 }
 
 class ChildSummary {

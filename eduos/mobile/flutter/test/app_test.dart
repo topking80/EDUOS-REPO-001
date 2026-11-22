@@ -76,6 +76,35 @@ void main() {
     expect(fake.requests.any((r) => r.headers.containsKey('cookie')), isFalse);
   });
 
+  testWidgets('a person with several profiles switches from the top bar', (tester) async {
+    final fake = FakeEduOs();
+    fake.extra['GET /api/memberships'] = {'data': [
+      {'id': 'm-parent', 'role': 'parent', 'district_id': 'd1', 'district_name': 'Lake District', 'school_id': 's1', 'school_name': 'Maple Elementary', 'current': true},
+      {'id': 'm-teacher', 'role': 'teacher', 'district_id': 'd1', 'district_name': 'Lake District', 'school_id': 's2', 'school_name': 'Oak Middle', 'current': false},
+      {'id': 'm-hill', 'role': 'parent', 'district_id': 'd2', 'district_name': 'Hill County', 'school_id': 's9', 'school_name': 'Hill Primary', 'current': false},
+    ]};
+    fake.extra['POST /api/session/membership'] = {'role': 'teacher', 'districtId': 'd1', 'schoolId': 's2', 'csrfToken': 'csrf-1',
+        'sessionToken': 'tok-2', 'expiresAt': DateTime.now().add(const Duration(hours: 8)).toIso8601String()};
+    final app = await signedInApp(tester, fake);
+    expect(app.profiles, hasLength(3));
+    await tester.tap(find.byTooltip('Switch profile'));
+    await tester.pumpAndSettle();
+    expect(find.text('Switch profile'), findsOneWidget);
+    // Profiles in two districts: each label names its district.
+    expect(find.text('Teacher · Oak Middle · Lake District'), findsOneWidget);
+    expect(find.text('Family · Hill Primary · Hill County'), findsOneWidget);
+    await tester.tap(find.text('Teacher · Oak Middle · Lake District'));
+    await tester.pumpAndSettle();
+    final post = fake.requests.lastWhere((r) => r.url.path == '/api/session/membership');
+    expect(jsonDecode(post.body), {'membershipId': 'm-teacher'});
+    expect(fake.requests.last.headers['authorization'], 'Bearer tok-2', reason: 'the new session is used from then on');
+  });
+
+  testWidgets('one profile: no switch button', (tester) async {
+    await signedInApp(tester, FakeEduOs());
+    expect(find.byTooltip('Switch profile'), findsNothing);
+  });
+
   testWidgets('arrival shows driver check-ins; the library shows loans', (tester) async {
     await signedInApp(tester, FakeEduOs());
     await tester.tap(find.text('Arrival').last);

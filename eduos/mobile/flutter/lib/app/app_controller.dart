@@ -140,6 +140,9 @@ class AppController extends ChangeNotifier {
   Future<List<Membership>> memberships() async =>
       objs((await api.get('/api/memberships'))['data']).map(Membership.fromJson).toList();
 
+  /// Every profile this person can switch to (loaded with the profile; empty if unavailable).
+  List<Membership> profiles = const [];
+
   Future<void> switchMembership(String membershipId) async {
     final res = await api.post('/api/session/membership', {'membershipId': membershipId});
     final json = res.json ?? const {};
@@ -217,20 +220,23 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The profile, branding, safety status and unread count, requested
-  /// together (one round trip in sequence instead of four).
+  /// The profile, branding, the person's other profiles, safety status and
+  /// unread count, requested together (one round trip in sequence).
   Future<void> _loadProfile() async {
     final client = api;
-    final (profile, branding, _) = await (
+    final (profile, branding, _, mems) = await (
       client.get('/api/me'),
       _attempt(() => client.get('/api/branding/current')),
       refreshStatus(),
-    ).wait.onError<ParallelWaitError<(Map<String, Object?>, (Map<String, Object?>?, ApiException?), void), (AsyncError?, AsyncError?, AsyncError?)>>(
-        (e, _) => throw e.errors.$1?.error ?? e.errors.$3?.error ?? e);
+      _attempt(() => client.get('/api/memberships')),
+    ).wait.onError<
+        ParallelWaitError<(Map<String, Object?>, (Map<String, Object?>?, ApiException?), void, (Map<String, Object?>?, ApiException?)),
+            (AsyncError?, AsyncError?, AsyncError?, AsyncError?)>>((e, _) => throw e.errors.$1?.error ?? e.errors.$3?.error ?? e);
     me = Me.fromJson(profile);
     final brandError = branding.$2;
     if (brandError != null && brandError.isUnauthorized) throw brandError;
     brand = branding.$1 == null ? null : Brand.fromJson(obj(branding.$1!['data']));
+    profiles = mems.$1 == null ? const [] : objs(mems.$1!['data']).map(Membership.fromJson).toList();
     // The queue counts depend on who signed in (now known).
     await _countQueue();
     _statusSignature = '';
@@ -259,6 +265,7 @@ class AppController extends ChangeNotifier {
     _session = null;
     me = null;
     brand = null;
+    profiles = const [];
     incidents = const [];
     canInitiateSafety = false;
     canLeadSafety = false;

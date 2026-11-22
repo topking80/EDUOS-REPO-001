@@ -160,7 +160,10 @@ function renderTop() {
     mascotSrc ? h("img", { class: "mascot", src: mascotSrc, alt: `${b.branding?.mascotName || "School"} mascot` })
       : h("span", { class: "mascot initials", "aria-hidden": "true" }, String(b?.school?.name || b?.districtName || "EduOS").replace(/\(.*?\)/g, "").split(/\s+/).filter(w => /^[A-Z]/.test(w)).slice(0, 2).map(w => w[0]).join("") || "E"),
     h("div", { class: "who" },
-      h("p", { class: "school" }, `${b?.school?.name || b?.districtName || "EduOS"} · ${APP_NAME[me.role] || me.role}`),
+      (state.profiles || []).length > 1
+        ? h("button", { class: "school switch", type: "button", "aria-haspopup": "dialog", "aria-label": `${b?.school?.name || b?.districtName || "EduOS"} · ${APP_NAME[me.role] || me.role}. Switch profile`, onclick: openProfiles },
+            `${b?.school?.name || b?.districtName || "EduOS"} · ${APP_NAME[me.role] || me.role}`, h("span", { class: "caret", "aria-hidden": "true" }, " ▾"))
+        : h("p", { class: "school" }, `${b?.school?.name || b?.districtName || "EduOS"} · ${APP_NAME[me.role] || me.role}`),
       h("h1", {}, `Hi, ${first(me.displayName)}`)),
     h("button", { class: "iconbtn", type: "button", "aria-label": state.unread ? `Alerts, ${state.unread} unread` : "Alerts", onclick: () => go(tabsFor().some(t => t[0] === "alerts") ? "alerts" : "me") },
       icon("bell"), state.unread ? h("span", { class: "dot", "aria-hidden": "true" }, String(Math.min(state.unread, 99))) : null),
@@ -206,14 +209,43 @@ const VIEWS = {};
 // another school moves the app to that school (its colours, news, messages and
 // alerts) when the family has an account there. Kept in memory only.
 const NO_FAMILY_BAR = ["safety", "sos", "me", "more"];
+// UI-05: every profile this person can use (role + school + district), for the
+// switcher in the header and on Account.
+async function loadProfiles() { state.profiles = (await safe(api.get("/api/memberships")))?.data || []; }
 async function loadFamily() {
   if (state.me?.role !== "parent") { state.family = null; return; }
-  const [kids, mems] = await Promise.all([safe(api.get("/api/family/children")), safe(api.get("/api/memberships"))]);
+  const kids = await safe(api.get("/api/family/children"));
   if (state.family?.userId !== state.me.userId) state.childId = null;
-  state.family = { userId: state.me.userId, kids: kids?.data || [], memberships: (mems?.data || []).filter(m => m.role === "parent") };
+  state.family = { userId: state.me.userId, kids: kids?.data || [], memberships: (state.profiles || []).filter(m => m.role === "parent") };
   if (state.childId && !state.family.kids.some(k => k.id === state.childId)) state.childId = null;
 }
 const familyMembershipFor = kid => state.family?.memberships.find(m => m.district_id === state.me.districtId && m.school_id === kid.school_id);
+function profileLabel(m, all = state.profiles || []) {
+  const place = m.school_name || (m.school_id ? "School" : "District office");
+  const districts = new Set(all.map(p => p.district_id));
+  return `${APP_NAME[m.role] || m.role} · ${place}${districts.size > 1 && m.district_name ? ` · ${m.district_name}` : ""}`;
+}
+function profileList(onPick) {
+  const all = state.profiles || [];
+  return h("ul", { class: "list profiles" }, all.map(m => h("li", {}, m.current
+    ? h("p", { class: "row profile current", "aria-current": "true" }, icon("check"), h("span", { class: "grow" }, profileLabel(m, all)), chip("present", "Current"))
+    : h("button", { class: "row profile", type: "button", onclick: () => onPick(m) }, icon("me"), h("span", { class: "grow" }, profileLabel(m, all)), icon("chevron")))));
+}
+async function switchProfile(m) {
+  try { state.childId = null; await useMembership(m, `Now using ${profileLabel(m)}`); }
+  catch { toast("Couldn't switch profile."); }
+}
+function openProfiles() {
+  const dlg = h("dialog", { class: "dialog", "aria-labelledby": "prof-t" });
+  const close = () => { dlg.close(); dlg.remove(); };
+  dlg.append(h("h2", { id: "prof-t" }, "Switch profile"),
+    h("p", { class: "small muted" }, "Each profile is one of your roles at a school or district. Saved offline changes stay with the profile they were made in."),
+    profileList(m => { close(); switchProfile(m); }),
+    h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: close }, "Close")));
+  dlg.addEventListener("cancel", e => { e.preventDefault(); close(); });
+  document.body.append(dlg); dlg.showModal();
+  (dlg.querySelector("button.profile") || dlg.querySelector("button")).focus();
+}
 async function useMembership(m, message) {
   const r = await api.post("/api/session/membership", { membershipId: m.id });
   api.csrf = r.csrfToken;
@@ -2990,11 +3022,10 @@ VIEWS.apps = async () => {
 };
 
 VIEWS.me = async () => {
-  const memberships = (await safe(api.get("/api/memberships")))?.data || [];
+  await loadProfiles();
+  const memberships = state.profiles;
   return [h("h2", {}, "Account"), h("section", { class: "card" }, h("h3", {}, state.me.displayName), h("p", { class: "muted" }, `${APP_NAME[state.me.role] || state.me.role} · ${state.brand?.school?.name || state.brand?.districtName || ""}`)),
-    memberships.length > 1 ? h("section", { class: "card", "aria-label": "Switch role" }, h("h3", {}, "Switch role"), h("ul", { class: "list" }, memberships.map(m => h("li", { class: "row" },
-      h("span", { class: "grow" }, `${APP_NAME[m.role] || m.role} · ${m.school_name || "District"}`),
-      m.role === state.me.role && (m.school_id || null) === (state.me.schoolId || null) ? chip("present", "Current") : h("button", { class: "btn", type: "button", onclick: async () => { const r = await api.post("/api/session/membership", { membershipId: m.id }); api.csrf = r.csrfToken; boot(); } }, "Use"))))) : null,
+    memberships.length > 1 ? h("section", { class: "card", "aria-label": "Switch profile" }, h("h3", {}, "Switch profile"), profileList(switchProfile)) : null,
     h("a", { class: "btn block", href: "/" }, "Open the full EduOS site"),
     h("button", { class: "btn danger block", type: "button", onclick: async () => { if (OQ.count && !(await ask({ title: "Sign out with unsent changes?", text: `${OQ.count} saved change${OQ.count > 1 ? "s have" : " has"} not been sent yet. Signing out deletes them from this phone.`, confirm: "Sign out and delete", danger: true }))) return;
       await safe(api.post("/auth/logout")); await OQ.clear(); api.csrf = null; renderSignIn(); } }, "Sign out"),
@@ -3014,6 +3045,7 @@ const OQ = {
   db: null, key: null, MAX: 200, TTL: 24 * 3600 * 1000, count: 0, flushing: false,
   PATHS: [/^\/api\/safety\/incidents\/[0-9a-f-]{36}\/rollcall$/, /^\/api\/transport\/runs\/[0-9a-f-]{36}\/checkins$/, /^\/api\/attendance$/],
   queueable(method, path) { return method === "POST" && this.PATHS.some(r => r.test(path)); },
+  held: 0,
   async open() {
     if (this.db) return this.db;
     if (!("indexedDB" in self) || !crypto?.subtle) return null;
@@ -3042,7 +3074,7 @@ const OQ = {
   async enqueue(path, body, headers) {
     if ((await this.refresh()) >= this.MAX) throw new ApiError(507, { error: "offline_queue_full" });
     const key = await this.cryptoKey(), iv = crypto.getRandomValues(new Uint8Array(12));
-    const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ path, body })));
+    const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ path, body, profile: profileKey() })));
     await this.tx("queue", "readwrite", s => s.put({ id: headers["idempotency-key"], at: Date.now(), queuedAt: headers["x-eduos-queued-at"], iv, data }));
     await this.refresh();
   },
@@ -3051,7 +3083,7 @@ const OQ = {
   async clear() { this.key = null; this.count = 0; if (this.db) { this.db.close(); this.db = null; } await new Promise(r => { const q = indexedDB.deleteDatabase("eduos-offline-queue"); q.onsuccess = q.onerror = q.onblocked = () => r(); }); renderNetBar(); },
   async flush() {
     if (this.flushing || !state.me) return; this.flushing = true;
-    let sent = 0, dropped = 0;
+    let sent = 0, dropped = 0, held = 0;
     try {
       const items = (await this.all()).sort((a, b) => a.at - b.at);
       if (!items.length) return;
@@ -3059,7 +3091,9 @@ const OQ = {
       for (const it of items) {
         const del = () => this.tx("queue", "readwrite", s => s.delete(it.id));
         if (Date.now() - it.at > this.TTL) { await del(); dropped++; continue; }
-        const { path, body } = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: it.iv }, key, it.data)));
+        const { path, body, profile } = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: it.iv }, key, it.data)));
+        // UI-05: made in another profile (e.g. as a teacher, now using the family profile): keep it for that profile.
+        if (profile && profile !== profileKey()) { held++; continue; }
         if (!api.csrf) api.csrf = (await api.get("/api/csrf")).csrfToken;
         let res;
         try { res = await fetch(path, { method: "POST", credentials: "same-origin", headers: { accept: "application/json", "content-type": "application/json", "x-csrf-token": api.csrf, "idempotency-key": it.id, "x-eduos-queued-at": it.queuedAt }, body: JSON.stringify(body) }); }
@@ -3068,17 +3102,19 @@ const OQ = {
         if ([401, 408, 429].includes(res.status) || res.status >= 500) break; // try again later
         await del(); dropped++; // refused for good (e.g. incident closed long ago): never retried forever
       }
-    } finally { this.flushing = false; await this.refresh(); }
+    } finally { this.flushing = false; this.held = held; await this.refresh(); }
     if (sent) toast(`Sent ${sent} saved change${sent > 1 ? "s" : ""}`);
     if (dropped) toast(`${dropped} saved change${dropped > 1 ? "s were" : " was"} too old or refused and not sent`);
   }
 };
+const profileKey = () => state.me ? `${state.me.districtId}|${state.me.schoolId || ""}|${state.me.role}` : "";
 function renderNetBar() {
   let bar = document.getElementById("netbar");
   if (!bar) { bar = h("div", { id: "netbar", class: "netbar", role: "status", "aria-live": "polite" }); document.getElementById("top")?.after(bar); }
   const off = !navigator.onLine;
   bar.hidden = !off && !OQ.count;
   bar.textContent = off ? `You're offline.${OQ.count ? ` ${OQ.count} change${OQ.count > 1 ? "s" : ""} saved on this phone, waiting to send.` : " Roll call, bus check-ins and attendance are saved and sent later."}`
+    : OQ.count && OQ.held === OQ.count ? `${OQ.count} saved change${OQ.count > 1 ? "s were" : " was"} made in another of your profiles. Switch back to it to send ${OQ.count > 1 ? "them" : "it"}.`
     : OQ.count ? `${OQ.count} saved change${OQ.count > 1 ? "s" : ""} waiting to send.` : "";
 }
 window.addEventListener("online", () => { renderNetBar(); OQ.flush(); });
@@ -3725,7 +3761,7 @@ async function boot() {
   try {
     state.me = await api.get("/api/me");
   } catch (e) { if (e.status === 401) { await OQ.clear().catch(() => {}); return renderSignIn(); } put(empty(navigator.onLine ? "EduOS is unavailable right now." : "You're offline.")); return; }
-  const [brand] = await Promise.all([safe(api.get("/api/branding/current")), loadFamily()]);
+  const [brand] = await Promise.all([safe(api.get("/api/branding/current")), loadProfiles().then(loadFamily)]);
   state.brand = brand?.data || null;
   applyBranding(state.brand);
   renderTop();
