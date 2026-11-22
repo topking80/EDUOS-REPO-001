@@ -560,6 +560,118 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     } finally { await new Promise(r => dlTool.close(r)); }
   });
 
+  it("LTI-03 NRPS: a course's class list goes only to an approved tool a teacher chose, through a signed token", async () => {
+    const { privateKey: toolPriv, publicKey: toolPub } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const { privateKey: otherPriv } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const sign = (claims, key = toolPriv) => {
+      const h = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "nr-1" })).toString("base64url"), p = Buffer.from(JSON.stringify(claims)).toString("base64url");
+      return `${h}.${p}.${crypto.sign("RSA-SHA256", Buffer.from(`${h}.${p}`), key).toString("base64url")}`;
+    };
+    const tool = http.createServer((req, res) => {
+      const u = new URL(req.url, "http://127.0.0.1");
+      if (u.pathname === "/jwks") { res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ keys: [{ ...toolPub.export({ format: "jwk" }), kid: "nr-1", alg: "RS256", use: "sig" }] })); }
+      if (u.pathname === "/login") {
+        const p = new URLSearchParams({ scope: "openid", response_type: "id_token", response_mode: "form_post", prompt: "none", client_id: u.searchParams.get("client_id"),
+          redirect_uri: `http://127.0.0.1:${tool.address().port}/launch`, login_hint: u.searchParams.get("login_hint"), lti_message_hint: u.searchParams.get("lti_message_hint"), state: "st", nonce: crypto.randomUUID() });
+        res.writeHead(302, { location: `${server.base}/lti/authorize?${p}` }); return res.end();
+      }
+      res.end("tool");
+    });
+    await new Promise(r => tool.listen(0, "127.0.0.1", r));
+    const jar = new Map();
+    const launchAs = async (who, appId, linkId) => {
+      const r = await as(who)("POST", `/api/apps/${appId}/launch`, { contentLinkId: linkId });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      for (const c of r.headers.getSetCookie()) { const m = /^(eduos_lti_[0-9a-f]+)=([^;]*)/.exec(c); if (m) jar.set(m[1], m[2]); }
+      const auth = (await fetch(r.body.data.url, { redirect: "manual" })).headers.get("location");
+      const page = await fetch(auth, { headers: { cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") } });
+      const token = /name="id_token" value="([^"]+)"/.exec(await page.text())[1];
+      return (await jwtVerify(token, createRemoteJWKSet(new URL(`${server.base}/.well-known/jwks.json`)), { issuer: "http://localhost", audience: "nr-client" })).payload;
+    };
+    try {
+      const tb = `http://127.0.0.1:${tool.address().port}`;
+      const cfg = { clientId: "nr-client", deploymentId: "nr-dep", loginUrl: `${tb}/login`, redirectUris: [`${tb}/launch`], targetLinkUri: `${tb}/launch`, jwksUrl: `${tb}/jwks` };
+      const body = { name: "Class Tool", vendor: "Tool Co", launchUrl: `${tb}/launch`, integrationType: "lti13", dataSharingScope: "roster_basic", dpaStatus: "signed", coppaCompliant: true };
+      const { jwksUrl: _, ...noServices } = cfg;
+      assert.equal((await as("it")("POST", "/api/apps", { ...body, integrationConfig: noServices })).body.error, "roster_scope_needs_names_roles");
+      const reg = await as("it")("POST", "/api/apps", { ...body, integrationConfig: { ...cfg, namesRoles: true } });
+      assert.equal(reg.status, 201, JSON.stringify(reg.body));
+      const appId = reg.body.data.id;
+      await as("it")("POST", `/api/apps/${appId}/licenses`, {});
+      await as("it")("POST", `/api/apps/${appId}/assignments`, { scope: "district" });
+      assert.equal((await as("supt1")("POST", `/api/apps/${appId}/lti/approve`)).status, 200);
+
+      // A course with Alice (who has a pupil account) and Bob (who doesn't), and a placed link.
+      const course = (await as("t1")("POST", "/api/learning/courses", { title: "Reading 3", subject: "ELA", gradeLevel: "3" })).body.data;
+      assert.equal((await as("t1")("POST", `/api/learning/courses/${course.id}/enrollments`, { studentIds: [ID.alice, ID.bob] })).status, 200);
+      const asg = (await admin.query(`INSERT INTO assignments(district_id,school_id,created_by,title,status,course_id) VALUES($1,$2,$3,'Chapter 1','published',$4) RETURNING id`,
+        [ID.d1, ID.s1, USERS.t1[0], course.id])).rows[0].id;
+      const link = (await admin.query(`INSERT INTO lti_content_links(district_id,assignment_id,app_id,title,url,created_by) VALUES($1,$2,$3,'Chapter 1 quiz',$4,$5) RETURNING id`,
+        [ID.d1, asg, appId, `${tb}/activity/1`, USERS.t1[0]])).rows[0].id;
+
+      const before = await launchAs("pu", appId, link);
+      assert.equal(before["https://purl.imsglobal.org/spec/lti/claim/context"].title, "Reading 3", "the course is the launch context");
+      assert.notEqual(before["https://purl.imsglobal.org/spec/lti/claim/context"].id, course.id, "under a per-tool identifier");
+      assert.equal(before["https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice"], undefined, "no class list until a teacher shares it");
+
+      assert.equal((await as("pu")("PUT", "/api/lti/course-sharing", { courseId: course.id, appId, enabled: true })).body.error, "course_not_manageable");
+      const view = (await as("t1")("GET", `/api/lti/course-sharing?courseId=${course.id}`)).body.data;
+      assert.deepEqual([view.canManage, view.candidates.map(c => c.appName).includes("Class Tool"), view.shared], [true, true, []]);
+      assert.equal((await as("t1")("PUT", "/api/lti/course-sharing", { courseId: course.id, appId, enabled: true })).status, 200);
+      assert.deepEqual((await as("pu")("GET", `/api/lti/course-sharing?courseId=${course.id}`)).body.data.shared.map(x => x.appName), ["Class Tool"], "students can see who gets the class list");
+
+      const after = await launchAs("pu", appId, link);
+      const nrpsUrl = new URL(after["https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice"].context_memberships_url);
+      assert.deepEqual(after["https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice"].service_versions, ["2.0"]);
+
+      // The tool gets a token with a client assertion signed by its registered key.
+      const tokenUrl = `${server.base}/lti/token/${ID.d1}/${appId}`;
+      const now = Math.floor(Date.now() / 1000);
+      const assertion = (extra = {}, key) => sign({ iss: "nr-client", sub: "nr-client", aud: `http://localhost/lti/token/${ID.d1}/${appId}`, iat: now, exp: now + 300, jti: crypto.randomUUID(), ...extra }, key);
+      const ask = (a, scope = "https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly") => fetch(tokenUrl, { method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials",
+          client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: a, scope }) });
+      assert.equal((await ask(assertion({}, otherPriv))).status, 401, "another key");
+      assert.equal((await ask(assertion({ aud: `http://localhost/lti/token/${ID.d2}/${appId}` }))).status, 401, "another registration's token URL");
+      assert.equal((await ask(assertion(), "https://purl.imsglobal.org/spec/lti-ags/scope/score")).status, 400, "grade scopes aren't offered");
+      const once = assertion();
+      const t = await ask(once);
+      assert.equal(t.status, 200, `token: ${await t.clone().text()}`);
+      const { access_token, token_type, expires_in } = await t.json();
+      assert.deepEqual([token_type, expires_in], ["Bearer", 3600]);
+      assert.equal((await ask(once)).status, 401, "an assertion is accepted once");
+
+      const members = async (url = nrpsUrl, token = access_token, q = "") => fetch(`${server.base}${url.pathname}${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+      assert.equal((await members(nrpsUrl, null)).status, 401);
+      const r = await members();
+      assert.equal(r.status, 200, `members: ${await r.clone().text()}`);
+      assert.match(r.headers.get("content-type"), /application\/vnd\.ims\.lti-nrps\.v2\.membershipcontainer\+json/);
+      const container = await r.json();
+      assert.equal(container.context.id, after["https://purl.imsglobal.org/spec/lti/claim/context"].id);
+      const byRole = Object.fromEntries(container.members.map(m => [m.roles[0].split("#")[1], m]));
+      assert.equal(container.members.length, 2, "the teacher and Alice; Bob has no EduOS account");
+      assert.equal(byRole.Learner.user_id, after.sub, "the same pseudonymous id the tool saw at launch");
+      assert.equal(byRole.Instructor.name, "Teacher S1");
+      assert.equal((await (await members(nrpsUrl, access_token, "?role=http://purl.imsglobal.org/vocab/lis/v2/membership%23Learner")).json()).members.length, 1);
+      assert.equal((await members(new URL(`http://x/lti/nrps/${crypto.randomUUID()}/memberships`))).status, 404);
+      const logged = (await admin.query("SELECT service, members FROM lti_service_access_log WHERE app_id=$1 ORDER BY at", [appId])).rows;
+      assert.deepEqual(logged.map(x => `${x.service}:${x.members ?? "-"}`), ["token:-", "nrps_memberships:2", "nrps_memberships:1"]);
+
+      // The teacher stops sharing: the class list is gone at once.
+      assert.equal((await as("t1")("PUT", "/api/lti/course-sharing", { courseId: course.id, appId, enabled: false })).status, 200);
+      assert.equal((await members()).status, 404);
+      // Sharing again gives a new address (the old one stays dead); the next launch carries it.
+      await as("t1")("PUT", "/api/lti/course-sharing", { courseId: course.id, appId, enabled: true });
+      assert.equal((await members()).status, 404);
+      const again = new URL((await launchAs("pu", appId, link))["https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice"].context_memberships_url);
+      assert.notEqual(again.pathname, nrpsUrl.pathname);
+      assert.equal((await members(again)).status, 200);
+      // Any change to the registration invalidates issued tokens until it's approved again.
+      await as("it")("PATCH", `/api/apps/${appId}`, { integrationConfig: { ...cfg, namesRoles: true, redirectUris: [`${tb}/launch`, `${tb}/launch2`] } });
+      assert.equal((await members(again)).status, 401);
+    } finally { await new Promise(r => tool.close(r)); }
+  });
+
   it("every role gets a home dashboard scoped like its list endpoints", async () => {
     for (const name of ["supt1", "it", "p1", "p2", "t1", "pa", "pu"]) {
       const r = await as(name)("GET", "/api/home");

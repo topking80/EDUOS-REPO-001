@@ -1711,6 +1711,7 @@ VIEWS.course = async () => {
   const c = (await api.get(`/api/learning/courses/${state.courseId}${learnerQuery()}`)).data;
   const listOf = r => Array.isArray(r?.data) ? r.data : [];
   const toolLinks = listOf(await safe(api.get(`/api/lti/content-links?courseId=${c.id}`)));
+  const sharing = (await safe(api.get(`/api/lti/course-sharing?courseId=${c.id}`)))?.data;
   const pickers = c.canManage && ["teacher", "principal"].includes(state.me.role) ? listOf(await safe(api.get("/api/my/apps"))).filter(x => x.deepLinking) : [];
   const toolsFor = a => {
     const mine = toolLinks.filter(l => l.assignmentId === a.id);
@@ -1738,6 +1739,22 @@ VIEWS.course = async () => {
     h("ul", { class: "list" }, u.lessons.map(l => h("li", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, l.title), h("p", { class: "small muted" }, `${l.standards.join(", ")}${l.sources ? ` · ${l.sources} primary source${l.sources > 1 ? "s" : ""}` : ""}`)),
       c.canManage ? chip(l.approved ? "present" : "expected", l.approved ? "Approved" : "Needs approval") : null,
       h("button", { class: "btn", type: "button", "aria-label": `Open lesson: ${l.title}`, onclick: () => openView("lesson", { lessonId: l.id }) }, "Open"))))));
+  // LTI-03: which tools get this course's class list (teacher chooses; everyone in the course can see).
+  if (sharing && (sharing.shared?.length || sharing.candidates?.length)) {
+    const on = new Set((sharing.shared || []).map(x => x.appId));
+    const tools = [...(sharing.candidates || []), ...(sharing.shared || []).filter(x => !(sharing.candidates || []).some(c2 => c2.appId === x.appId))];
+    out.push(h("section", { class: "card", "aria-label": "Class list sharing" }, h("h2", {}, "Class list sharing"),
+      h("p", { class: "small muted" }, sharing.canManage
+        ? "A tool you turn on here can read this course's class list: the names and emails of you and your students who have EduOS accounts. It can't see grades or anything else."
+        : "These tools can read this course's class list (names and emails)."),
+      sharing.canManage
+        ? h("ul", { class: "list" }, tools.map(t => { const box = h("input", { type: "checkbox", id: `share-${t.appId}`, checked: on.has(t.appId) });
+            box.addEventListener("change", async () => {
+              try { await api.req("PUT", "/api/lti/course-sharing", { courseId: c.id, appId: t.appId, enabled: box.checked }); toast(box.checked ? `Class list shared with ${t.appName}.` : `${t.appName} can no longer read the class list.`); }
+              catch { box.checked = !box.checked; toast("Couldn't change it."); } });
+            return h("li", {}, h("label", { for: box.id, class: "row" }, box, h("span", {}, `Share the class list with ${t.appName}`))); }))
+        : h("ul", { class: "list" }, (sharing.shared || []).map(t => h("li", {}, t.appName)))));
+  }
   out.push(h("section", { class: "card", "aria-label": "Assignments and quizzes" }, h("h2", {}, "Assignments & quizzes"),
     c.assignments.length ? h("ul", { class: "list" }, c.assignments.map(a => h("li", {}, h("div", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, a.title),
       h("p", { class: "small muted" }, `${kindText[a.kind]} · ${a.points} pts${a.due_at ? ` · due ${fmtDay(a.due_at)}` : ""}${a.time_limit_minutes ? ` · ${a.time_limit_minutes} min` : ""}`)),

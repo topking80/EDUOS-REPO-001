@@ -95,6 +95,8 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       ...(role === "teacher" ? { students: [] } : { learner: { id: "st1", name: "Alice" }, grade: null, mastery: { mastered: 0, total: 0 } }) } };
     case "/api/lti/content-links": return { data: [{ id: "cl1", assignmentId: "as1", appId: "app1", appName: "Practice Tool", title: "Fractions practice", description: "", canRemove: role === "teacher" }] };
     case "/api/my/apps": return { data: [{ id: "app1", name: "Practice Tool", integrationType: "lti13", deepLinking: true }] };
+    case "/api/lti/course-sharing": return { data: { canManage: role === "teacher", shared: [{ appId: "app1", appName: "Practice Tool", enabledBy: "Teacher S1", enabledAt: now }],
+      candidates: role === "teacher" ? [{ appId: "app1", appName: "Practice Tool" }] : [] } };
   }
   switch (pathname) {
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: "s1", memberships: [] };
@@ -335,7 +337,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
   }
   // LTI-02: tool links on a course assignment, for a pupil (open) and a teacher (open, remove, add).
   withCourse = true;
-  for (const [role, wants] of [["pupil", ["Fractions practice · Practice Tool", "Open"]], ["teacher", ["Fractions practice · Practice Tool", "Remove", "Add from Practice Tool"]]]) {
+  for (const [role, wants] of [["pupil", ["Fractions practice · Practice Tool", "Open", "Class list sharing", "These tools can read this course's class list"]],
+    ["teacher", ["Fractions practice · Practice Tool", "Remove", "Add from Practice Tool", "Share the class list with Practice Tool"]]]) {
     state.role = role;
     const page = await Page.open(chrome.port);
     try {

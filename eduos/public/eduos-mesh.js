@@ -162,7 +162,8 @@
           <label class="wide">Tool login URL<input name="ltiLoginUrl" type="url"></label><label class="wide">Redirect URL<input name="ltiRedirectUri" type="url"></label>
           <label class="wide">Target link URL (where the tool opens; blank means the launch address)<input name="ltiTargetLinkUri" type="url"></label>
           <label class="wide">Deep Linking URL (optional: lets teachers add the tool's activities to assignments)<input name="ltiDeepLinkingUrl" type="url"></label>
-          <label class="wide">Tool public key set (JWKS) URL (needed with Deep Linking)<input name="ltiJwksUrl" type="url"></label>
+          <label class="wide">Tool public key set (JWKS) URL (needed with Deep Linking or class lists)<input name="ltiJwksUrl" type="url"></label>
+          <label class="api-check wide"><input type="checkbox" name="ltiNamesRoles"> Class lists (LTI Names and Role Provisioning). Needs the "Name, email and school" data setting; each teacher still chooses per course.</label>
           <p class="wide">A new LTI tool stays off until a different district administrator approves it. Changing its settings or student data needs approval again.</p></fieldset>
         <label class="wide">Description<textarea name="description" maxlength="2000" rows="2"></textarea></label>
         <div class="wide"><button class="primary" type="submit">Add app</button></div>
@@ -173,6 +174,12 @@
     const { esc } = ctx, [cls, label] = LTI_STATUS[a.registrationStatus] || ["warn", a.registrationStatus];
     return `<section><h4>LTI registration</h4><p><span class="api-badge ${cls}">${esc(label)}</span></p>
       ${a.registrationStatus === "approved" ? "<p>People given access can open this tool.</p>" : "<p>Nobody can open this tool until it is approved. Approval must come from a different district administrator than the person who registered it.</p>"}
+      <details><summary>Platform details for the tool's setup</summary><dl>
+        <dt>Issuer</dt><dd><code>${esc(location.origin)}</code></dd>
+        <dt>Login (OIDC authorization) URL</dt><dd><code>${esc(location.origin)}/lti/authorize</code></dd>
+        <dt>Public keys (JWKS)</dt><dd><code>${esc(location.origin)}/.well-known/jwks.json</code></dd>
+        ${a.integrationConfig?.namesRoles ? `<dt>Token URL (class lists)</dt><dd><code>${esc(location.origin)}/lti/token/${esc(ctx.API.actor?.districtId || "")}/${esc(a.id)}</code></dd>` : ""}
+      </dl></details>
       ${isDistrict ? `<p>${a.registrationStatus !== "approved" ? `<button type="button" data-action="lti-approve" data-id="${esc(a.id)}">Approve this registration</button> ` : ""}${a.registrationStatus !== "revoked" ? `<button type="button" class="danger" data-action="lti-revoke" data-id="${esc(a.id)}">Turn off now</button>` : ""}</p>` : ""}</section>`;
   }
   function manager(ctx, a) {
@@ -246,7 +253,8 @@
       if (v.category) body.category = v.category; if (v.description) body.description = v.description; if (v.dpaExpiresOn) body.dpaExpiresOn = v.dpaExpiresOn;
       if (form.elements.ownerSchoolId) body.ownerSchoolId = v.ownerSchoolId || null;
       if (v.integrationType === "lti13") body.integrationConfig = { clientId: v.ltiClientId, deploymentId: v.ltiDeploymentId, loginUrl: v.ltiLoginUrl, redirectUris: [v.ltiRedirectUri], targetLinkUri: v.ltiTargetLinkUri || v.launchUrl,
-        ...(v.ltiDeepLinkingUrl || v.ltiJwksUrl ? { deepLinkingUrl: v.ltiDeepLinkingUrl, jwksUrl: v.ltiJwksUrl } : {}) };
+        ...(v.ltiDeepLinkingUrl ? { deepLinkingUrl: v.ltiDeepLinkingUrl } : {}), ...(v.ltiJwksUrl ? { jwksUrl: v.ltiJwksUrl } : {}),
+        ...(form.elements.ltiNamesRoles?.checked ? { namesRoles: true } : {}) };
       const r = await post(ctx, "/api/apps", body); st.open = r.data.id;
       ctx.notify(`${r.data.name} was added. Next: add a license and choose who can use it.`); await ctx.openTab("apps"); return true;
     }

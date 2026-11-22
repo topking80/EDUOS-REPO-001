@@ -65,10 +65,16 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 - [x] Links are stored in `lti_content_links` (097) under row-level security that reuses `eduos_can_see_assignment` / `eduos_can_manage_assignment`. Students see them on the course page and open them through a normal launch (`contentLinkId`), which sends the link's own `resource_link`, target URL and custom parameters. Only someone who can manage the assignment can remove a link.
 - [x] Tests cover forged signatures, another key with the same `kid`, missing browser binding, wrong deployment, replay, off-host URLs, draft assignments, and removal by a student.
 
-### Phase 4 — NRPS
-- Implement membership endpoint and OAuth scope enforcement.
-- Return only course-scoped members and the minimum role/profile fields.
-- Require per-course opt-in and verify teacher/administrator permissions.
+### Phase 4 — NRPS (LTI-03, implemented)
+- [x] **Two approvals.** The district approves the tool with `namesRoles: true`, its `jwksUrl` and the `roster_basic` data scope ("Name, email and school"); the approval fingerprint covers all three, and `roster_basic` is refused without NRPS. Then a teacher who manages a course turns sharing on for that tool (`lti_course_sharing`, migration 098). Everyone in the course can see which tools get its class list.
+- [x] **Launch claims.** Launches from a link placed on a course assignment carry the course as the LTI `context`, under an identifier that differs per tool. They carry the `namesroleservice` claim only while that course is shared with that tool.
+- [x] **Tool authentication.** OAuth 2.0 client credentials with `private_key_jwt` (RFC 7523) at a per-registration token URL, `/lti/token/<district>/<app>`. The token URL is shown in the tool's Apps panel. The assertion must be signed by the tool's registered key, with iss = sub = client ID, audience = that token URL, a lifetime of at most 10 minutes and a jti accepted once. The only scope offered is `contextmembership.readonly`. The 1-hour access token is encrypted and names the district, app and approved registration.
+- [x] **Memberships.** `GET /lti/nrps/<sharing>/memberships` re-checks the approval on every call, so changing the registration invalidates issued tokens. It reads through `eduos_lti_nrps_members` in a district-only transaction and returns only:
+  - the course teacher, and
+  - learners with active EduOS pupil accounts linked to students actively enrolled.
+
+  Each member has the same per-tool `user_id` the tool sees at launch, plus name, email and role. It supports `?role=`. Turning sharing off ends access at once; turning it on again gives a new address. Every token and read is logged in `lti_service_access_log`, with the number of members returned.
+- [x] **Not shared:** parents, students without accounts, grades, attendance and any other record.
 
 ### Phase 5 — AGS
 - Implement line-item, result, and score services with strict course/resource ownership.
@@ -89,7 +95,7 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 
 ## Current limitations
 
-Phase 1 (Core resource-link launch) and Phase 3 (Deep Linking) are implemented. Cross-library JOSE interoperability tests are automated in CI, but end-to-end interoperability against independent standards-conformant tools and the IMS reference implementation remains outstanding. NRPS and AGS (Phases 4–5) are not implemented. No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. These capabilities must ship in separately testable increments behind district-controlled feature flags.
+Phases 1 (Core resource-link launch), 3 (Deep Linking) and 4 (NRPS class-list sharing) are implemented and covered by repository tests. Cross-library JOSE interoperability tests are automated in CI, but end-to-end interoperability against independent standards-conformant tools and the IMS reference implementation remains outstanding. AGS (Phase 5) is not implemented. No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. These capabilities must ship in separately testable increments behind district-controlled feature flags.
 
 ## Signing-key rotation procedure
 

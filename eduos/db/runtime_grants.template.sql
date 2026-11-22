@@ -533,3 +533,11 @@ GRANT SELECT, INSERT, DELETE ON lti_content_links TO eduos_app;
 REVOKE UPDATE, TRUNCATE ON lti_content_links FROM eduos_app;
 GRANT SELECT, INSERT ON lti_deep_link_returns TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON lti_deep_link_returns FROM eduos_app;
+
+-- 098 LTI-03 NRPS: teachers share a course's class list with a tool; tools
+-- read it only through the checked functions; every read is logged.
+GRANT SELECT, INSERT, DELETE ON lti_course_sharing TO eduos_app;
+REVOKE UPDATE, TRUNCATE ON lti_course_sharing FROM eduos_app;
+GRANT SELECT, INSERT ON lti_service_assertions, lti_service_access_log TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON lti_service_assertions, lti_service_access_log FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_lti_nrps_members(uuid, uuid) TO eduos_app;
