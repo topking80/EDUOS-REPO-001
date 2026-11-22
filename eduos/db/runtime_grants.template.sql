@@ -134,6 +134,9 @@ REVOKE UPDATE ON christie_items, christie_turns FROM eduos_app;
 GRANT SELECT, INSERT ON comms_announcements, comms_announcement_reads, comms_threads, comms_participants, comms_messages, comms_message_reads, comms_reports TO eduos_app;
 GRANT UPDATE (status, removed_by, removed_at, removed_reason) ON comms_announcements TO eduos_app;
 GRANT UPDATE (status, locked_by, locked_at, lock_reason, last_message_at) ON comms_threads TO eduos_app;
+-- TEACH-01: leaving and rejoining network threads (db/101; policy own_membership).
+GRANT UPDATE (left_at) ON comms_participants TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_is_network_educator() TO eduos_app;
 GRANT UPDATE (hidden_at, hidden_by, hidden_reason) ON comms_messages TO eduos_app;
 GRANT UPDATE (status, resolution, resolved_by, resolved_at) ON comms_reports TO eduos_app;
 REVOKE DELETE, TRUNCATE ON comms_announcements, comms_announcement_reads, comms_threads, comms_participants, comms_messages, comms_message_reads, comms_reports FROM eduos_app;

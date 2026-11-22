@@ -134,7 +134,7 @@ function applyBranding(b) {
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
   pupil: [["home", "Home", "home"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
-  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"]],
+  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["messages", "Messages", "chat"]],
   vice_principal: [["operations", "Operations", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["messages", "Messages", "chat"]],
@@ -142,7 +142,7 @@ const ROLE_TABS = {
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
-  principal: [["overview", "School", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  principal: [["overview", "School", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"], ["alerts", "Alerts", "bell"]],
   superintendent: [["overview", "District", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
@@ -1366,7 +1366,12 @@ async function openThread(id) {
   const input = h("textarea", { id: "reply", maxlength: 4000, "aria-label": "Reply" });
   put(
     h("button", { class: "btn", type: "button", onclick: () => go("messages", { push: false }) }, "‹ Conversations"),
-    h("h2", {}, t.subject), h("p", { class: "small muted" }, `${t.kind === "family" ? `About ${t.student_name} · ` : "Staff · "}with ${others.map(p => p.name).join(", ")}`),
+    h("h2", {}, t.subject), h("p", { class: "small muted" }, t.kind === "network" && t.discoverable ? `Group · ${t.participants.length} member${t.participants.length === 1 ? "" : "s"}${t.description ? ` · ${t.description}` : ""}`
+      : `${t.kind === "family" ? `About ${t.student_name} · ` : t.kind === "network" ? "Colleagues · " : "Staff · "}with ${others.map(p => p.name).join(", ")}`),
+    t.kind === "network" && t.status === "open" ? h("div", { class: "btns" },
+      h("button", { class: "btn", type: "button", onclick: () => addColleagues(id) }, icon("people"), "Add colleagues"),
+      h("button", { class: "btn", type: "button", onclick: async () => { if (!(await ask({ title: t.discoverable ? "Leave this group?" : "Leave this conversation?", text: t.discoverable ? "You can join again from Colleagues › Groups." : "A member can add you back.", confirm: "Leave" }))) return;
+        try { await api.post(`/api/network/threads/${id}/leave`); toast("You left."); go(t.discoverable ? "network" : "messages", { push: false }); } catch { toast("Couldn't leave."); } } }, "Leave")) : null,
     h("div", { class: "chat" }, t.messages.map(m => h("div", { class: `bubble ${m.author_user_id === me ? "me" : "them"}` },
       h("span", { class: "sr" }, `${m.author_name}: `), m.hidden ? h("em", {}, "Hidden by a moderator") : m.body,
       h("span", { class: "meta" }, `${m.author_user_id === me ? "You" : m.author_name} · ${fmtTime(m.created_at)}${m.author_user_id === me ? (m.read_by.length ? ` · Read by ${m.read_by.map(r => first(r.name)).join(", ")}` : " · Sent") : ""}`),
@@ -1377,6 +1382,91 @@ async function openThread(id) {
     ["principal", "superintendent"].includes(state.me.role) && t.status === "open" ? h("button", { class: "btn danger", type: "button", onclick: async () => { const reason = await ask({ title: "Lock this conversation?", label: "Reason (shown to participants)", confirm: "Lock conversation", danger: true }); if (reason) { await api.post(`/api/comms/threads/${id}/lock`, { reason }); openThread(id); } } }, "Lock conversation") : null);
   $main().focus();
 }
+// ---- TEACH-01: the district teacher network -----------------------------
+// Teachers and principals at every school in the district: find colleagues,
+// message them, and keep open groups. Conversations open in Messages.
+/** Choose colleagues from the district directory; resolves to their records (or null). */
+async function pickColleagues({ title, confirm, multiple = true, exclude = [] }) {
+  const d = (await api.get("/api/network/colleagues")).data;
+  return new Promise(resolve => {
+    const dlg = h("dialog", { class: "dialog", "aria-labelledby": "pick-t" });
+    const done = v => { dlg.close(); dlg.remove(); resolve(v); };
+    const q = h("input", { id: "pick-q", type: "search", placeholder: "Name or school", autocomplete: "off" });
+    const list = h("ul", { class: "list pick" });
+    const draw = () => {
+      const term = q.value.trim().toLowerCase();
+      const people = d.colleagues.filter(c => !exclude.includes(c.user_id) && (!term || c.name.toLowerCase().includes(term) || c.schools.some(x => x.name.toLowerCase().includes(term))));
+      list.replaceChildren(...(people.length ? people.slice(0, 60).map(c => h("li", {}, h("label", { class: "row" },
+        h("input", { type: multiple ? "checkbox" : "radio", name: "pick", value: c.user_id }),
+        h("span", { class: "grow" }, h("b", {}, c.name), h("br"), h("span", { class: "small muted" }, `${c.roles.map(r => APP_NAME[r] || r).join(", ")} · ${c.schools.map(x => x.name).join(", ")}`)))))
+        : [h("li", {}, empty("Nobody matches."))]));
+    };
+    q.addEventListener("input", draw); draw();
+    dlg.append(h("form", { method: "dialog", onsubmit: e => { e.preventDefault(); const ids = [...list.querySelectorAll("input:checked")].map(x => x.value); if (ids.length) done(d.colleagues.filter(c => ids.includes(c.user_id))); } },
+      h("h2", { id: "pick-t" }, title), h("label", { for: q.id }, "Search colleagues across the district"), q, list,
+      h("div", { class: "btns" }, h("button", { class: "btn primary", type: "submit" }, confirm), h("button", { class: "btn", type: "button", onclick: () => done(null) }, "Cancel"))));
+    dlg.addEventListener("cancel", e => { e.preventDefault(); done(null); });
+    document.body.append(dlg); dlg.showModal(); q.focus();
+  });
+}
+async function addColleagues(threadId) {
+  const t = (await api.get(`/api/comms/threads/${threadId}`)).data;
+  const people = await pickColleagues({ title: "Add colleagues", confirm: "Add", exclude: t.participants.map(p => p.user_id) });
+  if (!people) return;
+  try { const r = await api.post(`/api/network/threads/${threadId}/participants`, { userIds: people.map(c => c.user_id) }); toast(`Added ${r.data.added}`); openThread(threadId); }
+  catch { toast("Couldn't add them."); }
+}
+function messageColleague(c) {
+  return new Promise(resolve => {
+    const dlg = h("dialog", { class: "dialog", "aria-labelledby": "mc-t" });
+    const done = v => { dlg.close(); dlg.remove(); resolve(v); };
+    const subject = h("input", { id: "mc-s", maxlength: 160, required: true }), body = h("textarea", { id: "mc-b", maxlength: 4000, required: true, rows: 4 });
+    dlg.append(h("form", { method: "dialog", onsubmit: async e => { e.preventDefault();
+        try { const r = await api.post("/api/network/threads", { participantIds: c.map(x => x.user_id), subject: subject.value, body: body.value }); done(r.data.id); }
+        catch { toast("Couldn't send."); } } },
+      h("h2", { id: "mc-t" }, `Message ${c.map(x => x.name).join(", ")}`),
+      h("label", { for: subject.id }, "Subject"), subject, h("label", { for: body.id }, "Message"), body,
+      h("div", { class: "btns" }, h("button", { class: "btn primary", type: "submit" }, icon("send"), "Send"), h("button", { class: "btn", type: "button", onclick: () => done(null) }, "Cancel"))));
+    dlg.addEventListener("cancel", e => { e.preventDefault(); done(null); });
+    document.body.append(dlg); dlg.showModal(); subject.focus();
+  });
+}
+VIEWS.network = async () => {
+  const view = state.netView || "people";
+  const tabs = seg([["people", "Colleagues"], ["groups", "Groups"]], view, v => { state.netView = v; go("network", { push: false }); });
+  const intro = h("p", { class: "muted small" }, "Teachers and principals at every school in the district. Conversations here are between colleagues: no student records, and families and students can't join.");
+  if (view === "groups") {
+    const groups = (await api.get("/api/network/groups")).data;
+    const name = h("input", { id: "g-name", maxlength: 160, required: true, placeholder: "e.g. Grade 4 math" }), desc = h("input", { id: "g-desc", maxlength: 300, placeholder: "What the group is for" });
+    const start = h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        try { const r = await api.post("/api/network/groups", { name: name.value, description: desc.value.trim() || null }); toast("Group started."); openThread(r.data.id); }
+        catch { toast("Couldn't start the group."); } } },
+      h("label", { for: name.id }, "Group name"), name, h("label", { for: desc.id }, "Description (optional)"), desc,
+      h("button", { class: "btn primary", type: "submit" }, "Start a group"));
+    return [h("h2", {}, "Colleagues"), tabs, intro,
+      h("section", { class: "card", "aria-label": "Groups" }, h("h3", {}, "Groups in the district"),
+        groups.length ? h("ul", { class: "list" }, groups.map(g => h("li", { class: "row" },
+          h("div", { class: "grow" }, h("b", {}, g.name), g.description ? h("p", { class: "small" }, g.description) : null,
+            h("p", { class: "small muted" }, `${g.members} member${g.members === 1 ? "" : "s"} · started at ${g.started_at_school} · active ${ago(g.last_message_at)}`)),
+          g.joined ? h("button", { class: "btn", type: "button", "aria-label": `Open ${g.name}`, onclick: () => openThread(g.id) }, "Open")
+            : h("button", { class: "btn primary", type: "button", "aria-label": `Join ${g.name}`, onclick: async () => { try { await api.post(`/api/network/groups/${g.id}/join`); toast(`Joined ${g.name}`); openThread(g.id); } catch { toast("Couldn't join."); } } }, "Join"))))
+          : empty("No groups yet. Start one for your grade, subject or project.")),
+      h("section", { class: "card", "aria-label": "Start a group" }, h("h3", {}, "Start a group"), start)];
+  }
+  const q = state.netQuery || "";
+  const d = (await api.get(`/api/network/colleagues${q ? `?q=${encodeURIComponent(q)}` : ""}`)).data;
+  const search = h("input", { id: "net-q", type: "search", value: q, placeholder: "Name or school", autocomplete: "off" });
+  return [h("h2", {}, "Colleagues"), tabs, intro,
+    h("form", { class: "row", role: "search", onsubmit: e => { e.preventDefault(); state.netQuery = search.value.trim(); go("network", { push: false }); } },
+      h("label", { for: search.id, class: "sr" }, "Search colleagues"), h("div", { class: "grow" }, search), h("button", { class: "btn", type: "submit" }, "Search")),
+    h("button", { class: "btn block", type: "button", onclick: async () => {
+      const people = await pickColleagues({ title: "Message several colleagues", confirm: "Next" }); if (!people) return;
+      const id = await messageColleague(people); if (id) openThread(id); } }, icon("people"), "Message several colleagues"),
+    h("section", { class: "card", "aria-label": "Colleagues" }, d.colleagues.length ? h("ul", { class: "list" }, d.colleagues.map(c => h("li", { class: "row" },
+      h("div", { class: "grow" }, h("b", {}, c.name), h("p", { class: "small muted" }, `${c.roles.map(r => APP_NAME[r] || r).join(", ")} · ${c.schools.map(x => x.name).join(", ")}`)),
+      h("button", { class: "btn", type: "button", "aria-label": `Message ${c.name}`, onclick: async () => { const id = await messageColleague([c]); if (id) openThread(id); } }, icon("chat"), "Message"))))
+      : empty(q ? "Nobody matches." : "No colleagues found."))];
+};
 async function report(messageId, threadId) {
   const reason = await ask({ title: "Report this message", text: "A school leader will review it. The sender is not told who reported it.", label: "Why are you reporting it?", confirm: "Report" });
   if (!reason) return;
