@@ -163,7 +163,10 @@ BEGIN
   SELECT * INTO a FROM eduos_lti_ags_link(p_link, p_app);
   IF NOT FOUND THEN RETURN 'not_found'; END IF;
   IF NOT EXISTS (SELECT 1 FROM eduos_lti_ags_learners(p_link, p_app) x WHERE x.student_id = p_student) THEN RETURN 'not_found'; END IF;
-  SELECT * INTO prev FROM lti_scores WHERE district_id = d AND content_link_id = p_link AND student_id = p_student;
+  -- Serialize updates for this activity/learner pair so an older concurrent
+  -- delivery cannot pass the stale check before a newer score commits.
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_link::text || ':' || p_student::text, 0));
+  SELECT * INTO prev FROM lti_scores WHERE district_id = d AND content_link_id = p_link AND student_id = p_student FOR UPDATE;
   IF FOUND AND prev.tool_timestamp >= p_timestamp THEN
     INSERT INTO lti_score_events(district_id, content_link_id, student_id, app_id, payload, outcome) VALUES (d, p_link, p_student, p_app, p_payload, 'stale_ignored');
     RETURN 'stale_ignored';
