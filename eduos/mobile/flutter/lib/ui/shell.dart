@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app/app_scope.dart';
 import '../app/role_tabs.dart';
+import 'profile_switcher.dart';
 import 'screens/account_screen.dart';
 import 'screens/alerts_screen.dart';
 import 'screens/arrival_screen.dart';
@@ -182,6 +183,12 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
               onPressed: live.isNotEmpty
                   ? () => _go(tabs.first.id) // the safety takeover shows the board
                   : () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SafetyCenterScreen())),
+            ),
+          if (app.profiles.length > 1)
+            IconButton(
+              tooltip: 'Switch profile',
+              icon: const Icon(Icons.switch_account_outlined),
+              onPressed: () => showProfileSheet(context),
             ),
           IconButton(
             tooltip: 'Account',

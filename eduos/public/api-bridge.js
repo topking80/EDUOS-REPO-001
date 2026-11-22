@@ -199,7 +199,7 @@ html:not([data-eduos-mode="demo"]) .eduos-demo-only{display:none}
     document.head.appendChild(css);
     const bar=document.createElement("div");bar.id="eduos-api-bridge";bar.innerHTML=`
 <div class="api-left"><b>EduOS Connected Services</b><span id="eduos-api-state" class="api-pill">Checking session…</span><span id="eduos-api-actor">Local demonstration workspace</span></div>
-<div class="api-left"><button id="eduos-api-connect" class="primary">District sign-in</button><button id="eduos-api-refresh" disabled>Refresh records</button><a id="eduos-api-app" class="api-linkbtn" href="/app/">EduOS app</a><button id="eduos-api-logout" hidden>Sign out</button><select id="eduos-api-membership" hidden aria-label="Switch role or school"></select><button id="eduos-api-toggle">Server workspace</button></div>`;
+<div class="api-left"><button id="eduos-api-connect" class="primary">District sign-in</button><button id="eduos-api-refresh" disabled>Refresh records</button><a id="eduos-api-app" class="api-linkbtn" href="/app/">EduOS app</a><button id="eduos-api-logout" hidden>Sign out</button><select id="eduos-api-membership" hidden aria-label="Switch profile" title="Switch profile: your roles at each school and district"></select><button id="eduos-api-toggle">Server workspace</button></div>`;
     const menu=document.createElement("button");menu.id="eduos-api-menu";menu.type="button";menu.textContent="Menu";
     menu.setAttribute("aria-expanded","false");menu.setAttribute("aria-controls","eduos-api-actions");
     bar.children[1].id="eduos-api-actions";bar.children[0].appendChild(menu);
@@ -256,7 +256,10 @@ html:not([data-eduos-mode="demo"]) .eduos-demo-only{display:none}
   async function loadMemberships(){try{
     const rows=(await API.request("/api/memberships")).data||[],select=el("eduos-api-membership");
     if(rows.length<2){select.hidden=true;return}
-    select.innerHTML=rows.map(m=>`<option value="${esc(m.id)}"${m.current?" selected":""}>${esc(m.role)}${m.school_name?" · "+esc(m.school_name):""}</option>`).join("");
+    // UI-05: the same profile names as the app: role, school (or district office), and the district when there are several.
+    const ROLE={superintendent:"Superintendent",it_admin:"IT administrator",principal:"Principal",vice_principal:"Vice principal",teacher:"Teacher",parent:"Parent or guardian",pupil:"Student",librarian:"Librarian",counselor:"Counselor",nurse:"Nurse",maintenance:"Facilities",lunch_staff:"Meal service",driver:"Bus driver",sro:"School resource officer"};
+    const many=new Set(rows.map(m=>m.district_id)).size>1;
+    select.innerHTML=rows.map(m=>`<option value="${esc(m.id)}"${m.current?" selected":""}>${esc(ROLE[m.role]||m.role)} · ${esc(m.school_name||(m.school_id?"School":"District office"))}${many&&m.district_name?" · "+esc(m.district_name):""}</option>`).join("");
     select.hidden=false;
   }catch{}}
   async function loadAll(){

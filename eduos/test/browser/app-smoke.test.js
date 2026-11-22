@@ -123,8 +123,10 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     // UI-04: a family with children at two schools and an account at each.
     case "/api/family/children": return { data: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", relationship: "parent" },
       { id: "c2", display_name: "Ben A", grade_level: "7", school_id: "s2", school_name: "Oak Middle", relationship: "parent" }] };
-    case "/api/memberships": return { data: [{ id: "00000000-0000-4000-8000-0000000a0001", role: "parent", district_id: "d1", district_name: "Riverside", school_id: "s1", school_name: "Maple" },
-      { id: "00000000-0000-4000-8000-0000000a0002", role: "parent", district_id: "d1", district_name: "Riverside", school_id: "s2", school_name: "Oak Middle" }] };
+    case "/api/memberships": return { data: [{ id: "00000000-0000-4000-8000-0000000a0001", role: "parent", district_id: "d1", district_name: "Riverside", school_id: "s1", school_name: "Maple", current: role === "parent" && mockSchool === "s1" },
+      { id: "00000000-0000-4000-8000-0000000a0002", role: "parent", district_id: "d1", district_name: "Riverside", school_id: "s2", school_name: "Oak Middle", current: role === "parent" && mockSchool === "s2" },
+      // UI-05: a profile in another district.
+      { id: "00000000-0000-4000-8000-0000000a0003", role: "teacher", district_id: "d2", district_name: "Hill County", school_id: "s9", school_name: "Hill Primary", current: false }] };
       return { data: { school_name: "Maple", students: 4, absent_today: 1, open_cases: 0, overdue_follow_ups: 0, pending_invitations: 0, schools: 1, urgent_cases: 0, absences_7d: 1 } };
     case "/api/attendance": return { data: [{ id: "e1", event_date: today(), status: "absent", display_name: "Bob B" }] };
     case "/api/attendance/day": return { data: { date: today(), counts: { present: 3, absent: 1, tardy: 0, excused: 0 }, exceptions: [{ student_id: "s1", status: "absent", display_name: "Bob B" }] } };
@@ -398,6 +400,26 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       } finally { page.close(); }
     }
     appearance = "dark";
+  }
+  // UI-05: any profile can be chosen from the header; the dialog passes axe.
+  {
+    state.role = "parent"; mockSchool = "s1"; switches = [];
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/messages` });
+      await page.mainText();
+      const opened = await page.eval(`(() => { const b = document.querySelector(".top button.school.switch"); if (!b) return "no header switch"; b.click();
+        const d = document.querySelector("dialog[open]"); if (!d) return "no dialog";
+        return [...d.querySelectorAll(".profile")].map(p => (p.getAttribute("aria-current") ? "*" : "") + p.textContent.trim()).join(" | "); })()`);
+      const want = "*Family · Maple · RiversideCurrent | Family · Oak Middle · Riverside | Teacher · Hill Primary · Hill County";
+      if (opened !== want) failures.push(`profile switcher: ${opened}`);
+      await axeScan(page, "parent: switch profile dialog", a11y);
+      await page.eval(`[...document.querySelectorAll("dialog[open] button.profile")].find(b => b.textContent.includes("Oak Middle")).click()`);
+      for (let i = 0; i < 30 && !switches.length; i++) await new Promise(r => setTimeout(r, 100));
+      if (JSON.stringify(switches) !== '["00000000-0000-4000-8000-0000000a0002"]') failures.push(`profile switch sent ${JSON.stringify(switches)}`);
+      for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 100)); if ((await page.eval(`document.querySelector(".top .school")?.textContent || ""`)).length) break; }
+      if (page.errors.length) failures.push(`profile switcher: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); mockSchool = "s1"; switches = []; }
   }
   // UI-04: a family picks a child; a child at another school moves the app there.
   {

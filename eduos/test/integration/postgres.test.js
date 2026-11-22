@@ -287,6 +287,27 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
     const kids = await (await fetch(`${server.base}/api/family/children`, { headers: { cookie } })).json();
     assert.deepEqual(kids.data.map(k => k.id), [ID.alice]);
   });
+  it("UI-05: profiles in two districts are listed with their school and district, and switching moves the session there", async () => {
+    const tpId = USERS.tp[0];
+    await admin.query("INSERT INTO district_users(district_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [ID.d2, tpId]);
+    const ins = await admin.query("INSERT INTO memberships(user_id,district_id,school_id,role,is_default) VALUES($1,$2,$3,'parent',false) RETURNING id", [tpId, ID.d2, ID.sd2]);
+    try {
+      const s = await login(server.base, idp, "tp", { email_verified: true });
+      const list = (await client(server.base, s)("GET", "/api/memberships")).body.data;
+      const d2 = list.find(m => m.district_id === ID.d2);
+      assert.equal(d2.school_name, "D2-S"); assert.equal(d2.district_name, "D2");
+      assert.ok(list.filter(m => m.district_id === ID.d1).every(m => m.school_name === "S1"), JSON.stringify(list));
+      assert.equal(list.filter(m => m.current).length, 1, "exactly one current profile");
+      const sw = await client(server.base, s)("POST", "/api/session/membership", { membershipId: d2.id });
+      assert.equal(sw.status, 200, JSON.stringify(sw.body));
+      const cookie = sw.headers.getSetCookie().map(c => c.split(";")[0]).find(c => c.startsWith("eduos_session=") && !c.endsWith("="));
+      const me = await (await fetch(`${server.base}/api/me`, { headers: { cookie } })).json();
+      assert.equal(me.districtId, ID.d2); assert.equal(me.schoolId, ID.sd2); assert.equal(me.role, "parent");
+      const after = (await (await fetch(`${server.base}/api/memberships`, { headers: { cookie } })).json()).data;
+      assert.equal(after.find(m => m.current)?.id, d2.id);
+      assert.ok(after.filter(m => m.district_id === ID.d1).every(m => m.school_name === "S1"), "names resolve from the other district too");
+    } finally { await admin.query("DELETE FROM memberships WHERE id=$1", [ins.rows[0].id]); }
+  });
   it("L24: a parent with children at two schools can accept an invitation at the second school", async () => {
     const inv = await as("p2")("POST", "/api/guardian-invitations", { studentId: ID.carol, email: "two.school@d1.test" });
     assert.equal(inv.status, 201);

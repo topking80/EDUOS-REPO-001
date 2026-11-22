@@ -413,13 +413,20 @@ export async function listMemberships(req, res, next) {
         ORDER BY m.is_default DESC, m.role, sc.name`,
       [req.actor.userId]
     );
-    // Schools are RLS-scoped to the session's district: name this district's
-    // schools inside it (other districts' memberships keep the district name).
-    const here = [...new Set(result.rows.filter(r => r.district_id === req.actor.districtId && r.school_id).map(r => r.school_id))];
-    if (here.length) {
-      const names = await withTenantTransaction(req.actor, c => c.query("SELECT id,name FROM schools WHERE id=ANY($1::uuid[])", [here]));
-      const byId = new Map(names.rows.map(r => [r.id, r.name]));
-      for (const r of result.rows) if (!r.school_name && byId.has(r.school_id)) r.school_name = byId.get(r.school_id);
+    // Schools are RLS-scoped to one district. Name each district's schools inside
+    // that district, as one of this person's own memberships there (the context
+    // they would have after switching), and only the schools of those memberships.
+    const byDistrict = new Map();
+    for (const r of result.rows) if (r.school_id && !r.school_name) {
+      if (!byDistrict.has(r.district_id)) byDistrict.set(r.district_id, { as: r, ids: new Set() });
+      byDistrict.get(r.district_id).ids.add(r.school_id);
+    }
+    for (const [districtId, { as, ids }] of byDistrict) {
+      const actor = districtId === req.actor.districtId ? req.actor
+        : { districtId, userId: req.actor.userId, role: as.role, schoolId: as.school_id };
+      const names = await withTenantTransaction(actor, c => c.query("SELECT id,name FROM schools WHERE id=ANY($1::uuid[])", [[...ids]]));
+      const byId = new Map(names.rows.map(n => [n.id, n.name]));
+      for (const r of result.rows) if (r.district_id === districtId && !r.school_name && byId.has(r.school_id)) r.school_name = byId.get(r.school_id);
     }
     res.setHeader("Cache-Control", "no-store");
     res.json({ data: result.rows.map(r => ({ ...r,

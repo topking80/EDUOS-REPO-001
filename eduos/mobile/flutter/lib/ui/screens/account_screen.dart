@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
 import '../../app/role_tabs.dart';
-import '../../core/api_client.dart';
 import '../../core/models.dart';
+import '../profile_switcher.dart';
 import '../widgets.dart';
 import 'web_fallback_screen.dart';
 
-/// Account: who's signed in, switch role, send saved changes, sign out.
+/// Account: who's signed in, switch profile, send saved changes, sign out.
 class AccountScreen extends StatelessWidget {
   const AccountScreen({super.key});
 
@@ -27,25 +27,8 @@ class AccountScreen extends StatelessWidget {
             Text(app.server?.host ?? '', style: Theme.of(context).textTheme.bodySmall),
           ]),
           if (memberships.length > 1)
-            SectionCard(title: 'Switch role', children: [
-              for (final m in memberships)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text('${roleNames[m.role] ?? m.role} · ${m.schoolName ?? 'District'}'),
-                  trailing: m.role == me?.role && m.schoolId == me?.schoolId
-                      ? const StatusChip('present', text: 'Current')
-                      : OutlinedButton(
-                          onPressed: () async {
-                            try {
-                              await app.switchMembership(m.id);
-                              if (context.mounted) Navigator.of(context).pop();
-                            } on ApiException {
-                              if (context.mounted) toast(context, 'Couldn\'t switch role.');
-                            }
-                          },
-                          child: const Text('Switch'),
-                        ),
-                ),
+            SectionCard(title: 'Switch profile', children: [
+              ProfileList(profiles: memberships, onSwitched: () { if (context.mounted) Navigator.of(context).pop(); }),
             ]),
           if (app.queued > 0)
             SectionCard(title: 'Saved on this phone', children: [
