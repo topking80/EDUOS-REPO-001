@@ -1,6 +1,6 @@
 # LTI 1.3 Core platform support for third-party educational software
 
-Status: LTI 1.3 Core resource-link launch (Phase 1) and Deep Linking 2.0 (Phase 3) are implemented. Cross-library RS256/JWKS interoperability tests now exercise both platform-issued ID tokens and independently generated tool responses. NRPS and AGS are not implemented, and independent third-party tool/IMS reference interoperability remains outstanding. This document does not claim LTI Advantage conformance or certification.
+Status: LTI 1.3 Core resource-link launch, Deep Linking 2.0, NRPS 2.0 and the governed AGS 2.0 grade-passback slice are implemented and covered by repository tests. Independent IMS reference-tool and third-party interoperability validation remains outstanding; this document does not claim LTI Advantage conformance or certification.
 
 ## Repository audit
 
@@ -108,7 +108,7 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 
 ## Current limitations
 
-Phases 1 (Core resource-link launch), 3 (Deep Linking) and 4 (NRPS class-list sharing) are implemented and covered by repository tests. Cross-library JOSE interoperability tests are automated in CI, but end-to-end interoperability against independent standards-conformant tools and the IMS reference implementation remains outstanding. AGS (Phase 5) is not implemented. No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. These capabilities must ship in separately testable increments behind district-controlled feature flags.
+Phases 1 (Core resource-link launch), 3 (Deep Linking), 4 (NRPS class-list sharing) and 5 (AGS grade passback) are implemented and covered by repository tests. Cross-library JOSE interoperability tests are automated in CI, but end-to-end interoperability against independent standards-conformant tools and the IMS reference implementation remains outstanding. No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. These capabilities must ship in separately testable increments behind district-controlled feature flags.
 
 ## Signing-key rotation procedure
 
