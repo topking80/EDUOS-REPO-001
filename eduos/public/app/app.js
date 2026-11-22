@@ -25,6 +25,7 @@ function svg(tag, attrs = {}, ...kids) {
   return el;
 }
 const ICONS = {
+  apps: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6",
   home: "M3 11l9-8 9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z",
   chat: "M4 4h16v12H8l-4 4z",
   path: "M5 19c0-6 14-4 14-10a4 4 0 0 0-8 0M5 19h4M12 5h0",
@@ -81,7 +82,8 @@ function toast(msg) { const t = document.getElementById("toast"); t.textContent 
 const fmtTime = (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
 const fmtDay = (iso) => iso ? new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
 const ago = (iso) => { const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : fmtDay(iso); };
-const first = (name) => String(name || "").split(/\s+/)[0];
+// First name for greetings: skips a leading title ("Dr. Maya Chen" -> "Maya").
+const first = (name) => { const w = String(name || "").trim().split(/\s+/); return (w.length > 1 && /^(dr|mr|mrs|ms|mx|miss|prof|rev)\.?$/i.test(w[0]) ? w[1] : w[0]) || ""; };
 const STATUS_TEXT = { boarded: "On board", alighted: "Dropped off", not_riding: "Not riding", expected: "Expected", not_started: "Run not started", present: "Present", absent: "Absent", tardy: "Tardy" };
 const chip = (status, text) => h("span", { class: `chip ${status}` }, text || STATUS_TEXT[status] || status);
 
@@ -126,11 +128,11 @@ const ROLE_TABS = {
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
-  principal: [["overview", "School", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
-  superintendent: [["overview", "District", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
+  principal: [["overview", "School", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  superintendent: [["overview", "District", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
-  it_admin: [["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
+  it_admin: [["apps", "Apps", "apps"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
 };
 const APP_NAME = { pupil: "Student", teacher: "Teacher", parent: "Family", principal: "School leader", superintendent: "District leader", driver: "Driver", sro: "School Resource Officer", librarian: "Librarian", vice_principal: "Vice Principal", counselor: "Guidance Counselor", nurse: "School Nurse", maintenance: "Maintenance", lunch_staff: "Lunch Staff", it_admin: "District IT" };
 const state = { me: null, brand: null, tab: null, unread: 0, home: null, safety: [], safetySig: "" };
@@ -141,7 +143,8 @@ function renderTop() {
   const mascotSrc = b?.mascot ? (b.mascot["96"] || Object.values(b.mascot)[0]) : null;
   const top = document.getElementById("top");
   top.replaceChildren(
-    mascotSrc ? h("img", { class: "mascot", src: mascotSrc, alt: `${b.branding?.mascotName || "School"} mascot` }) : h("span", { class: "mascot", "aria-hidden": "true" }),
+    mascotSrc ? h("img", { class: "mascot", src: mascotSrc, alt: `${b.branding?.mascotName || "School"} mascot` })
+      : h("span", { class: "mascot initials", "aria-hidden": "true" }, String(b?.school?.name || b?.districtName || "EduOS").replace(/\(.*?\)/g, "").split(/\s+/).filter(w => /^[A-Z]/.test(w)).slice(0, 2).map(w => w[0]).join("") || "E"),
     h("div", { class: "who" },
       h("p", { class: "school" }, `${b?.school?.name || b?.districtName || "EduOS"} · ${APP_NAME[me.role] || me.role}`),
       h("h1", {}, `Hi, ${first(me.displayName)}`)),
@@ -2781,6 +2784,91 @@ VIEWS.library = async () => {
   out.push(h("section",{class:"card"},h("h3",{},"Active loans"),activeLoans.length?h("ul",{class:"list"},activeLoans.slice(0,100).map(l=>h("li",{class:"row"},h("span",{class:"grow"},h("b",{},l.title),h("br"),h("span",{class:"muted small"},`${l.barcode||l.isbn||"No barcode"} · Due ${fmtDay(l.due_at)}`)),chip(l.overdue?"absent":"expected",l.overdue?"Overdue":"Checked out")))):empty("No active loans.")));
   out.push(h("section",{class:"card"},h("h3",{},"Scanner compatibility"),h("ul",{class:"list"},h("li",{},"USB wired HID keyboard-wedge scanners"),h("li",{},"Bluetooth HID scanners paired as keyboards"),h("li",{},"Wireless 2.4 GHz USB-dongle scanners"),h("li",{},"Scanners configured to append Enter/Return")),h("p",{class:"muted small"},"No vendor-specific driver or SDK is required for keyboard-wedge mode. Configure scanners to send the barcode followed by Enter; focus the scan field before scanning.")));
   setTimeout(()=>scanInput?.focus(),0);
+  return out;
+};
+
+// ---- Apps in the app (UI-01) -------------------------------------------------
+// Everyone's licensed apps, opened through the same governed launch as the full
+// site; leaders also get the decisions waiting for them and grade passback.
+async function appsCard({ title = "Your apps", limit = 12 } = {}) {
+  const r = await safe(api.get("/api/my/apps"));
+  const list = Array.isArray(r?.data) ? r.data : [];
+  if (!list.length) return null;
+  return h("section", { class: "card", "aria-label": title }, h("h2", {}, title),
+    h("div", { class: "apptiles" }, list.slice(0, limit).map(a => h("button", { class: "apptile", type: "button",
+      onclick: () => openToolTab(`/api/apps/${a.id}/launch`, {}, e => TOOL_ERRORS[e] || "Couldn't open it.") },
+      icon("apps"), h("span", { class: "name" }, a.name), a.category ? h("span", { class: "small muted" }, a.category) : null))),
+    list.length > limit ? h("p", { class: "small" }, h("a", { href: "/#tab=apps" }, `All ${list.length} apps`)) : null);
+}
+for (const view of ["home", "classes", "children"]) {
+  const inner = VIEWS[view];
+  VIEWS[view] = async () => {
+    const [out, card] = await Promise.all([inner(), appsCard()]);
+    if (!card) return out;
+    const arr = Array.isArray(out) ? [...out] : [out];
+    arr.splice(Math.min(1, arr.length), 0, card);
+    return arr;
+  };
+}
+const LTI_APPROVE_ERRORS = { lti_second_approver_required: "A different district administrator from the one who registered this tool must approve it.",
+  lti_configuration_invalid: "This registration is incomplete; fix it on the full site." };
+VIEWS.apps = async () => {
+  const district = ["superintendent", "it_admin"].includes(state.me.role);
+  const [catalog, requests, grades, launcher] = await Promise.all([
+    district ? safe(api.get("/api/apps?limit=100")) : null,
+    safe(api.get("/api/app-requests?status=pending")),
+    state.me.role === "it_admin" ? null : safe(api.get("/api/lti/grade-approvals")),
+    appsCard({ title: "Apps you can open", limit: 8 })]);
+  const out = [h("h2", {}, "Apps")];
+  // Decisions waiting for this person.
+  const pendingLti = (Array.isArray(catalog?.data) ? catalog.data : []).filter(a => a.integrationType === "lti13" && a.registrationStatus === "pending");
+  const pendingReq = Array.isArray(requests?.data) ? requests.data : [];
+  out.push(h("section", { class: "card", "aria-label": "Waiting for you" }, h("h2", {}, "Waiting for you"),
+    !pendingLti.length && !pendingReq.length ? empty("Nothing is waiting.") : null,
+    pendingLti.length ? h("ul", { class: "list" }, pendingLti.map(a => h("li", { class: "row" },
+      h("div", { class: "grow" }, h("h3", {}, a.name), h("p", { class: "small muted" }, `${a.vendor} · LTI tool waiting for district approval`)),
+      h("button", { class: "btn small", type: "button", "aria-label": `Approve ${a.name}`, onclick: async () => {
+        if (!await ask({ title: `Approve ${a.name}?`, text: "People given access can then open it. Any later change to its settings needs approval again.", confirm: "Approve" })) return;
+        try { await api.post(`/api/apps/${a.id}/lti/approve`, {}); toast(`${a.name} approved.`); go("apps", { push: false }); }
+        catch (e) { toast(LTI_APPROVE_ERRORS[e.body?.error] || "Couldn't approve it."); } } }, "Approve")))) : null,
+    pendingReq.length ? h("p", {}, `${pendingReq.length} app request${pendingReq.length === 1 ? "" : "s"} ${district ? "from schools" : "from your school"} waiting. `,
+      h("a", { href: "/#tab=app_requests" }, district ? "Decide on the full site" : "See them on the full site")) : null));
+  // Grade passback: district guidelines and oversight; principals approve for their school.
+  const g = grades?.data;
+  if (g && Array.isArray(g.approvals) && g.policy) {
+    const active = g.approvals.filter(x => !x.revokedAt);
+    const sec = h("section", { class: "card", "aria-label": "Grade passback" }, h("h2", {}, "Grade passback from tools"));
+    if (district) {
+      const on = h("input", { type: "checkbox", id: "gp-on", checked: g.policy.enabled }), review = h("input", { type: "checkbox", id: "gp-review", checked: g.policy.teacherReviewRequired });
+      sec.append(h("p", { class: "small muted" }, "You set the guidelines. Each school's principal approves tools for their school and is accountable for them; you can turn any approval off."),
+        h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+          try { await api.req("PUT", "/api/lti/grade-policy", { enabled: on.checked, teacherReviewRequired: review.checked }); toast("Guidelines saved."); go("apps", { push: false }); }
+          catch { toast("Couldn't save."); } } },
+          h("label", { for: on.id, class: "row" }, on, h("span", {}, "Allow tools to send grades")),
+          h("label", { for: review.id, class: "row" }, review, h("span", {}, "Teachers review each score before it counts")),
+          h("button", { class: "btn", type: "submit" }, "Save guidelines")));
+    } else sec.append(h("p", { class: "small muted" }, g.policy.enabled
+      ? `The district allows grade passback${g.policy.teacherReviewRequired ? "; teachers review each score" : "; scores count without review but never replace a teacher's grade"}. You approve tools for your school.`
+      : "The district hasn't turned grade passback on."));
+    sec.append(active.length ? h("ul", { class: "list" }, active.map(x => h("li", { class: "row" },
+      h("div", { class: "grow" }, h("h3", {}, district ? `${x.appName} · ${x.schoolName}` : x.appName),
+        h("p", { class: "small muted" }, `Approved by ${x.approvedBy} · ${x.scores30d} score${x.scores30d === 1 ? "" : "s"} in 30 days`)),
+      h("button", { class: "btn small danger", type: "button", "aria-label": `Turn off grade passback for ${x.appName}${district ? ` at ${x.schoolName}` : ""}`, onclick: async () => {
+        const reason = await ask({ title: `Turn off grades from ${x.appName}?`, text: "Scores stop at once. The school sees your reason.", label: "Reason", confirm: "Turn off", danger: true, maxlength: 500 });
+        if (!reason) return;
+        try { await api.req("PUT", "/api/lti/grade-approvals", { appId: x.appId, schoolId: x.schoolId, approved: false, reason }); toast("Turned off."); go("apps", { push: false }); }
+        catch { toast("Couldn't turn it off."); } } }, "Turn off")))) : h("p", { class: "small" }, "No tools are approved for grades" + (district ? " at any school." : " at your school.")));
+    const open = g.canApprove && g.policy.enabled ? (g.candidates || []).filter(c => !active.some(a => a.appId === c.appId)) : [];
+    if (open.length) sec.append(h("div", { class: "btns" }, open.map(c => h("button", { class: "btn", type: "button", onclick: async () => {
+      if (!await ask({ title: `Let ${c.appName} send grades at your school?`, text: "You're accountable for this approval. Teachers still turn it on per activity.", confirm: "Approve" })) return;
+      try { await api.req("PUT", "/api/lti/grade-approvals", { appId: c.appId, approved: true }); toast("Approved for your school."); go("apps", { push: false }); }
+      catch { toast("Couldn't approve it."); } } }, `Approve grades from ${c.appName}`))));
+    out.push(sec);
+  }
+  if (launcher) out.push(launcher);
+  out.push(h("section", { class: "card", "aria-label": "Catalog" }, h("h2", {}, "Catalog, licenses and access"),
+    h("p", { class: "small muted" }, "Adding apps, licenses, who can use them, and LTI tool details are on the full site."),
+    h("a", { class: "btn", href: "/#tab=apps" }, "Open the app catalog")));
   return out;
 };
 
