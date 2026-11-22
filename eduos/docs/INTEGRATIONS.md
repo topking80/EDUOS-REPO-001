@@ -127,3 +127,29 @@ a SAML bridge) in front of EduOS by pointing `OIDC_ISSUER`,
 `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` at it. EduOS still decides what
 each person can do from its own memberships; it never takes roles from the
 identity provider.
+
+## Incremental scheduled syncs (SIS-06)
+
+A schedule can ask to read only what changed since the last successful run:
+`PUT /api/integrations/connectors/:id/schedule` with `incremental: true` and
+`fullSyncHours` (1–168, default 24). Like any schedule change, it needs a
+second district lead's approval.
+
+| Source | How changes are read |
+| --- | --- |
+| OneRoster | The standard `dateLastModified>` filter on `/students`, starting 10 minutes before the last run to cover clock skew. Schools are always read in full. |
+| Ed-Fi | Change Queries (`/changeQueries/v1`): students and school enrollments changed since the last change version. Each affected student's current enrollments are re-read, so withdrawals and transfers are seen. More than 5,000 changed students runs a full sync instead. |
+| PowerSchool | Not supported; always full. |
+
+A run is incremental only when all of these hold; otherwise it is a full sync,
+and the run's `counts.sync` says why:
+
+- the schedule has `incremental` on and the source supports it;
+- a previous full sync recorded a starting point under the connector's
+  **current** configuration (any configuration change forces a full sync);
+- the last full sync was less than `fullSyncHours` ago.
+
+If the source refuses a change query, the run falls back to a full sync
+(`reason: "incremental_failed:<code>"`). The starting point only moves after a
+run's import succeeds. Incremental runs import students only: class rosters
+(SIS-04) refresh on full runs. A run with no changes imports nothing.
