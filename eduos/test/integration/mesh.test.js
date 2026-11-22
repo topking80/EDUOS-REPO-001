@@ -721,6 +721,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
       assert.equal((await as("p1")("PUT", "/api/lti/grade-approvals", { appId, approved: true })).status, 200);
       assert.equal((await as("t1")("PUT", "/api/lti/grade-approvals", { appId, approved: true })).status, 403);
       assert.equal((await grades(true)).status, 200);
+      assert.equal((await as("p1")("PUT", `/api/lti/content-links/${link}/grades`, { enabled: false })).status, 403, "principals approve the school tool, not activity grade switches");
 
       // The student's launch now carries this activity's line item.
       const claims = await launch("pu", appId, link);
@@ -755,7 +756,8 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
       assert.equal((await score(1, 10, claims.sub, { timestamp: new Date(Date.now() - 3_600_000).toISOString() })).status, 204, "older scores are accepted but ignored");
       const list = (await as("t1")("GET", `/api/lti/scores?assignmentId=${asg}`)).body.data;
       assert.deepEqual(list.map(x => [x.studentName, x.scoreGiven, x.status]), [["Alice A", 8, "pending"]]);
-      assert.deepEqual((await as("pu")("GET", `/api/lti/scores?assignmentId=${asg}`)).body.data, [], "students don't review scores");
+      assert.equal((await as("pu")("GET", `/api/lti/scores?assignmentId=${asg}`)).status, 403, "students cannot access the teacher review endpoint");
+      assert.equal((await as("p1")("GET", `/api/lti/scores?assignmentId=${asg}`)).status, 403, "principals do not review individual learner scores");
       assert.equal((await as("t1")("POST", `/api/lti/scores/${list[0].id}/record`, {})).status, 200);
       assert.deepEqual(await sub(), { score: 80, points: 16, grade_source: "lti" });
 
