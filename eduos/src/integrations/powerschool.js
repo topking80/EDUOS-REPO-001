@@ -100,3 +100,61 @@ export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, s
   }
   return { schools, students, rejected, fetchedStudentRecords };
 }
+
+// ---- SIS-04 class rosters (read-only), per mapped school ----
+// GET /ws/v1/school/{id}/section, /ws/v1/school/{id}/staff and
+// /ws/v1/section/{id}/section_enrollment. Field names vary between
+// PowerSchool versions and plugins; preview against the district's sandbox
+// before turning class rosters on (docs/INTEGRATIONS.md).
+const MAX_SECTIONS = 20_000;
+const staffEmail = s => {
+  const e = s?.emails && typeof s.emails === "object" ? s.emails : {};
+  const v = s?.email ?? s?.email_addr ?? e.work_email ?? e.email;
+  return typeof v === "string" && /^[^\s@]{1,64}@[^\s@]{1,190}$/.test(v.trim()) ? v.trim().toLowerCase() : null;
+};
+export function normalizeClasses({ schoolExternalId, sections = [], staffs = [], enrollmentsBySection = new Map() }, today = new Date().toISOString().slice(0, 10)) {
+  const out = { sections: [], staff: [], enrollments: [] };
+  for (const s of staffs) {
+    const id = text(s?.id ?? s?.dcid, 80);
+    if (!id) continue;
+    const name = s?.name && typeof s.name === "object" ? s.name : {};
+    out.staff.push({ externalId: id, email: staffEmail(s), displayName: [text(s?.first_name ?? name.first_name, 80), text(s?.last_name ?? name.last_name, 80)].filter(Boolean).join(" ") || id });
+  }
+  for (const s of sections) {
+    const id = text(s?.id ?? s?.dcid, 80);
+    if (!id) continue;
+    out.sections.push({ externalId: id, schoolExternalId, title: [text(s?.course_name ?? s?.course_number, 120), text(s?.section_number, 30)].filter(Boolean).join(" ").slice(0, 160) || id });
+    const teacher = text(s?.staff_id ?? s?.teacher_id, 80);
+    if (teacher) out.enrollments.push({ sectionExternalId: id, userExternalId: teacher, role: "teacher" });
+    for (const e of enrollmentsBySection.get(id) || []) {
+      const student = text(e?.student_id, 80);
+      const dropped = e?.dropped === true || String(e?.dropped).toLowerCase() === "true";
+      const exited = e?.exit_date && String(e.exit_date).slice(0, 10) < today;
+      if (student && !dropped && !exited) out.enrollments.push({ sectionExternalId: id, userExternalId: student, role: "student" });
+    }
+  }
+  return out;
+}
+
+export async function fetchClasses({ baseUrl, tokenUrl, clientId, clientSecret, scope, options, mappedSchoolIds = [] }) {
+  const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope, options });
+  const base = baseUrl.replace(/\/+$/, "");
+  const all = { sections: [], staff: [], enrollments: [] };
+  let sectionCount = 0;
+  for (const schoolId of mappedSchoolIds) {
+    if (!/^\d+$/.test(String(schoolId))) continue;
+    const school = encodeURIComponent(schoolId);
+    const sections = await collect(`${base}/ws/v1/school/${school}/section`, token, options, "sections", "section", MAX_SECTIONS - sectionCount);
+    sectionCount += sections.length;
+    const staffs = await collect(`${base}/ws/v1/school/${school}/staff`, token, options, "staffs", "staff", MAX_SECTIONS);
+    const enrollmentsBySection = new Map();
+    for (const s of sections) {
+      const id = text(s?.id ?? s?.dcid, 80);
+      if (id) enrollmentsBySection.set(id, await collect(`${base}/ws/v1/section/${encodeURIComponent(id)}/section_enrollment`, token, options,
+        "section_enrollments", "section_enrollment", MAX_STUDENT_RECORDS));
+    }
+    const part = normalizeClasses({ schoolExternalId: String(schoolId), sections, staffs, enrollmentsBySection });
+    all.sections.push(...part.sections); all.staff.push(...part.staff); all.enrollments.push(...part.enrollments);
+  }
+  return all;
+}

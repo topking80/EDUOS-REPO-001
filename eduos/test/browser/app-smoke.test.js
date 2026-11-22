@@ -65,9 +65,16 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       releases: [{ id: "r1", version: "45.20261117.3.0", stage: "canary", approved_at: now, approved_by_name: "Supt",
         gate: { ready: false, blockers: ["1 of 2 canaries healthy on it"], soaked: 0, required: 2, soakHours: 24 } },
         { id: "r0", version: "45.20261110.3.0", stage: "promoted", approved_at: now, promoted_at: now, approved_by_name: "Supt", promoted_by_name: "IT" }] } };
-    case "/api/integrations/connectors": return { data: { enabled: true, schools: [{ id: "s1", name: "Maple" }], connectors: [
-      { id: "c1", kind: "oneroster", name: "District SIS", baseUrl: "https://sis.example.org/ims/oneroster/rostering/v1p2", status: "active", updatedBy: "IT", approvedBy: "Supt", canApprove: false, lastSyncAt: now, lastSyncStatus: "completed", schoolMap: [] },
+    case "/api/integrations/connectors": return { data: { enabled: true, schools: [{ id: "s1", name: "Maple" }],
+      teachers: [{ id: "u7", name: "Teacher S1", email: "t1@d1.test", school: "Maple" }], connectors: [
+      { id: "c1", kind: "oneroster", name: "District SIS", baseUrl: "https://sis.example.org/ims/oneroster/rostering/v1p2", status: "active", updatedBy: "IT", approvedBy: "Supt", canApprove: false, lastSyncAt: now, lastSyncStatus: "completed", schoolMap: [],
+        dataScope: ["students", "class_rosters"], staffMap: [] },
       { id: "c2", kind: "edfi", name: "State Ed-Fi", baseUrl: "https://edfi.example.org/api/data", status: "pending_approval", updatedBy: "IT", canApprove: true, schoolMap: [] }] } };
+    // SIS-04: a preview with class rosters and one unmatched teacher.
+    case "/api/integrations/connectors/c1/sync": return { data: { runId: "r1", mode: "preview", rejected: [{ externalId: "u-x", reason: "student_not_imported" }],
+      externalSchools: [], counts: { studentsFetched: 3, toImport: 2, notMapped: 0, rejected: 1,
+        rosters: { sectionsFetched: 4, sectionsNotMapped: 0, enrollmentsFetched: 20, teachersUnmatched: 1, rosterLinks: 15, toAdd: 12, toRemove: 1, keptManual: 2 } },
+      unmatchedTeachers: [{ externalId: "tch-2", reason: "no_matching_eduos_teacher", name: "New Hire", email: "new.hire@d1.test" }] } };
     // 37.7.0 commerce (sandbox) screens.
     case "/api/events": return { data: [{ id: "e1", activity_id: "a1", school_id: "s1", title: "Friday Night Football", starts_at: new Date(Date.now() + 864e5).toISOString(),
       ends_at: new Date(Date.now() + 9e7).toISOString(), venue: "Main field", status: "published", school_name: "Maple" }] };
@@ -152,7 +159,8 @@ function startServer() {
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
       }
-      const body = req.method === "GET" ? mockApi(state.role, pathname, state.failWebhookLoads) : { data: {} };
+      // GETs, and a connector sync (preview), answer from the sample data; other writes just succeed.
+      const body = req.method === "GET" || /^\/api\/integrations\/connectors\/[^/]+\/sync$/.test(pathname) ? mockApi(state.role, pathname, state.failWebhookLoads) : { data: {} };
       res.writeHead(body ? (req.method === "GET" ? 200 : 201) : 404, { "content-type": "application/json", "cache-control": "no-store" });
       return res.end(JSON.stringify(body ?? { error: "not_found" }));
     }
@@ -223,6 +231,23 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         page.close();
       }
     }
+  }
+  // SIS-04: a connector preview shows class roster counts and unmatched teachers to match by hand.
+  state.role = "superintendent";
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/integrations` });
+      let text = await page.mainText();
+      if (!text.includes("students and class rosters")) failures.push("superintendent #/integrations: class rosters status is missing");
+      if (!text.includes("Stop class rosters")) failures.push("superintendent #/integrations: class rosters switch is missing");
+      await page.eval(`([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Preview") || {}).click?.()`);
+      for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Save teacher matches"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const want of ["Class rosters", "Classes found", "Would be added", "Would be removed", "Already on a roster entered by hand (left as is)",
+        "New Hire · new.hire@d1.test · No EduOS teacher at that school has this email", "Teacher S1 (Maple)", "Save teacher matches", "a student in a class isn't in EduOS"])
+        if (!text.includes(want)) failures.push(`superintendent integrations preview: "${want}" is missing`);
+      if (page.errors.length) failures.push(`superintendent integrations preview: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   // Time Capsules: open a draft from the list; its management controls render.
   state.role = "parent";

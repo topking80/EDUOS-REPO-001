@@ -72,3 +72,51 @@ export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, s
   }
   return { schools, students, rejected };
 }
+
+// ---- SIS-04 class rosters (read-only): sections, staffs and their section associations ----
+// An Ed-Fi section is identified by school, course code, school year, session and section identifier.
+export function sectionKey(r) {
+  if (!r) return null;
+  const parts = [r.schoolId, r.localCourseCode, r.schoolYear, r.sessionName, r.sectionIdentifier];
+  return parts.every(p => p !== undefined && p !== null && String(p).trim() !== "") ? parts.map(p => String(p).trim()).join("|").slice(0, 255) : null;
+}
+const current = (a, today) => !a?.endDate || String(a.endDate).slice(0, 10) >= today;
+const workEmail = s => {
+  const list = Array.isArray(s?.electronicMails) ? s.electronicMails : [];
+  const pick = list.find(m => /work/i.test(String(m?.electronicMailTypeDescriptor || ""))) || list[0];
+  const v = pick?.electronicMailAddress;
+  return typeof v === "string" && /^[^\s@]{1,64}@[^\s@]{1,190}$/.test(v.trim()) ? v.trim().toLowerCase() : null;
+};
+
+export function normalizeClasses({ sections = [], staffs = [], staffSections = [], studentSections = [] }, today = new Date().toISOString().slice(0, 10)) {
+  const out = { sections: [], staff: [], enrollments: [] };
+  for (const s of sections) {
+    const key = sectionKey({ ...s.courseOfferingReference, sectionIdentifier: s.sectionIdentifier });
+    if (key) out.sections.push({ externalId: key, schoolExternalId: String(s.courseOfferingReference.schoolId),
+      title: text(s.sectionName, 160) || `${s.courseOfferingReference.localCourseCode} ${s.sectionIdentifier}`.slice(0, 160) });
+  }
+  for (const s of staffs) {
+    const id = text(s?.staffUniqueId, 255);
+    if (id) out.staff.push({ externalId: id, email: workEmail(s), displayName: [text(s.firstName, 80), text(s.lastSurname, 80)].filter(Boolean).join(" ") || id });
+  }
+  for (const [list, role, who] of [[staffSections, "teacher", "staffReference.staffUniqueId"], [studentSections, "student", "studentReference.studentUniqueId"]]) {
+    for (const a of list) {
+      if (!current(a, today)) continue;
+      const [obj, field] = who.split(".");
+      const user = text(a?.[obj]?.[field], 255), section = sectionKey(a?.sectionReference);
+      if (user && section) out.enrollments.push({ sectionExternalId: section, userExternalId: user, role });
+    }
+  }
+  return out;
+}
+
+export async function fetchClasses({ baseUrl, tokenUrl, clientId, clientSecret, scope, options }) {
+  const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope, options });
+  const base = baseUrl.replace(/\/+$/, "");
+  return normalizeClasses({
+    sections: await collect(base, "sections", token, options),
+    staffs: await collect(base, "staffs", token, options),
+    staffSections: await collect(base, "staffSectionAssociations", token, options),
+    studentSections: await collect(base, "studentSectionAssociations", token, options),
+  });
+}

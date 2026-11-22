@@ -7,7 +7,7 @@ import { decryptSecret } from "./secrets.js";
 import * as oneroster from "./oneroster.js";
 import * as edfi from "./edfi.js";
 import * as powerschool from "./powerschool.js";
-import { loadPlanInputs, planImport, applyPlan } from "./sync.js";
+import { loadPlanInputs, planImport, applyPlan, planRosters, loadRosterInputs, applyRosters } from "./sync.js";
 
 const KINDS = { oneroster, edfi, powerschool };
 export const SYNC_JOB_LEASE_SECONDS = 300;
@@ -123,7 +123,7 @@ async function processScheduledSisSyncLeased(job, { db = pool, tx = schedulerTen
       `SELECT j.id,j.connector_id,j.schedule_id,j.config_version,j.attempts,j.lease_token,
               s.enabled,s.paused_at,s.config_version AS schedule_version,
               x.kind,x.status,x.config_version AS connector_version,x.base_url,x.token_url,
-              x.client_id,x.client_secret_enc,x.scope
+              x.client_id,x.client_secret_enc,x.scope,x.data_scope
          FROM integration_sync_jobs j
          JOIN integration_sync_schedules s ON s.id=j.schedule_id AND s.district_id=j.district_id
          JOIN integration_connectors x ON x.id=j.connector_id AND x.district_id=j.district_id
@@ -147,6 +147,12 @@ async function processScheduledSisSyncLeased(job, { db = pool, tx = schedulerTen
       clientSecret:decryptSecret(config.integrationsKey,districtId,input.connector_id,input.client_secret_enc),
       scope:input.scope,options:urlOptions(),mappedSchoolIds:mapped.rows.map(x=>x.external_id),
       maxStudentRecords:config.powerschoolMaxStudents
+    });
+    // SIS-04: class rosters, if this connector was approved to import them.
+    if (input.data_scope?.includes("class_rosters")) roster.classes = await KINDS[input.kind].fetchClasses({
+      baseUrl:input.base_url,tokenUrl:input.token_url,clientId:input.client_id,
+      clientSecret:decryptSecret(config.integrationsKey,districtId,input.connector_id,input.client_secret_enc),
+      scope:input.scope,options:urlOptions(),mappedSchoolIds:mapped.rows.map(x=>x.external_id)
     });
   } catch (error) {
     await recordScheduledFailure(tx,districtId,serviceActorId,job,runId,error);
@@ -177,10 +183,16 @@ async function processScheduledSisSyncLeased(job, { db = pool, tx = schedulerTen
       const plan=planImport(roster,inputs.map,inputs.existing,inputs.schools);
       const actor={districtId,userId:null,serviceActorId,role:"sis_scheduler",schoolId:null};
       const imported=await applyPlan(c,actor,{kind:input.kind,id:input.connector_id},runId,plan,job.id);
+      let rosterRejected=[];
+      if(roster.classes){
+        const rosters=planRosters(roster.classes,roster,await loadRosterInputs(c,districtId,input.connector_id,roster.classes,roster));
+        rosters.counts.applied=await applyRosters(c,districtId,input.connector_id,rosters);
+        plan.counts.rosters=rosters.counts; rosterRejected=rosters.rejected;
+      }
       await c.query(
         `INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,schedule_id,scheduled_job_id,schedule_approved_by,schedule_approved_at,started_at,finished_at,counts,rejected)
          VALUES($1,$2,$3,'apply','completed',NULL,$4,$5,$6,$7,$8,now(),now(),$9::jsonb,$10::jsonb)`,
-        [runId,districtId,input.connector_id,serviceActorId,input.schedule_id,job.id,v.schedule_approved_by,v.schedule_approved_at,JSON.stringify({...plan.counts,imported}),JSON.stringify(plan.rejected)]);
+        [runId,districtId,input.connector_id,serviceActorId,input.schedule_id,job.id,v.schedule_approved_by,v.schedule_approved_at,JSON.stringify({...plan.counts,imported}),JSON.stringify([...plan.rejected,...rosterRejected].slice(0,200))]);
       await c.query("UPDATE integration_connectors SET last_sync_at=now(),last_sync_status='completed' WHERE id=$1",[input.connector_id]);
       await c.query(
         `INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)

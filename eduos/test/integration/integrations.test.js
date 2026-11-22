@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import crypto from "node:crypto";
 import pg from "pg";
-import { PG_URL, ID, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
+import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 const SECRET = "or-secret-123", EDFI_SECRET = "edfi-secret-456";
@@ -43,6 +43,16 @@ function fakeServer() {
         { sourcedId: "u-none", givenName: "No", familyName: "School" },
         { sourcedId: "u-gone", status: "tobedeleted", givenName: "Gone", orgs: [{ sourcedId: "or-s1" }] }]) });
     }
+    // SIS-04 class rosters (OneRoster): one class at S1 with two teachers and two students.
+    if (url.pathname.endsWith("/classes")) return send(200, { classes: page([{ sourcedId: "cls-1", title: "Grade 4 Math", school: { sourcedId: "or-s1" } }]) });
+    if (url.pathname.endsWith("/teachers")) return send(200, { users: page([
+      { sourcedId: "tch-1", givenName: "Teacher", familyName: "S1", email: "T1@D1.test" },
+      { sourcedId: "tch-2", givenName: "New", familyName: "Hire", email: "new.hire@d1.test" }]) });
+    if (url.pathname.endsWith("/enrollments")) return send(200, { enrollments: page(ctl.noEnrollments ? [] : [
+      { sourcedId: "en-1", role: "teacher", user: { sourcedId: "tch-1" }, class: { sourcedId: "cls-1" } },
+      { sourcedId: "en-2", role: "teacher", user: { sourcedId: "tch-2" }, class: { sourcedId: "cls-1" } },
+      { sourcedId: "en-3", role: "student", user: { sourcedId: "u-alice" }, class: { sourcedId: "cls-1" } },
+      ...(ctl.dropDan ? [] : [{ sourcedId: "en-4", role: "student", user: { sourcedId: "u-dan" }, class: { sourcedId: "cls-1" } }])]) });
     if (url.pathname.startsWith("/api/data/ed-fi/")) {
       if (auth !== "Bearer tok-edfi-client") return send(401, {});
       const r = url.pathname.split("/").pop();
@@ -250,6 +260,72 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     assert.equal(invalidated.body.data.pause_reason, "connector_configuration_changed");
     assert.equal(invalidated.body.data.approved_at, null, "old schedule approval is invalidated");
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_sync_jobs WHERE connector_id=$1 AND status IN ('pending','processing')", [or.id])).rows[0].n, 0);
+  });
+
+  it("SIS-04: class rosters are opt-in, approved, matched to existing teachers, and never touch hand-entered rosters", async () => {
+    const rosterOf = async () => (await admin.query(`SELECT u.email, s.local_student_number AS num, (r.source_connector_id IS NOT NULL) AS synced
+        FROM teacher_student_rosters r JOIN users u ON u.id=r.teacher_user_id JOIN students s ON s.id=r.student_id
+       WHERE r.district_id=$1 ORDER BY 1,2`, [ID.d1])).rows.map(r => `${r.email}:${r.num}:${r.synced ? "sis" : "hand"}`);
+    // A roster row a person entered by hand.
+    await admin.query(`INSERT INTO teacher_student_rosters(district_id,school_id,teacher_user_id,student_id,created_by)
+      SELECT $1,$2,$3,s.id,$4 FROM students s WHERE s.district_id=$1 AND s.local_student_number='S1-A'`, [ID.d1, ID.s1, USERS.t1[0], USERS.p1[0]]);
+    const c = (await as("supt1")("POST", "/api/integrations/connectors", { kind: "oneroster", name: "Rosters OneRoster", baseUrl: `${fake.base}/ims/oneroster/rostering/v1p2`,
+      tokenUrl: `${fake.base}/oauth/token`, clientId: "or-client", clientSecret: SECRET, classRosters: true })).body.data;
+    assert.deepEqual(c.dataScope, ["students", "class_rosters"]);
+    assert.equal(c.status, "pending_approval");
+    await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/school-map`, { mappings: [{ externalId: "or-s1", schoolId: ID.s1 }] });
+    assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/approve`)).status, 200);
+
+    const before = await rosterOf();
+    const p = await sync("supt1", c.id, "preview");
+    assert.equal(p.status, 200, JSON.stringify(p.body));
+    assert.deepEqual(await rosterOf(), before, "a preview changes nothing");
+    assert.equal(p.body.data.counts.rosters.toAdd, 1, "Teacher S1 + Dan (Alice is already on their roster by hand)");
+    assert.equal(p.body.data.counts.rosters.keptManual, 1);
+    assert.deepEqual(p.body.data.unmatchedTeachers, [{ externalId: "tch-2", reason: "no_matching_eduos_teacher", name: "New Hire", email: "new.hire@d1.test" }]);
+
+    const a = await sync("supt1", c.id, "apply");
+    assert.equal(a.status, 200, JSON.stringify(a.body));
+    assert.deepEqual(await rosterOf(), ["t1@d1.test:S1-A:hand", "t1@d1.test:S1-D:sis"], "matched by email, case-insensitive; no account created for New Hire");
+
+    // Dan leaves the class: only the synced link goes; the hand-entered one stays.
+    fake.ctl.dropDan = true;
+    assert.equal((await sync("supt1", c.id, "apply")).body.data.counts.rosters.toRemove, 1);
+    assert.deepEqual(await rosterOf(), ["t1@d1.test:S1-A:hand"]);
+
+    // Matching New Hire by hand to an existing teacher needs approval again.
+    const m = await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/staff-map`, { mappings: [{ externalId: "tch-2", userId: USERS.tp[0] }] });
+    assert.equal(m.body.data.status, "pending_approval");
+    assert.equal((await sync("supt1", c.id, "apply")).body.error, "connector_not_approved");
+    assert.equal((await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/staff-map`, { mappings: [{ externalId: "tch-2", userId: USERS.pa[0] }] })).body.error,
+      "teacher_not_found", "only an EduOS teacher can be matched");
+    await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/approve`);
+    await sync("supt1", c.id, "apply");
+    assert.deepEqual(await rosterOf(), ["t1@d1.test:S1-A:hand", "tp@d1.test:S1-A:sis"]);
+
+    // The SIS returns no enrollments at all: nothing is removed, and the run says why.
+    fake.ctl.noEnrollments = true;
+    const empty = await sync("supt1", c.id, "apply");
+    assert.equal(empty.status, 409); assert.equal(empty.body.error, "sync_not_applied");
+    assert.match(empty.body.detail, /no class enrollments/);
+    assert.deepEqual(await rosterOf(), ["t1@d1.test:S1-A:hand", "tp@d1.test:S1-A:sis"]);
+    fake.ctl.noEnrollments = false; fake.ctl.dropDan = false;
+
+    // A scheduled sync (the service actor, no user) applies class rosters the same way.
+    // (A schedule needs a preview of the current configuration first.)
+    assert.equal((await sync("supt1", c.id, "preview")).status, 200);
+    assert.equal((await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/schedule`, { intervalMinutes: 15 })).status, 200);
+    const approvedSchedule = await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/schedule/approve`);
+    assert.equal(approvedSchedule.status, 200, JSON.stringify(approvedSchedule.body));
+    const scheduled = await run(["src/integrations/scheduler-cli.js"], { ...workerEnv, DATABASE_URL: db.appUrl });
+    assert.equal(scheduled.code, 0, scheduled.out);
+    assert.deepEqual(await rosterOf(), ["t1@d1.test:S1-A:hand", "t1@d1.test:S1-D:sis", "tp@d1.test:S1-A:sis", "tp@d1.test:S1-D:sis"], "Dan is back, added by the scheduled run");
+    const lastRun = (await admin.query("SELECT started_by, counts FROM integration_sync_runs WHERE connector_id=$1 AND started_by_service IS NOT NULL ORDER BY started_at DESC LIMIT 1", [c.id])).rows[0];
+    assert.equal(lastRun.started_by, null);
+    assert.equal(lastRun.counts.rosters.toAdd, 2);
+
+    const audit = (await admin.query("SELECT action, detail FROM audit_events WHERE resource_type='integration_staff_map' AND resource_id=$1", [c.id])).rows;
+    assert.match(audit[0].detail, /tch-2=>.*needs approval/);
   });
 
   it("another district sees none of it", async () => {

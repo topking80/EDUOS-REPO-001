@@ -56,3 +56,34 @@ export async function fetchRoster({ baseUrl, tokenUrl, clientId, clientSecret, s
   for (const u of users) { const r = normalizeStudent(u); if (r.student) students.push(r.student); else if (r.rejected) rejected.push(r.rejected); }
   return { schools, students, rejected };
 }
+
+// ---- SIS-04 class rosters (read-only): /classes, /teachers, /enrollments ----
+const ACTIVE = x => !x?.status || x.status === "active";
+const email = v => (typeof v === "string" && /^[^\s@]{1,64}@[^\s@]{1,190}$/.test(v.trim()) ? v.trim().toLowerCase() : null);
+const ref = x => (typeof x?.sourcedId === "string" && x.sourcedId.trim() ? x.sourcedId.trim().slice(0, 255) : null);
+
+/** Teachers, class sections and enrollments in the shared shape (src/integrations/sync.js planRosters). */
+export function normalizeClasses({ classes = [], teachers = [], enrollments = [] }) {
+  const sections = classes.filter(ACTIVE).map(c => ({ externalId: ref(c), title: text(c.title, 160) || ref(c), schoolExternalId: ref(c.school) }))
+    .filter(s => s.externalId && s.schoolExternalId);
+  const staff = teachers.filter(ACTIVE).map(t => ({ externalId: ref(t), email: email(t.email),
+    displayName: [text(t.preferredFirstName, 80) || text(t.givenName, 80), text(t.familyName, 80)].filter(Boolean).join(" ") || ref(t) }))
+    .filter(t => t.externalId);
+  const out = [];
+  for (const e of enrollments) {
+    if (!ACTIVE(e) || !["student", "teacher"].includes(e?.role)) continue;
+    const user = ref(e.user), section = ref(e.class);
+    if (user && section) out.push({ sectionExternalId: section, userExternalId: user, role: e.role });
+  }
+  return { staff, sections, enrollments: out };
+}
+
+export async function fetchClasses({ baseUrl, tokenUrl, clientId, clientSecret, scope, options }) {
+  const token = await clientCredentialsToken({ tokenUrl, clientId, clientSecret, scope: scope || DEFAULT_SCOPE, options });
+  const base = baseUrl.replace(/\/+$/, "");
+  return normalizeClasses({
+    classes: await collect(base, "/classes", "classes", token, options),
+    teachers: await collect(base, "/teachers", "users", token, options),
+    enrollments: await collect(base, "/enrollments", "enrollments", token, options),
+  });
+}

@@ -505,3 +505,8 @@ GRANT EXECUTE ON FUNCTION eduos_history_submit(uuid), eduos_history_review(uuid,
 GRANT EXECUTE ON FUNCTION eduos_capsule_is_draft(uuid), eduos_capsule_seal(uuid), eduos_capsule_cancel(uuid),
   eduos_capsule_release_milestone(uuid), eduos_capsule_release_due(integer), eduos_capsule_contents(uuid),
   eduos_capsule_invitations(), eduos_capsule_recipient_options(uuid), eduos_capsule_milestones_pending() TO eduos_app;
+
+-- 092 SIS-04 class rosters: a sync refreshes synced_at on rows it keeps;
+-- manual teacher matches are edited by district leads.
+GRANT UPDATE (synced_at) ON teacher_student_rosters TO eduos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON integration_staff_map TO eduos_app;
