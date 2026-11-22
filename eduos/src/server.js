@@ -46,6 +46,7 @@ import { registerClubsSportsRoutes } from "./clubs-sports-routes.js";
 import { registerStudentHistoryContributionRoutes } from "./student-history-contribution-routes.js";
 import { registerStudentHistoryTeacherRoutes } from "./student-history-teacher-routes.js";
 import { registerStudentHistoryPortfolioRoutes } from "./student-history-portfolio-routes.js";
+import { registerStudentHistoryCapsuleRoutes, startCapsuleReleaseSweep } from "./student-history-capsule-routes.js";
 import { registerSportsEligibilityRoutes } from "./sports-eligibility-routes.js";
 import { registerSchoolOperationsRoutes } from "./school-operations-routes.js";
 import { registerWellbeingRoutes } from "./wellbeing-routes.js";
@@ -1975,6 +1976,7 @@ registerClubsSportsRoutes(app);
 registerStudentHistoryContributionRoutes(app);
 registerStudentHistoryTeacherRoutes(app);
 registerStudentHistoryPortfolioRoutes(app);
+registerStudentHistoryCapsuleRoutes(app);
 registerSportsEligibilityRoutes(app);
 registerSchoolOperationsRoutes(app);
 registerWellbeingRoutes(app);
@@ -2055,6 +2057,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
     startWebhookSweep();
     startSisSyncSweep();
     startCommerceReconcile();
+    startCapsuleReleaseSweep();
     if(config.nodeTier==="school"&&process.env.EDEN_AGENT!=="off")startAgent();
   });
 }

@@ -498,3 +498,10 @@ GRANT SELECT ON student_history_entry_decisions TO eduos_app;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_decisions FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_history_submit(uuid), eduos_history_review(uuid,text,text,text),
   eduos_history_family_decide(uuid,text,text,text) TO eduos_app;
+
+-- 091 Time Capsule lifecycle. Seal, cancel, milestone release and the release
+-- sweep go through these functions; eduos_capsule_try_release and
+-- eduos_capsule_event are internal to them.
+GRANT EXECUTE ON FUNCTION eduos_capsule_is_draft(uuid), eduos_capsule_seal(uuid), eduos_capsule_cancel(uuid),
+  eduos_capsule_release_milestone(uuid), eduos_capsule_release_due(integer), eduos_capsule_contents(uuid),
+  eduos_capsule_invitations(), eduos_capsule_recipient_options(uuid), eduos_capsule_milestones_pending() TO eduos_app;
