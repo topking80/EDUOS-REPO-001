@@ -53,12 +53,20 @@ function findAxe() {
 const AXE = findAxe();
 if (!AXE && process.env.EDUOS_REQUIRE_AXE === "1") { console.error("EDUOS_REQUIRE_AXE=1 but axe-core was not found (set EDUOS_AXE_PATH)"); process.exit(2); }
 if (!AXE) console.warn("axe-core not found: skipping the accessibility scan");
+
+// Injected over the DevTools protocol, not as a <script> tag: the app's Content
+// Security Policy (script-src 'self') rightly blocks inline scripts, and
+// loosening it for tests would hide real CSP problems.
+async function injectAxe(page) {
+  const cdp = await page.context().newCDPSession(page);
+  try { await cdp.send("Runtime.evaluate", { expression: fs.readFileSync(AXE, "utf8") }); } finally { await cdp.detach().catch(() => {}); }
+}
 const axeFindings = [];
-// WCAG 2.0/2.1 level A and AA rules only (what the brief and most district procurement asks for).
+// WCAG 2.0/2.1/2.2 level A and AA rules only (CMP-02).
 async function axe(page, label) {
   if (!AXE) return;
   await page.evaluate(() => document.querySelectorAll("[data-eduos-toast]").forEach(x => x.remove()));
-  if (!(await page.evaluate(() => Boolean(window.axe)))) await page.addScriptTag({ path: AXE });
+  if (!(await page.evaluate(() => Boolean(window.axe)))) await injectAxe(page);
   const r = await page.evaluate(() => window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"] }, resultTypes: ["violations"] }));
   for (const v of r.violations) axeFindings.push({ screen: label, id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.slice(0, 5).map(n => ({ target: n.target.join(" "), summary: n.failureSummary })) });
   console.log(`      axe ${label}: ${r.violations.length ? r.violations.map(v => `${v.id}(${v.nodes.length})`).join(", ") : "no violations"}`);
@@ -438,7 +446,7 @@ await step("a low-contrast design is flagged live, with suggested shades, and pu
   check(await brander.locator('#eb-contrast li.error').count() >= 1, "contrast errors listed");
   check(await brander.locator('#eb-contrast [data-action="brand-fix"]').count() >= 1, "suggested shade offered");
   // axe agrees with our math: the intentionally failing preview has color-contrast violations.
-  if (AXE && !(await brander.evaluate(() => Boolean(window.axe)))) await brander.addScriptTag({ path: AXE });
+  if (AXE && !(await brander.evaluate(() => Boolean(window.axe)))) await injectAxe(brander);
   const pv = !AXE ? 1 : await brander.evaluate(async () => (await window.axe.run(document.querySelector("#eb-preview"), { runOnly: { type: "rule", values: ["color-contrast"] } })).violations.length);
   check(pv >= 1, "axe should see the low-contrast preview");
   await brander.locator("#eb-contrast").scrollIntoViewIfNeeded();
@@ -512,7 +520,7 @@ await step("restore the seeded design from history and publish it", async () => 
 });
 await step("no uncaught page errors", async () => { check(pageErrors.length === 0, pageErrors.join("; ")); });
 await step("nothing blocked by the Content Security Policy", async () => { check(cspViolations.length === 0, cspViolations.join("; ")); });
-await step("axe-core: no WCAG 2.1 A/AA violations on any scanned screen", async () => {
+await step("axe-core: no WCAG 2.2 A/AA violations on any scanned screen", async () => {
   if (!AXE) { console.log("      (skipped: axe-core not found; npm --prefix ~/tools/pw i axe-core)"); return; }
   fs.writeFileSync(path.join(OUT, "axe-report.json"), JSON.stringify(axeFindings, null, 2));
   check(axeFindings.length === 0, `${axeFindings.length} violation group(s): ${axeFindings.map(f => `${f.screen}:${f.id}`).join(", ")}`);

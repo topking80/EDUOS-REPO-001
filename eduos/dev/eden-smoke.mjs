@@ -28,6 +28,14 @@ const chrome = [process.env.CHROME_PATH, "/usr/bin/google-chrome", "/usr/bin/goo
 if (!chrome) { console.error("No Chrome/Chromium found; set CHROME_PATH."); process.exit(2); }
 const AXE = [process.env.EDUOS_AXE_PATH, path.join(home, "tools/pw/node_modules/axe-core/axe.min.js")].filter(Boolean).find(p => fs.existsSync(p)) || null;
 
+// Injected over the DevTools protocol, not as a <script> tag: the app's Content
+// Security Policy (script-src 'self') rightly blocks inline scripts, and
+// loosening it for tests would hide real CSP problems.
+async function injectAxe(page) {
+  const cdp = await page.context().newCDPSession(page);
+  try { await cdp.send("Runtime.evaluate", { expression: fs.readFileSync(AXE, "utf8") }); } finally { await cdp.detach().catch(() => {}); }
+}
+
 const docker = (...args) => execFileSync("docker", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, EDUOS_ENV_FILE: ENV_FILE } }).trim();
 const eden = (...args) => docker("compose", "--env-file", ENV_FILE, "-f", "docker-compose.eden.yml", ...args);
 const WAN = "eduos-eden_eden_wan";
@@ -54,7 +62,7 @@ async function phone() {
 }
 async function axe(page, label) {
   if (!AXE) return;
-  if (!(await page.evaluate(() => Boolean(window.axe)))) await page.addScriptTag({ path: AXE });
+  if (!(await page.evaluate(() => Boolean(window.axe)))) await injectAxe(page);
   const r = await page.evaluate(() => window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] }));
   for (const v of r.violations) axeFindings.push({ screen: label, id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.slice(0, 5).map(n => ({ target: n.target.join(" "), summary: n.failureSummary })) });
   console.log(`      axe ${label}: ${r.violations.length ? r.violations.map(v => `${v.id}(${v.nodes.length})`).join(", ") : "no violations"}`);
