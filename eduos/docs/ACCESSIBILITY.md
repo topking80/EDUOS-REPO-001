@@ -46,6 +46,14 @@ Without `EDUOS_AXE_PATH` the accessibility checks are skipped locally;
   pushed off the screen, so they could not be seen or tapped. The tab bar now
   scrolls sideways, each tab keeps a 64 px minimum width, and the current tab
   is kept in view.
+- Segmented toggles (e.g. Conversations / Announcements) overflowed a 320 px
+  screen with wider fonts; their buttons now shrink and wrap.
+- The district app catalog's checkboxes (grades, roles, compliance, webhook
+  events) were 18 px and packed tightly, failing WCAG 2.2 target size
+  (2.5.8); they are now 24 px with more spacing.
+- The e2e smoke scripts injected axe with an inline `<script>`, which the
+  app's Content Security Policy blocks; they now inject it over the DevTools
+  protocol, so CSP stays strict during tests.
 
 ## Already in the product
 
