@@ -86,6 +86,12 @@ const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(
 
 // LTI-02: when set, the course list holds one course whose assignment has a tool link.
 let withCourse = false;
+// UI-02: the school theme the app receives; the light pass switches its appearance.
+let appearance = "dark";
+const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName: "Riverside", mascot: null, publicKey: null,
+  branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
+    tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
+  preferences: { theme: "school", reduceMotion: false } } });
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   if (withCourse) switch (pathname) {
@@ -100,6 +106,7 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       candidates: role === "teacher" ? [{ appId: "app1", appName: "Practice Tool" }] : [] } };
   }
   switch (pathname) {
+    case "/api/branding/current": return BRAND();
     // UI-01: the Apps view for leaders.
     case "/api/lti/grade-approvals": return { data: { policy: { enabled: true, teacherReviewRequired: true }, canApprove: role === "principal",
       approvals: [{ id: "g1", appId: "app1", appName: "Practice Tool", schoolId: "s1", schoolName: "Maple", approvedBy: "Pat Principal", approvedAt: now, scores30d: 3 }],
@@ -342,6 +349,23 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "superintendent integrations preview", a11y);
       if (page.errors.length) failures.push(`superintendent integrations preview: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
+  }
+  // UI-02: the light appearance a school can choose, on every role's screens.
+  if (AXE_SOURCE) {
+    appearance = "light";
+    for (const [role, roleTabList] of Object.entries(roleTabs)) for (const tab of roleTabList) {
+      state.role = role;
+      const page = await Page.open(chrome.port);
+      try {
+        await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/${tab}` });
+        await page.mainText();
+        if (await page.eval("document.documentElement.dataset.appearance") !== "light") failures.push(`${role} #/${tab} (light): the school's light appearance wasn't applied`);
+        await axeScan(page, `${role} #/${tab} (light)`, a11y);
+        await focusScan(page, `${role} #/${tab} (light)`, a11y);
+        if (page.errors.length) failures.push(`${role} #/${tab} (light): ${page.errors[0].split("\n")[0]}`);
+      } finally { page.close(); }
+    }
+    appearance = "dark";
   }
   // LTI-02: tool links on a course assignment, for a pupil (open) and a teacher (open, remove, add).
   withCourse = true;

@@ -16,6 +16,9 @@
   const SHAPES = ["rounded", "circle", "square"];
   const GLYPH_MODES = ["mono", "color"];
   const SURFACE = "#ffffff";
+  // UI-02: how the EduOS app looks for this school (the full site stays light).
+  const APPEARANCES = Object.freeze(["dark", "light", "device"]);
+  const APPEARANCE_NAMES = Object.freeze({ dark: "Dark", light: "Light", device: "Follow each device's setting" });
   const GLYPHS = Object.freeze({
     pencil: "M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
     book: "M6.5 2H19v18H6.5A2.5 2.5 0 0 1 4 17.5v-13A2.5 2.5 0 0 1 6.5 2zm0 14a1.5 1.5 0 0 0 0 3H17v-3z",
@@ -36,7 +39,7 @@
   });
   const CATEGORY_GLYPH = { reading: "book", math: "calculator", science: "flask", "social studies": "globe", music: "music", art: "star" };
   const SYSTEM_DEFAULT = Object.freeze({
-    mascotName: null, motto: null, primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", mascotUploadId: null,
+    mascotName: null, motto: null, primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: "dark", mascotUploadId: null,
     tiles: Object.freeze({ preset: "minimal", base: Object.freeze({ shape: "rounded", bg: "surface", glyphMode: "mono", glyphColor: "primary", labelColor: "auto", badge: false }), overrides: Object.freeze({}) })
   });
   const PRESETS = Object.freeze({
@@ -84,7 +87,7 @@
     const out = { ...SYSTEM_DEFAULT, tiles: SYSTEM_DEFAULT.tiles };
     for (const p of layers.reverse()) { // last argument = lowest priority
       if (!p) continue;
-      for (const k of ["mascotName", "motto", "primary", "secondary", "accent", "font", "mascotUploadId"]) out[k] = pick(p[k], out[k]);
+      for (const k of ["mascotName", "motto", "primary", "secondary", "accent", "font", "appAppearance", "mascotUploadId"]) out[k] = pick(p[k], out[k]);
       if (p.tiles && p.tiles.preset) out.tiles = p.tiles;
     }
     return out;
@@ -149,6 +152,6 @@
   function glyphSvg(name, fg, size = 24) {
     return `<svg aria-hidden="true" focusable="false" width="${size}" height="${size}" viewBox="0 0 24 24"><path fill="${fg}" fill-rule="evenodd" d="${GLYPHS[name] || GLYPHS.star}"/></svg>`;
   }
-  root.EduOSBrandModel = Object.freeze({ HEX, FONTS, FONT_NAMES, SHAPES, GLYPH_MODES, GLYPHS, GLYPH_NAMES, BUILTIN_TILES, SYSTEM_DEFAULT, PRESETS, SURFACE,
+  root.EduOSBrandModel = Object.freeze({ HEX, FONTS, FONT_NAMES, APPEARANCES, APPEARANCE_NAMES, SHAPES, GLYPH_MODES, GLYPHS, GLYPH_NAMES, BUILTIN_TILES, SYSTEM_DEFAULT, PRESETS, SURFACE,
     SAMPLE_TILES, validateTiles, effective, resolveColor, tileStyle, contrastPairs, summarize, presetTiles, glyphSvg, isColorRef });
 })(typeof window !== "undefined" ? window : globalThis);
