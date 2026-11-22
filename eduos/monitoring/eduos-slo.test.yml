@@ -50,12 +50,12 @@ tests:
       - expr: "eduos:slo_error_budget_remaining:ratio{slo=\"availability\"}"
         eval_time: 100m
         exp_samples:
-          - labels: "{slo=\"availability\"}"
+          - labels: "eduos:slo_error_budget_remaining:ratio{slo=\"availability\"}"
             value: 1
       - expr: "eduos:slo_error_budget_remaining:ratio{slo=\"uptime\"}"
         eval_time: 100m
         exp_samples:
-          - labels: "{slo=\"uptime\"}"
+          - labels: "eduos:slo_error_budget_remaining:ratio{slo=\"uptime\"}"
             value: 1
   # Outage: 10% server errors
   - interval: 1m

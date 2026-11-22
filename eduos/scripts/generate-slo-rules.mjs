@@ -116,8 +116,8 @@ export function renderTests() {
     ...t("Healthy: no alerts, full budget; monitoring routes are excluded", [...traffic({ ok: 600, fast: 600 }),
       ...series("eduos_http_requests_total", 'job="eduos",method="GET",route="/metrics",instance="a",status="5xx"', "0+600x120")],
       alertsAt("100m", []),
-      [...expr("100m", 'eduos:slo_error_budget_remaining:ratio{slo="availability"}', { labels: '{slo="availability"}', value: 1 }),
-       ...expr("100m", 'eduos:slo_error_budget_remaining:ratio{slo="uptime"}', { labels: '{slo="uptime"}', value: 1 })]),
+      [...expr("100m", 'eduos:slo_error_budget_remaining:ratio{slo="availability"}', { labels: 'eduos:slo_error_budget_remaining:ratio{slo="availability"}', value: 1 }),
+       ...expr("100m", 'eduos:slo_error_budget_remaining:ratio{slo="uptime"}', { labels: 'eduos:slo_error_budget_remaining:ratio{slo="uptime"}', value: 1 })]),
     // 10% of requests fail: the fast and steady burns page; slower ones are still pending.
     ...t("Outage: 10% server errors", traffic({ ok: 540, err: 60, fast: 600 }),
       alertsAt("30m", [burn("availability", "Fast"), burn("availability", "Steady")]),
