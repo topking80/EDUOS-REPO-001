@@ -21,7 +21,7 @@ import { config } from "./config.js";
 import { pageOf, pageSql, paged } from "./paging.js";
 import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig, ltiConfigFingerprint,
   newBrowserBinding, browserBindingMatches, bindingCookieName, AUTO_SUBMIT_SCRIPT, AUTO_SUBMIT_SCRIPT_HASH } from "./lti.js";
-import { parse as parseCookies, serialize as serializeCookie } from "./cookies.js";
+import { getCookie, serialize as serializeCookie } from "./cookies.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validId = v => typeof v === "string" && UUID_RE.test(v);
@@ -584,7 +584,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     // copied lti_message_hint (it passes through the tool and the address bar)
     // would let someone else receive this user's id_token.
     const bindingName = validId(hint.l) ? bindingCookieName(hint.l) : null;
-    if (!bindingName || !browserBindingMatches(parseCookies(req.headers.cookie || "")[bindingName], hint.b))
+    if (!bindingName || !browserBindingMatches(getCookie(req.headers.cookie, bindingName), hint.b))
       return deny(403, "launch_browser_mismatch");
     // The signed hint is bound to one user, app, launch row and tenant, expires
     // in 5 minutes and is accepted once.
