@@ -13,6 +13,17 @@ export function parse(header = "") {
   return result;
 }
 
+/** The value of one named cookie, without building an object from request data. */
+export function getCookie(header = "", name) {
+  for (const part of String(header).split(";")) {
+    const index = part.indexOf("=");
+    if (index < 0 || part.slice(0, index).trim() !== name) continue;
+    const raw = part.slice(index + 1).trim();
+    try { return decodeURIComponent(raw); } catch { return raw; }
+  }
+  return undefined;
+}
+
 export function serialize(name, value, options = {}) {
   if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)) throw new TypeError("Invalid cookie name");
   const encoded = encodeURIComponent(String(value)).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);

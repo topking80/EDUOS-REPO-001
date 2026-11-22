@@ -159,10 +159,19 @@
         <fieldset class="wide"><legend>Compliance</legend><label class="api-check"><input type="checkbox" name="coppaCompliant"> COPPA: suitable for students under 13</label><label class="api-check"><input type="checkbox" name="ferpaSchoolOfficial"> FERPA: the vendor acts as a school official</label></fieldset>
         <fieldset class="wide api-lti"><legend>LTI 1.3 tool registration (only for LTI 1.3)</legend>
           <label>Client ID<input name="ltiClientId" maxlength="200"></label><label>Deployment ID<input name="ltiDeploymentId" maxlength="200"></label>
-          <label class="wide">Tool login URL<input name="ltiLoginUrl" type="url"></label><label class="wide">Redirect URL<input name="ltiRedirectUri" type="url"></label></fieldset>
+          <label class="wide">Tool login URL<input name="ltiLoginUrl" type="url"></label><label class="wide">Redirect URL<input name="ltiRedirectUri" type="url"></label>
+          <label class="wide">Target link URL (where the tool opens; blank means the launch address)<input name="ltiTargetLinkUri" type="url"></label>
+          <p class="wide">A new LTI tool stays off until a different district administrator approves it. Changing its settings or student data needs approval again.</p></fieldset>
         <label class="wide">Description<textarea name="description" maxlength="2000" rows="2"></textarea></label>
         <div class="wide"><button class="primary" type="submit">Add app</button></div>
       </form></details>`;
+  }
+  const LTI_STATUS = { pending: ["warn", "Waiting for district approval"], approved: ["ok", "Approved"], revoked: ["warn", "Turned off"] };
+  function ltiSection(ctx, a, isDistrict) {
+    const { esc } = ctx, [cls, label] = LTI_STATUS[a.registrationStatus] || ["warn", a.registrationStatus];
+    return `<section><h4>LTI registration</h4><p><span class="api-badge ${cls}">${esc(label)}</span></p>
+      ${a.registrationStatus === "approved" ? "<p>People given access can open this tool.</p>" : "<p>Nobody can open this tool until it is approved. Approval must come from a different district administrator than the person who registered it.</p>"}
+      ${isDistrict ? `<p>${a.registrationStatus !== "approved" ? `<button type="button" data-action="lti-approve" data-id="${esc(a.id)}">Approve this registration</button> ` : ""}${a.registrationStatus !== "revoked" ? `<button type="button" class="danger" data-action="lti-revoke" data-id="${esc(a.id)}">Turn off now</button>` : ""}</p>` : ""}</section>`;
   }
   function manager(ctx, a) {
     const { esc, data } = ctx, role = ctx.API.actor?.role, isDistrict = DISTRICT.includes(role);
@@ -177,6 +186,7 @@
           <fieldset><legend>Roles</legend>${ASSIGN_ROLES.slice(0, 4).map(([k, v]) => `<label class="api-check"><input type="checkbox" name="roles" value="${k}" checked> ${v}</label>`).join("")}</fieldset>
           <fieldset><legend>Grades (none checked means all grades)</legend><div class="api-grades">${GRADES.map(g => `<label class="api-check"><input type="checkbox" name="grades" value="${g}"> ${g}</label>`).join("")}</div></fieldset>
           <button type="submit">Give access</button></form></section>
+      ${a.integrationType === "lti13" ? ltiSection(ctx, a, isDistrict) : ""}
       <section><h4>Usage</h4>${u ? `<p>${u.unlimited ? "Unlimited seats" : `${u.seatsUsed} of ${u.seatsLicensed} seats used`} · ${plural(u.launches, "launch", "launches")}${u.scope === "my_school" ? " (your school only)" : ""}</p><table class="api-table"><caption class="sr-only">Usage by school</caption><thead><tr><th scope="col">School</th><th scope="col">Seats</th><th scope="col">Launches (30 days)</th></tr></thead><tbody>${u.bySchool.map(x => `<tr><td>${esc(x.schoolName || "District staff")}</td><td>${x.seatsUsed}</td><td>${x.launches30d}</td></tr>`).join("")}</tbody></table>` : `<button type="button" data-action="app-usage" data-id="${esc(a.id)}">Show usage</button>`}
         <p><button type="button" class="danger" data-action="app-retire" data-id="${esc(a.id)}">Retire this app</button></p></section>
     </div></td></tr>`;
@@ -233,7 +243,7 @@
         coppaCompliant: form.elements.coppaCompliant.checked, ferpaSchoolOfficial: form.elements.ferpaSchoolOfficial.checked };
       if (v.category) body.category = v.category; if (v.description) body.description = v.description; if (v.dpaExpiresOn) body.dpaExpiresOn = v.dpaExpiresOn;
       if (form.elements.ownerSchoolId) body.ownerSchoolId = v.ownerSchoolId || null;
-      if (v.integrationType === "lti13") body.integrationConfig = { clientId: v.ltiClientId, deploymentId: v.ltiDeploymentId, loginUrl: v.ltiLoginUrl, redirectUris: [v.ltiRedirectUri] };
+      if (v.integrationType === "lti13") body.integrationConfig = { clientId: v.ltiClientId, deploymentId: v.ltiDeploymentId, loginUrl: v.ltiLoginUrl, redirectUris: [v.ltiRedirectUri], targetLinkUri: v.ltiTargetLinkUri || v.launchUrl };
       const r = await post(ctx, "/api/apps", body); st.open = r.data.id;
       ctx.notify(`${r.data.name} was added. Next: add a license and choose who can use it.`); await ctx.openTab("apps"); return true;
     }
@@ -272,6 +282,8 @@
     }
     if (a === "app-manage") { st.open = st.open === id ? null : id; st.appUsage = null; ctx.render("apps"); return true; }
     if (a === "apps-more") { await loadCatalog(ctx, st.catalogPage?.nextOffset || 0); ctx.render("apps"); return true; }
+    if (a === "lti-approve") { await post(ctx, `/api/apps/${id}/lti/approve`, {}); ctx.notify("LTI registration approved."); await ctx.openTab("apps"); return true; }
+    if (a === "lti-revoke") { if (!confirm("Turn off this LTI tool? Launches in progress stop immediately.")) return true; await post(ctx, `/api/apps/${id}/lti/revoke`, {}); ctx.notify("LTI tool turned off."); await ctx.openTab("apps"); return true; }
     if (a === "app-usage") { st.appUsage = (await ctx.API.request(`/api/apps/${id}/usage`)).data; ctx.render("apps"); return true; }
     if (a === "app-retire") { if (!confirm("Retire this app? Nobody will be able to open it.")) return true; await post(ctx, `/api/apps/${id}`, { status: "retired" }, "PATCH"); st.open = null; ctx.notify("App retired."); await ctx.openTab("apps"); return true; }
     if (a === "license-cancel") { if (!confirm("Cancel this license?")) return true; await post(ctx, `/api/apps/${b.dataset.app}/licenses/${id}`, { status: "cancelled" }, "PATCH"); ctx.notify("License cancelled."); await ctx.openTab("apps"); return true; }

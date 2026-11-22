@@ -311,6 +311,10 @@ await step("one district purchase works in every school; a school's purchase is 
   assert.equal(mine.scope, "my_school"); assert.ok(mine.bySchool.every(s => s.schoolId === SCHOOLS.middle.id));
 });
 await step("LTI 1.3 launch: the tool verifies the district-signed id_token", async () => {
+  // Seeded LTI registrations are intentionally pending until a district
+  // administrator approves the exact current configuration.
+  const ltiApp = appByName("Science Lab (LTI demo)");
+  await S.it.ok("POST", `/api/apps/${ltiApp.id}/lti/approve`);
   const tool = spawn(process.execPath, [new URL("./lti-tool.js", import.meta.url).pathname], { stdio: ["ignore", "pipe", "inherit"] });
   try {
     await new Promise((ok, bad) => { tool.stdout.once("data", ok); tool.once("exit", c => bad(new Error(`lti-tool exited ${c}`))); });
