@@ -9,8 +9,9 @@
 //   2. The tool redirects the browser to GET /lti/authorize (OIDC auth request).
 //   3. EduOS checks the hint, client_id and registered redirect_uri, and
 //      form-posts an RS256 id_token to the tool.
-// Claims are limited to the launching user and the app's data_sharing_scope.
-// No roster, grade or attendance data is sent by EduOS (no NRPS/AGS).
+// Identity claims are limited to the launching user and the app's approved data_sharing_scope.
+// NRPS class lists and AGS grade passback are separate services, each requiring
+// district, school/course and teacher-level approval. Attendance is not shared.
 // Disabled (503) unless LTI_PLATFORM_PRIVATE_KEY (PEM RSA private key) is set.
 import crypto from "node:crypto";
 
