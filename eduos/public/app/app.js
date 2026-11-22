@@ -156,6 +156,8 @@ function renderTabs() {
   const nav = document.getElementById("tabs");
   const cur = parentTab(state.tab);
   nav.replaceChildren(...tabsFor().map(([id, label, ic]) => h("a", { href: `#/${id}`, "aria-current": cur === id ? "page" : false }, icon(ic), h("span", {}, label))));
+  // When the bar scrolls (many tabs on a narrow screen), keep the current tab in view.
+  nav.querySelector('[aria-current="page"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
 }
 
 const VIEWS = {};
