@@ -491,3 +491,10 @@ GRANT EXECUTE ON FUNCTION eduos_history_relation(uuid,uuid,uuid), eduos_history_
   eduos_history_entry_visible(uuid,uuid,uuid,text,text,text,uuid), eduos_history_entry_writable(uuid,uuid,uuid,text,text,text,text,uuid),
   eduos_history_entry_manageable(uuid,uuid,uuid,text,uuid), eduos_history_entry_access(uuid,text),
   eduos_capsule_role(uuid,uuid,uuid,uuid,uuid,text), eduos_capsule_access(uuid) TO eduos_app;
+
+-- 090 TC-03: teacher contributions. Steps (submit, school review, family
+-- decision) go through these functions; the decision log is read-only here.
+GRANT SELECT ON student_history_entry_decisions TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_decisions FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_history_submit(uuid), eduos_history_review(uuid,text,text,text),
+  eduos_history_family_decide(uuid,text,text,text) TO eduos_app;

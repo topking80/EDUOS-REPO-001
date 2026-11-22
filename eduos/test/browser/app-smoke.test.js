@@ -37,7 +37,8 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: "s1", memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: [], canInitiate: false, canLead: false } };
-    case "/api/home": return { data: { school_name: "Maple", students: 4, absent_today: 1, open_cases: 0, overdue_follow_ups: 0, pending_invitations: 0, schools: 1, urgent_cases: 0, absences_7d: 1 } };
+    case "/api/home": if (role === "parent") return { data: { children: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_name: "Maple", absences_30d: 0, due_7d: 0, overdue: 0, to_acknowledge: 0 }] } };
+      return { data: { school_name: "Maple", students: 4, absent_today: 1, open_cases: 0, overdue_follow_ups: 0, pending_invitations: 0, schools: 1, urgent_cases: 0, absences_7d: 1 } };
     case "/api/attendance": return { data: [{ id: "e1", event_date: today(), status: "absent", display_name: "Bob B" }] };
     case "/api/attendance/day": return { data: { date: today(), counts: { present: 3, absent: 1, tardy: 0, excused: 0 }, exceptions: [{ student_id: "s1", status: "absent", display_name: "Bob B" }] } };
     case "/api/school-operations/command-center": return { data: { summary: [], work: [{ id: "w1", domain: "facilities", kind: "repair", status: "open", priority: "high", summary: "Gym door", escalation_level: 0, created_at: now }] } };
@@ -99,8 +100,17 @@ function mockApi(role, pathname, failWebhookLoads = false) {
           lastTest: p === "paypal" ? { at: now, ok: true, detail: "token_ok" } : null, updatedAt: now }]; })),
       methods: Object.values(METHODS).map(m => ({ id: m.id, label: m.label, description: m.description, processors: m.processors, setupProcessor: m.setupProcessor, checkout: !m.methodless,
         signup: m.signup || null, developer: m.developer || null, docs: m.docs || [], notes: m.notes || [], otherLinks: m.otherLinks || [], adapter: m.adapter, comingReason: m.comingReason || null })) } };
+    // TC-03 teacher contributions: one item in each state the screens handle.
+    case "/api/rosters": return { data: [{ teacher_user_id: "u1", teacher_name: "Smoke Test", student_id: "c1", student_name: "Alice A", school_id: "s1" }], page: { limit: 500, offset: 0, nextOffset: null } };
+    case "/api/teacher/history-items": return { data: [
+      { id: "h1", studentId: "c1", studentName: "Alice A", entryType: "project", title: "Volcano project", body: "Built a model.", occurredAt: now, status: "draft", updatedAt: now,
+        decisions: [{ decision: "submitted", reasonCode: null, note: null, by: "teacher", at: now }, { decision: "changes_requested", reasonCode: "needs_edits", note: "Add the date.", by: "school_lead", at: now }] },
+      { id: "h2", studentId: "c1", studentName: "Alice A", entryType: "achievement", title: "Spelling bee", body: "", occurredAt: now, status: "published", updatedAt: now, decisions: [] }] };
+    case "/api/history-review": return { data: [{ id: "h3", studentId: "c1", studentName: "Alice A", entryType: "project", title: "Science fair", body: "Second place.", occurredAt: now, status: "submitted", authorName: "Teacher S1", updatedAt: now, decisions: [] }] };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
+      if (/^\/api\/family\/children\/[^/]+\/history-items\/pending$/.test(pathname))
+        return { data: [{ id: "h4", studentId: "c1", entryType: "project", title: "Volcano project", body: "Built a model.", occurredAt: now, status: "approved", authorName: "Teacher S1", updatedAt: now }] };
       return { data: [] };
   }
 }
@@ -175,6 +185,13 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
             failures.push(`${role} #/payments: webhook operations panel is incomplete`);
           if (!text.includes("CAPTURE-123") || !text.includes("evt-123")) failures.push(`${role} #/payments: webhook recovery records did not render`);
         }
+        // TC-03: the teacher, reviewer and family screens show their items and actions.
+        const expect = { "teacher/contributions": ["Volcano project", "Changes requested · Needs edits", "Save and resubmit", "In the student's history"],
+          "principal/history": ["Teacher contributions", "Science fair", "Ask for changes", "Reject"],
+          "vice_principal/history": ["Teacher contributions", "Science fair", "Ask for changes"],
+          "superintendent/history": ["Teacher contributions", "Science fair"],
+          "parent/children": ["From teachers (1 to decide)", "Volcano project", "Keep in history", "Decline"] }[`${role}/${tab}`];
+        for (const want of expect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
       } finally {
         page.close();
       }
