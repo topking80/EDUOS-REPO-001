@@ -4,13 +4,16 @@
 // desktop and phone widths. For design review only; writes PNGs to OUT_DIR.
 //   EDUOS_TEST_PG_URL=postgres://... node dev/ui-screens.mjs [outDir]
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createDatabase, startIdp, startServer, baseEnv, run, login } from "../test/integration/harness.js";
 import { seedDemo } from "./seed-demo.js";
 import { USERS } from "./demo-fixture.js";
 import { startChrome, Page } from "../test/browser/cdp.js";
 
-const OUT = process.argv[2] || "/tmp/eduos-screens";
-fs.mkdirSync(OUT, { recursive: true });
+// Default: a new private folder (mkdtemp, mode 0700), never a fixed, guessable /tmp path.
+const OUT = process.argv[2] ? (fs.mkdirSync(process.argv[2], { recursive: true }), process.argv[2])
+  : fs.mkdtempSync(path.join(os.tmpdir(), "eduos-screens-"));
 const db = await createDatabase(), idp = await startIdp();
 const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app, EDUOS_ALLOW_DEMO_SEED: "true",
   INTEGRATIONS_KEY: "0".repeat(64), INTEGRATIONS_ALLOW_INSECURE_LOOPBACK: "true", SIS_SYNC_DISPATCH_ENABLED: "false" });
