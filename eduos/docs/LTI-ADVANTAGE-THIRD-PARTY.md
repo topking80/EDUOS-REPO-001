@@ -1,10 +1,10 @@
 # LTI 1.3 Core platform support for third-party educational software
 
-Status: LTI 1.3 Core resource-link launch is implemented (Phase 1). Deep Linking, NRPS and AGS are not. This document defines the scope and acceptance criteria; it does not claim LTI Advantage conformance or certification.
+Status: LTI 1.3 Core resource-link launch (Phase 1) and Deep Linking 2.0 (Phase 3) are implemented. Cross-library RS256/JWKS interoperability tests now exercise both platform-issued ID tokens and independently generated tool responses. NRPS and AGS are not implemented, and independent third-party tool/IMS reference interoperability remains outstanding. This document does not claim LTI Advantage conformance or certification.
 
 ## Repository audit
 
-The existing `src/lti.js` contains LTI 1.3 building blocks: RS256 platform-key loading, JWKS construction, signed short-lived launch hints, pairwise subjects, basic resource-link claims, and HTTPS URL validation. `src/mesh-routes.js` already registers the OIDC authorization and JWKS endpoints; this PR adds durable replay consumption and LTI-specific regression tests. NRPS, AGS, and Deep Linking remain unimplemented. Therefore this is an initial platform-side Core slice, not a complete or certified LTI Advantage integration.
+The existing `src/lti.js` contains LTI 1.3 platform building blocks: RS256 platform-key loading, JWKS construction, signed short-lived launch hints, pairwise subjects, resource-link and Deep Linking claims, and HTTPS URL validation. `src/mesh-routes.js` registers the OIDC authorization, JWKS, and Deep Linking endpoints. Unit and route tests cover protocol validation and security; `test/lti-independent-interop.test.js` additionally verifies EduOS-issued tokens with the independent `jose` library and verifies independently generated tool JWTs with the EduOS verifier. This is cross-library protocol testing, not a substitute for testing against independent LTI tool implementations or IMS certification.
 
 ## Product commitment
 
@@ -51,9 +51,10 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 - [x] Unit, route, multi-tenant, replay, revocation-window and negative-security tests.
 
 ### Phase 2 — vendor-neutral tool registration and interoperability
-- Add administrator-facing configuration for standards-conformant third-party LTI tools.
-- Validate issuer, client ID, deployment ID, login URL, explicit HTTPS target link URI, redirect URLs, and JWKS behavior using provider-neutral registration records.
-- Add end-to-end tests against independent LTI 1.3 reference fixtures and more than one standards-conformant tool implementation where available; do not use production student data in test fixtures.
+- [x] Administrator-facing configuration for standards-conformant third-party LTI tools is available through the district app catalog and approval workflow.
+- [x] Validate issuer, client ID, deployment ID, login URL, explicit HTTPS target link URI, redirect URLs, and JWKS behavior using provider-neutral registration records.
+- [x] Cross-library protocol tests verify platform ID tokens with an independent JOSE verifier and verify independently generated RS256 tool responses with the EduOS verifier.
+- [ ] Run end-to-end tests against the IMS reference implementation and at least two independent standards-conformant LTI tool implementations where available; use synthetic identities and no production student data.
 - Keep provider-specific setup notes optional and do not make any competing LMS a required integration target.
 
 ### Phase 3 — Deep Linking (LTI-02, implemented)
@@ -88,7 +89,7 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 
 ## Current limitations
 
-Phase 1 (Core resource-link launch) and Phase 3 (Deep Linking) are implemented and tested against local test tools. Not yet done: NRPS and AGS (Phases 4–5), and interoperability testing against independent, standards-conformant tools and the IMS reference implementation (Phase 2). No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+Phase 1 (Core resource-link launch) and Phase 3 (Deep Linking) are implemented. Cross-library JOSE interoperability tests are automated in CI, but end-to-end interoperability against independent standards-conformant tools and the IMS reference implementation remains outstanding. NRPS and AGS (Phases 4–5) are not implemented. No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. These capabilities must ship in separately testable increments behind district-controlled feature flags.
 
 ## Signing-key rotation procedure
 
