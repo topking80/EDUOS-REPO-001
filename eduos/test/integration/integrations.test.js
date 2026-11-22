@@ -602,6 +602,8 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     const rosterOf = async id => (await admin.query(`SELECT u.email, st.local_student_number AS num, (r.source_connector_id=$2) AS canvas
         FROM teacher_student_rosters r JOIN users u ON u.id=r.teacher_user_id JOIN students st ON st.id=r.student_id
        WHERE r.district_id=$1 AND u.email='t1@d1.test' ORDER BY 2`, [ID.d1, id])).rows.map(r => `${r.num}:${r.canvas ? "canvas" : "other"}`);
+    // Syncs run as the second superintendent: the sync route allows 20 runs a minute per
+    // user, and earlier tests in this file use supt1's.
     try {
       // Start from just the hand-entered t1:S1-A link (earlier tests' SIS links removed).
       await admin.query("DELETE FROM teacher_student_rosters WHERE district_id=$1 AND source_connector_id IS NOT NULL", [ID.d1]);
@@ -614,25 +616,25 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/approve`)).status, 200);
       await authorize(c.id);
       // Approved and connected, but nobody approved reading courses yet.
-      assert.equal((await sync("supt1", c.id, "preview")).body.error, "canvas_class_rosters_not_approved");
+      assert.equal((await sync("supt1b", c.id, "preview")).body.error, "canvas_class_rosters_not_approved");
       // Turning it on is a configuration change: tokens are dropped, and it needs approval and consent again.
       const on = await as("supt1")("PATCH", `/api/integrations/connectors/${c.id}`, { classRosters: true });
       assert.equal(on.status, 200, JSON.stringify(on.body));
       assert.deepEqual(on.body.data.dataScope, ["students", "class_rosters"]);
-      assert.equal((await sync("supt1", c.id, "preview")).body.error, "connector_not_approved");
+      assert.equal((await sync("supt1b", c.id, "preview")).body.error, "connector_not_approved");
       assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/approve`)).status, 200);
-      assert.equal((await sync("supt1", c.id, "preview")).body.error, "canvas_authorization_required", "consent was revoked with the change");
+      assert.equal((await sync("supt1b", c.id, "preview")).body.error, "canvas_authorization_required", "consent was revoked with the change");
       await authorize(c.id);
 
       // Nothing mapped yet: the preview lists Canvas sub-accounts to map.
-      const first = await sync("supt1", c.id, "preview");
+      const first = await sync("supt1b", c.id, "preview");
       assert.equal(first.status, 200, JSON.stringify(first.body));
       assert.deepEqual(first.body.data.externalSchools.map(x => `${x.externalId}:${x.name}`), ["1:District", "20:Lincoln High", "21:Elsewhere"]);
       assert.equal(first.body.data.counts.rosters.sectionsFetched, 0);
       await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/school-map`, { mappings: [{ externalId: "20", schoolId: ID.s1 }] });
       assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${c.id}/approve`)).status, 200);
 
-      const p = await sync("supt1", c.id, "preview");
+      const p = await sync("supt1b", c.id, "preview");
       assert.equal(p.status, 200, JSON.stringify(p.body));
       assert.deepEqual(await rosterOf(c.id), ["S1-A:other"], "a preview changes nothing");
       const r = p.body.data.counts.rosters;
@@ -642,7 +644,7 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       assert.ok(canvasFake.api.filter(x => x.path === "/api/v1/courses/500/enrollments").length >= 3, "three pages of two");
       assert.ok(!canvasFake.api.some(x => x.path.includes("/courses/501/")), "completed courses aren't read");
 
-      const a = await sync("supt1", c.id, "apply");
+      const a = await sync("supt1b", c.id, "apply");
       assert.equal(a.status, 200, JSON.stringify(a.body));
       assert.deepEqual(await rosterOf(c.id), ["S1-A:other", "S1-B:canvas"]);
       assert.equal((await admin.query("SELECT count(*)::int AS n FROM students")).rows[0].n, studentsBefore, "Canvas never creates students");
@@ -650,11 +652,11 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
       // Bob leaves the course: only the Canvas link goes.
       canvasFake.ctl.enrollments = [{ type: "TeacherEnrollment", user_id: "7", user: { login_id: "t1@d1.test" } },
         { type: "StudentEnrollment", user_id: "40", user: { sis_user_id: "S1-A" } }];
-      assert.equal((await sync("supt1", c.id, "apply")).body.data.counts.rosters.toRemove, 1);
+      assert.equal((await sync("supt1b", c.id, "apply")).body.data.counts.rosters.toRemove, 1);
       assert.deepEqual(await rosterOf(c.id), ["S1-A:other"]);
       // Canvas returns no enrollments at all: refuse rather than empty the rosters.
       canvasFake.ctl.enrollments = [{ type: "StudentEnrollment", user_id: "41", user: { sis_user_id: "S1-B" } }];
-      await sync("supt1", c.id, "apply");
+      await sync("supt1b", c.id, "apply");
       assert.deepEqual(await rosterOf(c.id), ["S1-A:other"], "no teacher matched: nothing to link");
 
       assert.equal((await as("supt1")("PUT", `/api/integrations/connectors/${c.id}/schedule`, { intervalMinutes: 60 })).body.error, "canvas_scheduled_sync_not_supported");
