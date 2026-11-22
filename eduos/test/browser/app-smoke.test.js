@@ -350,6 +350,26 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (page.errors.length) failures.push(`superintendent integrations preview: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
+  // UI-03: on a phone the bar holds at most five one-line items, and every tab it
+  // leaves out is on the More screen.
+  for (const role of Object.keys(roleTabs)) {
+    state.role = role;
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/more` });
+      await page.mainText();
+      const r = await page.eval(`(() => { const all = [...document.querySelectorAll("#tabs a")];
+        const shown = all.filter(a => a.getBoundingClientRect().width > 0);
+        const listed = [...document.querySelectorAll("#main .morelist a")].map(a => a.getAttribute("href"));
+        return { shown: shown.length, tall: shown.filter(a => a.getBoundingClientRect().height > 64).map(a => a.textContent),
+          missing: all.filter(a => !shown.includes(a)).map(a => a.getAttribute("href")).filter(h => !listed.includes(h)) }; })()`);
+      if (r.shown > 5) failures.push(`${role}: ${r.shown} items in the phone tab bar (at most 5)`);
+      if (r.tall.length) failures.push(`${role}: phone tab labels wrap: ${r.tall.join(", ")}`);
+      if (r.missing.length) failures.push(`${role}: tabs neither in the phone bar nor on More: ${r.missing.join(", ")}`);
+      await axeScan(page, `${role} #/more (390px)`, a11y);
+    } finally { page.close(); }
+  }
   // UI-02: the light appearance a school can choose, on every role's screens.
   if (AXE_SOURCE) {
     appearance = "light";
