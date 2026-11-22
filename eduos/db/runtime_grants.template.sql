@@ -526,3 +526,10 @@ GRANT EXECUTE ON FUNCTION eduos_lti_consume_launch(uuid, text, timestamptz) TO e
 GRANT SELECT, INSERT, UPDATE, DELETE ON integration_canvas_oauth_states TO eduos_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON integration_canvas_oauth_grants TO eduos_app;
 REVOKE TRUNCATE ON integration_canvas_oauth_states, integration_canvas_oauth_grants FROM eduos_app;
+
+-- 097 LTI-02 Deep Linking: links are placed and removed, never edited; each
+-- return is recorded once.
+GRANT SELECT, INSERT, DELETE ON lti_content_links TO eduos_app;
+REVOKE UPDATE, TRUNCATE ON lti_content_links FROM eduos_app;
+GRANT SELECT, INSERT ON lti_deep_link_returns TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON lti_deep_link_returns FROM eduos_app;

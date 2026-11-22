@@ -1697,9 +1697,36 @@ VIEWS.courses = async () => {
       h("button", { class: "btn primary block", type: "button", onclick: () => openView("course", { courseId: c.id }) }, "Open course"))) : h("section", { class: "card" }, empty("You're not in any courses yet."))];
 };
 
+// LTI-02: open an LTI tool in a new tab (opened first, so pop-up blockers allow it).
+async function openToolTab(path, body, failText) {
+  const tab = window.open("about:blank", "_blank");
+  try { const r = await api.post(path, body); if (tab) { tab.opener = null; tab.location.href = r.data.url; } else location.assign(r.data.url); }
+  catch (e) { if (tab) tab.close(); toast(failText(e.body?.error)); }
+}
+const TOOL_ERRORS = { no_seats_available: "All seats for this tool are in use.", lti_approval_required: "This tool is waiting for district approval.",
+  app_not_available: "This tool isn't available for your account.", content_not_available: "That activity isn't available any more.",
+  deep_linking_not_registered: "This tool can't add content to assignments.", assignment_not_manageable: "You can't change this assignment." };
 VIEWS.course = async () => {
   if (!state.courseId) return VIEWS.courses();
   const c = (await api.get(`/api/learning/courses/${state.courseId}${learnerQuery()}`)).data;
+  const listOf = r => Array.isArray(r?.data) ? r.data : [];
+  const toolLinks = listOf(await safe(api.get(`/api/lti/content-links?courseId=${c.id}`)));
+  const pickers = c.canManage && ["teacher", "principal"].includes(state.me.role) ? listOf(await safe(api.get("/api/my/apps"))).filter(x => x.deepLinking) : [];
+  const toolsFor = a => {
+    const mine = toolLinks.filter(l => l.assignmentId === a.id);
+    if (!mine.length && !pickers.length) return null;
+    const pick = pickers.length > 1 ? h("select", { id: `dl-${a.id}`, "aria-label": `Tool to add content from, for ${a.title}` }, pickers.map(p => h("option", { value: p.id }, p.name))) : null;
+    return h("div", { class: "stack" },
+      mine.map(l => h("div", { class: "row" }, h("span", { class: "grow small" }, `${l.title} · ${l.appName}`),
+        h("button", { class: "btn small", type: "button", "aria-label": `Open ${l.title} in ${l.appName}`, onclick: () => openToolTab(`/api/apps/${l.appId}/launch`, { contentLinkId: l.id }, e => TOOL_ERRORS[e] || "Couldn't open it.") }, "Open"),
+        l.canRemove ? h("button", { class: "btn small", type: "button", "aria-label": `Remove ${l.title}`, onclick: async () => {
+          if (!await ask({ title: `Remove ${l.title}?`, text: "Students won't see it on this assignment any more.", confirm: "Remove" })) return;
+          try { await api.req("DELETE", `/api/lti/content-links/${l.id}`); toast("Removed."); go("course", { push: false }); } catch { toast("Couldn't remove it."); } } }, "Remove") : null)),
+      pickers.length ? h("div", { class: "row" }, pick, h("button", { class: "btn small", type: "button",
+        "aria-label": `${pickers.length === 1 ? `Add from ${pickers[0].name}` : "Add from tool"} to ${a.title}`, onclick: () =>
+        openToolTab(`/api/apps/${pick ? pick.value : pickers[0].id}/deep-link`, { assignmentId: a.id }, e => TOOL_ERRORS[e] || "Couldn't open the tool.") },
+        pickers.length === 1 ? `Add from ${pickers[0].name}` : "Add from tool")) : null);
+  };
   const out = [back(state.me.role === "parent" ? "progress" : "courses", state.me.role === "parent" ? "Grades & progress" : "Courses"),
     h("section", { class: "card hero", "aria-label": c.title }, h("p", { class: "small muted" }, `${c.subject} · Grade ${c.gradeLevel} · ${c.term} · ${c.teacher}`), h("h2", {}, c.title),
       c.learner ? h("p", { class: "muted" }, `Grade so far: ${gradeText(c.grade)} · ${c.mastery.mastered} of ${c.mastery.total} standards mastered`) : null)];
@@ -1715,7 +1742,8 @@ VIEWS.course = async () => {
     c.assignments.length ? h("ul", { class: "list" }, c.assignments.map(a => h("li", {}, h("div", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, a.title),
       h("p", { class: "small muted" }, `${kindText[a.kind]} · ${a.points} pts${a.due_at ? ` · due ${fmtDay(a.due_at)}` : ""}${a.time_limit_minutes ? ` · ${a.time_limit_minutes} min` : ""}`)),
       a.mine ? chip(a.mine.missing ? "absent" : a.mine.status === "graded" ? "present" : "not_started", a.mine.missing ? "Missing" : a.mine.status === "graded" ? `${a.mine.earned}/${a.points}` : statusText[a.mine.status]) : null),
-      a.kind === "quiz" || state.me.role !== "teacher" ? h("button", { class: `btn${a.kind === "quiz" && state.me.role === "pupil" ? " primary" : ""}`, type: "button", "aria-label": `${a.kind === "quiz" ? "Open quiz" : "Details"}: ${a.title}`, onclick: () => openView("quiz", { assignmentId: a.id }) }, a.kind === "quiz" ? "Open quiz" : "Details") : null))) : empty("Nothing assigned yet.")));
+      a.kind === "quiz" || state.me.role !== "teacher" ? h("button", { class: `btn${a.kind === "quiz" && state.me.role === "pupil" ? " primary" : ""}`, type: "button", "aria-label": `${a.kind === "quiz" ? "Open quiz" : "Details"}: ${a.title}`, onclick: () => openView("quiz", { assignmentId: a.id }) }, a.kind === "quiz" ? "Open quiz" : "Details") : null,
+      toolsFor(a)))) : empty("Nothing assigned yet.")));
   if (c.canManage && state.me.role !== "superintendent") {
     const acc = await safe(api.get(`/api/learning/accommodations?courseId=${c.id}`));
     if (acc) out.push(h("section", { class: "card", "aria-label": "Accommodations" }, h("h2", {}, "Accommodations"),

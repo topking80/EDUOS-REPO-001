@@ -456,6 +456,110 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     });
   });
 
+  it("LTI-02 Deep Linking: a teacher places tool content on an assignment; students open it through a governed launch", async () => {
+    const jar = new Map();
+    const keep = r => { for (const c of r.headers.getSetCookie()) { const m = /^(eduos_lti(?:dl)?_[0-9a-f]+)=([^;]*)/.exec(c); if (m) jar.set(m[1], m[2]); } return r; };
+    const cookies = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
+    const { privateKey: toolPriv, publicKey: toolPub } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const { privateKey: otherPriv } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const toolSign = (claims, key = toolPriv) => {
+      const h = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "tool-1" })).toString("base64url"), p = Buffer.from(JSON.stringify(claims)).toString("base64url");
+      return `${h}.${p}.${crypto.sign("RSA-SHA256", Buffer.from(`${h}.${p}`), key).toString("base64url")}`;
+    };
+    const dlTool = http.createServer((req, res) => {
+      const u = new URL(req.url, "http://127.0.0.1");
+      if (u.pathname === "/jwks") { res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ keys: [{ ...toolPub.export({ format: "jwk" }), kid: "tool-1", alg: "RS256", use: "sig" }] })); }
+      if (u.pathname === "/login") {
+        const p = new URLSearchParams({ scope: "openid", response_type: "id_token", response_mode: "form_post", prompt: "none", client_id: u.searchParams.get("client_id"),
+          redirect_uri: `http://127.0.0.1:${dlTool.address().port}/launch`, login_hint: u.searchParams.get("login_hint"),
+          lti_message_hint: u.searchParams.get("lti_message_hint"), state: "st", nonce: crypto.randomUUID() });
+        res.writeHead(302, { location: `${server.base}/lti/authorize?${p}` }); return res.end();
+      }
+      res.end("tool");
+    });
+    await new Promise(r => dlTool.listen(0, "127.0.0.1", r));
+    try {
+      const tb = `http://127.0.0.1:${dlTool.address().port}`;
+      const reg = await as("it")("POST", "/api/apps", { name: "Practice Tool", vendor: "Tool Co", launchUrl: `${tb}/launch`, integrationType: "lti13", dataSharingScope: "none", coppaCompliant: true,
+        integrationConfig: { clientId: "dl-client", deploymentId: "dl-dep", loginUrl: `${tb}/login`, redirectUris: [`${tb}/launch`], targetLinkUri: `${tb}/launch`,
+          deepLinkingUrl: `${tb}/dl`, jwksUrl: `${tb}/jwks` } });
+      assert.equal(reg.status, 201, JSON.stringify(reg.body));
+      const appId = reg.body.data.id;
+      await as("it")("POST", `/api/apps/${appId}/licenses`, {});
+      await as("it")("POST", `/api/apps/${appId}/assignments`, { scope: "district" });
+      assert.equal((await as("supt1")("POST", `/api/apps/${appId}/lti/approve`)).status, 200);
+      assert.equal((await as("t1")("GET", "/api/my/apps")).body.data.find(x => x.id === appId).deepLinking, true);
+      const asg = (await admin.query("SELECT id FROM assignments WHERE title='Published reading' AND district_id=$1", [ID.d1])).rows[0].id;
+
+      assert.equal((await as("pu")("POST", `/api/apps/${appId}/deep-link`, { assignmentId: asg })).body.error, "deep_linking_teachers_only");
+      assert.equal((await as("t1")("POST", `/api/apps/${appId}/deep-link`, { assignmentId: crypto.randomUUID() })).body.error, "assignment_not_manageable");
+      // The teacher opens the tool to choose content for "Published reading".
+      const start = keep(await as("t1")("POST", `/api/apps/${appId}/deep-link`, { assignmentId: asg }));
+      assert.equal(start.status, 200, JSON.stringify(start.body));
+      assert.equal(new URL(start.body.data.url).searchParams.get("target_link_uri"), `${tb}/dl`);
+      const authorize = (await fetch(start.body.data.url, { redirect: "manual" })).headers.get("location");
+      const page = keep(await fetch(authorize, { headers: { cookie: cookies() } }));
+      assert.equal(page.status, 200);
+      const idToken = /name="id_token" value="([^"]+)"/.exec(await page.text())[1];
+      const req1 = (await jwtVerify(idToken, createRemoteJWKSet(new URL(`${server.base}/.well-known/jwks.json`)), { issuer: "http://localhost", audience: "dl-client" })).payload;
+      assert.equal(req1["https://purl.imsglobal.org/spec/lti/claim/message_type"], "LtiDeepLinkingRequest");
+      assert.deepEqual(req1["https://purl.imsglobal.org/spec/lti/claim/roles"], ["http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor"]);
+      assert.equal(req1["https://purl.imsglobal.org/spec/lti/claim/resource_link"], undefined);
+      const settings = req1["https://purl.imsglobal.org/spec/lti-dl/claim/deep_linking_settings"];
+      assert.equal(settings.deep_link_return_url, "http://localhost/lti/deep-link/return");
+      assert.deepEqual(settings.accept_types, ["ltiResourceLink"]);
+
+      // The tool answers with two items: one on its own site, one elsewhere.
+      const now = Math.floor(Date.now() / 1000);
+      const response = (extra = {}, key) => toolSign({ iss: "dl-client", aud: "http://localhost", iat: now, exp: now + 300, nonce: crypto.randomUUID(),
+        "https://purl.imsglobal.org/spec/lti/claim/message_type": "LtiDeepLinkingResponse", "https://purl.imsglobal.org/spec/lti/claim/version": "1.3.0",
+        "https://purl.imsglobal.org/spec/lti/claim/deployment_id": "dl-dep", "https://purl.imsglobal.org/spec/lti-dl/claim/data": settings.data,
+        "https://purl.imsglobal.org/spec/lti-dl/claim/content_items": [
+          { type: "ltiResourceLink", title: "Fractions practice", url: `${tb}/activity/7`, custom: { level: "3" }, lineItem: { scoreMaximum: 10 } },
+          { type: "ltiResourceLink", title: "Elsewhere", url: "https://evil.example/phish" }], ...extra }, key);
+      const post = (jwt, cookie = cookies()) => fetch(`${server.base}/lti/deep-link/return`, { method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", ...(cookie ? { cookie } : {}) }, body: new URLSearchParams({ JWT: jwt }) });
+      const forged = await post(response({}, otherPriv));
+      assert.equal(forged.status, 400); assert.match(await forged.text(), /jwt signature invalid/);
+      const noBrowser = await post(response(), "");
+      assert.equal(noBrowser.status, 403, "only the teacher's browser can complete it");
+      const wrongDeployment = await post(response({ "https://purl.imsglobal.org/spec/lti/claim/deployment_id": "other" }));
+      assert.equal(wrongDeployment.status, 400);
+      const done = await post(response());
+      const doneText = await done.text();
+      assert.equal(done.status, 200, doneText);
+      assert.match(doneText, /1 activity was added/); assert.match(doneText, /1 item was not added/); assert.match(doneText, /Grade passback isn&#39;t turned on/);
+      assert.match(done.headers.get("content-security-policy"), /default-src 'none'/);
+      const replay = await post(response());
+      assert.equal(replay.status, 409); assert.match(await replay.text(), /response already used/);
+
+      // Students see it on the assignment and open it through a normal, bound launch.
+      const links = (await as("pu")("GET", `/api/lti/content-links?assignmentId=${asg}`)).body.data;
+      assert.deepEqual(links.map(x => [x.title, x.appName, x.canRemove]), [["Fractions practice", "Practice Tool", false]]);
+      assert.deepEqual((await as("pu")("GET", `/api/lti/content-links?assignmentId=${ID.draft}`)).body.data, []);
+      const stored = (await admin.query("SELECT url, custom FROM lti_content_links WHERE id=$1", [links[0].id])).rows[0];
+      assert.deepEqual(stored, { url: `${tb}/activity/7`, custom: { level: "3" } });
+      const open = keep(await as("pu")("POST", `/api/apps/${appId}/launch`, { contentLinkId: links[0].id }));
+      assert.equal(open.status, 200, JSON.stringify(open.body));
+      const openAuth = (await fetch(open.body.data.url, { redirect: "manual" })).headers.get("location");
+      const openPage = await fetch(openAuth, { headers: { cookie: cookies() } });
+      const token = /name="id_token" value="([^"]+)"/.exec(await openPage.text())[1];
+      const launchClaims = (await jwtVerify(token, createRemoteJWKSet(new URL(`${server.base}/.well-known/jwks.json`)), { issuer: "http://localhost", audience: "dl-client" })).payload;
+      assert.deepEqual(launchClaims["https://purl.imsglobal.org/spec/lti/claim/resource_link"], { id: links[0].id, title: "Fractions practice" });
+      assert.equal(launchClaims["https://purl.imsglobal.org/spec/lti/claim/target_link_uri"], `${tb}/activity/7`);
+      assert.deepEqual(launchClaims["https://purl.imsglobal.org/spec/lti/claim/custom"], { level: "3" });
+      assert.equal((await as("pu")("POST", `/api/apps/${appId}/launch`, { contentLinkId: crypto.randomUUID() })).body.error, "content_not_available");
+
+      // Only the assignment's manager can remove it.
+      assert.equal((await as("pu")("DELETE", `/api/lti/content-links/${links[0].id}`)).status, 404);
+      assert.equal((await as("t1")("DELETE", `/api/lti/content-links/${links[0].id}`)).status, 200);
+      assert.deepEqual((await as("pu")("GET", `/api/lti/content-links?assignmentId=${asg}`)).body.data, []);
+      // Adding Deep Linking to an approved tool is a registration change: approval again.
+      const plain = await as("it")("PATCH", `/api/apps/${appId}`, { integrationConfig: { ...reg.body.data.integrationConfig, jwksUrl: `${tb}/jwks2` } });
+      assert.equal(plain.body.data.registrationStatus, "pending");
+    } finally { await new Promise(r => dlTool.close(r)); }
+  });
+
   it("every role gets a home dashboard scoped like its list endpoints", async () => {
     for (const name of ["supt1", "it", "p1", "p2", "t1", "pa", "pu"]) {
       const r = await as(name)("GET", "/api/home");

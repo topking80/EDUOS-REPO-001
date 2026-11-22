@@ -64,17 +64,17 @@ export function signJwt(key, claims) {
 }
 
 /** Signed, expiring launch hint: binds the launch to one user, app and tenant. */
-export function makeHint(key, payload, now = Date.now()) {
+export function makeHint(key, payload, now = Date.now(), ttlMs = HINT_TTL_MS) {
   // lti_message_hint is sent to the external tool in the browser URL. Encrypt
   // the tenant/user launch context; an HMAC alone would expose internal IDs.
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key.hintKey, iv);
-  const plaintext = Buffer.from(JSON.stringify({ ...payload, exp: now + HINT_TTL_MS }));
+  const plaintext = Buffer.from(JSON.stringify({ ...payload, exp: now + ttlMs }));
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   return `v1.${b64u(iv)}.${b64u(ciphertext)}.${b64u(cipher.getAuthTag())}`;
 }
 export function readHint(key, hint, now = Date.now()) {
-  if (typeof hint !== "string" || hint.length > 2048) return null;
+  if (typeof hint !== "string" || hint.length > 4096) return null;
   const match = /^v1\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{22})$/.exec(hint);
   if (!match) return null;
   try {
@@ -122,20 +122,32 @@ export function pairwiseSub(key, appId, userId) {
 // separately governed Advantage services exist.
 const SCOPE_RANK = Object.freeze({ none: 0, identity: 1 });
 /** Build id_token claims, limited by the app's data-sharing scope. */
-export function launchClaims({ key, issuer, app, launch, user, school, nonce, now = Math.floor(Date.now() / 1000) }) {
+export function launchClaims({ key, issuer, app, launch, user, school, nonce, deepLinking = null, content = null, now = Math.floor(Date.now() / 1000) }) {
   const cfg = app.integration_config || {};
   const rank = SCOPE_RANK[app.data_sharing_scope] ?? 0;
   const claims = {
     iss: issuer, aud: cfg.clientId, azp: cfg.clientId, sub: pairwiseSub(key, app.id, user.id),
     iat: now, exp: now + 300, nonce,
-    "https://purl.imsglobal.org/spec/lti/claim/message_type": "LtiResourceLinkRequest",
+    "https://purl.imsglobal.org/spec/lti/claim/message_type": deepLinking ? "LtiDeepLinkingRequest" : "LtiResourceLinkRequest",
     "https://purl.imsglobal.org/spec/lti/claim/version": "1.3.0",
     "https://purl.imsglobal.org/spec/lti/claim/deployment_id": cfg.deploymentId,
-    "https://purl.imsglobal.org/spec/lti/claim/target_link_uri": cfg.targetLinkUri,
-    "https://purl.imsglobal.org/spec/lti/claim/resource_link": { id: app.id },
+    "https://purl.imsglobal.org/spec/lti/claim/target_link_uri": deepLinking ? cfg.deepLinkingUrl : content ? content.url : cfg.targetLinkUri,
     "https://purl.imsglobal.org/spec/lti/claim/roles": LTI_ROLE[launch.role] || [],
     "https://purl.imsglobal.org/spec/lti/claim/tool_platform": { guid: crypto.createHash("sha256").update(`eduos-lti-platform\0${issuer}`).digest("hex"), product_family_code: "eduos", name: "EduOS" }
   };
+  if (deepLinking) {
+    // LTI Deep Linking 2.0: resource links only, returned to EduOS, signed by the tool.
+    claims["https://purl.imsglobal.org/spec/lti-dl/claim/deep_linking_settings"] = {
+      deep_link_return_url: deepLinking.returnUrl, accept_types: ["ltiResourceLink"],
+      accept_presentation_document_targets: ["window"], accept_multiple: true, auto_create: false,
+      title: deepLinking.title, data: deepLinking.data };
+  } else if (content) {
+    // A link placed on an assignment by Deep Linking: its own stable resource link.
+    claims["https://purl.imsglobal.org/spec/lti/claim/resource_link"] = { id: content.id, title: content.title };
+    if (content.custom && Object.keys(content.custom).length) claims["https://purl.imsglobal.org/spec/lti/claim/custom"] = content.custom;
+  } else {
+    claims["https://purl.imsglobal.org/spec/lti/claim/resource_link"] = { id: app.id };
+  }
   if (rank >= 1) { claims.name = user.display_name; claims.email = user.email; }
   // School records are not LTI course contexts. Never disclose school IDs or
   // names as a substitute for an approved course mapping, even for identity scope.
@@ -149,6 +161,9 @@ export function ltiConfigFingerprint(cfg, dataSharingScope) {
   // The approved fingerprint covers every setting that changes the student
   // data exposed to a tool, not just its OIDC endpoints and client identity.
   const registration = [cfg.clientId, cfg.deploymentId, cfg.loginUrl, [...cfg.redirectUris], cfg.targetLinkUri, dataSharingScope];
+  // Deep Linking (LTI-02) settings are covered when present; registrations
+  // without them keep the fingerprint (and approval) they already had.
+  if (cfg.deepLinkingUrl || cfg.jwksUrl) registration.push({ deepLinkingUrl: cfg.deepLinkingUrl, jwksUrl: cfg.jwksUrl });
   return crypto.createHash("sha256").update(JSON.stringify(registration)).digest("base64url");
 }
 
@@ -167,7 +182,9 @@ export function validLtiConfig(cfg, { allowInsecureLoopback = process.env.NODE_E
   return cfg && typeof cfg.clientId === "string" && /^[\w.:\/-]{1,200}$/.test(cfg.clientId) &&
     typeof cfg.deploymentId === "string" && /^[\w.:\/-]{1,200}$/.test(cfg.deploymentId) &&
     url(cfg.loginUrl) && Array.isArray(cfg.redirectUris) && cfg.redirectUris.length >= 1 && cfg.redirectUris.length <= 10 &&
-    cfg.redirectUris.every(url) && url(cfg.targetLinkUri);
+    cfg.redirectUris.every(url) && url(cfg.targetLinkUri) &&
+    // Deep Linking is optional, and needs both its launch URL and the tool's public keys.
+    ((cfg.deepLinkingUrl === undefined && cfg.jwksUrl === undefined) || (url(cfg.deepLinkingUrl) && url(cfg.jwksUrl)));
 }
 
 /**
@@ -189,4 +206,80 @@ export async function consumeHintDurably(client, districtId, launchId, expiresAt
     [districtId, launchId, expiresAt]
   );
   return result.rows?.[0]?.consumed === true;
+}
+
+// ---- LTI-02 Deep Linking 2.0 ----------------------------------------------
+
+export const DEEP_LINK_TTL_MS = 30 * 60_000; // time a teacher has to choose content in the tool
+const MAX_ITEMS = 20;
+const b64json = part => JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+
+/** Header and claims of a compact JWT, unverified (to find the key and our data claim). */
+export function decodeJwt(jwt) {
+  if (typeof jwt !== "string" || jwt.length > 60_000 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(jwt)) return null;
+  try { const [h, p] = jwt.split("."); const header = b64json(h), payload = b64json(p);
+    return header && typeof header === "object" && payload && typeof payload === "object" && !Array.isArray(payload) ? { header, payload } : null; } catch { return null; }
+}
+
+/**
+ * Verify a tool-signed JWT (RS256 only) against the tool's JWKS and the
+ * registration: issuer = client ID, audience includes the platform issuer,
+ * current time window. Returns the payload or throws an Error with .code.
+ */
+export function verifyToolJwt(jwt, jwks, { clientId, issuer, now = Math.floor(Date.now() / 1000), skew = 60 }) {
+  const bad = code => Object.assign(new Error(code), { code });
+  const decoded = decodeJwt(jwt);
+  if (!decoded) throw bad("jwt_malformed");
+  const { header, payload } = decoded;
+  if (header.alg !== "RS256" || (header.typ && header.typ !== "JWT")) throw bad("jwt_algorithm_not_allowed");
+  const keys = (jwks?.keys || []).filter(k => k?.kty === "RSA" && (!k.use || k.use === "sig") && (!k.alg || k.alg === "RS256"));
+  const candidates = header.kid ? keys.filter(k => k.kid === header.kid) : keys;
+  if (!candidates.length) throw bad("jwt_key_not_found");
+  const [h, p, sig] = jwt.split(".");
+  const ok = candidates.some(k => {
+    try {
+      const pub = crypto.createPublicKey({ key: { kty: "RSA", n: k.n, e: k.e }, format: "jwk" });
+      if ((pub.asymmetricKeyDetails?.modulusLength || 0) < 2048) return false;
+      return crypto.verify("RSA-SHA256", Buffer.from(`${h}.${p}`), pub, Buffer.from(sig, "base64url"));
+    } catch { return false; }
+  });
+  if (!ok) throw bad("jwt_signature_invalid");
+  const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+  if (payload.iss !== clientId) throw bad("jwt_issuer_mismatch");
+  if (!aud.includes(issuer) || (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== undefined && payload.azp !== issuer)) throw bad("jwt_audience_mismatch");
+  if (!Number.isSafeInteger(payload.exp) || payload.exp <= now - skew) throw bad("jwt_expired");
+  if (!Number.isSafeInteger(payload.iat) || payload.iat > now + skew || payload.iat < now - 3600) throw bad("jwt_iat_invalid");
+  if (typeof payload.nonce !== "string" || !payload.nonce || payload.nonce.length > 256) throw bad("jwt_nonce_missing");
+  return payload;
+}
+
+/**
+ * Content items a tool returned, reduced to what EduOS accepts: LTI resource
+ * links to the tool's own host (that of its registered target link URI), with
+ * bounded titles, text and custom parameters. Anything else is counted, not kept.
+ */
+export function acceptContentItems(items, cfg, { allowInsecureLoopback = false } = {}) {
+  if (items === undefined) items = [];
+  if (!Array.isArray(items)) throw Object.assign(new Error("content_items_invalid"), { code: "content_items_invalid" });
+  if (items.length > MAX_ITEMS) throw Object.assign(new Error("too_many_content_items"), { code: "too_many_content_items" });
+  const toolHost = new URL(cfg.targetLinkUri).host;
+  const accepted = [], skipped = [];
+  for (const it of items) {
+    if (!it || typeof it !== "object" || it.type !== "ltiResourceLink") { skipped.push("type_not_accepted"); continue; }
+    let url;
+    try { url = new URL(it.url ?? cfg.targetLinkUri); } catch { skipped.push("url_invalid"); continue; }
+    const scheme = url.protocol === "https:" || (allowInsecureLoopback && url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname));
+    if (!scheme || url.username || url.password || url.hash || url.host !== toolHost || url.href.length > 2048) { skipped.push("url_not_allowed"); continue; }
+    const title = (typeof it.title === "string" ? it.title : "").trim().slice(0, 180) || "Activity";
+    const text = typeof it.text === "string" ? it.text.trim().slice(0, 1000) : "";
+    let custom = {};
+    if (it.custom !== undefined) {
+      const entries = it.custom && typeof it.custom === "object" && !Array.isArray(it.custom) ? Object.entries(it.custom) : null;
+      if (!entries || entries.length > 20 || entries.some(([k, v]) => !/^[A-Za-z0-9_.-]{1,64}$/.test(k) || typeof v !== "string" || v.length > 256)) { skipped.push("custom_invalid"); continue; }
+      custom = Object.fromEntries(entries);
+    }
+    // AGS isn't implemented: a line item (gradebook column) request is not honoured.
+    accepted.push({ title, text, url: url.href, custom, lineItemIgnored: it.lineItem !== undefined });
+  }
+  return { accepted, skipped };
 }

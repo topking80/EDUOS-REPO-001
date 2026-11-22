@@ -26,7 +26,8 @@ test("LTI authorization consumes launch hints through the durable tenant-scoped 
 
 test("LTI authorization binds client, target and exact redirect; deployment is emitted as a signed LTI claim", () => {
   assert.match(source, /p\.client_id !== cfg\.clientId/);
-  assert.match(lti, /claim\/target_link_uri": cfg\.targetLinkUri,/);
+  // Resource launches target the registered URI; Deep Linking its registered URL; placed links their checked URL.
+  assert.match(lti, /claim\/target_link_uri": deepLinking \? cfg\.deepLinkingUrl : content \? content\.url : cfg\.targetLinkUri,/);
   assert.match(source, /cfg\.redirectUris\.includes\(p\.redirect_uri\)/);
   assert.match(lti, /claim\/deployment_id": cfg\.deploymentId/);
   assert.doesNotMatch(source, /p\.lti_deployment_id/);

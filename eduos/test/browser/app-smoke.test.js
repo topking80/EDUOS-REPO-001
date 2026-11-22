@@ -84,8 +84,18 @@ const roleTabs = (() => {
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json" };
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
+// LTI-02: when set, the course list holds one course whose assignment has a tool link.
+let withCourse = false;
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
+  if (withCourse) switch (pathname) {
+    case "/api/learning/courses": return { data: { courses: [{ id: "k1", title: "Math 3", subject: "Math", gradeLevel: "3", term: "Fall", teacher: "Teacher S1", teacher_name: "Teacher S1", status: "active", grade: null, mastery: { average: 0, mastered: 0, total: 0 } }] } };
+    case "/api/learning/courses/k1": return { data: { id: "k1", title: "Math 3", subject: "Math", gradeLevel: "3", term: "Fall", teacher: "Teacher S1", canManage: role === "teacher",
+      standards: [], units: [], assignments: [{ id: "as1", title: "Fractions week", kind: "work", points: 10, due_at: null, status: "published" }],
+      ...(role === "teacher" ? { students: [] } : { learner: { id: "st1", name: "Alice" }, grade: null, mastery: { mastered: 0, total: 0 } }) } };
+    case "/api/lti/content-links": return { data: [{ id: "cl1", assignmentId: "as1", appId: "app1", appName: "Practice Tool", title: "Fractions practice", description: "", canRemove: role === "teacher" }] };
+    case "/api/my/apps": return { data: [{ id: "app1", name: "Practice Tool", integrationType: "lti13", deepLinking: true }] };
+  }
   switch (pathname) {
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: "s1", memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
@@ -323,6 +333,23 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (page.errors.length) failures.push(`superintendent integrations preview: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
+  // LTI-02: tool links on a course assignment, for a pupil (open) and a teacher (open, remove, add).
+  withCourse = true;
+  for (const [role, wants] of [["pupil", ["Fractions practice · Practice Tool", "Open"]], ["teacher", ["Fractions practice · Practice Tool", "Remove", "Add from Practice Tool"]]]) {
+    state.role = role;
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/courses` });
+      await page.mainText();
+      await page.eval(`([...document.querySelectorAll("button")].find(b => /Open course|^Open$/.test(b.textContent.trim()) && /Math 3/.test(b.closest("li,section")?.textContent || "")) || {}).click?.()`);
+      let text = "";
+      for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Fractions practice"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const want of wants) if (!text.includes(want)) failures.push(`${role} course tool links: "${want}" is missing`);
+      await axeScan(page, `${role} course with tool links`, a11y);
+      if (page.errors.length) failures.push(`${role} course tool links: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
+  }
+  withCourse = false;
   // Time Capsules: open a draft from the list; its management controls render.
   state.role = "parent";
   {
