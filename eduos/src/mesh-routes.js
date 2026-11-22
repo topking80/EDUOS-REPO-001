@@ -1028,7 +1028,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
       const num = v => v === undefined || v === null ? null : typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e6 ? v : NaN;
       const given = num(b?.scoreGiven), max = num(b?.scoreMaximum), ts = Date.parse(b?.timestamp);
       if (!b || typeof b !== "object" || typeof b.userId !== "string" || b.userId.length > 64 || Number.isNaN(given) || Number.isNaN(max) ||
-          (given !== null && (max === null || max <= 0)) || !ACTIVITY.includes(b.activityProgress) || !GRADING.includes(b.gradingProgress) ||
+          (given !== null && (max === null || max <= 0 || given > max)) || !ACTIVITY.includes(b.activityProgress) || !GRADING.includes(b.gradingProgress) ||
           !Number.isFinite(ts) || ts > Date.now() + 300_000 || (b.comment !== undefined && (typeof b.comment !== "string" || b.comment.length > 1000)))
         return agsDeny(res, 400, "invalid_score");
       const outcome = await serviceTx(tok.d, async c => {
