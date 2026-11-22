@@ -1687,7 +1687,7 @@ VIEWS.course = async () => {
   const c = (await api.get(`/api/learning/courses/${state.courseId}${learnerQuery()}`)).data;
   const listOf = r => Array.isArray(r?.data) ? r.data : [];
   const toolLinks = listOf(await safe(api.get(`/api/lti/content-links?courseId=${c.id}`)));
-  const pickers = c.canManage && state.me.role === "teacher" ? listOf(await safe(api.get("/api/my/apps"))).filter(x => x.deepLinking) : [];
+  const pickers = c.canManage && ["teacher", "principal"].includes(state.me.role) ? listOf(await safe(api.get("/api/my/apps"))).filter(x => x.deepLinking) : [];
   const toolsFor = a => {
     const mine = toolLinks.filter(l => l.assignmentId === a.id);
     if (!mine.length && !pickers.length) return null;
