@@ -522,3 +522,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON integration_staff_map TO eduos_app;
 -- LTI 1.3: replay ledger remains inaccessible; only the tenant-checked
 -- SECURITY DEFINER function may atomically claim a launch under tenant context.
 GRANT EXECUTE ON FUNCTION eduos_lti_consume_launch(uuid, text, timestamptz) TO eduos_app;
+-- CANVAS-API-01 (096): one-time OAuth state and tenant-owned encrypted grants.
+GRANT SELECT, INSERT, UPDATE, DELETE ON integration_canvas_oauth_states TO eduos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON integration_canvas_oauth_grants TO eduos_app;
+REVOKE TRUNCATE ON integration_canvas_oauth_states, integration_canvas_oauth_grants FROM eduos_app;

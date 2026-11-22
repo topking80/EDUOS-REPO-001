@@ -93,6 +93,31 @@ function fakeServer() {
   return new Promise(r => srv.listen(0, "127.0.0.1", () => r({ base: `http://127.0.0.1:${srv.address().port}`, seen, ctl, close: () => new Promise(x => srv.close(x)) })));
 }
 
+
+function fakeCanvasOAuth() {
+  const seen = [];
+  const srv = http.createServer(async (req, res) => {
+    const send = (status, body) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    if (req.url !== "/login/oauth2/token") return send(404, {});
+    if (req.method === "DELETE") { seen.push({ grant_type: "revoke", authorization: req.headers.authorization }); return send(200, {}); }
+    if (req.method !== "POST") return send(405, {});
+    let body = ""; for await (const chunk of req) body += chunk;
+    const form = new URLSearchParams(body); seen.push(Object.fromEntries(form));
+    if (form.get("client_id") !== "canvas-client" || form.get("client_secret") !== "canvas-secret")
+      return send(401, { error: "invalid_client" });
+    if (form.get("grant_type") === "authorization_code" &&
+        form.get("redirect_uri") === "http://localhost/api/integrations/canvas/callback")
+      return send(200, { access_token: "canvas-access-secret", refresh_token: "canvas-refresh-secret",
+        token_type: "Bearer", expires_in: 3600, user: { id: 9876, name: "District Canvas Admin" } });
+    if (form.get("grant_type") === "refresh_token" &&
+        ["canvas-refresh-secret","canvas-refresh-rotated"].includes(form.get("refresh_token")))
+      return send(200, { access_token: "canvas-access-refreshed", token_type: "Bearer", expires_in: 3600 });
+    return send(400, { error: "invalid_grant" });
+  });
+  return new Promise(resolve => srv.listen(0, "127.0.0.1", () =>
+    resolve({ base: `http://127.0.0.1:${srv.address().port}`, seen, close: () => new Promise(done => srv.close(done)) })));
+}
+
 describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () => {
   let db, idp, server, admin, fake, s = {}, or, ef, workerEnv;
   const as = name => client(server.base, s[name]);
@@ -420,6 +445,126 @@ describe("OneRoster and Ed-Fi connectors against real PostgreSQL", { skip }, () 
     const none = await lastRun(e.id);
     assert.deepEqual([none.sync.mode, none.studentsFetched], ["incremental", 0], JSON.stringify(none));
     fake.ctl.edfiStudents = []; fake.ctl.edfiAssoc = [];
+  });
+
+  it("Canvas OAuth is two-person approved, browser-bound, single-use, tenant-scoped and encrypted", async () => {
+    const canvasFake = await fakeCanvasOAuth();
+    try {
+      const added = await as("supt1")("POST", "/api/integrations/connectors", {
+        kind: "canvas", name: "District Canvas", baseUrl: canvasFake.base,
+        tokenUrl: `${canvasFake.base}/login/oauth2/token`, clientId: "canvas-client", clientSecret: "canvas-secret", scope: "url:GET|/api/v1/courses"
+      });
+      assert.equal(added.status, 201, JSON.stringify(added.body));
+      const id = added.body.data.id;
+      assert.equal((await as("supt1")("POST", `/api/integrations/connectors/${id}/approve`)).body.error, "approver_must_differ");
+      assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${id}/approve`)).status, 200);
+      const rosters = await as("supt1")("PATCH", `/api/integrations/connectors/${id}`, { classRosters: true });
+      assert.deepEqual([rosters.status, rosters.body.field], [400, "classRosters"], "SIS class rosters can't be switched on for Canvas");
+      const writeScope = await as("supt1")("PATCH", `/api/integrations/connectors/${id}`, { scope: "url:POST|/api/v1/courses" });
+      assert.equal(writeScope.status,400,"Canvas connector rejects write scopes");
+      const scheduleAttempt = await as("supt1")("PUT", `/api/integrations/connectors/${id}/schedule`, { intervalMinutes: 60 });
+      assert.equal(scheduleAttempt.status,409);
+      assert.equal(scheduleAttempt.body.error,"canvas_sync_not_enabled");
+      const syncAttempt = await as("supt1")("POST", `/api/integrations/connectors/${id}/sync`, { mode: "preview" });
+      assert.equal(syncAttempt.status,409);
+      assert.equal(syncAttempt.body.error,"canvas_sync_not_enabled");
+
+      const started = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
+      assert.equal(started.status, 200, JSON.stringify(started.body));
+      const authorization = new URL(started.body.data.authorizationUrl);
+      assert.equal(authorization.pathname, "/login/oauth2/auth");
+      assert.equal(authorization.searchParams.get("client_id"), "canvas-client");
+      assert.equal(authorization.searchParams.get("scope"), "url:GET|/api/v1/courses");
+      assert.equal(authorization.searchParams.get("redirect_uri"), "http://localhost/api/integrations/canvas/callback");
+      const state = authorization.searchParams.get("state");
+      assert.ok(state && state.length >= 32);
+      const setCookie = started.headers.get("set-cookie") || "";
+      const stateCookie = setCookie.match(/(eduos_canvas_state_[^=]+=[^;,]+)/)?.[1];
+      assert.ok(stateCookie, "authorization state is browser-bound in an HttpOnly cookie");
+
+      const callback = await fetch(`${server.base}/api/integrations/canvas/callback?code=one-time-code&state=${encodeURIComponent(state)}`, {
+        headers: { cookie: `${s.supt1.cookie}; ${stateCookie}` }, redirect: "manual"
+      });
+      assert.equal(callback.status, 303, await callback.text());
+      assert.equal(callback.headers.get("location"), "/app/?canvas=connected");
+      assert.equal(canvasFake.seen.length, 1);
+      assert.equal(canvasFake.seen[0].grant_type, "authorization_code");
+      assert.equal(canvasFake.seen[0].client_secret, "canvas-secret");
+
+      const grant = (await admin.query("SELECT access_token_enc,refresh_token_enc,canvas_user_id FROM integration_canvas_oauth_grants WHERE connector_id=$1", [id])).rows[0];
+      assert.ok(grant);
+      assert.equal(grant.canvas_user_id, "9876");
+      assert.ok(!grant.access_token_enc.includes("canvas-access-secret"));
+      assert.ok(!grant.refresh_token_enc.includes("canvas-refresh-secret"));
+
+      await admin.query("UPDATE integration_canvas_oauth_grants SET expires_at=now()-interval '1 second' WHERE connector_id=$1",[id]);
+      const refreshPath = `/api/integrations/connectors/${id}/canvas/refresh`;
+      const refreshed = await Promise.all([as("supt1")("POST",refreshPath,{}),as("supt1")("POST",refreshPath,{})]);
+      assert.deepEqual(refreshed.map(x=>x.status),[200,200]);
+      assert.deepEqual(refreshed.map(x=>x.body.data.connected),[true,true]);
+      assert.equal(canvasFake.seen.filter(x => x.grant_type === "refresh_token").length,1,
+        "concurrent callers share one database-serialized refresh");
+      const rotated = (await admin.query("SELECT access_token_enc,refresh_token_enc FROM integration_canvas_oauth_grants WHERE connector_id=$1",[id])).rows[0];
+      assert.ok(!rotated.access_token_enc.includes("canvas-access-refreshed"));
+      assert.ok(!rotated.refresh_token_enc.includes("canvas-refresh-secret"));
+      assert.equal(canvasFake.seen.find(x => x.grant_type === "refresh_token").refresh_token, "canvas-refresh-secret",
+        "Canvas refresh responses retain the original refresh token");
+
+      const status = await as("supt1")("GET", `/api/integrations/connectors/${id}/canvas/status`);
+      assert.equal(status.status, 200);
+      assert.equal(status.body.data.connected, true);
+      assert.equal(JSON.stringify(status.body).includes("canvas-access-secret"), false);
+      assert.equal(JSON.stringify(status.body).includes("canvas-refresh-secret"), false);
+ 
+      const secondStart = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
+      const secondState = new URL(secondStart.body.data.authorizationUrl).searchParams.get("state");
+      const secondCookie = (secondStart.headers.get("set-cookie") || "").match(/(eduos_canvas_state_[^=]+=[^;,]+)/)?.[1];
+      assert.ok(secondCookie);
+      const wrongBrowser = await fetch(`${server.base}/api/integrations/canvas/callback?code=wrong-user&state=${encodeURIComponent(secondState)}`, {
+        headers: { cookie: `${s.supt1b.cookie}; ${secondCookie}` }, redirect: "manual"
+      });
+      assert.equal(wrongBrowser.status,400,"another district administrator cannot complete this user authorization");
+      const wrongUserReplay = await fetch(`${server.base}/api/integrations/canvas/callback?code=retry&state=${encodeURIComponent(secondState)}`, {
+        headers: { cookie: `${s.supt1.cookie}; ${secondCookie}` }, redirect: "manual"
+      });
+      assert.equal(wrongUserReplay.status,400,"failed browser/user binding still consumes OAuth state");
+      const cancelStart = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
+      const cancelState = new URL(cancelStart.body.data.authorizationUrl).searchParams.get("state");
+      const cancelCookie = (cancelStart.headers.get("set-cookie") || "").match(/(eduos_canvas_state_[^=]+=[^;,]+)/)?.[1];
+      assert.ok(cancelCookie);
+
+      const disconnected = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/disconnect`, {});
+      assert.equal(disconnected.status, 200, JSON.stringify(disconnected.body));
+      assert.equal(disconnected.body.data.connected, false);
+      assert.equal(disconnected.body.data.canvasTokenRevoked, true);
+      assert.equal(disconnected.body.data.reapprovalRequired, true);
+      assert.equal(disconnected.body.data.canvasDeveloperKeyRevocationRequired, true);
+      const cancelledCallback = await fetch(`${server.base}/api/integrations/canvas/callback?code=cancelled&state=${encodeURIComponent(cancelState)}`, {
+        headers: { cookie: `${s.supt1.cookie}; ${cancelCookie}` }, redirect: "manual"
+      });
+      assert.equal(cancelledCallback.status,400,"disconnect cancels an OAuth callback already in progress");
+      assert.ok(canvasFake.seen.some(x => x.grant_type === "revoke" && x.authorization === "Bearer canvas-access-refreshed"));
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_canvas_oauth_grants WHERE connector_id=$1", [id])).rows[0].n, 0);
+
+      assert.equal((await as("supt1b")("POST", `/api/integrations/connectors/${id}/approve`)).status, 200, "a different district lead must reapprove after disconnect");
+      const reauth = await as("supt1")("POST", `/api/integrations/connectors/${id}/canvas/authorize`, {});
+      const reauthState = new URL(reauth.body.data.authorizationUrl).searchParams.get("state");
+      const reauthCookie = (reauth.headers.get("set-cookie") || "").match(/(eduos_canvas_state_[^=]+=[^;,]+)/)?.[1];
+      const reauthCallback = await fetch(`${server.base}/api/integrations/canvas/callback?code=reauthorize&state=${encodeURIComponent(reauthState)}`, {
+        headers: { cookie: `${s.supt1.cookie}; ${reauthCookie}` }, redirect: "manual"
+      });
+      assert.equal(reauthCallback.status,303,await reauthCallback.text());
+      const changed = await as("supt1")("PATCH", `/api/integrations/connectors/${id}`, { clientSecret: "rotated-canvas-secret" });
+      assert.equal(changed.status, 200, JSON.stringify(changed.body));
+      assert.equal(changed.body.data.status, "pending_approval");
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM integration_canvas_oauth_grants WHERE connector_id=$1", [id])).rows[0].n, 0,
+        "credential changes invalidate the previously authorized token grant");
+      const replay = await fetch(`${server.base}/api/integrations/canvas/callback?code=replay&state=${encodeURIComponent(state)}`, {
+        headers: { cookie: `${s.supt1.cookie}; ${stateCookie}` }, redirect: "manual"
+      });
+      assert.equal(replay.status, 400, "consumed OAuth state cannot be replayed");
+
+    } finally { await canvasFake.close(); }
   });
 
   it("another district sees none of it", async () => {

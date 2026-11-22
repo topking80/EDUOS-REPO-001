@@ -153,3 +153,37 @@ If the source refuses a change query, the run falls back to a full sync
 (`reason: "incremental_failed:<code>"`). The starting point only moves after a
 run's import succeeds. Incremental runs import students only: class rosters
 (SIS-04) refresh on full runs. A run with no changes imports nothing.
+
+## Canvas LMS API connection (separate from app launch)
+
+EduOS launches the district's Canvas LMS from the approved app catalog. The
+optional Canvas API connector is a separate integration and does not change
+that direction. A district can launch Canvas without connecting its API.
+
+For the API connection, register an institution-managed Canvas developer key
+in the district's Canvas tenant. Add a **Canvas LMS API** connector using the
+tenant origin only (for example, `https://district.instructure.com`), the
+matching token endpoint
+(`https://district.instructure.com/login/oauth2/token`), the developer key
+ID and its secret. Configure the developer key to require endpoint scopes, then enter only the approved read-only Canvas endpoint scopes in EduOS (space-separated `url:GET|/api/v1/...` values). Write scopes are rejected by the connector. The callback URI must be registered exactly as:
+
+`PUBLIC_ORIGIN` + `/api/integrations/canvas/callback`
+
+A different district lead must approve the connector before the authorized
+district administrator can complete the Canvas OAuth consent flow. EduOS uses
+the authorization-code flow; it does not collect Canvas passwords, personal
+access tokens or browser cookies. The developer key's scopes must be set and
+reviewed in Canvas by the district. Keep the developer key secret in EduOS's
+encrypted connector secret field and never commit it to source control.
+
+EduOS stores access and refresh tokens encrypted and does not return them from
+its API. Expired access tokens are refreshed server-side with a database-backed
+lease so concurrent application instances do not issue duplicate refresh requests. Canvas reuses the existing refresh token.
+Invalid or revoked refresh grants require the district administrator to reconnect.
+Changing Canvas connector credentials or disabling the connector deletes the
+previous grant and pending authorization state. Disconnecting in EduOS attempts Canvas's token DELETE endpoint, deletes the locally stored tokens and pending authorization state, and returns the connector to pending approval. A different district lead must approve it before reconnecting. The district should also revoke or disable the developer key in Canvas when full application revocation is required.
+
+**CANVAS-API-01 scope:** OAuth connection, token storage, status and local
+disconnect only. Course, enrollment and grade synchronization are not enabled
+by this phase. The existing roster sync endpoint explicitly refuses Canvas
+connectors until the read-only Canvas adapter is implemented and reviewed.
