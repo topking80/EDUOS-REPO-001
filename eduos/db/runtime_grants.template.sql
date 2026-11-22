@@ -561,3 +561,10 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON lti_score_events FROM eduos_app;
 GRANT UPDATE (grade_source) ON assignment_submissions TO eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_lti_ags_link(uuid, uuid), eduos_lti_ags_learners(uuid, uuid),
   eduos_lti_record_score(uuid, uuid, uuid, numeric, numeric, text, text, text, timestamptz, jsonb) TO eduos_app;
+
+-- TEACH-02 (db/102): the shared materials library. A share is updated
+-- (re-shared or withdrawn), never deleted; copies are a record only.
+GRANT SELECT, INSERT ON shared_materials, shared_material_copies TO eduos_app;
+GRANT UPDATE (title, subject, grade_level, summary, body, version, status, withdrawn_by, withdrawn_at, withdrawn_reason, updated_at) ON shared_materials TO eduos_app;
+REVOKE DELETE, TRUNCATE ON shared_materials, shared_material_copies FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_material_copies(uuid) TO eduos_app;

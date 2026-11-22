@@ -1431,10 +1431,95 @@ function messageColleague(c) {
     document.body.append(dlg); dlg.showModal(); subject.focus();
   });
 }
+// ---- TEACH-02: shared materials ---------------------------------------
+function dialogForm(title, build, submitText) {
+  return new Promise(resolve => {
+    const dlg = h("dialog", { class: "dialog", "aria-labelledby": "df-t" });
+    const done = v => { dlg.close(); dlg.remove(); resolve(v); };
+    const { fields, value } = build(done);
+    dlg.append(h("form", { method: "dialog", onsubmit: async e => { e.preventDefault(); const v = await value(); if (v !== undefined) done(v); } },
+      h("h2", { id: "df-t" }, title), fields,
+      h("div", { class: "btns" }, submitText ? h("button", { class: "btn primary", type: "submit" }, submitText) : null, h("button", { class: "btn", type: "button", onclick: () => done(null) }, submitText ? "Cancel" : "Close"))));
+    dlg.addEventListener("cancel", e => { e.preventDefault(); done(null); });
+    document.body.append(dlg); dlg.showModal();
+    (dlg.querySelector("input, textarea, select") || dlg.querySelector("button")).focus();
+  });
+}
+async function shareMaterial(kind, id, title) {
+  const summary = await dialogForm(`Share “${title}” with colleagues`, () => {
+    const box = h("textarea", { id: "sm-sum", maxlength: 500, rows: 3, placeholder: "What it's for, what worked" });
+    return { fields: [h("p", { class: "small muted" }, `Teachers and principals at every school in the district will see this ${kind === "unit" ? "unit and its lessons" : "lesson"} and can copy it into their own courses. Sharing again later updates it.`),
+      h("label", { for: box.id }, "A note for colleagues (optional)"), box], value: () => box.value.trim() };
+  }, "Share");
+  if (summary === null) return;
+  const post = confirmNotStudents => api.post("/api/materials", { kind, sourceId: id, summary: summary || null, confirmNotStudents });
+  try { await post(false); toast("Shared with colleagues."); }
+  catch (e) {
+    if (e.body?.error !== "may_mention_students") return toast("Couldn't share it.");
+    const sure = await ask({ title: "Does this mention a student?", text: `These words match students in the district: ${e.body.words.join(", ")}. Shared materials must not name students. Edit the text, or share it if these words aren't students (for example, a place or a historical person).`, confirm: "They aren't students: share", cancel: "Edit first" });
+    if (!sure) return;
+    try { await post(true); toast("Shared with colleagues."); } catch { toast("Couldn't share it."); }
+  }
+}
+async function previewMaterial(id) {
+  const m = (await api.get(`/api/materials/${id}`)).data;
+  const lessonBlock = l => [h("h3", {}, l.title), h("p", {}, h("b", {}, "Goal: "), l.objective),
+    l.standards?.length ? h("div", { class: "btns" }, l.standards.map(s => h("span", { class: "chip" }, s.code))) : null,
+    h("div", { class: "lesson-text" }, l.content.split(/\n+/).map(p => h("p", {}, p))),
+    l.sources?.length ? h("p", { class: "small muted" }, `Primary sources: ${l.sources.map(x => x.title).join("; ")}`) : null];
+  await dialogForm(m.title, () => ({ fields: [
+    h("p", { class: "small muted" }, `${m.kind === "unit" ? "Unit" : "Lesson"} · ${m.subject} · Grade ${m.grade_level} · ${m.author}, ${m.school}${m.version > 1 ? ` · updated (v${m.version})` : ""}`),
+    m.summary ? h("p", {}, m.summary) : null,
+    h("div", { class: "preview" }, m.kind === "unit" ? [m.body.summary ? h("p", { class: "small" }, m.body.summary) : null, ...m.body.lessons.map(lessonBlock)] : lessonBlock(m.body))], value: () => undefined }), null);
+}
+async function copyMaterial(m) {
+  const courses = ((await api.get("/api/learning/courses")).data.courses || []);
+  if (!courses.length) return toast("Make a course first, then copy into it.");
+  const target = await dialogForm(`Copy “${m.title}”`, () => {
+    const course = h("select", { id: "cm-course", required: true }, courses.map(c => h("option", { value: c.id }, `${c.title} · Grade ${c.grade_level}`)));
+    const unit = h("select", { id: "cm-unit" });
+    const unitRow = m.kind === "lesson" ? [h("label", { for: unit.id }, "Into unit"), unit] : null;
+    const loadUnits = async () => {
+      if (m.kind !== "lesson") return;
+      const c = (await api.get(`/api/learning/courses/${course.value}`)).data;
+      unit.replaceChildren(...(c.units.length ? c.units.map(u => h("option", { value: u.id }, `Unit ${u.seq}: ${u.title}`)) : [h("option", { value: "" }, "This course has no units yet")]));
+    };
+    course.addEventListener("change", loadUnits); loadUnits();
+    return { fields: [h("p", { class: "small muted" }, `${m.kind === "unit" ? "The unit and its lessons are" : "The lesson is"} added to your course as drafts you can change. A school leader approves lessons before Christie uses them.`),
+      h("label", { for: course.id }, "Into course"), course, unitRow],
+      value: () => m.kind === "lesson" && !unit.value ? (toast("Choose a unit (or add one to the course first)."), undefined) : { courseId: course.value, unitId: m.kind === "lesson" ? unit.value : null } };
+  }, "Copy");
+  if (!target) return;
+  try {
+    const r = (await api.post(`/api/materials/${m.id}/copy`, target)).data;
+    toast("Copied into your course as a draft.");
+    r.kind === "lesson" ? openView("lesson", { lessonId: r.id }) : openView("course", { courseId: target.courseId });
+  } catch { toast("Couldn't copy it."); }
+}
+async function materialsSection() {
+  const f = state.matFilters ||= { q: "", kind: "" };
+  const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
+  const list = (await api.get(`/api/materials${qs.size ? `?${qs}` : ""}`)).data;
+  const q = h("input", { id: "mat-q", type: "search", value: f.q, placeholder: "Title, subject or note", autocomplete: "off" });
+  const kind = h("select", { id: "mat-kind", "aria-label": "Lessons or units" }, [["", "Lessons and units"], ["lesson", "Lessons"], ["unit", "Units"]].map(([v, t]) => h("option", { value: v, selected: f.kind === v }, t)));
+  return [h("form", { class: "row wrap", role: "search", onsubmit: e => { e.preventDefault(); state.matFilters = { q: q.value.trim(), kind: kind.value }; go("network", { push: false }); } },
+      h("label", { for: q.id, class: "sr" }, "Search shared materials"), h("div", { class: "grow" }, q), kind, h("button", { class: "btn", type: "submit" }, "Search")),
+    h("p", { class: "small muted" }, "To share your own, open a lesson or a unit in Courses and choose Share with colleagues."),
+    h("section", { class: "card", "aria-label": "Shared materials" }, list.length ? h("ul", { class: "list" }, list.map(m => h("li", {},
+      h("div", { class: "row" }, h("div", { class: "grow" }, h("b", {}, m.title),
+        h("p", { class: "small muted" }, `${m.kind === "unit" ? `Unit · ${m.lessons} lessons` : "Lesson"} · ${m.subject} · Grade ${m.grade_level} · ${m.mine ? "You" : m.author}, ${m.school}${m.copies ? ` · copied ${m.copies}×` : ""}`),
+        m.summary ? h("p", { class: "small" }, m.summary) : null)),
+      h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", "aria-label": `Preview ${m.title}`, onclick: () => previewMaterial(m.id) }, "Preview"),
+        ["teacher", "principal"].includes(state.me.role) ? h("button", { class: "btn small primary", type: "button", "aria-label": `Copy to my course: ${m.title}`, onclick: () => copyMaterial(m) }, "Copy to my course") : null,
+        m.mine ? h("button", { class: "btn small", type: "button", "aria-label": `Stop sharing ${m.title}`, onclick: async () => { if (!(await ask({ title: "Stop sharing?", text: "Colleagues won't see it any more. Copies they already made stay theirs.", confirm: "Stop sharing" }))) return;
+          try { await api.post(`/api/materials/${m.id}/withdraw`, {}); toast("No longer shared."); go("network", { push: false }); } catch { toast("Couldn't change it."); } } }, "Stop sharing") : null))))
+      : empty(f.q || f.kind ? "Nothing matches." : "Nothing shared yet. Share a lesson from Courses to start the library."))];
+}
 VIEWS.network = async () => {
   const view = state.netView || "people";
-  const tabs = seg([["people", "Colleagues"], ["groups", "Groups"]], view, v => { state.netView = v; go("network", { push: false }); });
+  const tabs = seg([["people", "Colleagues"], ["groups", "Groups"], ["materials", "Materials"]], view, v => { state.netView = v; go("network", { push: false }); });
   const intro = h("p", { class: "muted small" }, "Teachers and principals at every school in the district. Conversations here are between colleagues: no student records, and families and students can't join.");
+  if (view === "materials") return [h("h2", {}, "Colleagues"), tabs, h("p", { class: "muted small" }, "Lessons and units shared by teachers across the district. Copy one into your course and make it yours."), ...await materialsSection()];
   if (view === "groups") {
     const groups = (await api.get("/api/network/groups")).data;
     const name = h("input", { id: "g-name", maxlength: 160, required: true, placeholder: "e.g. Grade 4 math" }), desc = h("input", { id: "g-desc", maxlength: 300, placeholder: "What the group is for" });
@@ -1990,6 +2075,7 @@ VIEWS.course = async () => {
       levelChip(s.level, s.mastery != null ? ` ${s.mastery}%` : "")),
       s.mastery != null ? h("button", { class: "btn", type: "button", "aria-label": `How is this calculated? (${s.code})`, onclick: () => openView("mastery", { masteryStd: s.id }) }, "How is this calculated?") : null)))));
   for (const u of c.units) out.push(h("section", { class: "card", "aria-label": `Unit ${u.seq}: ${u.title}` }, h("h2", {}, `Unit ${u.seq}: ${u.title}`), u.summary ? h("p", { class: "small muted" }, u.summary) : null,
+    c.canManage && ["teacher", "principal"].includes(state.me.role) && u.lessons.length ? h("button", { class: "btn small", type: "button", "aria-label": `Share with colleagues: unit ${u.seq}, ${u.title}`, onclick: () => shareMaterial("unit", u.id, u.title) }, icon("people"), "Share with colleagues") : null,
     h("ul", { class: "list" }, u.lessons.map(l => h("li", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, l.title), h("p", { class: "small muted" }, `${l.standards.join(", ")}${l.sources ? ` · ${l.sources} primary source${l.sources > 1 ? "s" : ""}` : ""}`)),
       c.canManage ? chip(l.approved ? "present" : "expected", l.approved ? "Approved" : "Needs approval") : null,
       h("button", { class: "btn", type: "button", "aria-label": `Open lesson: ${l.title}`, onclick: () => openView("lesson", { lessonId: l.id }) }, "Open"))))));
@@ -2039,7 +2125,9 @@ VIEWS.lesson = async () => {
       h("p", { class: "objective" }, h("b", {}, "Goal: "), l.objective),
       h("div", { class: "btns" }, l.standards.map(s => h("span", { class: "chip" }, s.code))),
       h("div", { class: "lesson-text" }, l.content.split(/\n+/).map(p => h("p", {}, p))),
-      l.canManage ? h("p", { class: "small muted" }, l.approved ? "Approved: Christie may use this lesson's text for hints." : "Waiting for a school leader to approve it for Christie.") : null),
+      l.canManage ? h("p", { class: "small muted" }, l.approved ? "Approved: Christie may use this lesson's text for hints." : "Waiting for a school leader to approve it for Christie.") : null,
+      l.adaptedFrom ? h("p", { class: "small muted" }, l.adaptedFrom.withdrawn ? "Adapted from a colleague's shared lesson (no longer shared)." : `Adapted from “${l.adaptedFrom.title}” by ${l.adaptedFrom.author}, ${l.adaptedFrom.school}.`) : null,
+      l.canManage && ["teacher", "principal"].includes(state.me.role) ? h("button", { class: "btn", type: "button", onclick: () => shareMaterial("lesson", l.id, l.title) }, icon("people"), "Share with colleagues") : null),
     l.mastery ? h("section", { class: "card", "aria-label": "My mastery" }, h("h2", {}, "My mastery here"), h("ul", { class: "list" }, l.standards.map(s => h("li", { class: "row" },
       h("span", { class: "grow" }, s.code), l.mastery[s.id] ? levelChip(l.mastery[s.id].level, ` ${l.mastery[s.id].mastery}%`) : levelChip("not_started"))))) : null,
     l.sources.length ? [h("h2", {}, "Primary sources"), ...l.sources.map(s => sourceCard(s))] : null,

@@ -92,7 +92,7 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
-let mockSchool = "s1", switches = [];
+let mockSchool = "s1", switches = [], copies = [];
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   if (withCourse) switch (pathname) {
@@ -125,6 +125,11 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       colleagues: [{ user_id: "u7", name: "Teacher Two", roles: ["teacher"], schools: [{ id: "s2", name: "Oak Middle" }] }, { user_id: "u8", name: "Principal P", roles: ["principal"], schools: [{ id: "s1", name: "Maple" }] }] } };
     case "/api/network/groups": return { data: [{ id: "g1", name: "Grade 4 math", description: "Fractions and decimals", members: 6, joined: true, started_at_school: "Oak Middle", started_by: "Teacher Two", last_message_at: now },
       { id: "g2", name: "Science fair", description: null, members: 3, joined: false, started_at_school: "Maple", started_by: "Principal P", last_message_at: now }] };
+    // TEACH-02: the shared materials library.
+    case "/api/materials": return { data: [{ id: "m1", kind: "lesson", title: "Fraction strips", subject: "Math", grade_level: "4", summary: "Hands-on start", version: 1, status: "shared", updated_at: now, author: "Teacher Two", school: "Oak Middle", mine: false, copies: 3, lessons: 1 },
+      { id: "m2", kind: "unit", title: "Fractions", subject: "Math", grade_level: "4", summary: null, version: 2, status: "shared", updated_at: now, author: "Smoke Test", school: "Maple", mine: true, copies: 0, lessons: 2 }] };
+    case "/api/materials/m1": return { data: { id: "m1", kind: "lesson", title: "Fraction strips", subject: "Math", grade_level: "4", summary: "Hands-on start", version: 1, status: "shared", author: "Teacher Two", school: "Oak Middle", mine: false, copies: 3,
+      body: { title: "Fraction strips", objective: "Show equivalent fractions", content: "Fold strips.\nCompare lengths.", standards: [{ id: "sd1", code: "4.NF.A.1", description: "Equivalent fractions" }], sources: [] } } };
     // UI-04: a family with children at two schools and an account at each.
     case "/api/family/children": return { data: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", relationship: "parent" },
       { id: "c2", display_name: "Ben A", grade_level: "7", school_id: "s2", school_name: "Oak Middle", relationship: "parent" }] };
@@ -252,6 +257,11 @@ function startServer() {
         state.endpointOps.revoked++;
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
+      }
+      if (/^\/api\/materials\/[^/]+\/copy$/.test(pathname) && req.method === "POST") {
+        let raw = ""; req.on("data", c => { raw += c; });
+        return req.on("end", () => { copies.push({ path: pathname, body: JSON.parse(raw || "{}") });
+          res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ data: { kind: "unit", id: "u9", lessonIds: ["l8", "l9"] } })); });
       }
       if (pathname === "/api/session/membership" && req.method === "POST") {
         let raw = ""; req.on("data", c => { raw += c; });
@@ -433,6 +443,34 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "teacher #/network groups", a11y);
       if (page.errors.length) failures.push(`teacher network: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); state.netView = undefined; }
+  }
+  // TEACH-02: Materials: browse, preview, copy a unit into my course.
+  {
+    state.role = "teacher"; withCourse = true; copies = [];
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/network` });
+      await page.mainText();
+      await page.eval(`[...document.querySelectorAll(".seg button")].find(b => b.textContent === "Materials").click()`);
+      for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 100)); if ((await page.eval(`document.getElementById("main").innerText`)).includes("Fraction strips")) break; }
+      const text = await page.eval(`document.getElementById("main").innerText`);
+      for (const want of ["Fraction strips", "Lesson · Math · Grade 4 · Teacher Two, Oak Middle · copied 3×", "Unit · 2 lessons · Math · Grade 4 · You, Maple", "Stop sharing"])
+        if (!text.includes(want)) failures.push(`materials: missing "${want}"`);
+      await axeScan(page, "teacher #/network materials", a11y);
+      await page.eval(`document.querySelector('[aria-label="Preview Fraction strips"]').click()`);
+      for (let i = 0; i < 30 && !(await page.eval(`!!document.querySelector("dialog[open] .preview")`)); i++) await new Promise(r => setTimeout(r, 100));
+      const preview = await page.eval(`document.querySelector("dialog[open]")?.innerText || ""`);
+      for (const want of ["Fraction strips", "Show equivalent fractions", "4.NF.A.1", "Compare lengths."]) if (!preview.includes(want)) failures.push(`material preview: missing "${want}"`);
+      await axeScan(page, "teacher: material preview", a11y);
+      await page.eval(`[...document.querySelectorAll("dialog[open] button")].find(b => b.textContent === "Close").click()`);
+      await page.eval(`document.querySelector('[aria-label="Copy to my course: Fractions"]').click()`);
+      for (let i = 0; i < 30 && !(await page.eval(`!!document.querySelector("dialog[open] #cm-course")`)); i++) await new Promise(r => setTimeout(r, 100));
+      await axeScan(page, "teacher: copy material", a11y);
+      await page.eval(`[...document.querySelectorAll("dialog[open] button")].find(b => b.textContent === "Copy").click()`);
+      for (let i = 0; i < 30 && !copies.length; i++) await new Promise(r => setTimeout(r, 100));
+      if (JSON.stringify(copies) !== '[{"path":"/api/materials/m2/copy","body":{"courseId":"k1","unitId":null}}]') failures.push(`copy request: ${JSON.stringify(copies)}`);
+      if (page.errors.length) failures.push(`materials: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); withCourse = false; }
   }
   // UI-05: any profile can be chosen from the header; the dialog passes axe.
   {

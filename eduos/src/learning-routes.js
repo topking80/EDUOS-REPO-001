@@ -319,9 +319,12 @@ export function registerLearningRoutes(app) {
       const m = await learnerStandardMastery(client, learner.id, standards.map(s => s.id));
       mastery = Object.fromEntries(standards.map(s => [s.id, m.get(s.id) ? { mastery: m.get(s.id).mastery, level: m.get(s.id).level } : null]));
     }
+    // TEACH-02: "Adapted from" a colleague's shared material (for the people who manage the lesson).
+    const adaptedFrom = l.can_manage && l.adapted_from ? (await one(client, `SELECT m.title,u.display_name AS author,s.name AS school FROM shared_materials m
+        JOIN users u ON u.id=m.author_user_id JOIN schools s ON s.id=m.school_id WHERE m.id=$1`, [l.adapted_from])) || { withdrawn: true } : undefined;
     await audit(client, req, "read", "lesson", l.id);
     return { id: l.id, courseId: l.course_id, course: l.course_title, unit: l.unit_title, title: l.title, objective: l.objective, content: l.content,
-      status: l.status, approved: Boolean(l.approved_at), canManage: l.can_manage, generatedBy: l.can_manage ? l.generated_by : undefined, standards, sources: sources.map(sourceView), christieSkills: skills, assignments: work, mastery };
+      status: l.status, approved: Boolean(l.approved_at), canManage: l.can_manage, generatedBy: l.can_manage ? l.generated_by : undefined, adaptedFrom, standards, sources: sources.map(sourceView), christieSkills: skills, assignments: work, mastery };
   }));
 
   // ---------- assignments (work with rubric, or quiz) ----------
