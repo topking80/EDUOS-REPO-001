@@ -1001,7 +1001,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
   const agsDeny = (res, status, error) => { res.status(status).setHeader("Cache-Control", "no-store"); if (status === 401) res.setHeader("WWW-Authenticate", 'Bearer error="invalid_token"'); return res.json({ error }); };
   app.get("/lti/ags/:linkId/lineitem", tokenLimiter, async (req, res, next) => {
     try {
-      const tok = await serviceToken(req, [AGS_LINEITEM_READ_SCOPE, AGS_SCORE_SCOPE]);
+      const tok = await serviceToken(req, [AGS_LINEITEM_READ_SCOPE]);
       if (!tok) return agsDeny(res, 401, "invalid_token");
       if (!validId(req.params.linkId)) return agsDeny(res, 404, "not_found");
       const li = await serviceTx(tok.d, async c => {
