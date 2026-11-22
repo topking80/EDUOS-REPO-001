@@ -73,7 +73,7 @@ export function registerHomeRoutes(app) {
         } else if (a.role === "parent" || a.role === "pupil") {
           const rel = a.role === "parent" ? ["parent", "guardian"] : ["pupil"];
           const kids = await client.query(
-            `SELECT s.id,s.display_name,s.grade_level,sc.name AS school_name,
+            `SELECT s.id,s.display_name,s.grade_level,s.school_id,sc.name AS school_name,
                     (SELECT count(*) FROM attendance_events e WHERE e.student_id=s.id AND e.status='absent' AND e.event_date>=current_date-29)::int AS absences_30d,
                     (SELECT count(*) FROM attendance_events e WHERE e.student_id=s.id AND e.status IN ('absent','tardy') AND e.family_acknowledged_at IS NULL)::int AS to_acknowledge,
                     (SELECT count(*) FROM assignments x WHERE x.school_id=s.school_id AND x.status='published' AND x.due_at BETWEEN now() AND now()+interval '7 days'

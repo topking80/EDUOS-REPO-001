@@ -201,6 +201,58 @@ function renderTabs() {
 }
 
 const VIEWS = {};
+// UI-04: families with several children, or children at several schools. The bar
+// on top of a parent's screens chooses whose things to show; choosing a child at
+// another school moves the app to that school (its colours, news, messages and
+// alerts) when the family has an account there. Kept in memory only.
+const NO_FAMILY_BAR = ["safety", "sos", "me", "more"];
+async function loadFamily() {
+  if (state.me?.role !== "parent") { state.family = null; return; }
+  const [kids, mems] = await Promise.all([safe(api.get("/api/family/children")), safe(api.get("/api/memberships"))]);
+  if (state.family?.userId !== state.me.userId) state.childId = null;
+  state.family = { userId: state.me.userId, kids: kids?.data || [], memberships: (mems?.data || []).filter(m => m.role === "parent") };
+  if (state.childId && !state.family.kids.some(k => k.id === state.childId)) state.childId = null;
+}
+const familyMembershipFor = kid => state.family?.memberships.find(m => m.district_id === state.me.districtId && m.school_id === kid.school_id);
+async function useMembership(m, message) {
+  const r = await api.post("/api/session/membership", { membershipId: m.id });
+  api.csrf = r.csrfToken;
+  toast(message);
+  await boot();
+}
+async function chooseChild(id) {
+  const kid = state.family.kids.find(k => k.id === id) || null;
+  state.childId = kid?.id || null;
+  if (kid) state.learnerId = kid.id;
+  const m = kid && kid.school_id !== state.me.schoolId ? familyMembershipFor(kid) : null;
+  if (m) {
+    try { return await useMembership(m, `Now showing ${kid.school_name}`); }
+    catch { toast(`Couldn't switch to ${kid.school_name}.`); }
+  }
+  go(state.tab, { push: false });
+}
+function familyBar() {
+  const f = state.family;
+  if (!f || NO_FAMILY_BAR.includes(state.tab)) return null;
+  const elsewhere = f.memberships.filter(m => m.district_id !== state.me.districtId);
+  if (f.kids.length < 2 && !elsewhere.length) return null;
+  const schools = new Set(f.kids.map(k => k.school_id));
+  const pick = (label, sub, pressed, onclick) => h("button", { class: "famchip", type: "button", "aria-pressed": pressed ? "true" : "false", onclick },
+    h("span", { class: "n" }, label), sub ? h("span", { class: "s" }, sub) : null);
+  const kid = f.kids.find(k => k.id === state.childId);
+  const noAccount = kid && kid.school_id !== state.me.schoolId && !familyMembershipFor(kid);
+  return h("nav", { class: "familybar", "aria-label": "Choose a child" },
+    h("div", { class: "famchips" },
+      f.kids.length > 1 ? pick("Everyone", schools.size > 1 ? `${schools.size} schools` : null, !state.childId, () => chooseChild(null)) : null,
+      f.kids.map(k => pick(first(k.display_name), schools.size > 1 || elsewhere.length ? k.school_name : `Grade ${k.grade_level}`, state.childId === k.id, () => chooseChild(k.id))),
+      elsewhere.map(m => pick(m.school_name || m.district_name, m.district_name, false, () => {
+        state.childId = null;
+        useMembership(m, `Now showing ${m.school_name || m.district_name}`).catch(() => toast("Couldn't switch."));
+      }))),
+    noAccount ? h("p", { class: "small muted" }, `${first(kid.display_name)}'s things are below. News, messages and alerts still come from ${state.brand?.school?.name || "your current school"}; ask ${kid.school_name}'s office to add you there.`) : null);
+}
+// Lists with one entry per child follow the bar; with no choice (or a child not in the list) everyone shows.
+const forChild = (list, key = "id") => state.childId && list.some(x => x[key] === state.childId) ? list.filter(x => x[key] === state.childId) : list;
 VIEWS.more = () => {
   const { extra } = phoneSplit(), list = extra.length ? extra : tabsFor();
   return h("section", { class: "card" }, h("h2", {}, "More"),
@@ -238,7 +290,7 @@ async function go(tab, { push = true } = {}) {
   try {
     const view = VIEWS[tab] || VIEWS[tabsFor()[0]?.[0]] || VIEWS.me;
     const node = await view();
-    main.replaceChildren(...[node].flat(Infinity).filter(Boolean));
+    main.replaceChildren(...[familyBar(), node].flat(Infinity).filter(Boolean));
   } catch (e) {
     if (e.status === 401) return renderSignIn();
     main.replaceChildren(h("div", { class: "card" }, h("h2", {}, "Something went wrong"), h("p", { class: "muted" }, navigator.onLine ? "Please try again." : "You're offline. EduOS needs a connection to show school data."),
@@ -926,6 +978,7 @@ const PORTFOLIO_TYPE = { achievement: "Achievement", project: "Project", coursew
   portfolio_artifact: "Portfolio piece", educator_note: "Teacher note", system_milestone: "Milestone" };
 VIEWS.portfolio = async () => {
   const role = state.me.role;
+  if (state.me.role === "parent" && state.childId) state.learnerId = state.childId;
   if (role === "parent" && !state.learnerId) {
     const kids = (await api.get("/api/home")).data.children || [];
     if (!kids.length) return empty("No children are linked to your account yet.");
@@ -1134,7 +1187,7 @@ VIEWS.children = async () => {
   const kids = home.data.children || [];
   if (!kids.length) return empty("No children are linked to your account yet.");
   const out = [];
-  for (const k of kids) {
+  for (const k of forChild(kids)) {
     const summary = await safe(api.get(`/api/family/children/${k.id}/summary`));
     const days = (summary?.attendance || []).slice(0, 5);
     const ride = (bus?.data?.riders || []).find(r => r.id === k.id && r.direction === (new Date().getHours() < 12 ? "am" : "pm")) || (bus?.data?.riders || []).find(r => r.id === k.id);
@@ -1154,7 +1207,7 @@ VIEWS.children = async () => {
   return out;
 };
 VIEWS.arrival = async () => {
-  const riders = (await api.get("/api/transport/today")).data.riders || [];
+  const riders = forChild((await api.get("/api/transport/today")).data.riders || []);
   if (!riders.length) return [h("h2", {}, "Arrival"), empty("No bus assignments for your children.")];
   return [h("h2", {}, "Arrival & bus"),
     ...riders.map(k => h("section", { class: "card", "aria-label": `${k.display_name}, ${k.route_name}` },
@@ -1564,7 +1617,7 @@ async function familyPickup() {
   if (!kids.length) return [h("h2", {}, "Pick-up"), empty("No children are linked to your account yet.")];
   const out = [liveIncidents().length ? h("button", { class: "btn", type: "button", onclick: () => go("safety") }, "‹ Safety update") : null, h("h2", {}, "Pick-up")];
   if (state.pass) out.push(passCard(state.pass, "Pick-up pass"));
-  for (const k of kids) {
+  for (const k of forChild(kids)) {
     const me = k.adults.find(a => a.is_me), approved = k.adults.filter(a => a.status === "approved");
     const name = h("input", { id: `ad-n-${k.id}`, maxlength: 120, required: true, autocomplete: "off" }), rel = h("input", { id: `ad-r-${k.id}`, maxlength: 40, required: true });
     const date = h("input", { id: `ed-d-${k.id}`, type: "date", required: true }), time = h("input", { id: `ed-t-${k.id}`, type: "time", required: true }), why = h("input", { id: `ed-w-${k.id}`, maxlength: 200, required: true });
@@ -1985,6 +2038,7 @@ VIEWS.mastery = async () => {
 };
 
 VIEWS.progress = async () => {
+  if (state.me.role === "parent" && state.childId) state.learnerId = state.childId;
   if (state.me.role === "parent" && !state.learnerId) {
     const kids = (await api.get("/api/learning/progress")).data.children;
     if (!kids.length) return empty("No children are linked to your account yet.");
@@ -2796,7 +2850,7 @@ VIEWS.library = async () => {
   if (state.me.role === "parent" || state.me.role === "pupil") {
     const endpoint = state.me.role === "parent" ? "/api/library/family-loans" : "/api/library/my-loans";
     const result = await safe(api.get(endpoint));
-    const loans = result?.data || [];
+    const loans = state.me.role === "parent" ? forChild(result?.data || [], "student_id") : result?.data || [];
     return [h("h2", {}, state.me.role === "parent" ? "Family library books" : "My library books"),
       h("p", { class: "muted" }, "View current loans, due dates, returns and overdue items. Renewals are subject to school library rules."),
       loans.length ? h("section", { class: "card" }, h("ul", { class: "list" }, loans.map(l => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, l.title), h("br"), h("span", { class: "muted small" }, `${l.student_name ? `${l.student_name} · ` : ""}Due ${fmtDay(l.due_at)}`)), chip(l.overdue ? "absent" : l.returned_at ? "expected" : "present", l.returned_at ? "Returned" : l.overdue ? "Overdue" : "Checked out"))))) : empty("No library loans to display."),
@@ -3671,7 +3725,8 @@ async function boot() {
   try {
     state.me = await api.get("/api/me");
   } catch (e) { if (e.status === 401) { await OQ.clear().catch(() => {}); return renderSignIn(); } put(empty(navigator.onLine ? "EduOS is unavailable right now." : "You're offline.")); return; }
-  state.brand = (await safe(api.get("/api/branding/current")))?.data || null;
+  const [brand] = await Promise.all([safe(api.get("/api/branding/current")), loadFamily()]);
+  state.brand = brand?.data || null;
   applyBranding(state.brand);
   renderTop();
   if (!ROLE_TABS[state.me.role]) {

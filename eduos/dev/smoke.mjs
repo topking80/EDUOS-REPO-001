@@ -537,7 +537,8 @@ await step("32.6 learning: courses, key secrecy, family progress, sources only f
   assert.ok(!("items" in q) && !JSON.stringify(q).includes("answerKey"), "learners never get quiz keys up front");
   assert.equal((await S.pupil.call("GET", `/api/learning/courses/${math.id}/gradebook`)).status, 403);
   const kids = (await S.parent.ok("GET", "/api/learning/progress")).data.children;
-  assert.deepEqual(kids.map(k => k.id), [STUDENTS.ava.id]);
+  // Alex Morgan is guardian of Ava (elementary) and Lucas (middle school), UI-04.
+  assert.deepEqual(kids.map(k => k.id).sort(), [STUDENTS.ava.id, STUDENTS.lucas.id].sort());
   const prog = (await S.parent.ok("GET", `/api/learning/progress?studentId=${STUDENTS.ava.id}`)).data;
   assert.ok(prog.finalGrades.length >= 1 && prog.credentials.length >= 1);
   assert.equal((await S.parent.call("GET", `/api/learning/progress?studentId=${STUDENTS.noah.id}`)).status, 403);

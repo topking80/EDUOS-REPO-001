@@ -294,6 +294,12 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
     const p2s = await login(server.base, idp, "p2s", { email_verified: true });
     const ok = await client(server.base, p2s)("POST", "/api/guardian-invitations/accept", { token });
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    // UI-04: the family switcher names each school and district, and sees every child with their school.
+    const mems = (await client(server.base, p2s)("GET", "/api/memberships")).body.data.filter(m => m.role === "parent");
+    assert.ok(mems.length >= 2, JSON.stringify(mems));
+    for (const m of mems) { assert.ok(m.school_name, `school name for ${m.school_id}`); assert.ok(m.district_name); }
+    const kids = (await client(server.base, p2s)("GET", "/api/family/children")).body.data;
+    assert.ok(kids.some(k => k.id === ID.carol) && kids.every(k => k.school_id && k.school_name), JSON.stringify(kids));
   });
 });
 

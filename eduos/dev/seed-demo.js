@@ -5,7 +5,7 @@
 // every tenant write happens with app.district_id set, as in the API.
 import pg from "pg";
 import crypto from "node:crypto";
-import { DISTRICT, SCHOOLS, USERS, STUDENTS, ROSTERS, LINKS, ASSIGNMENTS, APPS, APP_REQUESTS, BRANDING, MASCOT_SVGS,
+import { DISTRICT, SCHOOLS, USERS, STUDENTS, ROSTERS, LINKS, EXTRA_MEMBERSHIPS, ASSIGNMENTS, APPS, APP_REQUESTS, BRANDING, MASCOT_SVGS,
   TRANSPORT_ROUTES, CHRISTIE_SKILLS, CHRISTIE_MASTERY, ANNOUNCEMENTS, THREADS,
   PICKUP_ADULTS, PICKUP_PASSES, PICKUP_RESTRICTIONS, PAST_DRILL,
   STANDARDS, PRIMARY_SOURCES, COURSES, UNITS, LESSONS, SKILL_LINKS, COURSE_WORK, ACCOMMODATIONS } from "./demo-fixture.js";
@@ -38,6 +38,9 @@ export async function seedDemo({ databaseUrl = process.env.DATABASE_URL, issuer 
       await q(`INSERT INTO memberships(user_id,district_id,school_id,role,is_default) VALUES($1,$2,$3,$4,true)
                ON CONFLICT DO NOTHING`, [u.id, DISTRICT.id, u.school ? SCHOOLS[u.school].id : null, u.role]);
     }
+    for (const [user, school, role] of EXTRA_MEMBERSHIPS)
+      await q(`INSERT INTO memberships(user_id,district_id,school_id,role,is_default) VALUES($1,$2,$3,$4,false) ON CONFLICT DO NOTHING`,
+        [USERS[user].id, DISTRICT.id, SCHOOLS[school].id, role]);
     for (const s of Object.values(STUDENTS))
       await q(`INSERT INTO students(id,district_id,school_id,local_student_number,display_name,grade_level)
                VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING`,

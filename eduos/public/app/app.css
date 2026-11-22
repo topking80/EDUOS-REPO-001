@@ -348,3 +348,16 @@ html[data-appearance="light"] .btn.danger { background: #fdecea; border-color: #
 html[data-appearance="light"] .iconbtn.sos, html[data-appearance="light"] .sos-inline.active { color: #a3231b; border-color: #e9a59d; }
 html[data-appearance="light"] .dialog.danger { border-color: #d9534f; }
 html[data-appearance="light"] .top .mascot.initials { background: rgba(255,255,255,.22); color: var(--on-school); }
+
+/* UI-04: choose a child (and their school) on a family's screens. */
+.familybar { margin: 0 0 12px; }
+.famchips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; }
+.famchips::-webkit-scrollbar { display: none; }
+.famchip { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-height: 48px; min-width: 88px; padding: 6px 14px;
+  border-radius: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.famchip .n { font-weight: 700; font-size: 15px; }
+.famchip .s { font-size: 12px; color: var(--muted); max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.famchip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.famchip[aria-pressed="true"] .s { color: inherit; }
+.famchip:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.familybar > p { margin: 4px 2px 0; }
