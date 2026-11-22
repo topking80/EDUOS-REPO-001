@@ -265,3 +265,40 @@ code.token { display: block; margin-top: 6px; padding: 8px; word-break: break-al
 .action-center .chip{flex:none;min-width:42px;justify-content:center;font-variant-numeric:tabular-nums;}
 .action-center .btns{margin-top:10px;}
 @media(min-width:700px){.action-center .action-item{padding:14px 0;}}
+
+/* UI-01: district/school initials when there's no mascot. */
+.top .mascot.initials { display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 15px; letter-spacing: .5px; }
+/* UI-01: app launcher tiles. */
+.apptiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.apptile { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-height: 96px; padding: 12px; text-align: left;
+  border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2); color: inherit; font: inherit; cursor: pointer; }
+.apptile svg { width: 22px; height: 22px; color: var(--accent); }
+.apptile .name { font-weight: 700; line-height: 1.25; }
+.apptile:hover { border-color: var(--accent); }
+
+/* UI-01: on a laptop or desktop the bottom tab bar becomes a left navigation
+   rail and the content gets room; phones and tablets keep the bottom bar. */
+@media (min-width: 1024px) {
+  body { padding-bottom: 0; padding-left: 232px; }
+  html { scroll-padding-bottom: 12px; }
+  .tabs { top: 0; bottom: 0; right: auto; width: 232px; flex-direction: column; justify-content: flex-start; gap: 2px; overflow-x: hidden; overflow-y: auto;
+    border-top: none; border-right: 1px solid var(--line); padding: 84px 12px 16px; }
+  .tabs a { flex: 0 0 auto; flex-direction: row; justify-content: flex-start; gap: 12px; min-height: 44px; padding: 0 14px; font-size: 14px; }
+  .tabs a svg { width: 20px; height: 20px; flex: none; }
+  .tabs a[aria-current="page"] { background: var(--surface-2); }
+  .tabs a[aria-current="page"]::before { top: 10px; bottom: 10px; left: 0; width: 3px; height: auto; }
+  .top { position: sticky; z-index: 25; margin-left: -232px; padding-left: calc(232px + 16px); }
+  main { max-width: 960px; padding: 8px 32px 40px; }
+}
+@media (min-width: 1024px) { .toast { left: calc(232px + 32px); right: auto; max-width: 560px; bottom: 24px; } }
+
+/* GUI-03: mobile teacher action center */
+.action-center{border-color:color-mix(in srgb,var(--accent) 38%,var(--line));}
+.action-center> .row:first-child{align-items:flex-start;}
+.action-center h2{margin:0 0 3px;}
+.action-center .action-item{align-items:flex-start;gap:12px;}
+.action-center .action-item h3{font-size:15px;margin:0 0 3px;}
+.action-center .action-item p{margin:0;line-height:1.4;}
+.action-center .chip{flex:none;min-width:42px;justify-content:center;font-variant-numeric:tabular-nums;}
+.action-center .btns{margin-top:10px;}
+@media(min-width:700px){.action-center .action-item{padding:14px 0;}}

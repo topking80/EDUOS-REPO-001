@@ -100,6 +100,13 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       candidates: role === "teacher" ? [{ appId: "app1", appName: "Practice Tool" }] : [] } };
   }
   switch (pathname) {
+    // UI-01: the Apps view for leaders.
+    case "/api/lti/grade-approvals": return { data: { policy: { enabled: true, teacherReviewRequired: true }, canApprove: role === "principal",
+      approvals: [{ id: "g1", appId: "app1", appName: "Practice Tool", schoolId: "s1", schoolName: "Maple", approvedBy: "Pat Principal", approvedAt: now, scores30d: 3 }],
+      candidates: role === "principal" ? [{ appId: "app2", appName: "Quiz Maker" }] : [] } };
+    case "/api/apps": return { data: [{ id: "app3", name: "New LTI Tool", vendor: "Tool Co", integrationType: "lti13", registrationStatus: "pending" }] };
+    case "/api/app-requests": return { data: [{ id: "r1", status: "pending" }] };
+    case "/api/my/apps": return { data: [{ id: "a1", name: "Reading Room", category: "Reading", integrationType: "link" }, { id: "a2", name: "MathQuest", category: "Math", integrationType: "lti13" }] };
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: "s1", memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: [], canInitiate: false, canLead: false } };

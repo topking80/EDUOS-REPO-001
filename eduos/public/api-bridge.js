@@ -48,6 +48,7 @@
 #eduos-api-bridge .api-pill::before{content:"";width:7px;height:7px;border-radius:50%;background:#7e97b2}
 #eduos-api-bridge .api-pill.live{background:#13513f;color:#c6ffe6}
 #eduos-api-bridge .api-pill.live::before{background:#35d69b;box-shadow:0 0 0 3px #35d69b33}
+#eduos-api-bridge .api-linkbtn{display:inline-block;border:1px solid #3f6185;border-radius:8px;padding:7px 12px;background:#24445f;color:#fff;font-weight:700;font-size:12px;text-decoration:none}
 #eduos-api-bridge button,#eduos-api-data button{border:1px solid #3f6185;border-radius:8px;padding:7px 12px;background:#24445f;color:#fff;font-weight:700;font-size:12px;cursor:pointer;transition:filter .15s,transform .05s}
 #eduos-api-bridge button:hover,#eduos-api-data button:hover{filter:brightness(1.1)}
 #eduos-api-bridge button:active,#eduos-api-data button:active{transform:translateY(1px)}
@@ -179,7 +180,7 @@ html:not([data-eduos-mode="demo"]) .eduos-demo-only{display:none}
     document.head.appendChild(css);
     const bar=document.createElement("div");bar.id="eduos-api-bridge";bar.innerHTML=`
 <div class="api-left"><b>EduOS Connected Services</b><span id="eduos-api-state" class="api-pill">Checking session…</span><span id="eduos-api-actor">Local demonstration workspace</span></div>
-<div class="api-left"><button id="eduos-api-connect" class="primary">District sign-in</button><button id="eduos-api-refresh" disabled>Refresh records</button><button id="eduos-api-logout" hidden>Sign out</button><select id="eduos-api-membership" hidden aria-label="Switch role or school"></select><button id="eduos-api-toggle">Server workspace</button></div>`;
+<div class="api-left"><button id="eduos-api-connect" class="primary">District sign-in</button><button id="eduos-api-refresh" disabled>Refresh records</button><a id="eduos-api-app" class="api-linkbtn" href="/app/">EduOS app</a><button id="eduos-api-logout" hidden>Sign out</button><select id="eduos-api-membership" hidden aria-label="Switch role or school"></select><button id="eduos-api-toggle">Server workspace</button></div>`;
     document.body.prepend(bar);
     const panel=document.createElement("section");panel.id="eduos-api-data";panel.innerHTML=`<h1 class="api-title">EduOS workspace</h1><div id="eduos-api-content" aria-live="polite">Sign in to load authorized records.</div><div class="api-muted">Server permissions come from the authenticated account.<span class="eduos-demo-only"> The legacy persona selector below is a synthetic demo and does not grant server access.</span></div>`;
     bar.insertAdjacentElement("afterend",panel);
@@ -225,6 +226,8 @@ html:not([data-eduos-mode="demo"]) .eduos-demo-only{display:none}
       if(typeof window.go==="function")window.go(landing);
     }
     if(a.role==="parent"&&pendingInvite())await openTab("guardians");
+    // UI-01: deep links from the EduOS app (e.g. /#tab=apps) open that section once signed in.
+    else{const dt=/(?:^#|&)tab=([a-z_-]{2,40})/.exec(location.hash||"");if(dt&&(EXT_TABS.includes(dt[1])||window.EduOSMesh?.TABS?.includes(dt[1])||document.querySelector(`[data-tab="${dt[1]}"]`)))await openTab(dt[1]);}
     }catch(e){el("eduos-api-actor").textContent=document.documentElement.getAttribute("data-eduos-mode")==="demo"?"Local demonstration workspace":"";el("eduos-api-connect").hidden=false;el("eduos-api-logout").hidden=true;el("eduos-api-refresh").disabled=true;state(document.documentElement.getAttribute("data-eduos-mode")==="demo"?"Demo mode · not signed in":"Not signed in");el("eduos-api-content").innerHTML=`<div class="api-card api-welcome"><b>Welcome to EduOS</b><p>No authenticated server session. Sign in through your district identity provider to load server-backed records.</p><p>Everything you see after signing in comes from the district database and is limited to your role: district leadership, principals, teachers, families and students each get their own workspace.</p>${pendingInvite()?`<p class="api-notice info"><strong>Guardian invitation detected</strong>Sign in with the parent or guardian account your school created for you; the invitation is then offered for acceptance.</p>`:""}<button class="primary" type="button" data-action="sign-in">District sign-in</button></div>`;if(window.EduOSBranding)window.EduOSBranding.landing(el("eduos-api-content"));}}
   // 32.0.53: accounts may hold several roles/schools (e.g. a teacher who is also a parent).
   async function loadMemberships(){try{
