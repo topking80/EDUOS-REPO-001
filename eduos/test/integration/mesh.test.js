@@ -672,6 +672,128 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     } finally { await new Promise(r => tool.close(r)); }
   });
 
+  it("LTI-04 AGS: district guidelines, school approval, teacher switch; tool scores never silently replace a teacher's grade", async () => {
+    const { privateKey: toolPriv, publicKey: toolPub } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const sign = c => { const h = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "g-1" })).toString("base64url"), p = Buffer.from(JSON.stringify(c)).toString("base64url");
+      return `${h}.${p}.${crypto.sign("RSA-SHA256", Buffer.from(`${h}.${p}`), toolPriv).toString("base64url")}`; };
+    const tool = http.createServer((req, res) => {
+      const u = new URL(req.url, "http://127.0.0.1");
+      if (u.pathname === "/jwks") { res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ keys: [{ ...toolPub.export({ format: "jwk" }), kid: "g-1", alg: "RS256", use: "sig" }] })); }
+      if (u.pathname === "/login") {
+        const p = new URLSearchParams({ scope: "openid", response_type: "id_token", response_mode: "form_post", prompt: "none", client_id: u.searchParams.get("client_id"),
+          redirect_uri: `http://127.0.0.1:${tool.address().port}/launch`, login_hint: u.searchParams.get("login_hint"), lti_message_hint: u.searchParams.get("lti_message_hint"), state: "st", nonce: crypto.randomUUID() });
+        res.writeHead(302, { location: `${server.base}/lti/authorize?${p}` }); return res.end();
+      }
+      res.end("tool");
+    });
+    await new Promise(r => tool.listen(0, "127.0.0.1", r));
+    const jar = new Map();
+    const launch = async (who, appId, linkId) => {
+      const r = await as(who)("POST", `/api/apps/${appId}/launch`, { contentLinkId: linkId });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      for (const c of r.headers.getSetCookie()) { const m = /^(eduos_lti_[0-9a-f]+)=([^;]*)/.exec(c); if (m) jar.set(m[1], m[2]); }
+      const auth = (await fetch(r.body.data.url, { redirect: "manual" })).headers.get("location");
+      const html = await (await fetch(auth, { headers: { cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") } })).text();
+      return (await jwtVerify(/name="id_token" value="([^"]+)"/.exec(html)[1], createRemoteJWKSet(new URL(`${server.base}/.well-known/jwks.json`)), { issuer: "http://localhost", audience: "g-client" })).payload;
+    };
+    try {
+      const tb = `http://127.0.0.1:${tool.address().port}`;
+      const reg = await as("it")("POST", "/api/apps", { name: "Grading Tool", vendor: "Tool Co", launchUrl: `${tb}/launch`, integrationType: "lti13", dataSharingScope: "none", coppaCompliant: true,
+        integrationConfig: { clientId: "g-client", deploymentId: "g-dep", loginUrl: `${tb}/login`, redirectUris: [`${tb}/launch`], targetLinkUri: `${tb}/launch`, jwksUrl: `${tb}/jwks`, assignmentGrades: true } });
+      assert.equal(reg.status, 201, JSON.stringify(reg.body));
+      const appId = reg.body.data.id;
+      await as("it")("POST", `/api/apps/${appId}/licenses`, {});
+      await as("it")("POST", `/api/apps/${appId}/assignments`, { scope: "district" });
+      assert.equal((await as("supt1")("POST", `/api/apps/${appId}/lti/approve`)).status, 200);
+      const asg = (await admin.query(`INSERT INTO assignments(district_id,school_id,created_by,title,status,points_possible) VALUES($1,$2,$3,'Unit test','published',20) RETURNING id`,
+        [ID.d1, ID.s1, USERS.t1[0]])).rows[0].id;
+      const link = (await admin.query(`INSERT INTO lti_content_links(district_id,assignment_id,app_id,title,url,created_by) VALUES($1,$2,$3,'Unit quiz',$4,$5) RETURNING id`,
+        [ID.d1, asg, appId, `${tb}/quiz/1`, USERS.t1[0]])).rows[0].id;
+      const grades = on => as("t1")("PUT", `/api/lti/content-links/${link}/grades`, { enabled: on });
+
+      // District guidelines first, then the school, then the teacher.
+      assert.equal((await grades(true)).body.error, "district_grade_passback_off");
+      assert.equal((await as("p1")("PUT", "/api/lti/grade-policy", { enabled: true, teacherReviewRequired: true })).status, 403, "schools don't set district guidelines");
+      assert.equal((await as("supt1")("PUT", "/api/lti/grade-policy", { enabled: true, teacherReviewRequired: true })).status, 200);
+      assert.equal((await grades(true)).body.error, "school_has_not_approved_tool");
+      assert.equal((await as("supt1")("PUT", "/api/lti/grade-approvals", { appId, schoolId: ID.s1, approved: true })).body.error, "schools_approve_grade_passback");
+      assert.ok((await as("p1")("GET", "/api/lti/grade-approvals")).body.data.candidates.some(x => x.appId === appId));
+      assert.equal((await as("p1")("PUT", "/api/lti/grade-approvals", { appId, approved: true })).status, 200);
+      assert.equal((await as("t1")("PUT", "/api/lti/grade-approvals", { appId, approved: true })).status, 403);
+      assert.equal((await grades(true)).status, 200);
+      assert.equal((await as("p1")("PUT", `/api/lti/content-links/${link}/grades`, { enabled: false })).status, 403, "principals approve the school tool, not activity grade switches");
+
+      // The student's launch now carries this activity's line item.
+      const claims = await launch("pu", appId, link);
+      const endpoint = claims["https://purl.imsglobal.org/spec/lti-ags/claim/endpoint"];
+      assert.deepEqual(endpoint.scope, ["https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly", "https://purl.imsglobal.org/spec/lti-ags/scope/score"]);
+      const li = new URL(endpoint.lineitem);
+
+      // The tool signs in and reads the line item.
+      const now = Math.floor(Date.now() / 1000);
+      const token = async scope => fetch(`${server.base}/lti/token/${ID.d1}/${appId}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "client_credentials", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+          client_assertion: sign({ iss: "g-client", sub: "g-client", aud: `http://localhost/lti/token/${ID.d1}/${appId}`, iat: now, exp: now + 300, jti: crypto.randomUUID() }), scope }) });
+      assert.equal((await token("https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly")).status, 400, "no class lists for this tool");
+      const scoreOnly = await (await token("https://purl.imsglobal.org/spec/lti-ags/scope/score")).json();
+      assert.equal((await fetch(`${server.base}${li.pathname}`, { headers: { authorization: `Bearer ${scoreOnly.access_token}` } })).status, 401,
+        "score-only tokens cannot read line items");
+      const t = await (await token("https://purl.imsglobal.org/spec/lti-ags/scope/score https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly")).json();
+      const auth = { authorization: `Bearer ${t.access_token}` };
+      const item = await (await fetch(`${server.base}${li.pathname}`, { headers: auth })).json();
+      assert.deepEqual([item.scoreMaximum, item.label, item.resourceLinkId], [20, "Unit quiz", link]);
+      let clock = Date.now() - 60_000;
+      const score = (given, max = 10, userId = claims.sub, extra = {}) => fetch(`${server.base}${li.pathname}/scores`, { method: "POST",
+        headers: { ...auth, "content-type": "application/vnd.ims.lis.v1.score+json" },
+        body: JSON.stringify({ userId, scoreGiven: given, scoreMaximum: max, activityProgress: "Completed", gradingProgress: "FullyGraded", timestamp: new Date(clock += 1000).toISOString(), ...extra }) });
+      const sub = async () => (await admin.query("SELECT score::float8 AS score, points_earned::float8 AS points, grade_source FROM assignment_submissions WHERE assignment_id=$1 AND student_id=$2", [asg, ID.alice])).rows[0];
+
+      // Teacher review (district default): the score waits.
+      assert.equal((await score(8)).status, 204);
+      assert.equal((await score(11, 10)).status, 400, "a score cannot exceed its maximum");
+      assert.equal(await sub(), undefined, "nothing reaches the gradebook before review");
+      assert.equal((await score(8, 10, "someone-else")).status, 422);
+      assert.equal((await score(1, 10, claims.sub, { timestamp: new Date(Date.now() - 3_600_000).toISOString() })).status, 204, "older scores are accepted but ignored");
+      const list = (await as("t1")("GET", `/api/lti/scores?assignmentId=${asg}`)).body.data;
+      assert.deepEqual(list.map(x => [x.studentName, x.scoreGiven, x.status]), [["Alice A", 8, "pending"]]);
+      assert.equal((await as("pu")("GET", `/api/lti/scores?assignmentId=${asg}`)).status, 403, "students cannot access the teacher review endpoint");
+      assert.equal((await as("p1")("GET", `/api/lti/scores?assignmentId=${asg}`)).status, 403, "principals do not review individual learner scores");
+      assert.equal((await as("t1")("POST", `/api/lti/scores/${list[0].id}/record`, {})).status, 200);
+      assert.deepEqual(await sub(), { score: 80, points: 16, grade_source: "lti" });
+
+      // A teacher's own grade is never replaced without asking.
+      const subId = (await admin.query("SELECT id FROM assignment_submissions WHERE assignment_id=$1 AND student_id=$2", [asg, ID.alice])).rows[0].id;
+      await admin.query(`INSERT INTO teacher_student_rosters(district_id,school_id,teacher_user_id,student_id,created_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+        [ID.d1, ID.s1, USERS.t1[0], ID.alice, USERS.p1[0]]);
+      assert.equal((await as("t1")("POST", `/api/assignments/${asg}/submissions/${subId}/grade`, { score: 95 })).status, 200);
+      assert.equal((await sub()).grade_source, "teacher");
+      assert.equal((await score(9)).status, 204);
+      const id9 = (await as("t1")("GET", `/api/lti/scores?assignmentId=${asg}`)).body.data[0].id;
+      assert.equal((await as("t1")("POST", `/api/lti/scores/${id9}/record`, {})).body.error, "teacher_grade_exists");
+      assert.equal((await sub()).score, 95);
+
+      // Without review (district choice): scores count at once, but still not over the teacher's grade.
+      assert.equal((await as("supt1")("PUT", "/api/lti/grade-policy", { enabled: true, teacherReviewRequired: false })).status, 200);
+      assert.equal((await score(10)).status, 204);
+      assert.equal((await sub()).score, 95, "the teacher's 95 stands");
+      assert.equal((await as("t1")("POST", `/api/lti/scores/${id9}/record`, { overwrite: true })).status, 200, "unless the teacher chooses");
+      assert.deepEqual(await sub(), { score: 100, points: 20, grade_source: "lti" });
+      assert.equal((await score(5)).status, 204);
+      assert.deepEqual(await sub(), { score: 50, points: 10, grade_source: "lti" }, "tool grades update tool grades without review");
+
+      // District oversight: sees every school's approvals and activity, and can revoke.
+      const overview = (await as("supt1")("GET", "/api/lti/grade-approvals")).body.data;
+      const mine = overview.approvals.find(x => x.appId === appId);
+      assert.equal(mine.schoolName, "S1"); assert.ok(mine.scores30d >= 5);
+      assert.equal((await as("supt1")("PUT", "/api/lti/grade-approvals", { appId, schoolId: ID.s1, approved: false, reason: "Vendor contract under review" })).status, 200);
+      assert.equal((await score(7)).status, 404, "revoked: the tool can't post");
+      assert.equal((await launch("pu", appId, link))["https://purl.imsglobal.org/spec/lti-ags/claim/endpoint"], undefined);
+      const events = (await admin.query("SELECT outcome FROM lti_score_events WHERE content_link_id=$1 ORDER BY received_at", [link])).rows.map(r => r.outcome);
+      assert.deepEqual(events, ["pending", "stale_ignored", "pending", "pending", "recorded"]);
+      await as("supt1")("PUT", "/api/lti/grade-policy", { enabled: false, teacherReviewRequired: true });
+    } finally { await new Promise(r => tool.close(r)); }
+  });
+
   it("every role gets a home dashboard scoped like its list endpoints", async () => {
     for (const name of ["supt1", "it", "p1", "p2", "t1", "pa", "pu"]) {
       const r = await as(name)("GET", "/api/home");

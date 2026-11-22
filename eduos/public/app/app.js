@@ -1703,6 +1703,9 @@ async function openToolTab(path, body, failText) {
   try { const r = await api.post(path, body); if (tab) { tab.opener = null; tab.location.href = r.data.url; } else location.assign(r.data.url); }
   catch (e) { if (tab) tab.close(); toast(failText(e.body?.error)); }
 }
+const GRADE_ERRORS = { district_grade_passback_off: "The district hasn't turned grade passback on.", school_has_not_approved_tool: "Your principal hasn't approved this tool for grades.",
+  tool_not_registered_for_grades: "This tool isn't set up to send grades." };
+const SCORE_STATUS = { pending: "waiting for you", recorded: "in the gradebook", dismissed: "dismissed", not_final: "not final yet" };
 const TOOL_ERRORS = { no_seats_available: "All seats for this tool are in use.", lti_approval_required: "This tool is waiting for district approval.",
   app_not_available: "This tool isn't available for your account.", content_not_available: "That activity isn't available any more.",
   deep_linking_not_registered: "This tool can't add content to assignments.", assignment_not_manageable: "You can't change this assignment." };
@@ -1717,12 +1720,42 @@ VIEWS.course = async () => {
     const mine = toolLinks.filter(l => l.assignmentId === a.id);
     if (!mine.length && !pickers.length) return null;
     const pick = pickers.length > 1 ? h("select", { id: `dl-${a.id}`, "aria-label": `Tool to add content from, for ${a.title}` }, pickers.map(p => h("option", { value: p.id }, p.name))) : null;
+    // LTI-04: grade passback switch per activity, and the teacher's review of tool scores.
+    const gradeSwitch = l => {
+      if (!l.canRemove || !l.gradesCapable) return null;
+      const box = h("input", { type: "checkbox", id: `gr-${l.id}`, checked: l.gradesEnabled });
+      box.addEventListener("change", async () => {
+        try { await api.req("PUT", `/api/lti/content-links/${l.id}/grades`, { enabled: box.checked }); toast(box.checked ? `${l.appName} can send grades for ${l.title}.` : "Grades from this activity are off."); }
+        catch (e) { box.checked = !box.checked; toast(GRADE_ERRORS[e.body?.error] || "Couldn't change it."); } });
+      return h("label", { for: box.id, class: "row small" }, box, h("span", {}, `Send grades to EduOS (${l.title})`));
+    };
+    const review = mine.some(l => l.canRemove && l.gradesEnabled) ? (() => {
+      const box = h("div", { class: "stack" });
+      const load = async () => {
+        const rows = listOf(await safe(api.get(`/api/lti/scores?assignmentId=${a.id}`)));
+        box.replaceChildren(rows.length ? h("ul", { class: "list" }, rows.map(r => h("li", { class: "row" },
+          h("span", { class: "grow small" }, `${r.studentName}: ${r.scoreGiven ?? "–"}/${r.scoreMaximum ?? "–"} from ${r.appName} · ${SCORE_STATUS[r.status] || r.status}${r.gradebookScore != null ? ` · gradebook ${r.gradebookScore}% (${r.gradebookSource === "lti" ? "tool" : "teacher"})` : ""}`),
+          r.status === "pending" ? h("button", { class: "btn small", type: "button", "aria-label": `Record ${r.studentName}'s score`, onclick: async () => {
+            try { await api.post(`/api/lti/scores/${r.id}/record`, {}); }
+            catch (e) {
+              if (e.body?.error !== "teacher_grade_exists") return toast("Couldn't record it.");
+              if (!await ask({ title: "Replace your grade?", text: `${r.studentName} already has a grade you entered. Replace it with the tool's score?`, confirm: "Replace" })) return;
+              try { await api.post(`/api/lti/scores/${r.id}/record`, { overwrite: true }); } catch { return toast("Couldn't record it."); }
+            }
+            toast("Recorded."); load(); } }, "Record") : null,
+          r.status === "pending" ? h("button", { class: "btn small", type: "button", "aria-label": `Dismiss ${r.studentName}'s score`, onclick: async () => {
+            try { await api.post(`/api/lti/scores/${r.id}/dismiss`, {}); toast("Dismissed."); load(); } catch { toast("Couldn't dismiss it."); } } }, "Dismiss") : null)))
+          : h("p", { class: "small muted" }, "No scores from tools yet."));
+      };
+      return h("details", { ontoggle: e => { if (e.target.open) load(); } }, h("summary", {}, "Review scores from tools"), box);
+    })() : null;
     return h("div", { class: "stack" },
-      mine.map(l => h("div", { class: "row" }, h("span", { class: "grow small" }, `${l.title} · ${l.appName}`),
+      mine.map(l => [gradeSwitch(l), h("div", { class: "row" }, h("span", { class: "grow small" }, `${l.title} · ${l.appName}`),
         h("button", { class: "btn small", type: "button", "aria-label": `Open ${l.title} in ${l.appName}`, onclick: () => openToolTab(`/api/apps/${l.appId}/launch`, { contentLinkId: l.id }, e => TOOL_ERRORS[e] || "Couldn't open it.") }, "Open"),
         l.canRemove ? h("button", { class: "btn small", type: "button", "aria-label": `Remove ${l.title}`, onclick: async () => {
           if (!await ask({ title: `Remove ${l.title}?`, text: "Students won't see it on this assignment any more.", confirm: "Remove" })) return;
-          try { await api.req("DELETE", `/api/lti/content-links/${l.id}`); toast("Removed."); go("course", { push: false }); } catch { toast("Couldn't remove it."); } } }, "Remove") : null)),
+          try { await api.req("DELETE", `/api/lti/content-links/${l.id}`); toast("Removed."); go("course", { push: false }); } catch { toast("Couldn't remove it."); } } }, "Remove") : null)]),
+      review,
       pickers.length ? h("div", { class: "row" }, pick, h("button", { class: "btn small", type: "button",
         "aria-label": `${pickers.length === 1 ? `Add from ${pickers[0].name}` : "Add from tool"} to ${a.title}`, onclick: () =>
         openToolTab(`/api/apps/${pick ? pick.value : pickers[0].id}/deep-link`, { assignmentId: a.id }, e => TOOL_ERRORS[e] || "Couldn't open the tool.") },

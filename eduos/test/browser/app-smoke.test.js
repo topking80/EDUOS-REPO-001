@@ -93,7 +93,8 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/learning/courses/k1": return { data: { id: "k1", title: "Math 3", subject: "Math", gradeLevel: "3", term: "Fall", teacher: "Teacher S1", canManage: role === "teacher",
       standards: [], units: [], assignments: [{ id: "as1", title: "Fractions week", kind: "work", points: 10, due_at: null, status: "published" }],
       ...(role === "teacher" ? { students: [] } : { learner: { id: "st1", name: "Alice" }, grade: null, mastery: { mastered: 0, total: 0 } }) } };
-    case "/api/lti/content-links": return { data: [{ id: "cl1", assignmentId: "as1", appId: "app1", appName: "Practice Tool", title: "Fractions practice", description: "", canRemove: role === "teacher" }] };
+    case "/api/lti/content-links": return { data: [{ id: "cl1", assignmentId: "as1", appId: "app1", appName: "Practice Tool", title: "Fractions practice", description: "", canRemove: role === "teacher", gradesCapable: true, gradesEnabled: true }] };
+    case "/api/lti/scores": return { data: [{ id: "sc1", studentName: "Alice A", appName: "Practice Tool", scoreGiven: 8, scoreMaximum: 10, status: "pending", gradebookScore: null }] };
     case "/api/my/apps": return { data: [{ id: "app1", name: "Practice Tool", integrationType: "lti13", deepLinking: true }] };
     case "/api/lti/course-sharing": return { data: { canManage: role === "teacher", shared: [{ appId: "app1", appName: "Practice Tool", enabledBy: "Teacher S1", enabledAt: now }],
       candidates: role === "teacher" ? [{ appId: "app1", appName: "Practice Tool" }] : [] } };
@@ -338,7 +339,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
   // LTI-02: tool links on a course assignment, for a pupil (open) and a teacher (open, remove, add).
   withCourse = true;
   for (const [role, wants] of [["pupil", ["Fractions practice · Practice Tool", "Open", "Class list sharing", "These tools can read this course's class list"]],
-    ["teacher", ["Fractions practice · Practice Tool", "Remove", "Add from Practice Tool", "Share the class list with Practice Tool"]]]) {
+    ["teacher", ["Fractions practice · Practice Tool", "Remove", "Add from Practice Tool", "Share the class list with Practice Tool", "Send grades to EduOS (Fractions practice)", "Review scores from tools"]]]) {
     state.role = role;
     const page = await Page.open(chrome.port);
     try {

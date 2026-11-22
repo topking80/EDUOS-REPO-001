@@ -9,8 +9,9 @@
 //   2. The tool redirects the browser to GET /lti/authorize (OIDC auth request).
 //   3. EduOS checks the hint, client_id and registered redirect_uri, and
 //      form-posts an RS256 id_token to the tool.
-// Claims are limited to the launching user and the app's data_sharing_scope.
-// No roster, grade or attendance data is sent by EduOS (no NRPS/AGS).
+// Identity claims are limited to the launching user and the app's approved data_sharing_scope.
+// NRPS class lists and AGS grade passback are separate services, each requiring
+// district, school/course and teacher-level approval. Attendance is not shared.
 // Disabled (503) unless LTI_PLATFORM_PRIVATE_KEY (PEM RSA private key) is set.
 import crypto from "node:crypto";
 
@@ -129,8 +130,12 @@ const SCOPE_RANK = Object.freeze({ none: 0, identity: 1, roster_basic: 2 });
 /** Data scopes an LTI tool may be approved for. roster_basic (class lists) needs NRPS registered. */
 export const LTI_SCOPES = Object.freeze(["none", "identity", "roster_basic"]);
 export const NRPS_SCOPE = "https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly";
+// LTI-04: a tool may read its activity's line item and post scores. It can't
+// create, change or delete line items, or read results.
+export const AGS_SCORE_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/score";
+export const AGS_LINEITEM_READ_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly";
 /** Build id_token claims, limited by the app's data-sharing scope. */
-export function launchClaims({ key, issuer, app, launch, user, school, nonce, deepLinking = null, content = null, context = null, nrps = null, now = Math.floor(Date.now() / 1000) }) {
+export function launchClaims({ key, issuer, app, launch, user, school, nonce, deepLinking = null, content = null, context = null, nrps = null, ags = null, now = Math.floor(Date.now() / 1000) }) {
   const cfg = app.integration_config || {};
   // roster_basic counts only for a tool registered for NRPS; otherwise it fails closed.
   const rank = app.data_sharing_scope === "roster_basic" && cfg.namesRoles !== true ? 0 : SCOPE_RANK[app.data_sharing_scope] ?? 0;
@@ -154,6 +159,8 @@ export function launchClaims({ key, issuer, app, launch, user, school, nonce, de
     // A link placed on an assignment by Deep Linking: its own stable resource link.
     claims["https://purl.imsglobal.org/spec/lti/claim/resource_link"] = { id: content.id, title: content.title };
     if (content.custom && Object.keys(content.custom).length) claims["https://purl.imsglobal.org/spec/lti/claim/custom"] = content.custom;
+    // LTI-04: this activity's own line item, for posting scores (when grade passback is on for it).
+    if (ags) claims["https://purl.imsglobal.org/spec/lti-ags/claim/endpoint"] = { scope: [AGS_LINEITEM_READ_SCOPE, AGS_SCORE_SCOPE], lineitem: ags.lineitem };
   } else {
     claims["https://purl.imsglobal.org/spec/lti/claim/resource_link"] = { id: app.id };
   }
@@ -178,7 +185,8 @@ export function ltiConfigFingerprint(cfg, dataSharingScope) {
   const registration = [cfg.clientId, cfg.deploymentId, cfg.loginUrl, [...cfg.redirectUris], cfg.targetLinkUri, dataSharingScope];
   // Deep Linking (LTI-02) settings are covered when present; registrations
   // without them keep the fingerprint (and approval) they already had.
-  if (cfg.deepLinkingUrl || cfg.jwksUrl || cfg.namesRoles) registration.push({ deepLinkingUrl: cfg.deepLinkingUrl, jwksUrl: cfg.jwksUrl, ...(cfg.namesRoles ? { namesRoles: true } : {}) });
+  if (cfg.deepLinkingUrl || cfg.jwksUrl || cfg.namesRoles || cfg.assignmentGrades) registration.push({ deepLinkingUrl: cfg.deepLinkingUrl, jwksUrl: cfg.jwksUrl,
+    ...(cfg.namesRoles ? { namesRoles: true } : {}), ...(cfg.assignmentGrades ? { assignmentGrades: true } : {}) });
   return crypto.createHash("sha256").update(JSON.stringify(registration)).digest("base64url");
 }
 
@@ -203,8 +211,9 @@ export function validLtiConfig(cfg, { allowInsecureLoopback = process.env.NODE_E
     // Deep Linking (LTI-02) and Names and Role Provisioning (LTI-03).
     (cfg.deepLinkingUrl === undefined || url(cfg.deepLinkingUrl)) &&
     (cfg.namesRoles === undefined || typeof cfg.namesRoles === "boolean") &&
-    (cfg.jwksUrl === undefined ? cfg.deepLinkingUrl === undefined && cfg.namesRoles !== true
-      : url(cfg.jwksUrl) && (cfg.deepLinkingUrl !== undefined || cfg.namesRoles === true));
+    (cfg.assignmentGrades === undefined || typeof cfg.assignmentGrades === "boolean") &&
+    (cfg.jwksUrl === undefined ? cfg.deepLinkingUrl === undefined && cfg.namesRoles !== true && cfg.assignmentGrades !== true
+      : url(cfg.jwksUrl) && (cfg.deepLinkingUrl !== undefined || cfg.namesRoles === true || cfg.assignmentGrades === true));
 }
 
 /**

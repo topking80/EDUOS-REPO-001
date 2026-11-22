@@ -1,6 +1,6 @@
 # LTI 1.3 Core platform support for third-party educational software
 
-Status: LTI 1.3 Core resource-link launch (Phase 1) and Deep Linking 2.0 (Phase 3) are implemented. Cross-library RS256/JWKS interoperability tests now exercise both platform-issued ID tokens and independently generated tool responses. NRPS and AGS are not implemented, and independent third-party tool/IMS reference interoperability remains outstanding. This document does not claim LTI Advantage conformance or certification.
+Status: LTI 1.3 Core resource-link launch, Deep Linking 2.0, NRPS 2.0 and the governed AGS 2.0 grade-passback slice are implemented and covered by repository tests. Independent IMS reference-tool and third-party interoperability validation remains outstanding; this document does not claim LTI Advantage conformance or certification.
 
 ## Repository audit
 
@@ -76,11 +76,24 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
   Each member has the same per-tool `user_id` the tool sees at launch, plus name, email and role. It supports `?role=`. Turning sharing off ends access at once; turning it on again gives a new address. Every token and read is logged in `lti_service_access_log`, with the number of members returned.
 - [x] **Not shared:** parents, students without accounts, grades, attendance and any other record.
 
-### Phase 5 — AGS
-- Implement line-item, result, and score services with strict course/resource ownership.
-- Require explicit district and course-level grade-write approval.
-- Enforce score range/type validation, idempotency, replay protection, audit trails, and grade-change attribution.
-- Keep grade writes disabled until independent LTI interoperability and district policy tests pass.
+### Phase 5 — AGS (LTI-04, implemented)
+
+**Accountability: the district sets guidelines, schools are accountable, and the district keeps oversight.**
+
+| Who | Does | Where |
+| --- | --- | --- |
+| District leads | Turn grade passback on or off for the district, and decide whether teachers must review each score before it counts (default: review). They see every school's approvals and their score activity, and can turn any approval off with a reason. They don't approve tools for a school. | Apps → *Grade passback from LTI tools* |
+| Principal | Approves a tool for **their school** and is accountable for it; can turn it off. | Apps → same card |
+| Teacher | Turns grades on for one placed activity, reviews scores, records or dismisses them. | Course page → the activity |
+| District IT | Registers the tool with *Grade passback* (`assignmentGrades`, with `jwksUrl`). The registration is approved as usual, and the fingerprint covers it. | Apps → register |
+
+- [x] **What a tool can do.** A launch from an activity with grades on carries that activity's own line item (`lti-ags/claim/endpoint`) with `lineitem.readonly` and `score` only. Tools can't create, change or delete line items, or read results. They authenticate as in LTI-03 (`private_key_jwt`, per-registration token URL). Grade scopes are granted only while the registration has AGS and the district policy is on.
+- [x] **Every score call re-checks the chain.** The district policy must be on, the school approval active, the teacher's switch on and the assignment published. The learner must be one the activity is for, named by the same per-tool `user_id` the tool saw at launch. Scores older than the latest one are accepted but ignored, and every call is logged (`lti_score_events`).
+- [x] **Grade protection.**
+  - Tool scores are kept apart (`lti_scores`) and reach the gradebook with `grade_source = 'lti'`; teachers' grades are `grade_source = 'teacher'`.
+  - With review on, a score counts only when the teacher records it.
+  - With review off, final scores count at once, but never over a teacher's grade. They wait for the teacher instead, and replacing a teacher's grade needs the teacher's explicit confirmation.
+  - Turning off any link in the chain stops scores immediately.
 
 ## Acceptance gates
 
@@ -95,7 +108,7 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 
 ## Current limitations
 
-Phases 1 (Core resource-link launch), 3 (Deep Linking) and 4 (NRPS class-list sharing) are implemented and covered by repository tests. Cross-library JOSE interoperability tests are automated in CI, but end-to-end interoperability against independent standards-conformant tools and the IMS reference implementation remains outstanding. AGS (Phase 5) is not implemented. No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. These capabilities must ship in separately testable increments behind district-controlled feature flags.
+Phases 1 (Core resource-link launch), 3 (Deep Linking), 4 (NRPS class-list sharing) and 5 (AGS grade passback) are implemented and covered by repository tests. Cross-library JOSE interoperability tests are automated in CI, but end-to-end interoperability against independent standards-conformant tools and the IMS reference implementation remains outstanding. No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. These capabilities must ship in separately testable increments behind district-controlled feature flags.
 
 ## Signing-key rotation procedure
 

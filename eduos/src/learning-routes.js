@@ -423,9 +423,9 @@ export function registerLearningRoutes(app) {
       earned = points;
     }
     const pct = Math.round((earned / Number(a.points_possible)) * 10000) / 100;
-    const s = await one(client, `INSERT INTO assignment_submissions(district_id,assignment_id,student_id,response_text,submitted_at,score,points_earned,rubric_scores,feedback,graded_by,graded_at,returned_at)
-        VALUES($1,$2,$3,'(graded in class)',now(),$4,$5,$6,$7,$8,now(),CASE WHEN $9 THEN now() END)
-        ON CONFLICT(assignment_id,student_id) DO UPDATE SET score=$4,points_earned=$5,rubric_scores=$6,feedback=$7,graded_by=$8,graded_at=now(),
+    const s = await one(client, `INSERT INTO assignment_submissions(district_id,assignment_id,student_id,response_text,submitted_at,score,points_earned,rubric_scores,feedback,graded_by,graded_at,returned_at,grade_source)
+        VALUES($1,$2,$3,'(graded in class)',now(),$4,$5,$6,$7,$8,now(),CASE WHEN $9 THEN now() END,'teacher')
+        ON CONFLICT(assignment_id,student_id) DO UPDATE SET score=$4,points_earned=$5,rubric_scores=$6,feedback=$7,graded_by=$8,graded_at=now(),grade_source='teacher',
           returned_at=CASE WHEN $9 THEN now() ELSE assignment_submissions.returned_at END RETURNING id`,
       [req.actor.districtId, a.id, learner.id, pct, earned, rubricRows ? JSON.stringify(rubricRows) : null, feedback, req.actor.userId, Boolean(returnToStudent)]);
     // Rubric rows tied to a standard become mastery evidence.

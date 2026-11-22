@@ -541,3 +541,20 @@ REVOKE UPDATE, TRUNCATE ON lti_course_sharing FROM eduos_app;
 GRANT SELECT, INSERT ON lti_service_assertions, lti_service_access_log TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON lti_service_assertions, lti_service_access_log FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_lti_nrps_members(uuid, uuid) TO eduos_app;
+
+-- 099 LTI-04 AGS: the district policy, school approvals (revoked, never
+-- deleted), per-activity switches, and tool scores kept apart from the
+-- gradebook. Tools write scores only through eduos_lti_record_score.
+GRANT SELECT, INSERT, UPDATE ON lti_grade_policy TO eduos_app;
+REVOKE DELETE, TRUNCATE ON lti_grade_policy FROM eduos_app;
+GRANT SELECT, INSERT ON lti_school_grade_approvals TO eduos_app;
+GRANT UPDATE (revoked_by, revoked_at, revoke_reason) ON lti_school_grade_approvals TO eduos_app;
+REVOKE DELETE, TRUNCATE ON lti_school_grade_approvals FROM eduos_app;
+GRANT UPDATE (grades_enabled_by, grades_enabled_at) ON lti_content_links TO eduos_app;
+GRANT SELECT ON lti_scores, lti_score_events TO eduos_app;
+GRANT UPDATE (status, reviewed_by, reviewed_at, updated_at) ON lti_scores TO eduos_app;
+REVOKE INSERT, DELETE, TRUNCATE ON lti_scores FROM eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON lti_score_events FROM eduos_app;
+GRANT UPDATE (grade_source) ON assignment_submissions TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_lti_ags_link(uuid, uuid), eduos_lti_ags_learners(uuid, uuid),
+  eduos_lti_record_score(uuid, uuid, uuid, numeric, numeric, text, text, text, timestamptz, jsonb) TO eduos_app;

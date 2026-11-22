@@ -12,7 +12,7 @@
   const TYPE_TEXT = { link: "Web link", oidc_sso: "Single sign-on", lti13: "LTI 1.3", api: "API integration" };
   const GRADES = ["PK", "TK", "K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
   const ASSIGN_ROLES = [["principal", "Principals"], ["teacher", "Teachers"], ["parent", "Families"], ["pupil", "Students"], ["superintendent", "Superintendents"], ["it_admin", "IT admins"]];
-  const st = { schools: [], home: null, myApps: [], learner: null, catalog: [], catalogPage: null, usage: [], usageScope: null, appUsage: null, requests: [], settings: null, open: null, q: "" };
+  const st = { grades: null, schools: [], home: null, myApps: [], learner: null, catalog: [], catalogPage: null, usage: [], usageScope: null, appUsage: null, requests: [], settings: null, open: null, q: "" };
 
   // Tab lists per role, Home first. Labels use plain words for each audience.
   function tabsFor(role, can) {
@@ -44,6 +44,8 @@
       if ([...DISTRICT, "principal", "teacher"].includes(role)) await loadCatalog(ctx, 0);
       if (role === "principal") await safe("schools", async () => { st.schools = (await API.request("/api/schools/directory")).data || []; });
       if ([...DISTRICT, "principal"].includes(role)) await safe("usage", async () => { const r = await API.request("/api/apps-usage"); st.usage = r.data || []; st.usageScope = r.scope; });
+      // LTI-04: grade passback guidelines (district) and approvals (schools, with district oversight).
+      if ([...DISTRICT, "principal"].includes(role)) await safe("grades", async () => { st.grades = (await API.request("/api/lti/grade-approvals")).data; });
     }
     if (tab === "app_requests") {
       await safe("requests", async () => { st.requests = (await API.request("/api/app-requests")).data || []; });
@@ -163,6 +165,7 @@
           <label class="wide">Target link URL (where the tool opens; blank means the launch address)<input name="ltiTargetLinkUri" type="url"></label>
           <label class="wide">Deep Linking URL (optional: lets teachers add the tool's activities to assignments)<input name="ltiDeepLinkingUrl" type="url"></label>
           <label class="wide">Tool public key set (JWKS) URL (needed with Deep Linking or class lists)<input name="ltiJwksUrl" type="url"></label>
+          <label class="api-check wide"><input type="checkbox" name="ltiAssignmentGrades"> Grade passback (LTI Assignment and Grade Services). Needs the JWKS URL; schools approve it and teachers turn it on per activity.</label>
           <label class="api-check wide"><input type="checkbox" name="ltiNamesRoles"> Class lists (LTI Names and Role Provisioning). Needs the "Name, email and school" data setting; each teacher still chooses per course.</label>
           <p class="wide">A new LTI tool stays off until a different district administrator approves it. Changing its settings or student data needs approval again.</p></fieldset>
         <label class="wide">Description<textarea name="description" maxlength="2000" rows="2"></textarea></label>
@@ -178,7 +181,7 @@
         <dt>Issuer</dt><dd><code>${esc(location.origin)}</code></dd>
         <dt>Login (OIDC authorization) URL</dt><dd><code>${esc(location.origin)}/lti/authorize</code></dd>
         <dt>Public keys (JWKS)</dt><dd><code>${esc(location.origin)}/.well-known/jwks.json</code></dd>
-        ${a.integrationConfig?.namesRoles ? `<dt>Token URL (class lists)</dt><dd><code>${esc(location.origin)}/lti/token/${esc(ctx.API.actor?.districtId || "")}/${esc(a.id)}</code></dd>` : ""}
+        ${a.integrationConfig?.namesRoles || a.integrationConfig?.assignmentGrades ? `<dt>Token URL (class lists, grades)</dt><dd><code>${esc(location.origin)}/lti/token/${esc(ctx.API.actor?.districtId || "")}/${esc(a.id)}</code></dd>` : ""}
       </dl></details>
       ${isDistrict ? `<p>${a.registrationStatus !== "approved" ? `<button type="button" data-action="lti-approve" data-id="${esc(a.id)}">Approve this registration</button> ` : ""}${a.registrationStatus !== "revoked" ? `<button type="button" class="danger" data-action="lti-revoke" data-id="${esc(a.id)}">Turn off now</button>` : ""}</p>` : ""}</section>`;
   }
@@ -200,6 +203,25 @@
         <p><button type="button" class="danger" data-action="app-retire" data-id="${esc(a.id)}">Retire this app</button></p></section>
     </div></td></tr>`;
   }
+  function gradesCard(ctx, isDistrict) {
+    const { esc } = ctx, g = st.grades, p = g.policy;
+    const active = g.approvals.filter(x => !x.revokedAt), past = g.approvals.filter(x => x.revokedAt);
+    let html = `<div class="api-card"><h3>Grade passback from LTI tools</h3>`;
+    if (isDistrict) html += `<p class="api-muted">The district sets the guidelines; each school's principal approves tools for their school and is accountable for them. You can see every school and turn any approval off.</p>
+      <form data-form="grade-policy" class="api-inline-form">
+        <label class="api-check"><input type="checkbox" name="enabled"${p.enabled ? " checked" : ""}> Allow tools to send grades</label>
+        <label class="api-check"><input type="checkbox" name="teacherReviewRequired"${p.teacherReviewRequired ? " checked" : ""}> Teachers review each score before it counts</label>
+        <button type="submit">Save guidelines</button></form>`;
+    else html += `<p class="api-muted">${p.enabled ? `The district allows grade passback${p.teacherReviewRequired ? "; teachers review each score before it counts" : "; scores count without review, but never replace a grade a teacher entered"}. You approve which tools may send grades at your school.` : "The district hasn't turned grade passback on."}</p>`;
+    const row = x => `<tr><th scope="row">${esc(x.appName)}</th>${isDistrict ? `<td>${esc(x.schoolName)}</td>` : ""}<td>${esc(x.approvedBy)}, ${esc(String(x.approvedAt).slice(0, 10))}</td>
+      <td>${x.revokedAt ? `Turned off by ${esc(x.revokedBy)}${x.revokeReason ? `: ${esc(x.revokeReason)}` : ""}` : `${x.scores30d} score${x.scores30d === 1 ? "" : "s"} in 30 days`}</td>
+      <td>${x.revokedAt ? "" : `<button type="button" class="danger" data-action="grade-revoke" data-id="${esc(x.appId)}" data-school="${esc(x.schoolId)}" aria-label="Turn off grade passback for ${esc(x.appName)}${isDistrict ? ` at ${esc(x.schoolName)}` : ""}">Turn off</button>`}</td></tr>`;
+    html += active.length || past.length ? `<div class="api-scroll"><table class="api-table"><caption class="sr-only">Grade passback approvals</caption><thead><tr><th scope="col">Tool</th>${isDistrict ? `<th scope="col">School</th>` : ""}<th scope="col">Approved</th><th scope="col">Activity</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>${[...active, ...past].map(row).join("")}</tbody></table></div>` : `<p>No school has approved a tool for grade passback.</p>`;
+    const open = g.candidates.filter(c => !active.some(a => a.appId === c.appId));
+    if (g.canApprove && p.enabled && open.length) html += `<p>${open.map(c => `<button type="button" data-action="grade-approve" data-id="${esc(c.appId)}" aria-label="Approve grade passback for ${esc(c.appName)} at your school">Approve grade passback for ${esc(c.appName)} at your school</button>`).join(" ")}</p>`;
+    return html + `</div>`;
+  }
   function renderApps(ctx) {
     const { API, esc } = ctx, role = API.actor?.role, isDistrict = DISTRICT.includes(role);
     const young = role === "pupil" && st.learner?.youngLearner;
@@ -213,6 +235,7 @@
     html += `<div class="api-card"><h3>District app catalog</h3><form data-form="app-search" class="api-search" role="search"><label>Search apps<input name="q" type="search" value="${esc(st.q)}" placeholder="Name, vendor or category"></label><button type="submit">Search</button></form>
       <div class="api-scroll"><table class="api-table"><caption class="sr-only">District app catalog</caption><thead><tr><th scope="col">App</th><th scope="col">Privacy</th><th scope="col">License</th><th scope="col">Available to</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>
       ${st.catalogPage?.nextOffset ? `<button type="button" data-action="apps-more">Show more apps</button>` : ""}</div>`;
+    if (st.grades && (isDistrict || role === "principal")) html += gradesCard(ctx, isDistrict);
     if (st.usage.length && (isDistrict || role === "principal")) html += `<div class="api-card"><h3>License usage${st.usageScope === "my_school" ? " at your school" : ""}</h3><div class="api-scroll"><table class="api-table"><caption class="sr-only">License usage</caption><thead><tr><th scope="col">App</th><th scope="col">Seats used</th><th scope="col">Seats licensed</th><th scope="col">Launches (30 days)</th><th scope="col">Next renewal</th></tr></thead><tbody>${st.usage.map(u => `<tr><th scope="row">${esc(u.name)}</th><td>${u.seatsUsed.toLocaleString()}</td><td>${u.licensed ? (u.seatsLicensed === null ? "Unlimited" : u.seatsLicensed.toLocaleString()) : "Not licensed"}</td><td>${u.launches30d.toLocaleString()}</td><td>${esc(u.nextRenewal || "—")}</td></tr>`).join("")}</tbody></table></div></div>`;
     return html;
   }
@@ -254,7 +277,7 @@
       if (form.elements.ownerSchoolId) body.ownerSchoolId = v.ownerSchoolId || null;
       if (v.integrationType === "lti13") body.integrationConfig = { clientId: v.ltiClientId, deploymentId: v.ltiDeploymentId, loginUrl: v.ltiLoginUrl, redirectUris: [v.ltiRedirectUri], targetLinkUri: v.ltiTargetLinkUri || v.launchUrl,
         ...(v.ltiDeepLinkingUrl ? { deepLinkingUrl: v.ltiDeepLinkingUrl } : {}), ...(v.ltiJwksUrl ? { jwksUrl: v.ltiJwksUrl } : {}),
-        ...(form.elements.ltiNamesRoles?.checked ? { namesRoles: true } : {}) };
+        ...(form.elements.ltiNamesRoles?.checked ? { namesRoles: true } : {}), ...(form.elements.ltiAssignmentGrades?.checked ? { assignmentGrades: true } : {}) };
       const r = await post(ctx, "/api/apps", body); st.open = r.data.id;
       ctx.notify(`${r.data.name} was added. Next: add a license and choose who can use it.`); await ctx.openTab("apps"); return true;
     }
@@ -273,6 +296,10 @@
       const body = { reason: v.reason }; if (v.appId) body.appId = v.appId; else { body.name = v.name; if (v.vendor) body.vendor = v.vendor; if (v.url) body.url = v.url; }
       if (!v.appId && !String(v.name || "").trim()) throw new Error("Choose an app from the catalog or enter the name of a new app.");
       await post(ctx, "/api/app-requests", body); ctx.notify("Request sent to the district."); await ctx.openTab("app_requests"); return true;
+    }
+    if (kind === "grade-policy") {
+      await post(ctx, "/api/lti/grade-policy", { enabled: form.elements.enabled.checked, teacherReviewRequired: form.elements.teacherReviewRequired.checked }, "PUT");
+      ctx.notify("Grade passback guidelines saved."); await ctx.openTab("apps"); return true;
     }
     if (kind === "district-settings") {
       const body = {}; for (const k of ["maxSchools", "maxStudents", "maxUsers", "maxActiveWebhooks", "maxApps"]) body[k] = v[k] === "" ? null : Number(v[k]);
@@ -293,6 +320,16 @@
     }
     if (a === "app-manage") { st.open = st.open === id ? null : id; st.appUsage = null; ctx.render("apps"); return true; }
     if (a === "apps-more") { await loadCatalog(ctx, st.catalogPage?.nextOffset || 0); ctx.render("apps"); return true; }
+    if (a === "grade-approve") {
+      if (!confirm("Approve this tool to send grades at your school? You are accountable for it; teachers still turn it on per activity.")) return true;
+      await post(ctx, "/api/lti/grade-approvals", { appId: id, approved: true }, "PUT"); ctx.notify("Approved for your school."); await ctx.openTab("apps"); return true;
+    }
+    if (a === "grade-revoke") {
+      const reason = prompt("Why is grade passback being turned off? (shown to the school)", "");
+      if (reason === null) return true;
+      await post(ctx, "/api/lti/grade-approvals", { appId: id, schoolId: b.dataset.school, approved: false, reason: reason.trim() || null }, "PUT");
+      ctx.notify("Grade passback turned off."); await ctx.openTab("apps"); return true;
+    }
     if (a === "lti-approve") { await post(ctx, `/api/apps/${id}/lti/approve`, {}); ctx.notify("LTI registration approved."); await ctx.openTab("apps"); return true; }
     if (a === "lti-revoke") { if (!confirm("Turn off this LTI tool? Launches in progress stop immediately.")) return true; await post(ctx, `/api/apps/${id}/lti/revoke`, {}); ctx.notify("LTI tool turned off."); await ctx.openTab("apps"); return true; }
     if (a === "app-usage") { st.appUsage = (await ctx.API.request(`/api/apps/${id}/usage`)).data; ctx.render("apps"); return true; }
