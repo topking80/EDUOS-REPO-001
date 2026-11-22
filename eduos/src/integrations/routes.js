@@ -18,6 +18,7 @@ import * as edfi from "./edfi.js";
 import * as powerschool from "./powerschool.js";
 import * as canvas from "./canvas.js";
 import { registerCanvasOAuthRoutes, getCanvasAccessToken, revokeCanvasToken } from "./canvas-oauth.js";
+import { fetchCanvasClasses, listAccounts as listCanvasAccounts } from "./canvas.js";
 import { planImport, loadPlanInputs, applyPlan, planRosters, loadRosterInputs, applyRosters } from "./sync.js";
 
 const MANAGERS = ["superintendent", "it_admin"];
@@ -125,8 +126,6 @@ export function registerIntegrationRoutes(app) {
       const f = readFields(req.body || {}, false);
       if (f.kind === "canvas") {
         if (!validCanvasScopes(f.scope)) throw new HttpError(400, "invalid_connector", { field: "scope" });
-        // SIS-04 class rosters are a SIS import; Canvas course data waits for CANVAS-API-02.
-        if (f.data_scope?.includes("class_rosters")) throw new HttpError(400, "invalid_connector", { field: "classRosters" });
         let origin;
         try {
           const u = new URL(f.base_url);
@@ -172,7 +171,6 @@ export function registerIntegrationRoutes(app) {
         if (cur.kind === "canvas") {
           if ("scope" in f && !validCanvasScopes(f.scope))
             throw new HttpError(400, "invalid_connector", { field: "scope" });
-          if (f.data_scope?.includes("class_rosters")) throw new HttpError(400, "invalid_connector", { field: "classRosters" });
           const baseUrl = f.base_url ?? cur.base_url, tokenUrl = f.token_url ?? cur.token_url;
           let origin;
           try {
@@ -349,7 +347,8 @@ export function registerIntegrationRoutes(app) {
         const connector=await one(c,"SELECT id,kind,status,config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE",[req.params.id,a.districtId]);
         if(!connector)throw new HttpError(404,"connector_not_found");
         if(connector.status!=="active")throw new HttpError(409,"connector_not_approved");
-        if(connector.kind==="canvas")throw new HttpError(409,"canvas_sync_not_enabled",{next:"CANVAS-API-02"});
+        // Canvas syncs run by hand for now: scheduled runs would need the OAuth grant outside a user session.
+        if(connector.kind==="canvas")throw new HttpError(409,"canvas_scheduled_sync_not_supported");
         const saved=await one(c,
           `INSERT INTO integration_sync_schedules(district_id,connector_id,interval_minutes,created_by,updated_by,config_version,incremental,full_sync_hours)
            VALUES($1,$2,$3,$4,$4,$5,$6,$7)
@@ -487,11 +486,49 @@ export function registerIntegrationRoutes(app) {
       const error = `${code}${detail ? `: ${detail}` : ""}`.slice(0, 300);
       await withTenantTransaction(a, async (c) => { await record(c, "failed", { error }); await audit(c, req, `sync_${mode}`, "integration_connector", conn.id, error, "failure"); });
     };
+    // CANVAS-API-02: Canvas courses and enrollments become teacher rosters.
+    // No student is created or changed; nothing is written to Canvas.
+    const canvasSync = async () => {
+      if (!conn.data_scope?.includes("class_rosters")) throw new HttpError(409, "canvas_class_rosters_not_approved");
+      let fetched, accounts = null;
+      try {
+        const accessToken = await getCanvasAccessToken(a, conn.id);
+        const mapped = await withTenantTransaction(a, (c) => rows(c,
+          "SELECT external_id FROM integration_school_map WHERE connector_id=$1 AND district_id=$2 ORDER BY external_id", [conn.id, a.districtId]));
+        // A preview also lists Canvas sub-accounts, so a lead can map them to schools.
+        if (mode === "preview") accounts = await listCanvasAccounts({ baseUrl: conn.base_url, accessToken, options: urlOptions() });
+        fetched = await fetchCanvasClasses({ baseUrl: conn.base_url, accessToken, mappedAccountIds: mapped.map(m => m.external_id), options: urlOptions() });
+      } catch (e) {
+        const code = e instanceof IntegrationError ? e.code : e instanceof HttpError ? e.code : null;
+        if (!code) throw e;
+        await fail(code, e.detail);
+        return res.status(e instanceof HttpError ? e.status : 502).json({ error: code, detail: e.detail || null, runId });
+      }
+      const out = await withTenantTransaction(a, async (c) => {
+        await c.query("SELECT pg_advisory_xact_lock(hashtext('integration-sync'), hashtext($1))", [conn.id]);
+        const now = await one(c, "SELECT status, config_version FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [conn.id, a.districtId]);
+        if (!now || now.status !== "active" || now.config_version !== conn.config_version)
+          throw Object.assign(new Error("connector_changed_during_sync"), { code: "SYNC_STALE" });
+        const inputs = await loadRosterInputs(c, a.districtId, conn.id, fetched.classes, fetched.roster);
+        const rosters = planRosters(fetched.classes, fetched.roster, inputs);
+        if (mode === "apply") rosters.counts.applied = await applyRosters(c, a.districtId, conn.id, rosters);
+        const counts = { canvasStudents: fetched.roster.students.length, rosters: rosters.counts };
+        // Canvas never creates students, so "not imported" means no EduOS student has that SIS ID.
+        const rejected = [...fetched.roster.rejected, ...rosters.rejected.map(r => r.reason === "student_not_imported" ? { ...r, reason: "no_matching_eduos_student" } : r)].slice(0, 200);
+        await record(c, mode === "apply" ? "completed" : "previewed", { counts, rejected });
+        await audit(c, req, `sync_${mode}`, "integration_connector", conn.id,
+          `run=${runId}; canvas courses=${rosters.counts.sectionsFetched}; roster_add=${rosters.counts.toAdd}; roster_remove=${rosters.counts.toRemove}; teachers_unmatched=${rosters.counts.teachersUnmatched}`);
+        const externalSchools = accounts ? accounts.map(x => ({ externalId: x.externalId, name: x.name, schoolId: inputs.map.get(x.externalId) || null,
+          suggestedSchoolId: null, unmappedStudents: 0 })) : undefined;
+        return { runId, mode, counts, rejected, unmatchedTeachers: rosters.unmatchedTeachers, ...(externalSchools ? { externalSchools } : {}) };
+      });
+      return res.json({ data: out });
+    };
     try {
       conn = await withTenantTransaction(a, (c) => one(c, "SELECT * FROM integration_connectors WHERE id=$1 AND district_id=$2", [req.params.id, a.districtId]));
       if (!conn) throw new HttpError(404, "connector_not_found");
       if (conn.status !== "active") throw new HttpError(409, "connector_not_approved");
-      if (conn.kind === "canvas") throw new HttpError(409, "canvas_sync_not_enabled", { next: "CANVAS-API-02" });
+      if (conn.kind === "canvas") return await canvasSync();
       let roster;
       try {
         const [secret, mapped] = await Promise.all([
