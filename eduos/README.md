@@ -123,7 +123,9 @@
 - **A Home screen for every role.** Superintendent, IT admin, principal,
   teacher, student (a simplified version for grades K–2) and guardian each get
   a Home with "What needs attention". The layout is responsive, and axe-core
-  WCAG 2.1 AA scans pass with 0 violations.
+  WCAG 2.1 AA scans passed with 0 violations at the time. What is checked on
+  every change now, and what still needs manual review, is in
+  [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md).
 
 Documents for this release:
 - What changed, measured and verified: `FIX-REPORT-32.2.0.md`

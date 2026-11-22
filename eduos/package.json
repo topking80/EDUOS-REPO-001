@@ -24,6 +24,8 @@
     "arrival:escalations": "node src/arrival-escalation-dispatch.js",
     "webhooks:dispatch": "node src/webhook-dispatch.js",
     "sis:sync": "node src/integrations/scheduler-cli.js",
+    "slo:report": "node src/slo-report.js",
+    "slo:rules": "node scripts/generate-slo-rules.mjs",
     "release:preflight": "node scripts/production-preflight.js",
     "test:staff": "node --test test/staff-management-36.9.test.js test/staff-management-ui-37.1.test.js test/staff-daily-workspace-36.8.test.js"
   },

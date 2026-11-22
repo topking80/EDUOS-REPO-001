@@ -3,7 +3,7 @@
 // tokens are encrypted before persistence and never returned to the browser.
 import crypto from "node:crypto";
 import rateLimit from "express-rate-limit";
-import { parse, serialize } from "../cookies.js";
+import { getCookie, serialize } from "../cookies.js";
 import { config } from "../config.js";
 import { requireSession, requireCsrf } from "../auth.js";
 import { withTenantTransaction } from "../db.js";
@@ -223,8 +223,7 @@ export function registerCanvasOAuthRoutes(app) {
       const consumed = await withTenantTransaction(req.actor, c => one(c,
         "UPDATE integration_canvas_oauth_states SET consumed_at=now() WHERE state_hash=$1 AND district_id=$2 AND consumed_at IS NULL AND expires_at>now() RETURNING id,connector_id,user_id,config_version,redirect_uri,expires_at",
         [hash(state), req.actor.districtId]));
-      const cookies = parse(req.headers.cookie || "");
-      const cookieValue = cookies[stateCookie(state)];
+      const cookieValue = getCookie(req.headers.cookie, stateCookie(state));
       const cookieMatches = typeof cookieValue === "string" && cookieValue.length === state.length &&
         crypto.timingSafeEqual(Buffer.from(cookieValue), Buffer.from(state));
       if (!consumed || new Date(consumed.expires_at).getTime() <= Date.now() ||
