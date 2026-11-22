@@ -192,7 +192,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
             Expanded(
               child: ListView(padding: const EdgeInsets.all(16), children: [
                 Text(t.subject, style: Theme.of(context).textTheme.titleLarge),
-                Text('${t.kind == 'family' ? 'About ${t.studentName ?? ''} · ' : 'Staff · '}with $others', style: Theme.of(context).textTheme.bodySmall),
+                Text('${t.kind == 'family' ? 'About ${t.studentName ?? ''} · ' : t.kind == 'network' ? 'Colleagues · ' : 'Staff · '}with $others', style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 12),
                 for (final m in t.messages) _Bubble(m, mine: m.authorId == meId, onReport: () => _report(m)),
               ]),
