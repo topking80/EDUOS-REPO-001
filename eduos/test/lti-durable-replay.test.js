@@ -30,7 +30,7 @@ test("durable LTI replay helper fails closed on malformed identifiers and expiri
 });
 
 test("migration protects launch replay ledger behind a tenant-checked security-definer function", async () => {
-  const sql = await read("db/084_lti_durable_replay.sql");
+  const sql = await read("db/094_lti_durable_replay.sql");
   assert.match(sql, /PRIMARY KEY \(district_id, launch_id\)/);
   assert.match(sql, /current_setting\('app\.district_id'/);
   assert.match(sql, /ON CONFLICT \(district_id, launch_id\) DO UPDATE/);

@@ -1,4 +1,4 @@
--- 086: district-controlled approval and emergency revocation for LTI registrations.
+-- 095 (LTI-01): district-controlled approval and emergency revocation for LTI registrations.
 -- Every LTI registration starts pending. Any change to its trust-boundary
 -- configuration invalidates approval inside PostgreSQL, not just in the API.
 ALTER TABLE apps

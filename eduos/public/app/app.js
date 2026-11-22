@@ -117,17 +117,17 @@ function applyBranding(b) {
 
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
-  pupil: [["home", "Home", "home"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
-  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"]],
-  parent: [["children", "Children", "child"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  pupil: [["home", "Home", "home"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
+  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"]],
+  parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["messages", "Messages", "chat"]],
-  vice_principal: [["operations", "Operations", "grid"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["messages", "Messages", "chat"]],
+  vice_principal: [["operations", "Operations", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["messages", "Messages", "chat"]],
   counselor: [["guidance", "Counseling", "heart"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
-  principal: [["overview", "School", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
-  superintendent: [["overview", "District", "grid"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
+  principal: [["overview", "School", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  superintendent: [["overview", "District", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
   it_admin: [["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
@@ -156,14 +156,18 @@ function renderTabs() {
   const nav = document.getElementById("tabs");
   const cur = parentTab(state.tab);
   nav.replaceChildren(...tabsFor().map(([id, label, ic]) => h("a", { href: `#/${id}`, "aria-current": cur === id ? "page" : false }, icon(ic), h("span", {}, label))));
+  // When the bar scrolls (many tabs on a narrow screen), keep the current tab in view.
+  nav.querySelector('[aria-current="page"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
 }
 
 const VIEWS = {};
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
+  if (tab === "history") return "history";
+  if (tab === "capsule") return "capsules";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
   if (tab === "staffing") return "staffing";
@@ -673,6 +677,388 @@ async function openSession(id) {
 }
 
 // ---------------- family ----------------
+async function familyContributionsCard(k) {
+  const list = h("div", { class: "stack", "aria-live": "polite" });
+  const title = h("input", { type: "text", maxlength: 180, required: true, placeholder: "A family memory title" });
+  const body = h("textarea", { maxlength: 12000, rows: 3, placeholder: "Share a memory or milestone (optional)" });
+  const localDateTime = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const occurredAt = h("input", { type: "datetime-local", required: true, value: localDateTime() });
+  const refresh = async () => {
+    const result = await safe(api.get(`/api/family/children/${k.id}/history-contributions`), { data: null });
+    if (!result?.data) {
+      list.replaceChildren(h("p", { class: "small muted" }, "Family memories are temporarily unavailable."));
+      return;
+    }
+    const items = result.data;
+    list.replaceChildren(...(items.length ? items.map(item => h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, item.title), chip(item.status)),
+      item.body ? h("p", {}, item.body) : null,
+      h("p", { class: "small muted" }, `Memory date: ${fmtDay(item.occurred_at)} · Submitted ${fmtTime(item.created_at)}`),
+      item.review_note ? h("p", { class: "small muted" }, `School note: ${item.review_note}`) : null,
+      item.status === "submitted" ? h("button", { class: "btn danger small", type: "button", onclick: async () => {
+        if (!await ask({ title: "Withdraw this family memory?", text: "This removes the pending submission from the school review queue.", confirm: "Withdraw", danger: true })) return;
+        try {
+          await api.req("PATCH", `/api/family/children/${k.id}/history-contributions/${item.id}`, { decision: "withdraw" });
+          toast("Family memory withdrawn.");
+          await refresh();
+        } catch (error) { toast(error.message || "Could not withdraw this contribution."); }
+      } }, "Withdraw pending memory") : null
+    )) : [h("p", { class: "small muted" }, "No family memories submitted yet.")]));
+  };
+  const form = h("form", { class: "stack", onsubmit: async event => {
+    event.preventDefault();
+    try {
+      await api.post(`/api/family/children/${k.id}/history-contributions`, {
+        title: title.value, body: body.value, occurredAt: new Date(occurredAt.value).toISOString()
+      });
+      toast("Family memory sent to the school for review.");
+      form.reset();
+      occurredAt.value = localDateTime();
+      await refresh();
+    } catch (error) { toast(error.message || "Could not submit this family memory."); }
+  } },
+    h("label", {}, h("span", {}, "Title"), title),
+    h("label", {}, h("span", {}, "Memory"), body),
+    h("label", {}, h("span", {}, "When did it happen?"), occurredAt),
+    h("p", { class: "small muted" }, "Submissions are visible to you and authorized school reviewers. Approved memories appear in the student's family history."),
+    h("button", { class: "btn primary", type: "submit" }, "Submit family memory"));
+  await refresh();
+  return h("section", { class: "card" }, h("details", {}, h("summary", {}, "Family memories"), form, list));
+}
+
+// ---------------- TC-03 teacher contributions ----------------
+const HISTORY_REASONS = [["needs_edits", "Needs edits"], ["inaccurate", "Not accurate"], ["privacy_concern", "Privacy concern"],
+  ["other_students_identifiable", "Other students can be identified"], ["not_appropriate", "Not appropriate"], ["duplicate", "Duplicate"],
+  ["not_relevant", "Not relevant"], ["family_preference", "Family preference"], ["other", "Other"]];
+const reasonText = code => (HISTORY_REASONS.find(r => r[0] === code) || [code, code])[1];
+const reasonSelect = (options = HISTORY_REASONS.filter(r => r[0] !== "family_preference")) =>
+  h("select", {}, h("option", { value: "" }, "Choose a reason"), ...options.map(([v, t]) => h("option", { value: v }, t)));
+const ITEM_STATUS = { draft: "Changes requested", submitted: "With the school", approved: "With the family", published: "In the student's history", restricted: "Not shared" };
+const DECISION_TEXT = { submitted: "Submitted", approved: "Approved by the school", changes_requested: "Changes requested",
+  rejected: "Rejected by the school", accepted: "Accepted by the family", declined: "Declined by the family" };
+const ENTRY_TYPES = [["project", "Project"], ["achievement", "Achievement"], ["coursework", "Coursework"], ["event", "Event"], ["reflection", "Reflection"]];
+const decisionList = decisions => decisions?.length ? h("ul", { class: "small muted" }, decisions.map(d => h("li", {},
+  `${DECISION_TEXT[d.decision] || d.decision}${d.reasonCode ? ` · ${reasonText(d.reasonCode)}` : ""}${d.note ? ` · “${d.note}”` : ""} · ${fmtTime(d.at)}`))) : null;
+const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+// Teacher: submit items for students on my roster; follow and fix them.
+VIEWS.contributions = async () => {
+  const [roster, mine] = await Promise.all([safe(api.get("/api/rosters?limit=500"), { data: [] }), api.get("/api/teacher/history-items")]);
+  const students = [...new Map((roster?.data || []).map(r => [r.student_id, r.student_name])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  const student = h("select", { required: true }, h("option", { value: "" }, "Choose a student"), ...students.map(([id, name]) => h("option", { value: id }, name)));
+  const type = h("select", {}, ...ENTRY_TYPES.map(([v, t]) => h("option", { value: v }, t)));
+  const title = h("input", { type: "text", maxlength: 180, required: true, placeholder: "What did the student do?" });
+  const body = h("textarea", { maxlength: 12000, rows: 3, placeholder: "Describe it for the family (optional)" });
+  const when = h("input", { type: "datetime-local", required: true, value: nowLocal() });
+  const form = h("form", { class: "stack", onsubmit: async event => {
+    event.preventDefault();
+    try {
+      await api.post(`/api/students/${student.value}/history/teacher-items`, { title: title.value, body: body.value, entryType: type.value, occurredAt: new Date(when.value).toISOString() });
+      toast("Sent to the school for review.");
+      go("contributions", { push: false });
+    } catch (error) { toast(error.message || "Could not submit this item."); }
+  } },
+    h("label", {}, h("span", {}, "Student"), student), h("label", {}, h("span", {}, "Kind"), type),
+    h("label", {}, h("span", {}, "Title"), title), h("label", {}, h("span", {}, "Details"), body),
+    h("label", {}, h("span", {}, "When did it happen?"), when),
+    h("p", { class: "small muted" }, "The school reviews it first, then the student's family decides whether to keep it in their history. Don't include other students."),
+    h("button", { class: "btn primary", type: "submit", disabled: !students.length }, "Submit for review"));
+  const items = (mine.data || []).map(item => {
+    let editor = null;
+    if (item.status === "draft") {
+      const t = h("input", { type: "text", maxlength: 180, required: true, value: item.title });
+      const b = h("textarea", { maxlength: 12000, rows: 3 }, item.body || "");
+      editor = h("form", { class: "stack", onsubmit: async event => {
+        event.preventDefault();
+        try {
+          await api.req("PATCH", `/api/teacher/history-items/${item.id}`, { title: t.value, body: b.value });
+          await api.post(`/api/teacher/history-items/${item.id}/submit`);
+          toast("Resubmitted to the school.");
+          go("contributions", { push: false });
+        } catch (error) { toast(error.message || "Could not resubmit this item."); }
+      } }, h("label", {}, h("span", {}, "Title"), t), h("label", {}, h("span", {}, "Details"), b),
+        h("button", { class: "btn primary", type: "submit" }, "Save and resubmit"));
+    }
+    return h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, ITEM_STATUS[item.status] || item.status)),
+      h("p", { class: "small muted" }, `${item.studentName} · ${fmtDay(item.occurredAt)}`),
+      item.body ? h("p", {}, item.body) : null, decisionList(item.decisions), editor);
+  });
+  return [h("h2", {}, "Student history items"),
+    h("section", { class: "card" }, h("details", { open: !(mine.data || []).length }, h("summary", {}, "Add an item"),
+      students.length ? form : empty("No students are on your roster yet."))),
+    ...(items.length ? items : [empty("You haven't submitted anything yet.")])];
+};
+
+// Reviewer: teacher items waiting for the school.
+async function teacherReviewSection() {
+  const res = await safe(api.get("/api/history-review"), null);
+  if (!res) return null;
+  const cards = (res.data || []).map(item => {
+    const reason = reasonSelect();
+    const note = h("textarea", { rows: 2, maxlength: 1000, placeholder: "Optional note for the teacher" });
+    const decide = async decision => {
+      if (decision !== "approve" && !reason.value) { toast("Choose a reason first."); reason.focus(); return; }
+      const titles = { approve: "Approve and send to the family?", request_changes: "Send back to the teacher for changes?", reject: "Reject this item?" };
+      if (!await ask({ title: titles[decision], text: "This decision is recorded in the student's history log.", confirm: "Confirm", danger: decision === "reject" })) return;
+      try {
+        await api.post(`/api/history-review/${item.id}`, { decision, ...(decision === "approve" ? {} : { reasonCode: reason.value }), note: note.value || undefined });
+        toast({ approve: "Approved; the family will decide.", request_changes: "Sent back to the teacher.", reject: "Rejected." }[decision]);
+        go("history", { push: false });
+      } catch (error) { toast(error.message || "Could not record this decision."); }
+    };
+    return h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, ITEM_STATUS.submitted)),
+      h("p", { class: "small muted" }, `${item.studentName} · from ${item.authorName || "a teacher"} · ${fmtDay(item.occurredAt)}`),
+      item.body ? h("p", {}, item.body) : null, decisionList(item.decisions),
+      h("label", {}, h("span", {}, "Reason (to send back or reject)"), reason),
+      h("label", {}, h("span", {}, "Note (optional)"), note),
+      h("div", { class: "btns" },
+        h("button", { class: "btn primary", type: "button", onclick: () => decide("approve") }, "Approve"),
+        h("button", { class: "btn", type: "button", onclick: () => decide("request_changes") }, "Ask for changes"),
+        h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
+  });
+  return [h("h3", {}, "Teacher contributions"), ...(cards.length ? cards : [h("p", { class: "small muted" }, "No teacher items are waiting for review.")])];
+}
+
+// Family: teacher items the school approved, waiting for our decision.
+async function teacherItemsCard(k) {
+  const res = await safe(api.get(`/api/family/children/${k.id}/history-items/pending`), null);
+  if (!res) return null;
+  const items = res.data || [];
+  const cards = items.map(item => {
+    const note = h("textarea", { rows: 2, maxlength: 1000, placeholder: "Optional note for the school" });
+    const decide = async decision => {
+      try {
+        await api.post(`/api/family/children/${k.id}/history-items/${item.id}`, { decision, note: note.value || undefined });
+        toast(decision === "accept" ? `Added to ${k.display_name}'s history.` : "Declined; it won't be shared.");
+        go("children", { push: false });
+      } catch (error) { toast(error.message || "Could not record your decision."); }
+    };
+    return h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, item.title)),
+      h("p", { class: "small muted" }, `From ${item.authorName || "a teacher"} · ${fmtDay(item.occurredAt)}`),
+      item.body ? h("p", {}, item.body) : null,
+      h("label", {}, h("span", {}, "Note (optional)"), note),
+      h("div", { class: "btns" },
+        h("button", { class: "btn primary", type: "button", onclick: () => decide("accept") }, "Keep in history"),
+        h("button", { class: "btn", type: "button", onclick: () => decide("decline") }, "Decline")));
+  });
+  return h("section", { class: "card" }, h("details", { open: items.length > 0 },
+    h("summary", {}, items.length ? `From teachers (${items.length} to decide)` : "From teachers"),
+    h("p", { class: "small muted" }, "Teachers' items appear here after the school approves them. Nothing is added to the history until you keep it."),
+    ...(cards.length ? cards : [h("p", { class: "small muted" }, "Nothing waiting for you.")])));
+}
+
+// ---------------- TC-04 portfolio: a student's accepted history ----------------
+const PORTFOLIO_KIND = { official_record: "School record", family_memory: "Family memory", student_portfolio: "My work", teacher_artifact: "From a teacher", system_milestone: "Milestone" };
+const PORTFOLIO_TYPE = { achievement: "Achievement", project: "Project", coursework: "Coursework", reflection: "Reflection", event: "Event",
+  portfolio_artifact: "Portfolio piece", educator_note: "Teacher note", system_milestone: "Milestone" };
+VIEWS.portfolio = async () => {
+  const role = state.me.role;
+  if (role === "parent" && !state.learnerId) {
+    const kids = (await api.get("/api/home")).data.children || [];
+    if (!kids.length) return empty("No children are linked to your account yet.");
+    state.learnerId = kids[0].id;
+  }
+  const filters = state.portfolioFilters ||= {};
+  const query = extra => {
+    const p = new URLSearchParams();
+    if (role !== "pupil") p.set("studentId", state.learnerId);
+    for (const [k, v] of Object.entries({ ...filters, ...extra })) if (v) p.set(k, v);
+    return `/api/history/portfolio?${p}`;
+  };
+  const first = (await api.get(query())).data;
+  const f = first.facets;
+  const pick = (key, label, values, names) => {
+    const sel = h("select", { "aria-label": label, onchange: () => { filters[key] = sel.value || undefined; go("portfolio", { push: false }); } },
+      h("option", { value: "" }, label), ...values.map(v => h("option", { value: v, ...(filters[key] === v ? { selected: true } : {}) }, names?.[v] || v)));
+    return sel;
+  };
+  const search = h("input", { type: "search", maxlength: 100, placeholder: "Search titles and notes", "aria-label": "Search history", value: filters.q || "" });
+  const controls = h("form", { class: "btns", role: "search", onsubmit: event => { event.preventDefault(); filters.q = search.value.trim() || undefined; go("portfolio", { push: false }); } },
+    pick("year", "All school years", f.years), pick("kind", "All kinds", f.kinds, PORTFOLIO_KIND), pick("type", "All types", f.types, PORTFOLIO_TYPE),
+    search, h("button", { class: "btn", type: "submit" }, "Search"),
+    Object.values(filters).some(Boolean) ? h("button", { class: "btn", type: "button", onclick: () => { state.portfolioFilters = {}; go("portfolio", { push: false }); } }, "Clear") : null);
+
+  const list = h("div", { class: "stack" });
+  const sections = new Map();
+  const card = item => h("li", { class: "card" },
+    h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, PORTFOLIO_TYPE[item.entryType] || item.entryType)),
+    h("p", { class: "small muted" }, `${fmtDay(item.occurredAt)} · ${PORTFOLIO_KIND[item.kind] || item.kind}${item.authorName ? ` · ${item.authorName}` : ""}`),
+    item.body ? h("p", {}, item.body) : null);
+  const add = items => {
+    for (const item of items) {
+      let ul = sections.get(item.schoolYear);
+      if (!ul) {
+        const id = `year-${sections.size}`;
+        ul = h("ul", { class: "stack", "aria-labelledby": id });
+        sections.set(item.schoolYear, ul);
+        list.append(h("section", {}, h("h3", { id }, `School year ${item.schoolYear}`), ul));
+      }
+      ul.append(card(item));
+    }
+  };
+  add(first.items);
+  let cursor = first.nextCursor;
+  const more = h("button", { class: "btn block", type: "button", onclick: async () => {
+    more.disabled = true;
+    try {
+      const next = (await api.get(query({ cursor }))).data;
+      add(next.items); cursor = next.nextCursor;
+      if (!cursor) more.remove(); else more.disabled = false;
+    } catch (error) { more.disabled = false; toast(error.message || "Could not load more."); }
+  } }, "Show more");
+  const filtered = Object.values(filters).some(Boolean);
+  return [h("h2", {}, role === "pupil" ? "My history" : `${first.student.name}'s history`),
+    h("p", { class: "small muted" }, `${f.total} item${f.total === 1 ? "" : "s"} in the history. Only items that were accepted into it appear here.`),
+    f.total ? controls : null,
+    first.items.length ? list : empty(filtered ? "Nothing matches these filters." : "Nothing in the history yet."),
+    cursor ? more : null];
+};
+// ---------------- Time Capsules ----------------
+const MILESTONE_TEXT = { grade_5_completion: "Finishing grade 5", grade_8_completion: "Finishing grade 8", graduation: "Graduation", age_18: "Turning 18" };
+const CAPSULE_STATUS = { draft: "Draft", sealed: "Sealed, waiting for the milestone", scheduled: "Sealed", released: "Released", cancelled: "Cancelled" };
+const CONSENT_TEXT = { pending: "Hasn't answered", approved: "Accepted", denied: "Declined", withdrawn: "Withdrew" };
+const opensText = c => c.releaseKind === "milestone" ? `Opens at: ${MILESTONE_TEXT[c.milestone] || c.milestone}` : `Opens ${fmtDay(c.releaseAt)}`;
+VIEWS.capsules = async () => {
+  const role = state.me.role;
+  const [mine, invites, milestones, home] = await Promise.all([api.get("/api/history/capsules"), safe(api.get("/api/history/capsule-invitations"), { data: [] }),
+    safe(api.get("/api/history/capsule-milestones"), { data: [] }), role === "parent" ? safe(api.get("/api/home"), { data: {} }) : null]);
+  const out = [h("h2", {}, "Time Capsules")];
+  const answer = async (capsuleId, decision) => {
+    try { await api.post(`/api/history/capsule-invitations/${capsuleId}`, { decision }); toast({ approved: "Accepted.", denied: "Declined.", withdrawn: "Withdrawn." }[decision]); go("capsules", { push: false }); }
+    catch (error) { toast(error.message || "Could not save your answer."); }
+  };
+  const pendingInvites = (invites.data || []).filter(i => i.status !== "released" || i.consent !== "approved");
+  if (pendingInvites.length) out.push(h("section", { class: "card" }, h("h3", {}, "Capsules for you"),
+    h("p", { class: "small muted" }, "Someone has made a Time Capsule you can receive. You'll see what's inside only once it opens, and only if you accept."),
+    ...pendingInvites.map(i => h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", { class: "grow" }, `From ${i.from}`), h("span", { class: "chip" }, CONSENT_TEXT[i.consent] || i.consent)),
+      h("p", { class: "small muted" }, `For ${i.studentName} · ${opensText(i)}`),
+      i.status === "released" ? h("p", { class: "small muted" }, "This capsule has opened; you withdrew, so it's closed to you.")
+        : h("div", { class: "btns" },
+          i.consent !== "approved" ? h("button", { class: "btn primary", type: "button", onclick: () => answer(i.capsuleId, "approved") }, "Accept") : null,
+          i.consent === "pending" ? h("button", { class: "btn", type: "button", onclick: () => answer(i.capsuleId, "denied") }, "Decline") : null,
+          i.consent === "approved" ? h("button", { class: "btn", type: "button", onclick: () => answer(i.capsuleId, "withdrawn") }, "Withdraw") : null)))));
+  if ((milestones.data || []).length) out.push(h("section", { class: "card" }, h("h3", {}, "Milestones to confirm"),
+    h("p", { class: "small muted" }, "These capsules open when the student reaches the milestone. You see only the milestone, never what's inside."),
+    ...milestones.data.map(m => h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", { class: "grow" }, `${m.studentName}: ${MILESTONE_TEXT[m.milestone] || m.milestone}`)),
+      h("p", { class: "small muted" }, `From ${m.from} · ${m.accepted ? `${m.accepted} recipient${m.accepted === 1 ? "" : "s"} accepted` : "No recipient has accepted yet"}`),
+      h("button", { class: "btn primary", type: "button", disabled: !m.accepted, onclick: async () => {
+        if (!await ask({ title: `Confirm ${MILESTONE_TEXT[m.milestone] || m.milestone} for ${m.studentName}?`, text: "The capsule opens now for recipients who accepted. This is recorded.", confirm: "Confirm and open" })) return;
+        try { await api.post(`/api/history/capsules/${m.capsuleId}/release`); toast("Released."); go("capsules", { push: false }); }
+        catch (error) { toast(error.message || "Could not release this capsule."); }
+      } }, "Confirm milestone")))));
+  const capsules = mine.data || [];
+  const card = c => h("article", { class: "card" },
+    h("div", { class: "row" }, h("strong", { class: "grow" }, c.title), h("span", { class: "chip" }, CAPSULE_STATUS[c.status] || c.status)),
+    h("p", { class: "small muted" }, `For ${c.studentName} · ${opensText(c)}`),
+    h("button", { class: "btn", type: "button", onclick: () => openView("capsule", { capsuleId: c.id }) }, c.mine ? "Manage" : "Open"));
+  const received = capsules.filter(c => !c.mine);
+  if (received.length) out.push(h("section", { class: "card" }, h("h3", {}, "Opened for you"), ...received.map(card)));
+  const kids = home?.data?.children || [];
+  if (kids.length) {
+    const student = h("select", { required: true }, ...kids.map(k => h("option", { value: k.id, ...(state.learnerId === k.id ? { selected: true } : {}) }, k.display_name)));
+    const title = h("input", { type: "text", maxlength: 180, required: true, placeholder: "For Alice at 18" });
+    const message = h("textarea", { maxlength: 12000, rows: 3, placeholder: "A message for when it opens (optional)" });
+    const kind = h("select", {}, h("option", { value: "scheduled" }, "On a date"), h("option", { value: "milestone" }, "At a milestone"));
+    const date = h("input", { type: "date", required: true, min: new Date(Date.now() + 86400000).toISOString().slice(0, 10) });
+    const milestone = h("select", {}, ...Object.entries(MILESTONE_TEXT).map(([v, t]) => h("option", { value: v }, t)));
+    const dateRow = h("label", {}, h("span", {}, "Open on"), date), msRow = h("label", { hidden: true }, h("span", {}, "Milestone"), milestone);
+    kind.addEventListener("change", () => { const ms = kind.value === "milestone"; msRow.hidden = !ms; dateRow.hidden = ms; date.required = !ms; });
+    const form = h("form", { class: "stack", onsubmit: async event => {
+      event.preventDefault();
+      const ms = kind.value === "milestone";
+      try {
+        const r = await api.post("/api/history/capsules", { studentId: student.value, title: title.value, message: message.value, releaseKind: kind.value,
+          ...(ms ? { milestone: milestone.value } : { releaseAt: new Date(`${date.value}T09:00:00`).toISOString() }),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+        toast("Capsule started. Add memories and recipients, then seal it.");
+        openView("capsule", { capsuleId: r.data.id });
+      } catch (error) { toast(error.message || "Could not create the capsule."); }
+    } },
+      h("label", {}, h("span", {}, "For"), student), h("label", {}, h("span", {}, "Title"), title), h("label", {}, h("span", {}, "Message"), message),
+      h("label", {}, h("span", {}, "Opens"), kind), dateRow, msRow,
+      h("button", { class: "btn primary", type: "submit" }, "Start a capsule"));
+    out.push(h("section", { class: "card" }, h("details", {}, h("summary", {}, "Make a Time Capsule"), form)));
+  }
+  const made = capsules.filter(c => c.mine);
+  out.push(h("section", { class: "card" }, h("h3", {}, "Capsules you made"), ...(made.length ? made.map(card) : [h("p", { class: "small muted" }, "None yet.")])));
+  return out;
+};
+VIEWS.capsule = async () => {
+  if (!state.capsuleId) return empty("Choose a capsule from Time Capsules.");
+  const c = (await api.get(`/api/history/capsules/${state.capsuleId}`)).data;
+  const reload = () => go("capsule", { push: false });
+  const act = async (path, body, done) => { try { await api.post(path, body); toast(done); reload(); } catch (error) { toast(error.message || "That didn't work."); } };
+  const items = c.items.length ? h("ol", { class: "stack" }, c.items.map(i => h("li", { class: "card" },
+    i.withheld ? h("p", { class: "small muted" }, "This item was withdrawn from the history and is no longer shown.")
+      : [h("strong", {}, i.title), h("p", { class: "small muted" }, fmtDay(i.occurredAt)), i.body ? h("p", {}, i.body) : null])))
+    : h("p", { class: "small muted" }, "Nothing in it yet.");
+  const out = [h("div", { class: "row" }, h("h2", { class: "grow" }, c.title), h("span", { class: "chip" }, CAPSULE_STATUS[c.status] || c.status)),
+    h("p", { class: "small muted" }, `For ${c.studentName} · ${opensText(c)}`), c.message ? h("p", {}, c.message) : null, h("h3", {}, "Inside"), items];
+  if (c.mine && c.status === "draft") {
+    const [cands, opts] = await Promise.all([api.get(`/api/history/capsules/${c.id}/candidates`), api.get(`/api/history/capsule-recipient-options?studentId=${c.studentId}`)]);
+    const entry = h("select", { "aria-label": "History item to add" }, ...cands.data.map(e => h("option", { value: e.id }, `${e.title} (${fmtDay(e.occurredAt)})`)));
+    const named = new Set((c.recipients || []).map(r => r.userId));
+    const who = h("select", { "aria-label": "Recipient" }, ...opts.data.filter(o => !named.has(o.userId)).map(o => h("option", { value: `${o.userId}|${o.type}` }, `${o.name} (${o.type})`)));
+    out.push(h("section", { class: "card" }, h("h3", {}, "Add a memory"),
+      cands.data.length ? h("div", { class: "btns" }, entry, h("button", { class: "btn", type: "button", onclick: () => act(`/api/history/capsules/${c.id}/items`, { entryId: entry.value }, "Added.") }, "Add"))
+        : h("p", { class: "small muted" }, "No other history items to add. Items appear here once they're in the student's history.")),
+      h("section", { class: "card" }, h("h3", {}, "Who receives it"),
+        who.options.length ? h("div", { class: "btns" }, who, h("button", { class: "btn", type: "button", onclick: () => { const [userId, type] = who.value.split("|"); act(`/api/history/capsules/${c.id}/recipients`, { userId, type }, "Recipient added. They'll be asked to accept."); } }, "Add"))
+          : null));
+  }
+  if (c.mine) {
+    out.push(h("section", { class: "card" }, h("h3", {}, "Recipients"), (c.recipients || []).length
+      ? h("ul", {}, c.recipients.map(r => h("li", {}, `${r.name} (${r.type}): ${CONSENT_TEXT[r.consent] || r.consent}`)))
+      : h("p", { class: "small muted" }, "No one yet. Only people who accept will be able to open it.")));
+    const btns = [];
+    if (c.status === "draft") btns.push(h("button", { class: "btn primary", type: "button", onclick: async () => {
+      if (!await ask({ title: "Seal this capsule?", text: "After sealing you can't change its contents, message or recipients.", confirm: "Seal" })) return;
+      act(`/api/history/capsules/${c.id}/seal`, undefined, "Sealed.");
+    } }, "Seal"));
+    if (["draft", "sealed", "scheduled"].includes(c.status)) btns.push(h("button", { class: "btn danger", type: "button", onclick: async () => {
+      if (!await ask({ title: "Cancel this capsule?", text: "It will never open. This can't be undone.", confirm: "Cancel capsule", danger: true })) return;
+      act(`/api/history/capsules/${c.id}/cancel`, undefined, "Cancelled.");
+    } }, "Cancel capsule"));
+    if (btns.length) out.push(h("div", { class: "btns" }, btns));
+  }
+  out.push(h("button", { class: "btn", type: "button", onclick: () => go("capsules") }, "Back to Time Capsules"));
+  return out;
+};
+VIEWS.history = async () => {
+  const response = await safe(api.get("/api/history-contributions"), null);
+  const items = response?.data || [];
+  const content = items.length ? items.map(item => {
+    const note = h("textarea", { rows: 2, maxlength: 1000, placeholder: "Optional note for the family" });
+    const decide = async decision => {
+      const action = decision === "approve" ? "Approve this family memory?" : "Reject this family memory?";
+      if (!await ask({ title: action, text: "This decision is recorded in the student history audit trail.", confirm: decision === "approve" ? "Approve" : "Reject", danger: decision === "reject" })) return;
+      try {
+        await api.req("PATCH", `/api/students/${item.student_id}/history-contributions/${item.id}`, { decision, note: note.value });
+        toast(decision === "approve" ? "Family memory approved." : "Family memory rejected.");
+        go("history", { push: false });
+      } catch (error) { toast(error.message || "Could not review this family memory."); }
+    };
+    return h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, item.title), chip("submitted")),
+      h("p", { class: "small muted" }, `${item.student_name} · from ${item.guardian_name} · ${fmtDay(item.occurred_at)} · submitted ${fmtTime(item.created_at)}`),
+      item.body ? h("p", {}, item.body) : h("p", { class: "small muted" }, "No additional memory text."),
+      h("label", {}, h("span", {}, "Review note (optional)"), note),
+      h("div", { class: "btns" },
+        h("button", { class: "btn primary", type: "button", onclick: () => decide("approve") }, "Approve"),
+        h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
+  }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
+  const teacher = await teacherReviewSection();
+  return [h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
+    h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
+    h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),
+    ...(response ? [h("h3", {}, "Family memories"), ...content] : []),
+    ...(teacher || [])];
+};
 VIEWS.children = async () => {
   const [home, bus] = await Promise.all([api.get("/api/home"), safe(api.get("/api/transport/today"))]);
   const kids = home.data.children || [];
@@ -682,11 +1068,16 @@ VIEWS.children = async () => {
     const summary = await safe(api.get(`/api/family/children/${k.id}/summary`));
     const days = (summary?.attendance || []).slice(0, 5);
     const ride = (bus?.data?.riders || []).find(r => r.id === k.id && r.direction === (new Date().getHours() < 12 ? "am" : "pm")) || (bus?.data?.riders || []).find(r => r.id === k.id);
+    const familyMemories = await familyContributionsCard(k);
+    const fromTeachers = await teacherItemsCard(k);
     out.push(h("section", { class: "card", "aria-label": k.display_name },
       h("div", { class: "row" }, h("div", { class: "grow" }, h("h2", {}, k.display_name), h("p", { class: "small muted" }, `Grade ${k.grade_level} · ${k.school_name}`)),
         ride ? chip(ride.status) : null),
       h("div", { class: "stats" }, stat(k.absences_30d, "absences (30 days)", true), stat(k.due_7d, "due this week"), stat(k.overdue, "overdue", true), stat(k.to_acknowledge, "to acknowledge", true)),
       days.length ? h("div", {}, h("h3", {}, "Recent attendance"), h("div", { class: "btns" }, days.map(a => h("span", { class: `chip ${a.status}` }, `${fmtDay(a.event_date)}: ${STATUS_TEXT[a.status] || a.status}`)))) : null,
+      familyMemories,
+      fromTeachers,
+      h("button", { class: "btn block", type: "button", "aria-label": `History & portfolio: ${k.display_name}`, onclick: () => openView("portfolio", { learnerId: k.id, portfolioFilters: {} }) }, icon("book"), "History & portfolio"),
       h("button", { class: "btn primary block", type: "button", "aria-label": `Grades & progress: ${k.display_name}`, onclick: () => openView("progress", { learnerId: k.id }) }, icon("book"), "Grades & progress"),
       ride ? h("button", { class: "btn block", type: "button", onclick: () => go("arrival") }, icon("bus"), `Bus: ${STATUS_TEXT[ride.status] || ride.status}`) : null));
   }
@@ -1909,11 +2300,13 @@ VIEWS.node = async () => {
 // needs a second district lead's approval before it can sync.
 const CONNECTOR_KIND = { oneroster: "OneRoster 1.2", edfi: "Ed-Fi API", powerschool: "PowerSchool SIS" };
 const CONNECTOR_STATUS = { pending_approval: ["expected", "Needs approval"], active: ["present", "Active"], disabled: ["not_started", "Off"] };
-const REJECT_TEXT = { duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
+const ROSTER_TEACHER_TEXT = { no_matching_eduos_teacher: "No EduOS teacher at that school has this email", ambiguous_email: "More than one EduOS teacher has this email",
+  no_email: "Their SIS record has no email", not_in_staff_list: "Not in their staff list", matched_teacher_not_at_school: "The matched teacher doesn't teach at that school" };
+const REJECT_TEXT = { student_not_imported: "a student in a class isn't in EduOS", student_at_another_eduos_school: "a student in a class is at another EduOS school", duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
   no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id", invalid_school_id: "invalid school id", missing_student_id: "no student id", missing_student_number: "no student number", missing_enrollment_status: "enrollment status unavailable" };
 VIEWS.integrations = async () => {
   const r = await api.get("/api/integrations/connectors");
-  const { enabled, connectors = [], schools = [] } = r.data;
+  const { enabled, connectors = [], schools = [], teachers = [] } = r.data;
   const reload = () => go(state.tab, { push: false });
   const out = [h("h2", {}, "Data links"),
     h("p", { class: "muted" }, "Bring student rosters in from your SIS or state system (OneRoster 1.2, Ed-Fi or PowerSchool). EduOS only reads from them, never sends student data out, and keeps working without them."),
@@ -1938,6 +2331,21 @@ VIEWS.integrations = async () => {
         : `Preview: ${k.toImport} students would be added or updated. Nothing has changed yet.`),
       h("ul", { class: "list" }, kv("Students found", String(k.studentsFetched)), kv("At schools not linked yet", String(k.notMapped)),
         Object.entries(reasons).map(([r, n]) => kv(`Skipped: ${REJECT_TEXT[r] || r}`, String(n)))),
+      k.rosters ? h("section", { class: "stack", "aria-label": "Class rosters" }, h("h3", {}, "Class rosters"),
+        h("ul", { class: "list" }, kv("Classes found", String(k.rosters.sectionsFetched)), kv("Teacher–student links", String(k.rosters.rosterLinks)),
+          kv(res.mode === "apply" ? "Added" : "Would be added", String(k.rosters.toAdd)), kv(res.mode === "apply" ? "Removed" : "Would be removed", String(k.rosters.toRemove)),
+          kv("Already on a roster entered by hand (left as is)", String(k.rosters.keptManual)), kv("Teachers not matched", String(k.rosters.teachersUnmatched))),
+        (res.unmatchedTeachers || []).length ? h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
+          const mappings = [...e.target.querySelectorAll("select[data-staff]")].filter(x => x.value).map(x => ({ externalId: x.dataset.staff, userId: x.value }));
+          if (!mappings.length) return toast("Choose a teacher for at least one.");
+          try { await api.req("PUT", `/api/integrations/connectors/${c.id}/staff-map`, { mappings }); toast("Teacher matches saved. Another district lead needs to approve them before the next sync."); reload(); }
+          catch { toast("Couldn't save the teacher matches."); } } },
+          h("p", { class: "small muted" }, "These SIS teachers weren't matched, so their classes weren't linked. EduOS never creates accounts from the SIS: add them as teachers first, or match them to an existing teacher."),
+          (res.unmatchedTeachers || []).map(t => {
+            const sel = h("select", { id: `staff-${c.id}-${t.externalId}`, "data-staff": t.externalId }, h("option", { value: "" }, "Leave unmatched"),
+              teachers.map(x => h("option", { value: x.id }, `${x.name}${x.school ? ` (${x.school})` : ""}`)));
+            return [h("label", { for: sel.id }, `${t.name || t.externalId}${t.email ? ` · ${t.email}` : ""} · ${ROSTER_TEACHER_TEXT[t.reason] || t.reason}`), sel];
+          }), h("button", { class: "btn", type: "submit" }, "Save teacher matches")) : null) : null,
       selects.length ? h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
         const mappings = [...e.target.querySelectorAll("select[data-external]")].map(x => ({ externalId: x.dataset.external, schoolId: x.value || null }));
         try { await api.req("PUT", `/api/integrations/connectors/${c.id}/school-map`, { mappings }); toast("School links saved. Another district lead needs to approve them before the next sync."); reload(); }
@@ -1959,6 +2367,7 @@ VIEWS.integrations = async () => {
     return h("li", { class: "stack" },
       h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, c.name), h("br"),
         h("span", { class: "muted small" }, [CONNECTOR_KIND[c.kind], (() => { try { return new URL(c.baseUrl).host; } catch { return ""; } })(), `set up by ${c.updatedBy}`, c.approvedBy ? `approved by ${c.approvedBy}` : null,
+          c.dataScope?.includes("class_rosters") ? "students and class rosters" : "students only",
           c.lastSyncAt ? `last ${c.lastSyncStatus} ${ago(c.lastSyncAt)}` : "never synced"].filter(Boolean).join(" · "))), chip(cls, txt)),
       h("div", { class: "row wrap" },
         c.status !== "active" && c.canApprove ? h("button", { class: "btn small primary", type: "button", onclick: () => act("approve", "Approved", "Couldn't approve.") }, "Approve") : null,
@@ -1968,6 +2377,13 @@ VIEWS.integrations = async () => {
         h("button", { class: "btn small", type: "button", onclick: async () => {
           const secret = await ask({ title: `New client secret for ${c.name}`, text: "It's stored encrypted. The connector then needs approval again.", label: "Client secret", confirm: "Save", maxlength: 2000 });
           if (secret) try { await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { clientSecret: secret }); toast("Saved. It needs approval again."); reload(); } catch { toast("Couldn't save."); } } }, "Change secret"),
+        h("button", { class: "btn small", type: "button", onclick: async () => {
+          const on = c.dataScope?.includes("class_rosters");
+          if (!await ask({ title: on ? "Stop importing class rosters?" : "Also import class rosters?", text: on
+            ? "Rosters it already created stay until you remove them. It needs approval again."
+            : "Teachers, classes and enrollments become teacher rosters, which decide which students each teacher can see. Teachers are matched to existing EduOS teachers by email; no accounts are created. It needs approval again.", confirm: on ? "Stop" : "Turn on" })) return;
+          try { await api.req("PATCH", `/api/integrations/connectors/${c.id}`, { classRosters: !on }); toast("Saved. It needs approval again."); reload(); } catch { toast("Couldn't save."); } } },
+          c.dataScope?.includes("class_rosters") ? "Stop class rosters" : "Add class rosters"),
         c.status !== "disabled" ? h("button", { class: "btn small", type: "button", onclick: () => act("disable", "Turned off", "Couldn't turn it off.") }, "Turn off") : null),
       slot);
   };
@@ -1981,18 +2397,21 @@ VIEWS.integrations = async () => {
   const cid = field("dl-client", "Client ID", { maxlength: 300, autocomplete: "off" });
   const secret = field("dl-secret", "Client secret", { type: "password", maxlength: 2000, autocomplete: "new-password" });
   const hint = h("p", { class: "muted small" });
+  const rostersBox = h("input", { id: "dl-rosters", type: "checkbox" });
   const setHint = () => {
     base.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/api/data" : kind.value === "powerschool" ? "https://district.powerschool.com" : "https://sis.district.org/ims/oneroster/rostering/v1p2";
     token.el.placeholder = kind.value === "edfi" ? "https://edfi.district.org/oauth/token" : kind.value === "powerschool" ? "https://district.powerschool.com/oauth/access_token/" : "https://sis.district.org/oauth/token";
-    hint.textContent = kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : kind.value === "powerschool" ? "Use the district SIS origin and the OAuth token URL for its installed API plugin. EduOS reads district schools and each school’s students only; verify the plugin’s GET permissions and response contract with the district before enabling." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
+    hint.textContent = kind.value === "edfi" ? "Ed-Fi API v8: base URL ends in /api/data (ODS/API: /api/data/v3). Token URL: /connect/token on the Configuration Service, or /oauth/token on the API." : kind.value === "powerschool" ? "Use the district SIS origin and the OAuth token URL for its installed API plugin. EduOS reads district schools and each school’s students (and, with class rosters on, sections, staff and section enrollments); verify the plugin’s GET permissions and response contract with the district before enabling." : "Your SIS gives you the OneRoster base URL, token URL and a read-only client ID and secret.";
   };
   kind.addEventListener("change", setHint); setHint();
   out.push(h("section", { class: "card", "aria-label": "Add a data link" }, h("form", { class: "stack", onsubmit: async (e) => { e.preventDefault();
-      try { await api.post("/api/integrations/connectors", { kind: kind.value, name: name.el.value, baseUrl: base.el.value, tokenUrl: token.el.value, clientId: cid.el.value, clientSecret: secret.el.value });
+      try { await api.post("/api/integrations/connectors", { kind: kind.value, name: name.el.value, baseUrl: base.el.value, tokenUrl: token.el.value, clientId: cid.el.value, clientSecret: secret.el.value, classRosters: rostersBox.checked });
         toast("Added. Another district lead needs to approve it."); reload(); }
       catch (e2) { toast(e2.body?.error === "invalid_connector" ? `Check the ${e2.body.field}.` : e2.body?.error === "connector_name_taken" ? "That name is taken." : "Couldn't add it."); } } },
     h("h2", {}, "Add a data link"), h("label", { for: kind.id }, "Type"), kind, hint,
-    [name, base, token, cid, secret].map(x => [x.label, x.el]), h("button", { class: "btn", type: "submit" }, "Add"))));
+    [name, base, token, cid, secret].map(x => [x.label, x.el]),
+    h("label", { for: rostersBox.id, class: "row" }, rostersBox, h("span", {}, "Also import class rosters (teachers, classes and enrollments). Teachers are matched to existing EduOS teachers; no accounts are created.")),
+    h("button", { class: "btn", type: "submit" }, "Add"))));
   return out;
 };
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

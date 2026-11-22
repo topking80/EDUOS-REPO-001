@@ -1,0 +1,284 @@
+// SIS-02 durable scheduled roster-sync worker.
+// Runs as a district-scoped service principal. It never impersonates a user.
+import crypto from "node:crypto";
+import { pool } from "../db.js";
+import { config } from "../config.js";
+import { decryptSecret } from "./secrets.js";
+import * as oneroster from "./oneroster.js";
+import * as edfi from "./edfi.js";
+import * as powerschool from "./powerschool.js";
+import { loadPlanInputs, planImport, applyPlan, planRosters, loadRosterInputs, applyRosters } from "./sync.js";
+import { decideSyncMode } from "./sync-mode.js";
+
+const KINDS = { oneroster, edfi, powerschool };
+export const SYNC_JOB_LEASE_SECONDS = 300;
+export const SYNC_JOB_MAX_ATTEMPTS = 5;
+const urlOptions = () => ({ allowInsecureLoopback: config.integrationsAllowInsecureLoopback, allowedHosts: config.integrationsAllowedHosts });
+
+// Service transactions intentionally set only the tenant boundary. The
+// service identity is represented in immutable actor columns, not app.user_id.
+export function schedulerTenantTransaction(db = pool) {
+  return async (districtId, callback) => {
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.district_id',$1,true)", [String(districtId)]);
+      const result = await callback(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally { client.release(); }
+  };
+}
+
+async function enqueueDue(tx, districtId) {
+  return tx(districtId, async c => {
+    const due = await c.query(
+      `SELECT id,connector_id,config_version,interval_minutes
+         FROM integration_sync_schedules
+        WHERE district_id=$1 AND enabled=true AND paused_at IS NULL AND next_run_at<=now()
+          AND NOT EXISTS (SELECT 1 FROM integration_sync_jobs j WHERE j.schedule_id=integration_sync_schedules.id AND j.status IN ('pending','processing'))
+        ORDER BY next_run_at,id FOR UPDATE SKIP LOCKED LIMIT 10`, [districtId]);
+    for (const s of due.rows) {
+      await c.query(
+        `INSERT INTO integration_sync_jobs(district_id,connector_id,schedule_id,config_version)
+         VALUES($1,$2,$3,$4)`, [districtId,s.connector_id,s.id,s.config_version]);
+      await c.query(
+        `UPDATE integration_sync_schedules SET next_run_at=now()+make_interval(mins=>$2),updated_at=now()
+          WHERE id=$1 AND district_id=$3`, [s.id,s.interval_minutes,districtId]);
+    }
+    return due.rowCount;
+  });
+}
+
+async function claimJob(tx, districtId) {
+  return tx(districtId, async c => {
+    const expired=await c.query("UPDATE integration_sync_jobs SET status='failed',last_error='lease_expired_after_max_attempts',lease_until=NULL,lease_token=NULL,finished_at=now() WHERE district_id=$1 AND status='processing' AND lease_until<now() AND attempts>=$2 RETURNING id,connector_id,schedule_id",[districtId,SYNC_JOB_MAX_ATTEMPTS]);
+    if(expired.rowCount){
+      const actor=(await c.query("SELECT id FROM integration_service_actors WHERE actor_key='sis_scheduler'")).rows[0];
+      if(actor){
+        for(const failed of expired.rows){
+          const approval=(await c.query("SELECT approved_by,approved_at FROM integration_sync_schedules WHERE id=$1 AND district_id=$2",[failed.schedule_id,districtId])).rows[0];
+          if(!approval)continue;
+          const runId=crypto.randomUUID();
+          await c.query("INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,schedule_id,scheduled_job_id,schedule_approved_by,schedule_approved_at,started_at,finished_at,error) VALUES($1,$2,$3,'apply','failed',NULL,$4,$5,$6,$7,$8,now(),now(),'lease_expired_after_max_attempts')",[runId,districtId,failed.connector_id,actor.id,failed.schedule_id,failed.id,approval.approved_by,approval.approved_at]);
+          await c.query("UPDATE integration_connectors SET last_sync_at=now(),last_sync_status='failed' WHERE id=$1",[failed.connector_id]);
+          await c.query("INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id) VALUES($1,NULL,$2,'sis_scheduler','scheduled_sync','integration_connector',$3,'failure','lease_expired_after_max_attempts',$4)",[districtId,actor.id,failed.connector_id,failed.id]);
+        }
+      }
+    }
+    const picked = await c.query(
+      `SELECT id FROM integration_sync_jobs
+        WHERE district_id=$1 AND attempts<$2
+          AND ((status='pending' AND available_at<=now()) OR (status='processing' AND lease_until<now()))
+        ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1`,
+      [districtId,SYNC_JOB_MAX_ATTEMPTS]);
+    if (!picked.rowCount) return null;
+    const token = crypto.randomUUID();
+    const claimed = await c.query(
+      `UPDATE integration_sync_jobs SET status='processing',attempts=attempts+1,
+          lease_until=now()+make_interval(secs=>$3),lease_token=$2,
+          started_at=COALESCE(started_at,now())
+        WHERE id=$1 AND district_id=$4
+        RETURNING id,connector_id,schedule_id,config_version,attempts,lease_token`,
+      [picked.rows[0].id,token,SYNC_JOB_LEASE_SECONDS,districtId]);
+    return claimed.rows[0] || null;
+  });
+}
+
+async function finishJob(tx, districtId, job, status, error = null, retry = false) {
+  return tx(districtId, c => c.query(
+    `UPDATE integration_sync_jobs SET status=$3,last_error=$4,
+        available_at=CASE WHEN $5 THEN now()+make_interval(secs=>$6) ELSE available_at END,
+        lease_until=NULL,lease_token=NULL,finished_at=CASE WHEN $3 IN ('completed','failed','cancelled') THEN now() ELSE NULL END
+      WHERE id=$1 AND district_id=$2 AND status='processing' AND lease_token=$7`,
+    [job.id,districtId,retry?'pending':status,error, retry,
+      Math.min(3600,15*Math.pow(2,Math.max(0,job.attempts-1))),job.lease_token]));
+}
+
+async function recordScheduledFailure(tx,districtId,serviceActorId,job,runId,error) {
+  return tx(districtId,async c=>{
+    const held=await c.query("SELECT id FROM integration_sync_jobs WHERE id=$1 AND district_id=$2 AND status='processing' AND lease_token=$3 FOR UPDATE",[job.id,districtId,job.lease_token]);
+    if(!held.rowCount)return false;
+    const approval=(await c.query("SELECT approved_by,approved_at FROM integration_sync_schedules WHERE id=$1 AND district_id=$2",[job.schedule_id,districtId])).rows[0];
+    if(!approval)return false;
+    const code=String(error.code||"scheduled_sync_failed").slice(0,300);
+    await c.query("INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,schedule_id,scheduled_job_id,schedule_approved_by,schedule_approved_at,started_at,finished_at,error) VALUES($1,$2,$3,'apply','failed',NULL,$4,$5,$6,$7,$8,now(),now(),$9)",[runId,districtId,job.connector_id,serviceActorId,job.schedule_id,job.id,approval.approved_by,approval.approved_at,code]);
+    await c.query("UPDATE integration_connectors SET last_sync_at=now(),last_sync_status='failed' WHERE id=$1",[job.connector_id]);
+    await c.query("INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id) VALUES($1,NULL,$2,'sis_scheduler','scheduled_sync','integration_connector',$3,'failure',$4,$5)",[districtId,serviceActorId,job.connector_id,code,job.id]);
+    return true;
+  });
+}
+async function processScheduledSisSyncLeased(job, { db = pool, tx = schedulerTenantTransaction(db), log = console, leaseLost = () => false } = {}) {
+  const districtId = job.district_id;
+  const serviceActorId = await tx(districtId, async c => {
+    const actor = await c.query("SELECT id FROM integration_service_actors WHERE actor_key='sis_scheduler'");
+    if (!actor.rowCount) throw new Error("sis_scheduler_service_actor_missing");
+    return actor.rows[0].id;
+  });
+  const runId=crypto.randomUUID();
+  const input = await tx(districtId, async c => {
+    const r = await c.query(
+      `SELECT j.id,j.connector_id,j.schedule_id,j.config_version,j.attempts,j.lease_token,
+              s.enabled,s.paused_at,s.config_version AS schedule_version,
+              x.kind,x.status,x.config_version AS connector_version,x.base_url,x.token_url,
+              x.client_id,x.client_secret_enc,x.scope,x.data_scope,x.sync_watermark,x.last_full_sync_at,
+              s.incremental,s.full_sync_hours
+         FROM integration_sync_jobs j
+         JOIN integration_sync_schedules s ON s.id=j.schedule_id AND s.district_id=j.district_id
+         JOIN integration_connectors x ON x.id=j.connector_id AND x.district_id=j.district_id
+        WHERE j.id=$1 AND j.district_id=$2 AND j.status='processing' AND j.lease_token=$3`,
+      [job.id,districtId,job.lease_token]);
+    return r.rows[0] || null;
+  });
+  if (!input || !input.enabled || input.paused_at || input.status!=="active"
+      || input.config_version!==input.connector_version || input.config_version!==input.schedule_version) {
+    await finishJob(tx,districtId,job,"cancelled","schedule_or_connector_no_longer_approved");
+    return {status:"cancelled"};
+  }
+
+  let roster, sync;
+  try {
+    const mapped = await tx(districtId,c=>c.query(
+      "SELECT external_id FROM integration_school_map WHERE district_id=$1 AND connector_id=$2 ORDER BY external_id",
+      [districtId,input.connector_id]));
+    const kind = KINDS[input.kind];
+    const access = {
+      baseUrl:input.base_url,tokenUrl:input.token_url,clientId:input.client_id,
+      clientSecret:decryptSecret(config.integrationsKey,districtId,input.connector_id,input.client_secret_enc),
+      scope:input.scope,options:urlOptions(),mappedSchoolIds:mapped.rows.map(x=>x.external_id)
+    };
+    // SIS-06: read only what changed, when that's safe (see decideSyncMode).
+    sync = decideSyncMode(input, kind);
+    if (sync.mode === "incremental") {
+      try {
+        const changes = await kind.fetchRosterChanges({ ...access, watermark: input.sync_watermark });
+        roster = changes.roster; sync.nextWatermark = changes.watermark; sync.changesSince = changes.changesSince;
+      } catch (error) {
+        // Their server couldn't answer a change query: read everything instead.
+        sync = { mode: "full", reason: `incremental_failed:${String(error.code || "error").slice(0, 60)}` };
+        log.warn?.("Incremental SIS read failed; running a full sync",{jobId:job.id,code:error.code||"error"});
+      }
+    }
+    if (sync.mode === "full") {
+      // Where the next incremental read starts: taken before reading, so nothing changed during the read is missed.
+      sync.nextWatermark = kind.supportsIncremental && input.incremental ? await kind.startWatermark(access).catch(() => null) : null;
+      roster = await kind.fetchRoster({ ...access, maxStudentRecords:config.powerschoolMaxStudents });
+      // SIS-04: class rosters, if this connector was approved to import them (full runs only).
+      if (input.data_scope?.includes("class_rosters")) roster.classes = await kind.fetchClasses(access);
+    }
+  } catch (error) {
+    await recordScheduledFailure(tx,districtId,serviceActorId,job,runId,error);
+    const retry = Number(job.attempts)<SYNC_JOB_MAX_ATTEMPTS;
+    await finishJob(tx,districtId,job,retry?"pending":"failed",
+      String(error.code||"connector_fetch_failed").slice(0,300),retry);
+    log.error?.("Scheduled SIS connector fetch failed",{jobId:job.id,code:error.code||"connector_fetch_failed"});
+    return {status:retry?"retry":"failed"};
+  }
+
+  try {
+    const result = await tx(districtId,async c=>{
+      await c.query("SELECT pg_advisory_xact_lock(hashtext('integration-sync'),hashtext($1))",[input.connector_id]);
+      const current=await c.query(
+        `SELECT x.status,x.config_version,s.enabled,s.paused_at,s.config_version AS schedule_version,
+                j.status AS job_status,j.config_version AS job_version,j.lease_token,j.lease_until,s.approved_by AS schedule_approved_by,s.approved_at AS schedule_approved_at
+           FROM integration_connectors x
+           JOIN integration_sync_schedules s ON s.connector_id=x.id AND s.district_id=x.district_id
+           JOIN integration_sync_jobs j ON j.schedule_id=s.id AND j.district_id=s.district_id
+          WHERE x.id=$1 AND x.district_id=$2 AND s.id=$3 AND j.id=$4 FOR UPDATE OF x,s,j`,
+        [input.connector_id,districtId,input.schedule_id,job.id]);
+      const v=current.rows[0];
+      if(!v||v.status!=="active"||!v.enabled||v.paused_at||v.config_version!==input.config_version
+         ||v.schedule_version!==input.config_version||v.job_version!==input.config_version||v.job_status!=="processing"
+         ||v.lease_token!==job.lease_token||!v.lease_until||new Date(v.lease_until)<=new Date()||leaseLost())
+        throw Object.assign(new Error("scheduled_sync_approval_or_lease_changed"),{code:"SCHEDULE_STALE"});
+      const inputs=await loadPlanInputs(c,districtId,input.connector_id,roster.students.map(s=>s.localStudentNumber));
+      const plan=planImport(roster,inputs.map,inputs.existing,inputs.schools);
+      const actor={districtId,userId:null,serviceActorId,role:"sis_scheduler",schoolId:null};
+      const imported=await applyPlan(c,actor,{kind:input.kind,id:input.connector_id},runId,plan,job.id);
+      let rosterRejected=[];
+      if(roster.classes){
+        const rosters=planRosters(roster.classes,roster,await loadRosterInputs(c,districtId,input.connector_id,roster.classes,roster));
+        rosters.counts.applied=await applyRosters(c,districtId,input.connector_id,rosters);
+        plan.counts.rosters=rosters.counts; rosterRejected=rosters.rejected;
+      }
+      plan.counts.sync={mode:sync.mode,reason:sync.reason,...(sync.changesSince!==undefined?{changesSince:sync.changesSince}:{})};
+      // The watermark moves only with a successful import, under this configuration version.
+      await c.query(`UPDATE integration_connectors SET sync_watermark=$2::jsonb,
+          last_full_sync_at=CASE WHEN $3 THEN now() ELSE last_full_sync_at END WHERE id=$1`,
+        [input.connector_id,sync.nextWatermark?JSON.stringify({...sync.nextWatermark,configVersion:input.config_version}):null,sync.mode==="full"]);
+      await c.query(
+        `INSERT INTO integration_sync_runs(id,district_id,connector_id,mode,status,started_by,started_by_service,schedule_id,scheduled_job_id,schedule_approved_by,schedule_approved_at,started_at,finished_at,counts,rejected)
+         VALUES($1,$2,$3,'apply','completed',NULL,$4,$5,$6,$7,$8,now(),now(),$9::jsonb,$10::jsonb)`,
+        [runId,districtId,input.connector_id,serviceActorId,input.schedule_id,job.id,v.schedule_approved_by,v.schedule_approved_at,JSON.stringify({...plan.counts,imported}),JSON.stringify([...plan.rejected,...rosterRejected].slice(0,200))]);
+      await c.query("UPDATE integration_connectors SET last_sync_at=now(),last_sync_status='completed' WHERE id=$1",[input.connector_id]);
+      await c.query(
+        `INSERT INTO audit_events(district_id,actor_user_id,actor_service_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
+         VALUES($1,NULL,$2,'sis_scheduler','scheduled_sync','integration_connector',$3,'success',$4,$5)`,
+        [districtId,serviceActorId,input.connector_id,JSON.stringify({runId,jobId:job.id,configVersion:input.config_version}),job.id]);
+      const settled=await c.query(
+        `UPDATE integration_sync_jobs SET status='completed',lease_until=NULL,lease_token=NULL,finished_at=now(),last_error=NULL
+          WHERE id=$1 AND district_id=$2 AND status='processing' AND lease_token=$3`,
+        [job.id,districtId,job.lease_token]);
+      if(!settled.rowCount) throw Object.assign(new Error("scheduled_sync_lease_lost"),{code:"SCHEDULE_STALE"});
+      return {runId,counts:plan.counts,imported};
+    });
+    return {status:"completed",...result};
+  } catch(error) {
+    if(error.code==="SCHEDULE_STALE") {
+      await finishJob(tx,districtId,job,"cancelled","schedule_or_lease_changed");
+      return {status:"cancelled"};
+    }
+    await recordScheduledFailure(tx,districtId,serviceActorId,job,runId,error);
+    const retry=Number(job.attempts)<SYNC_JOB_MAX_ATTEMPTS;
+    await finishJob(tx,districtId,job,retry?"pending":"failed",
+      String(error.code||"scheduled_sync_failed").slice(0,300),retry);
+    log.error?.("Scheduled SIS sync failed",{jobId:job.id,code:error.code||"scheduled_sync_failed"});
+    return {status:retry?"retry":"failed"};
+  }
+}
+
+export async function processScheduledSisSync(job, deps = {}) {
+  const db=deps.db||pool;
+  const tx=deps.tx||schedulerTenantTransaction(db);
+  const log=deps.log||console;
+  let leaseLost=false,renewing=false;
+  const timer=setInterval(()=>{
+    if(renewing||leaseLost)return;
+    renewing=true;
+    tx(job.district_id,c=>c.query(
+      `UPDATE integration_sync_jobs SET lease_until=now()+make_interval(secs=>$4)
+        WHERE id=$1 AND district_id=$2 AND status='processing' AND lease_token=$3 AND lease_until>now()
+        RETURNING id`,
+      [job.id,job.district_id,job.lease_token,SYNC_JOB_LEASE_SECONDS]))
+      .then(result=>{if(!result.rowCount)leaseLost=true;})
+      .catch(error=>{leaseLost=true;log.warn?.("Scheduled SIS lease renewal failed",{jobId:job.id,code:error.code||"lease_renewal_failed"});})
+      .finally(()=>{renewing=false;});
+  },60_000);
+  timer.unref?.();
+  try {
+    return await processScheduledSisSyncLeased(job,{...deps,db,tx,log,leaseLost:()=>leaseLost});
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+export async function dispatchScheduledSisSync({db=pool,maxJobsPerDistrict=20,log=console}={}) {
+  if(!config.integrationsKey) return {skipped:"integrations_disabled",claimed:0};
+  if(!config.sisSyncDispatchEnabled) return {skipped:"sis_sync_dispatch_disabled",claimed:0};
+  const tx=schedulerTenantTransaction(db);
+  const districts=(await db.query("SELECT id FROM districts WHERE status='active' ORDER BY id")).rows;
+  let claimed=0;
+  for(const {id:districtId} of districts) {
+    await enqueueDue(tx,districtId);
+    for(let n=0;n<maxJobsPerDistrict;n++) {
+      const job=await claimJob(tx,districtId);
+      if(!job) break;
+      claimed++;
+      await processScheduledSisSync({...job,district_id:districtId},{db,tx,log});
+    }
+  }
+  return {claimed};
+}

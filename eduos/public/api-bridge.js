@@ -17,7 +17,9 @@
   const FRIENDLY={forbidden:"You don't have permission to do that.",school_scope_denied:"That record belongs to another school.",csrf_validation_failed:"Your session needs refreshing. Reload the page and try again.",
     rate_limited:"Too many requests in a short time. Wait a minute and try again.",payload_too_large:"That upload is too large.",invalid_json:"The request couldn't be read. Reload the page and try again.",
     no_seats_available:"All licensed seats for this app are in use. Ask your school office or district to add seats.",app_not_available:"This app isn't available for your account.",license_inactive:"This app's license isn't active.",
-    lti_not_configured:"This app can't open yet: the district hasn't finished setting up LTI.",district_limit_reached:"Your district has reached a limit set in District settings.",
+    lti_not_configured:"This app can't open yet: the district hasn't finished setting up LTI.",lti_approval_required:"This app is waiting for a district administrator to approve its LTI registration.",
+    lti_second_approver_required:"A different district administrator from the one who registered this tool must approve it.",lti_configuration_invalid:"This LTI registration is incomplete. Check its client ID, deployment ID and HTTPS addresses.",
+    invalid_lti_config:"Fill in every LTI field with HTTPS addresses (client ID, deployment ID, login URL, redirect URL).",district_limit_reached:"Your district has reached a limit set in District settings.",
     app_name_exists:"An app with that name is already in the catalog.",request_already_pending:"Your school already has a request waiting for this app.",cannot_manage_app:"Only the district or the school that owns this app can change it.",
     cannot_assign_app:"Only the district or the school that owns this app can give access to it.",assignment_exists:"That group already has access.",district_administrator_required:"A district administrator needs to do this.",
     administrator_required:"An administrator needs to do this.",cannot_manage_role_or_school:"You can't manage that role or school.",cannot_grant_self:"You can't add a role to your own account.",webhook_limit_reached:"Your district's webhook limit is reached (see District settings).",
@@ -81,8 +83,8 @@ html:not([data-eduos-mode="demo"]) .eduos-demo-only{display:none}
 #eduos-api-data .api-status.closed{background:#eceff3;color:#4b5563}
 #eduos-api-data fieldset{border:1px solid #d6e0ea;border-radius:8px;margin:8px 0;padding:6px 10px}
 #eduos-api-data .api-check{display:inline-flex;align-items:center;gap:6px;margin-right:12px;font-weight:400;white-space:nowrap;width:auto}
-#eduos-api-data .api-check input{width:auto;min-width:18px;height:18px;margin:0}
-#eduos-api-data .api-grades{display:flex;flex-wrap:wrap;gap:6px 4px}
+#eduos-api-data .api-check input{width:auto;min-width:24px;height:24px;margin:0}
+#eduos-api-data .api-grades{display:flex;flex-wrap:wrap;gap:6px 8px}
 #eduos-api-data .api-table td:last-child>button,#eduos-api-data .api-table td:last-child .api-row button{white-space:nowrap}
 #eduos-api-data .api-welcome p{max-width:760px}
 #eduos-api-data .api-notices{display:grid;gap:8px;margin:12px 0}
@@ -154,7 +156,7 @@ html:not([data-eduos-mode="demo"]) .eduos-demo-only{display:none}
 #eduos-api-data .api-inline-form button{margin-bottom:10px}
 #eduos-api-data .api-manage td{background:#f6f9fc!important}
 #eduos-api-data .api-manage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
-#eduos-api-data .api-grades{display:flex;flex-wrap:wrap;gap:2px 4px}
+#eduos-api-data .api-grades{display:flex;flex-wrap:wrap;gap:6px 8px}
 #eduos-api-data details>summary{cursor:pointer;list-style-position:inside}
 #eduos-api-data button.danger{background:#9b1c1c;border-color:#7f1d1d}
 #eduos-api-data .api-status.pending{background:#fff4dc;color:#6b3d00}

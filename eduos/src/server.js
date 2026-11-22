@@ -43,6 +43,10 @@ import { registerLibraryRoutes } from "./library-routes.js";
 import { registerLibraryCirculationRoutes } from "./library-circulation-routes.js";
 import { registerLibraryIntelligenceRoutes } from "./library-intelligence-routes.js";
 import { registerClubsSportsRoutes } from "./clubs-sports-routes.js";
+import { registerStudentHistoryContributionRoutes } from "./student-history-contribution-routes.js";
+import { registerStudentHistoryTeacherRoutes } from "./student-history-teacher-routes.js";
+import { registerStudentHistoryPortfolioRoutes } from "./student-history-portfolio-routes.js";
+import { registerStudentHistoryCapsuleRoutes, startCapsuleReleaseSweep } from "./student-history-capsule-routes.js";
 import { registerSportsEligibilityRoutes } from "./sports-eligibility-routes.js";
 import { registerSchoolOperationsRoutes } from "./school-operations-routes.js";
 import { registerWellbeingRoutes } from "./wellbeing-routes.js";
@@ -55,6 +59,7 @@ import { registerStaffManagementRoutes } from "./staff-management-routes.js";
 import { registerEdgeDeviceRoutes } from "./edge-device-routes.js";
 import { registerEdgeUpdateRoutes } from "./edge-update-routes.js";
 import { registerIntegrationRoutes } from "./integrations/routes.js";
+import { dispatchScheduledSisSync } from "./integrations/scheduler.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { registerLeoRoutes } from "./ai/leo.js";
 import { registerEdisonRoutes } from "./ai/edison.js";
@@ -1968,6 +1973,10 @@ registerLibraryRoutes(app);
 registerLibraryCirculationRoutes(app);
 registerLibraryIntelligenceRoutes(app);
 registerClubsSportsRoutes(app);
+registerStudentHistoryContributionRoutes(app);
+registerStudentHistoryTeacherRoutes(app);
+registerStudentHistoryPortfolioRoutes(app);
+registerStudentHistoryCapsuleRoutes(app);
 registerSportsEligibilityRoutes(app);
 registerSchoolOperationsRoutes(app);
 registerWellbeingRoutes(app);
@@ -2024,6 +2033,19 @@ function startWebhookSweep(){
   timer.unref?.();
 }
 
+let sisSyncSweepRunning=false;
+function startSisSyncSweep(){
+  if(!config.integrationsKey||!config.sisSyncDispatchEnabled)return;
+  const timer=setInterval(()=>{
+    if(sisSyncSweepRunning)return;
+    sisSyncSweepRunning=true;
+    dispatchScheduledSisSync({db:pool,maxJobsPerDistrict:20})
+      .catch(error=>console.error("Scheduled SIS sweep failed",{message:error.message}))
+      .finally(()=>{sisSyncSweepRunning=false;});
+  },60_000);
+  timer.unref?.();
+}
+
 export { app };
 
 // Start only when run directly (tests import the app without listening).
@@ -2033,7 +2055,9 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
   app.listen(config.port,()=>{
     console.log(`EduOS API listening on ${config.port}${config.nodeTier?` (EDEN ${config.nodeTier} tier)`:""}`);
     startWebhookSweep();
+    startSisSyncSweep();
     startCommerceReconcile();
+    startCapsuleReleaseSweep();
     if(config.nodeTier==="school"&&process.env.EDEN_AGENT!=="off")startAgent();
   });
 }

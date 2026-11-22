@@ -25,7 +25,15 @@ jobs:
           docker run --rm --entrypoint=promtool \
             --volume "$PWD/monitoring:/etc/prometheus:ro" \
             prom/prometheus:v3.5.0 \
-            check rules /etc/prometheus/eduos-alerts.yml
+            check rules /etc/prometheus/eduos-alerts.yml /etc/prometheus/eduos-slo.yml
+      # CMP-05: SLO rules, run against synthetic traffic (healthy, outage, slow,
+      # quiet hours, unreachable); each case lists which alerts must fire.
+      - name: Unit-test the SLO rules with promtool
+        run: |
+          docker run --rm --entrypoint=promtool \
+            --volume "$PWD/monitoring:/etc/prometheus:ro" --workdir /etc/prometheus \
+            prom/prometheus:v3.5.0 \
+            test rules eduos-slo.test.yml
 
   source-and-container-security:
     runs-on: ubuntu-24.04
@@ -114,10 +122,17 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22, cache: npm, cache-dependency-path: eduos/package-lock.json }
       - run: npm ci
+      # CMP-02: axe-core for the accessibility scan. Pinned, installed outside the
+      # project (like playwright-core in e2e), scripts disabled.
+      - run: npm install --prefix "$RUNNER_TEMP/a11y" --no-save --ignore-scripts axe-core@4.14.1
       # Includes test/browser/app-smoke.test.js: the web app booted in headless
-      # Chrome (preinstalled on the runner) for every role and tab.
+      # Chrome (preinstalled on the runner) for every role and tab, each scanned
+      # with axe-core for WCAG 2.2 A/AA (desktop and 390px) and checked for reflow at 320px.
       - run: npm test
-        env: { EDUOS_REQUIRE_BROWSER: "1" }
+        env:
+          EDUOS_REQUIRE_BROWSER: "1"
+          EDUOS_REQUIRE_AXE: "1"
+          EDUOS_AXE_PATH: ${{ runner.temp }}/a11y/node_modules/axe-core/axe.min.js
 
   integration:
     runs-on: ubuntu-24.04
@@ -185,7 +200,9 @@ jobs:
         run: make smoke
       - name: Browser smoke test (headless Chrome)
         run: |
-          npm install --prefix "$RUNNER_TEMP/pw" --no-save --ignore-scripts playwright-core@1.65.1
+          # axe-core too: without it the axe scan below was silently skipped (CMP-02).
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save --ignore-scripts playwright-core@1.65.1 axe-core@4.14.1
+          export EDUOS_REQUIRE_AXE=1
           EDUOS_PLAYWRIGHT_DIR="$RUNNER_TEMP/pw" EDUOS_SCREENSHOT_DIR=artifacts/screens CHROME_PATH=$(command -v google-chrome) node dev/browser-smoke.mjs
       - name: Live CSP through the edge (headers, every page and role screen in Chrome)
         run: EDUOS_PLAYWRIGHT_DIR="$RUNNER_TEMP/pw" CHROME_PATH=$(command -v google-chrome) ./scripts/smoke.sh --csp

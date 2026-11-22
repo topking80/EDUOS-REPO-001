@@ -347,6 +347,9 @@ GRANT UPDATE (update_cohort, cohort_set_by, cohort_set_at) ON edge_devices TO ed
 GRANT SELECT, INSERT, UPDATE ON integration_connectors TO eduos_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON integration_school_map TO eduos_app;
 GRANT SELECT, INSERT ON integration_sync_runs TO eduos_app;
+GRANT SELECT ON integration_service_actors TO eduos_app;
+GRANT SELECT, INSERT, UPDATE ON integration_sync_schedules, integration_sync_jobs TO eduos_app;
+REVOKE DELETE, TRUNCATE ON integration_service_actors, integration_sync_schedules, integration_sync_jobs FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON integration_connectors, integration_sync_runs FROM eduos_app;
 
 -- 041 AI gateway: the superintendent manages the district's AI policy; usage
@@ -453,14 +456,69 @@ GRANT UPDATE (last_seen_at, status, resolved_at, resolved_by, resolution_note)
   ON commerce_webhook_refund_cases TO eduos_app;
 REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
 
+-- 37.10.1 timeline_entries was retired in 089 (student history uses student_history_entries).
+-- TC-01 student history and Time Capsule persistence foundation.
+-- Revisions and lifecycle events are append-only; media bytes remain in the
+-- private object store and are never exposed through these metadata tables.
+GRANT SELECT, INSERT ON student_history_entries TO eduos_app;
+-- Revoke previously deployed column grants as well as withholding them below:
+-- re-running this template must close permissions granted by an older template.
+REVOKE UPDATE (status) ON student_history_entries FROM eduos_app;
+-- Approval/publication/deletion status is changed only by an authorized workflow.
+GRANT UPDATE (entry_type, classification, title, body, occurred_at, school_year, audience, source_reference)
+  ON student_history_entries TO eduos_app;
+REVOKE DELETE, TRUNCATE ON student_history_entries FROM eduos_app;
+GRANT SELECT ON student_history_entry_revisions TO eduos_app;
+GRANT SELECT, INSERT ON student_history_entry_attachments,
+  student_time_capsule_items, student_time_capsule_events TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_revisions FROM eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON student_history_entry_attachments,
+  student_time_capsule_items, student_time_capsule_events FROM eduos_app;
+GRANT SELECT, INSERT ON student_time_capsules, student_time_capsule_recipients TO eduos_app;
+-- Explicitly revoke lifecycle columns granted by earlier versions of this template.
+REVOKE UPDATE (status, release_kind, release_at, milestone_key, sealed_at, released_at, cancelled_at)
+  ON student_time_capsules FROM eduos_app;
+-- Runtime edits are limited to descriptive draft metadata. Sealing, scheduling,
+-- release, cancellation and milestone transitions require authorized workflow functions.
+GRANT UPDATE (title, message, timezone, updated_at)
+  ON student_time_capsules TO eduos_app;
+GRANT UPDATE (consent_status, updated_at) ON student_time_capsule_recipients TO eduos_app;
+REVOKE DELETE, TRUNCATE ON student_time_capsules, student_time_capsule_recipients FROM eduos_app;
+
+
+-- TC-02 guardian family-memory contribution workflow.
+GRANT SELECT, INSERT ON student_history_contributions TO eduos_app;
+REVOKE DELETE, TRUNCATE ON student_history_contributions FROM eduos_app;
+GRANT UPDATE (status, reviewed_by, reviewed_at, review_note, history_entry_id, updated_at)
+  ON student_history_contributions TO eduos_app;
+GRANT SELECT, INSERT ON student_history_contribution_events TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON student_history_contribution_events FROM eduos_app;
+-- 088: student history and Time Capsule relationship rules (row-level
+-- security helpers; each checks the session's own membership).
+GRANT EXECUTE ON FUNCTION eduos_history_relation(uuid,uuid,uuid), eduos_history_user_is(uuid,uuid,uuid,uuid,text),
+  eduos_history_entry_visible(uuid,uuid,uuid,text,text,text,uuid), eduos_history_entry_writable(uuid,uuid,uuid,text,text,text,text,uuid),
+  eduos_history_entry_manageable(uuid,uuid,uuid,text,uuid), eduos_history_entry_access(uuid,text),
+  eduos_capsule_role(uuid,uuid,uuid,uuid,uuid,text), eduos_capsule_access(uuid) TO eduos_app;
+
+-- 090 TC-03: teacher contributions. Steps (submit, school review, family
+-- decision) go through these functions; the decision log is read-only here.
+GRANT SELECT ON student_history_entry_decisions TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_decisions FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_history_submit(uuid), eduos_history_review(uuid,text,text,text),
+  eduos_history_family_decide(uuid,text,text,text) TO eduos_app;
+
+-- 091 Time Capsule lifecycle. Seal, cancel, milestone release and the release
+-- sweep go through these functions; eduos_capsule_try_release and
+-- eduos_capsule_event are internal to them.
+GRANT EXECUTE ON FUNCTION eduos_capsule_is_draft(uuid), eduos_capsule_seal(uuid), eduos_capsule_cancel(uuid),
+  eduos_capsule_release_milestone(uuid), eduos_capsule_release_due(integer), eduos_capsule_contents(uuid),
+  eduos_capsule_invitations(), eduos_capsule_recipient_options(uuid), eduos_capsule_milestones_pending() TO eduos_app;
+
+-- 092 SIS-04 class rosters: a sync refreshes synced_at on rows it keeps;
+-- manual teacher matches are edited by district leads.
+GRANT UPDATE (synced_at) ON teacher_student_rosters TO eduos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON integration_staff_map TO eduos_app;
 
 -- LTI 1.3: replay ledger remains inaccessible; only the tenant-checked
 -- SECURITY DEFINER function may atomically claim a launch under tenant context.
 GRANT EXECUTE ON FUNCTION eduos_lti_consume_launch(uuid, text, timestamptz) TO eduos_app;
-
--- 37.10.1 Timeline authorization foundation. Drafts remain append-only
--- until the audited revision/publication transition service is added.
-GRANT SELECT, INSERT ON timeline_entries TO eduos_app;
-REVOKE UPDATE, DELETE, TRUNCATE ON timeline_entries FROM eduos_app;
-GRANT EXECUTE ON FUNCTION eduos_timeline_can_read(uuid,uuid,uuid,uuid,text,text,uuid),
-  eduos_timeline_can_insert(uuid,uuid,uuid,uuid,text,text,uuid,text) TO eduos_app;

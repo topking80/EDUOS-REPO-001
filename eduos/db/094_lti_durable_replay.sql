@@ -1,4 +1,4 @@
--- 084: durable, cross-instance one-time consumption for LTI launch hints.
+-- 094 (LTI-01): durable, cross-instance one-time consumption for LTI launch hints.
 -- The runtime role cannot read or mutate the replay ledger directly. It can
 -- call one SECURITY DEFINER function which verifies the active tenant context
 -- and atomically claims a launch identifier until its signed expiry.

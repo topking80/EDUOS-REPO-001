@@ -91,14 +91,26 @@ export function readHint(key, hint, now = Date.now()) {
   }
 }
 
-// One-time use of each launch hint within its lifetime (per process).
-const usedHints = new Map();
-export function consumeHint(launchId, now = Date.now()) {
-  for (const [id, exp] of usedHints) if (exp < now) usedHints.delete(id);
-  if (usedHints.has(launchId)) return false;
-  usedHints.set(launchId, now + HINT_TTL_MS);
-  return true;
+/**
+ * Browser binding for a launch: a random value set as an HttpOnly cookie when
+ * the user starts the launch, whose hash travels inside the encrypted hint.
+ */
+export function newBrowserBinding() {
+  const value = crypto.randomBytes(32).toString("base64url");
+  return { value, hash: crypto.createHash("sha256").update(value).digest("base64url") };
 }
+export function browserBindingMatches(cookieValue, expectedHash) {
+  if (typeof cookieValue !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(cookieValue) ||
+      typeof expectedHash !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(expectedHash)) return false;
+  const got = crypto.createHash("sha256").update(cookieValue).digest();
+  return crypto.timingSafeEqual(got, Buffer.from(expectedHash, "base64url"));
+}
+/** One cookie per launch, so launches in two tabs don't overwrite each other. */
+export function bindingCookieName(launchId) {
+  return `eduos_lti_${String(launchId).replace(/[^0-9a-f]/gi, "").slice(0, 32)}`;
+}
+export const AUTO_SUBMIT_SCRIPT = 'document.getElementById("lti").submit()';
+export const AUTO_SUBMIT_SCRIPT_HASH = `sha256-${crypto.createHash("sha256").update(AUTO_SUBMIT_SCRIPT).digest("base64")}`;
 
 /** A stable per-app pseudonymous subject so tools cannot correlate users across apps. */
 export function pairwiseSub(key, appId, userId) {

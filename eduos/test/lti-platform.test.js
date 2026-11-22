@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import {
-  loadPlatformKey, assertPlatformRsaKey, makeHint, readHint, consumeHint, pairwiseSub,
+  loadPlatformKey, assertPlatformRsaKey, makeHint, readHint, pairwiseSub, newBrowserBinding, browserBindingMatches, bindingCookieName, AUTO_SUBMIT_SCRIPT, AUTO_SUBMIT_SCRIPT_HASH,
   launchClaims, validLtiConfig, ltiConfigFingerprint
 } from "../src/lti.js";
 
@@ -60,12 +60,18 @@ test("launch hints are signed, expiring, bounded and tamper evident", () => {
   assert.equal(readHint(key, "x".repeat(2049), 1001), null);
 });
 
-test("launch identifiers can be consumed only once within the process", () => {
+test("a launch is bound to the browser that started it", () => {
+  const a = newBrowserBinding(), b = newBrowserBinding();
+  assert.match(a.value, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(browserBindingMatches(a.value, a.hash), true);
+  assert.equal(browserBindingMatches(b.value, a.hash), false);
+  assert.equal(browserBindingMatches(undefined, a.hash), false);
+  assert.equal(browserBindingMatches(a.value, undefined), false, "hints without a binding are refused");
+  assert.equal(browserBindingMatches(a.hash, a.hash), false, "the hash itself is not the secret");
   const id = crypto.randomUUID();
-  assert.equal(consumeHint(id, 1000), true);
-  assert.equal(consumeHint(id, 1001), false);
-  assert.equal(consumeHint("expired-" + id, 1000), true);
-  assert.equal(consumeHint("expired-" + id, 301001), true);
+  assert.equal(bindingCookieName(id), `eduos_lti_${id.replace(/-/g, "")}`);
+  assert.notEqual(bindingCookieName(id), bindingCookieName(crypto.randomUUID()));
+  assert.equal(AUTO_SUBMIT_SCRIPT_HASH, `sha256-${crypto.createHash("sha256").update(AUTO_SUBMIT_SCRIPT).digest("base64")}`);
 });
 
 test("pairwise subjects differ across tools and remain stable within a tool", () => {

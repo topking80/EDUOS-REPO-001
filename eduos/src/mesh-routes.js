@@ -19,7 +19,9 @@ import { requirePermission, isDistrictRole, canPerform } from "./policy.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { pageOf, pageSql, paged } from "./paging.js";
-import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig, ltiConfigFingerprint } from "./lti.js";
+import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig, ltiConfigFingerprint,
+  newBrowserBinding, browserBindingMatches, bindingCookieName, AUTO_SUBMIT_SCRIPT, AUTO_SUBMIT_SCRIPT_HASH } from "./lti.js";
+import { parse as parseCookies, serialize as serializeCookie } from "./cookies.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validId = v => typeof v === "string" && UUID_RE.test(v);
@@ -315,6 +317,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!found.rowCount) return fail(404, "app_not_found");
         const a = found.rows[0];
         if (a.integration_type !== "lti13" || a.status !== "active") return fail(409, "lti_registration_not_approvable");
+        // Two-person rule (also enforced in PostgreSQL): the registrant can't approve.
+        if (a.created_by === req.actor.userId) return fail(409, "lti_second_approver_required");
         if (!validLtiConfig(a.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" })) return fail(409, "lti_configuration_invalid");
         const fingerprint = ltiConfigFingerprint(a.integration_config, a.data_sharing_scope);
         const updated = await client.query(
@@ -524,7 +528,11 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         await audit(client, req, "launch", "app", a.id, { integrationType: a.integration_type, dataSharingScope: a.data_sharing_scope, launchId: launch.rows[0].id }, req.actor.schoolId || null);
         if (a.integration_type !== "lti13") return { status: 200, data: { url: a.launch_url, integrationType: a.integration_type } };
         const ltiCfg = cfg.integration_config;
-        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg, a.data_sharing_scope), v: new Date(cfg.lti_approved_at).toISOString() });
+        // Bind the launch to this browser: the OIDC request that comes back
+        // through the tool must present this cookie (see /lti/authorize).
+        const binding = newBrowserBinding();
+        res.append("Set-Cookie", serializeCookie(bindingCookieName(launch.rows[0].id), binding.value, ltiBindingCookie(300)));
+        const hint = makeHint(ltiKey, { l: launch.rows[0].id, a: a.id, u: req.actor.userId, d: req.actor.districtId, r: req.actor.role, s: req.actor.schoolId || null, c: ltiConfigFingerprint(ltiCfg, a.data_sharing_scope), v: new Date(cfg.lti_approved_at).toISOString(), b: binding.hash });
         const u = new URL(ltiCfg.loginUrl);
         u.searchParams.set("iss", issuer); u.searchParams.set("login_hint", launch.rows[0].id);
         u.searchParams.set("target_link_uri", ltiCfg.targetLinkUri); u.searchParams.set("lti_message_hint", hint);
@@ -535,6 +543,14 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
       send(res, r);
     } catch (e) { next(e); }
   });
+
+  // The tool returns the browser to /lti/authorize from its own site, possibly
+  // as a form POST, so the binding cookie must be SameSite=None (which browsers
+  // only accept with Secure). Plain-HTTP development falls back to Lax.
+  function ltiBindingCookie(maxAge) {
+    const secure = Boolean(config.secureCookies);
+    return { httpOnly: true, secure, sameSite: secure ? "none" : "lax", path: "/lti/authorize", maxAge };
+  }
 
   // LTI 1.3 OIDC authentication request from the tool (GET or form POST).
   const ltiAuthorize = async (req, res, next) => {
@@ -564,6 +580,12 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
       return deny(400, "invalid_request");
     const hint = readHint(ltiKey, p.lti_message_hint);
     if (!hint || p.login_hint !== hint.l) return deny(400, "invalid_or_expired_launch");
+    // Only the browser that started the launch may complete it. Without this, a
+    // copied lti_message_hint (it passes through the tool and the address bar)
+    // would let someone else receive this user's id_token.
+    const bindingName = validId(hint.l) ? bindingCookieName(hint.l) : null;
+    if (!bindingName || !browserBindingMatches(parseCookies(req.headers.cookie || "")[bindingName], hint.b))
+      return deny(403, "launch_browser_mismatch");
     // The signed hint is bound to one user, app, launch row and tenant, expires
     // in 5 minutes and is accepted once.
     try {
@@ -625,12 +647,15 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
       const esc = v => String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       const target = new URL(p.redirect_uri);
       res.setHeader("Cache-Control", "no-store");
-      res.setHeader("Content-Security-Policy", `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action ${target.origin}; frame-ancestors 'self'; base-uri 'none'`);
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.append("Set-Cookie", serializeCookie(bindingName, "", ltiBindingCookie(0)));
+      // Only the fixed auto-submit script may run (hash, not 'unsafe-inline').
+      res.setHeader("Content-Security-Policy", `default-src 'none'; script-src '${AUTO_SUBMIT_SCRIPT_HASH}'; style-src 'unsafe-inline'; form-action ${target.origin}; frame-ancestors 'self'; base-uri 'none'`);
       res.type("html").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Opening app…</title></head>
 <body><main><h1 style="font:16px system-ui">Opening ${esc(ctx.app.name)}…</h1>
 <form id="lti" method="post" action="${esc(p.redirect_uri)}"><input type="hidden" name="id_token" value="${esc(idToken)}">${p.state !== undefined ? `<input type="hidden" name="state" value="${esc(p.state)}">` : ""}
 <noscript><button type="submit">Continue to ${esc(ctx.app.name)}</button></noscript></form></main>
-<script>document.getElementById("lti").submit()</script></body></html>`);
+<script>${AUTO_SUBMIT_SCRIPT}</script></body></html>`);
     } catch (e) { next(e); }
   };
   app.get("/lti/authorize", ltiAuthorize);

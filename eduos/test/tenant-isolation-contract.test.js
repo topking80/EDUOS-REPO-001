@@ -12,6 +12,7 @@ const tenantTables = [
   "assignments", "assignment_submissions", "access_requests", "permission_grants",
   "student_intervention_cases", "student_case_notes", "family_messages",
   "teacher_classroom_preferences", "sis_sync_runs", "sis_attendance_imports",
+  "integration_sync_schedules", "integration_sync_jobs",
   "guardian_invitations", "flow_events", "webhook_subscriptions", "webhook_deliveries"
 ];
 
@@ -21,6 +22,11 @@ test("every tenant-owned table has ENABLE and FORCE RLS plus district-scoped USI
       assert.match(sql, /ALTER TABLE %I ENABLE ROW LEVEL SECURITY/);
       assert.match(sql, /ALTER TABLE %I FORCE ROW LEVEL SECURITY/);
       assert.match(sql, new RegExp(`'${table}'`), `${table}: included in initial policy loop`);
+    } else if (["integration_sync_schedules", "integration_sync_jobs"].includes(table)) {
+      assert.match(sql, /FOREACH t IN ARRAY ARRAY\['integration_sync_schedules','integration_sync_jobs'\]/);
+      assert.match(sql, /ALTER TABLE %I ENABLE ROW LEVEL SECURITY/);
+      assert.match(sql, /ALTER TABLE %I FORCE ROW LEVEL SECURITY/);
+      assert.match(sql, /CREATE POLICY %I ON %I USING \(eduos_is_table_owner\(\) OR district_id=nullif\(current_setting\(''app\.district_id'',true\),''''\)::uuid\)/);
     } else {
       const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       assert.match(sql, new RegExp(`ALTER TABLE ${escaped} ENABLE ROW LEVEL SECURITY`, "i"), `${table}: ENABLE RLS`);

@@ -1,5 +1,7 @@
 # Timeline & Time Capsule — Implementation Plan
 
+> **Superseded data model (2026-11-21).** The `timeline_entries` tables described below were retired in `eduos/db/089_retire_timeline_entries.sql`. Student history and Time Capsules use `student_history_entries` and the `student_time_capsule*` tables (`086`), with relationship-based privacy enforced in the database (`088`). See `docs/STUDENT-HISTORY-TIME-CAPSULE-PR-ROADMAP.md`.
+
 ## Purpose
 Add a permission-aware learner timeline and scheduled Time Capsule experience to EduOS. The timeline records meaningful learning milestones; capsules package selected memories for release to named recipients at a future date or supported milestone.
 

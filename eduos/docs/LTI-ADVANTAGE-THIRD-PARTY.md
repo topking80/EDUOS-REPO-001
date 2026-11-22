@@ -1,6 +1,6 @@
 # LTI 1.3 Core platform support for third-party educational software
 
-Status: implementation plan and security acceptance criteria. This document defines the implementation scope and acceptance criteria; it does not claim full LTI Advantage interoperability.
+Status: LTI 1.3 Core resource-link launch is implemented (Phase 1). Deep Linking, NRPS and AGS are not. This document defines the scope and acceptance criteria; it does not claim LTI Advantage conformance or certification.
 
 ## Repository audit
 
@@ -45,8 +45,10 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 - [x] Revalidate the exact license whose seat was claimed, live district membership, active app assignment, DPA/learner eligibility, and school status at callback time; a replacement license cannot silently revive a revoked launch.
 - [x] Restrict LTI Core claims to `none` and `identity`; reject unsupported roster, grade, and attendance scopes and do not misrepresent a school as an LTI course context.
 - [x] Complete strict OIDC request validation: require scalar protocol parameters, reject unknown parameters, enforce supported response/scope/prompt values, and bind the login hint, signed message hint, client ID, and exact redirect URI.
-- Add schema-backed tool/deployment registrations, redirect URI allowlists, approval workflow, revocation, and district kill switch.
-- Add unit, route, multi-tenant, replay, and negative-security tests.
+- [x] Bind each launch to the browser that started it: launching sets an HttpOnly, per-launch cookie scoped to `/lti/authorize` (5 minutes, `SameSite=None; Secure` in production so the tool's cross-site redirect or form POST carries it), and the encrypted hint carries its hash. A copied hint without that browser's cookie is refused (`launch_browser_mismatch`), so a hint leaked through the tool, logs or the address bar can't be redeemed for the user's `id_token`. The cookie is cleared once used.
+- [x] The auto-submit page runs only its fixed script, allowed by hash (no `'unsafe-inline'`), and sends no referrer.
+- [x] Tool registrations live on the app catalog (`apps.integration_config`) with an exact redirect-URI allowlist. Approval and revocation (095): every registration starts pending; a district administrator other than the registrant approves (enforced in the route and in PostgreSQL); any change to the registration or data scope returns it to pending; "Turn off now" revokes it and stops in-flight launches. Managed from **Apps** in the web app.
+- [x] Unit, route, multi-tenant, replay, revocation-window and negative-security tests.
 
 ### Phase 2 — vendor-neutral tool registration and interoperability
 - Add administrator-facing configuration for standards-conformant third-party LTI tools.
@@ -83,7 +85,7 @@ EduOS is the LTI 1.3 platform for approved third-party LTI tools. EduOS initiate
 
 ## Current limitations
 
-This PR records the required scope and audit findings and adds a durable replay-consumption primitive. The durable replay primitive is now wired into the OIDC authorization transaction, with client, target-link, exact redirect, state, and nonce request checks; the deployment ID is emitted in the signed LTI claim rather than incorrectly required as an OIDC authorization parameter. It still does not claim complete OIDC conformance, NRPS, AGS, Deep Linking, third-party LTI interoperability validation, or production readiness. Signing-key overlap is implemented but must be configured and operationally exercised before production use. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
+Phase 1 (Core resource-link launch) is implemented and tested against a local test tool. Not yet done: Deep Linking, NRPS and AGS (Phases 3–5), and interoperability testing against independent, standards-conformant tools and the IMS reference implementation (Phase 2). No claim of OIDC or LTI certification is made. Signing-key overlap is implemented but must be configured and operationally exercised before production use. Those capabilities must ship in separately testable increments behind district-controlled feature flags.
 
 ## Signing-key rotation procedure
 

@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { loadPlatformKey, signJwt } from "../../src/lti.js";
+import { bindingCookieName, loadPlatformKey, signJwt } from "../../src/lti.js";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
@@ -192,6 +192,17 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
   });
 
   it("LTI 1.3 launch: signed id_token, registered redirect only, claims limited to scope, single use", async () => {
+    // Launch-binding cookies (one per launch) collected from launch responses,
+    // sent back on /lti/authorize as the launching browser would.
+    const jar = new Map();
+    const launchAs = async (who, appId) => {
+      const r = await as(who)("POST", `/api/apps/${appId}/launch`);
+      for (const c of r.headers.getSetCookie()) { const m = /^(eduos_lti_[0-9a-f]+)=([^;]*)/.exec(c); if (m) jar.set(m[1], m[2]); }
+      return r;
+    };
+    const lfetch = (url, init = {}) => String(url).includes("/lti/authorize")
+      ? fetch(url, { ...init, headers: { ...(init.headers || {}), cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") } })
+      : fetch(url, init);
     const got = [];
     tool = http.createServer(async (req, res) => {
       const u = new URL(req.url, "http://127.0.0.1");
@@ -213,9 +224,11 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     // tested independently of the app-availability authorization gate.
     await as("it")("POST", `/api/apps/${reg.body.data.id}/licenses`, {});
     await as("it")("POST", `/api/apps/${reg.body.data.id}/assignments`, { scope: "district" });
-    const blocked = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    const blocked = await launchAs("pu", reg.body.data.id);
     assert.equal(blocked.status, 409); assert.equal(blocked.body.error, "lti_approval_required");
     assert.equal((await as("p1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 403, "school principals cannot approve district LTI registrations");
+    const selfApproval = await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/approve`);
+    assert.deepEqual([selfApproval.status, selfApproval.body.error], [409, "lti_second_approver_required"], "the registrant cannot approve their own tool");
     const approval = await as("supt1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`);
     assert.equal(approval.status, 200, JSON.stringify(approval.body));
     assert.equal(approval.body.data.registrationStatus, "approved");
@@ -249,20 +262,20 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     const changedConfig = { ...reg.body.data.integrationConfig, redirectUris: [...reg.body.data.integrationConfig.redirectUris, `${base}/alternate`] };
     const changed = await as("it")("PATCH", `/api/apps/${reg.body.data.id}`, { integrationConfig: changedConfig });
     assert.equal(changed.status, 200); assert.equal(changed.body.data.registrationStatus, "pending", "registration changes invalidate approval");
-    assert.equal((await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`)).status, 409);
+    assert.equal((await launchAs("pu", reg.body.data.id)).status, 409);
     assert.equal((await as("supt1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200, "district must reapprove changed registration");
-    const launch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    const launch = await launchAs("pu", reg.body.data.id);
     assert.equal(launch.status, 200, JSON.stringify(launch.body));
-    const login1 = await fetch(launch.body.data.url, { redirect: "manual" });
+    const login1 = await lfetch(launch.body.data.url, { redirect: "manual" });
     let authorize = login1.headers.get("location");
     const revoked = await as("it")("POST", `/api/apps/${reg.body.data.id}/lti/revoke`);
     assert.equal(revoked.status, 200); assert.equal(revoked.body.data.registrationStatus, "revoked");
-    assert.equal((await fetch(authorize)).status, 409, "revocation blocks an in-flight callback");
+    assert.equal((await lfetch(authorize)).status, 409, "revocation blocks an in-flight callback");
     assert.equal((await as("supt1")("POST", `/api/apps/${reg.body.data.id}/lti/approve`)).status, 200);
-    assert.equal((await fetch(authorize)).status, 409, "reapproval does not revive hints issued under an earlier approval");
-    const freshLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    assert.equal((await lfetch(authorize)).status, 409, "reapproval does not revive hints issued under an earlier approval");
+    const freshLaunch = await launchAs("pu", reg.body.data.id);
     assert.equal(freshLaunch.status, 200);
-    const freshLogin = await fetch(freshLaunch.body.data.url, { redirect: "manual" });
+    const freshLogin = await lfetch(freshLaunch.body.data.url, { redirect: "manual" });
     authorize = freshLogin.headers.get("location");
     // Executable OIDC negative cases: reject malformed protocol parameters
     // before consuming the valid one-time launch hint.
@@ -273,23 +286,35 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     ]) {
       const invalid = new URL(authorize);
       invalid.searchParams.set(name, value);
-      const denied = await fetch(invalid);
+      const denied = await lfetch(invalid);
       assert.equal(denied.status, 400, `OIDC rejects ${name}=${value}`);
       assert.match(await denied.text(), /LTI launch refused/);
     }
     for (const name of ["scope", "response_type", "response_mode", "nonce", "state", "redirect_uri", "client_id"]) {
       const missing = new URL(authorize);
       missing.searchParams.delete(name);
-      assert.equal((await fetch(missing)).status, 400, `OIDC requires ${name}`);
+      assert.equal((await lfetch(missing)).status, 400, `OIDC requires ${name}`);
     }
-    const page = await fetch(authorize);
+    // Browser binding: the hint alone (no cookie, or another launch's cookie) is refused,
+    // and refusing doesn't use up the launch.
+    const noCookie = await fetch(authorize);
+    assert.equal(noCookie.status, 403); assert.match(await noCookie.text(), /launch_browser_mismatch/);
+    const otherLaunch = await launchAs("pu", reg.body.data.id);
+    const otherName = [...jar.keys()].at(-1);
+    const wrongCookie = await fetch(authorize, { headers: { cookie: `${bindingCookieName(new URL(authorize).searchParams.get("login_hint"))}=${jar.get(otherName)}` } });
+    assert.equal(wrongCookie.status, 403, "another launch's binding value does not match");
+    assert.ok(otherLaunch.headers.getSetCookie().some(c => /HttpOnly/.test(c) && /Path=\/lti\/authorize/.test(c) && /Max-Age=300/.test(c)));
+    const page = await lfetch(authorize);
     assert.equal(page.status, 200);
+    assert.ok(page.headers.getSetCookie().some(c => /^eduos_lti_[0-9a-f]+=;/.test(c) && /Max-Age=0/.test(c)), "binding cookie cleared once used");
+    assert.match(page.headers.get("content-security-policy"), /script-src 'sha256-[A-Za-z0-9+/=]+'/);
+    assert.doesNotMatch(page.headers.get("content-security-policy"), /script-src 'unsafe-inline'/);
     const html = await page.text();
     const token = /name="id_token" value="([^"]+)"/.exec(html)[1];
     assert.match(page.headers.get("content-security-policy"), new RegExp(`form-action ${base.replace(/[.:/]/g, "\\$&")}`));
     const { payload, protectedHeader } = await jwtVerify(token, createRemoteJWKSet(new URL(`${server.base}/.well-known/jwks.json`)), { issuer: "http://localhost", audience: "tool-client" });
     assert.equal(protectedHeader.alg, "RS256"); assert.equal(payload.nonce, "n-1");
-    const jwksResponse = await fetch(`${server.base}/.well-known/jwks.json`);
+    const jwksResponse = await lfetch(`${server.base}/.well-known/jwks.json`);
     const publishedJwks = await jwksResponse.json();
     assert.equal(publishedJwks.keys.length, 2, "JWKS publishes active and previous verification keys");
     assert.equal(protectedHeader.kid, publishedJwks.keys[0].kid, "new tokens use the active key");
@@ -301,19 +326,19 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     assert.deepEqual(payload["https://purl.imsglobal.org/spec/lti/claim/roles"], ["http://purl.imsglobal.org/vocab/lis/v2/membership#Learner"]);
     assert.ok(!payload.name && !payload.email && !payload["https://purl.imsglobal.org/spec/lti/claim/context"], "scope 'none' sends no name, email or school");
     assert.notEqual(payload.sub, USERS.pu[0], "subject is pairwise, not the EduOS user id");
-    assert.equal((await fetch(authorize)).status, 409, "a launch hint is single-use");
+    assert.equal((await lfetch(authorize)).status, 409, "a launch hint is single-use");
     const evil = new URL(authorize); evil.searchParams.set("redirect_uri", "https://evil.example/steal");
-    assert.equal((await fetch(evil)).status, 400);
+    assert.equal((await lfetch(evil)).status, 400);
     const forged = new URL(authorize); forged.searchParams.set("lti_message_hint", forged.searchParams.get("lti_message_hint").replace(/^(.{10})(.)/, (_, a, c) => a + (c === "A" ? "B" : "A")));
-    assert.equal((await fetch(forged)).status, 400);
+    assert.equal((await lfetch(forged)).status, 400);
 
     // Reject OIDC parameter pollution across query and form transports.
-    const pollutionLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+    const pollutionLaunch = await launchAs("pu", reg.body.data.id);
     assert.equal(pollutionLaunch.status, 200);
-    const pollutionInit = await fetch(pollutionLaunch.body.data.url, { redirect: "manual" });
+    const pollutionInit = await lfetch(pollutionLaunch.body.data.url, { redirect: "manual" });
     const pollutionAuthorize = new URL(pollutionInit.headers.get("location"));
     const pollutionForm = new URLSearchParams(pollutionAuthorize.searchParams);
-    const polluted = await fetch(`${server.base}/lti/authorize?scope=openid`, {
+    const polluted = await lfetch(`${server.base}/lti/authorize?scope=openid`, {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: pollutionForm
     });
     assert.equal(polluted.status, 400);
@@ -324,7 +349,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     for (const key of ["__proto__", "constructor", "prototype", "unsupported_extension"]) {
       const hostileForm = new URLSearchParams(authorize.searchParams);
       hostileForm.set(key, "unexpected");
-      const hostile = await fetch(`${server.base}/lti/authorize`, {
+      const hostile = await lfetch(`${server.base}/lti/authorize`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: hostileForm.toString()
@@ -335,7 +360,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
 
     // OIDC response_mode=form_post must reject JSON even when the payload
     // contains otherwise valid OIDC parameters.
-    const jsonPost = await fetch(`${server.base}/lti/authorize`, {
+    const jsonPost = await lfetch(`${server.base}/lti/authorize`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify(Object.fromEntries(pollutionForm))
     });
@@ -346,7 +371,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     // scalar OIDC parameter validation rather than selecting one value.
     const duplicateForm = new URLSearchParams(pollutionForm);
     duplicateForm.append("scope", "openid");
-    const duplicated = await fetch(`${server.base}/lti/authorize`, {
+    const duplicated = await lfetch(`${server.base}/lti/authorize`, {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: duplicateForm
     });
     assert.equal(duplicated.status, 400);
@@ -356,7 +381,7 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     // callback bodies must fail closed before OIDC validation or token issue.
     const oversizedForm = new URLSearchParams(pollutionForm);
     oversizedForm.set("state", "x".repeat(17 * 1024));
-    const oversized = await fetch(`${server.base}/lti/authorize`, {
+    const oversized = await lfetch(`${server.base}/lti/authorize`, {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: oversizedForm
     });
     const oversizedBody = await oversized.text();
@@ -367,15 +392,15 @@ describe("EduOS 32.2.0 district resource mesh against real PostgreSQL", { skip }
     // hint, then changes authoritative PostgreSQL state before the callback.
     // Restore fixture state in finally so one assertion cannot poison later cases.
     const expectRevokedCallback = async ({ revoke, restore, expected }) => {
-      const freshLaunch = await as("pu")("POST", `/api/apps/${reg.body.data.id}/launch`);
+      const freshLaunch = await launchAs("pu", reg.body.data.id);
       assert.equal(freshLaunch.status, 200, JSON.stringify(freshLaunch.body));
-      const initiation = await fetch(freshLaunch.body.data.url, { redirect: "manual" });
+      const initiation = await lfetch(freshLaunch.body.data.url, { redirect: "manual" });
       assert.equal(initiation.status, 302);
       const callback = initiation.headers.get("location");
       assert.ok(callback, "tool login initiation must produce an authorization request");
       try {
         await revoke({ launchUrl: freshLaunch.body.data.url });
-        const denied = await fetch(callback);
+        const denied = await lfetch(callback);
         assert.equal(denied.status, 403, expected);
         const body = await denied.text();
         assert.match(body, /LTI launch refused/);

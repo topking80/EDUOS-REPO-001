@@ -9,6 +9,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import pg from "pg";
+import { schoolDays } from "../../src/ai/edison-trends.js";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
@@ -51,12 +52,14 @@ describe("Leo and Edison against real PostgreSQL", { skip }, () => {
     await admin.query(`INSERT INTO learning_standards(id,district_id,framework,code,subject,grade_level,description) VALUES
       ($1,$3,'CCSS','3.NF.A.1','Math','3','Understand a fraction 1/b as one part of a whole partitioned into b equal parts.'),
       ($2,$3,'CCSS','3.NF.A.3','Math','3','Explain equivalence of fractions in special cases.')`, [STD, STD2, ID.d1]);
-    // 12 grade-3 pupils at S1 (Alice, Bob and ten more): today 7 present, 5 absent.
+    // 12 grade-3 pupils at S1 (Alice, Bob and ten more): latest school day has 7 present, 5 absent.
     for (const [i, n] of extraNames.entries())
       await admin.query(`INSERT INTO students(district_id,school_id,local_student_number,display_name,grade_level) VALUES($1,$2,$3,$4,'3')`, [ID.d1, ID.s1, `S1-X${i}`, n]);
     const kids = (await admin.query(`SELECT id FROM students WHERE school_id=$1 ORDER BY local_student_number`, [ID.s1])).rows.map(r => r.id);
+    const schoolToday = (await admin.query(`SELECT eduos_school_today($1)::text AS d`, [ID.s1])).rows[0].d;
+    const latestSchoolDay = schoolDays(schoolToday, 1)[0];
     for (const [i, id] of kids.entries())
-      await admin.query(`INSERT INTO attendance_events(district_id,student_id,event_date,status) VALUES($1,$2,eduos_school_today($3),$4)`, [ID.d1, id, ID.s1, i < 7 ? "present" : "absent"]);
+      await admin.query(`INSERT INTO attendance_events(district_id,student_id,event_date,status) VALUES($1,$2,$3::date,$4)`, [ID.d1, id, latestSchoolDay, i < 7 ? "present" : "absent"]);
     appDb = new pg.Client(db.appUrl); await appDb.connect();
     local = await startServer({ ...env, DATABASE_URL: db.appUrl });
     ext = await startServer({ ...env, DATABASE_URL: db.appUrl, AI_PROVIDER: "openai_compatible", AI_ALLOW_EXTERNAL_PROVIDER: "true",

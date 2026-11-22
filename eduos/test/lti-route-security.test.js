@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const source = await readFile(new URL("../src/mesh-routes.js", import.meta.url), "utf8");
 const lti = await readFile(new URL("../src/lti.js", import.meta.url), "utf8");
-const approvalMigration = await readFile(new URL("../db/086_lti_registration_approval.sql", import.meta.url), "utf8");
+const approvalMigration = await readFile(new URL("../db/095_lti_registration_approval.sql", import.meta.url), "utf8");
 
 test("LTI launch validates configuration before claiming a license seat", () => {
   const validate = source.indexOf('if (a.integration_type === "lti13" && !validLtiConfig(cfg.integration_config, { allowInsecureLoopback: config.nodeEnv !== "production" }))');
