@@ -568,3 +568,11 @@ GRANT SELECT, INSERT ON shared_materials, shared_material_copies TO eduos_app;
 GRANT UPDATE (title, subject, grade_level, summary, body, version, status, withdrawn_by, withdrawn_at, withdrawn_reason, updated_at) ON shared_materials TO eduos_app;
 REVOKE DELETE, TRUNCATE ON shared_materials, shared_material_copies FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_material_copies(uuid) TO eduos_app;
+
+-- TEACH-03 (db/103): co-written drafts. Saved (updated) by editors; revisions
+-- are append-only; editors leave by setting left_at; nothing is deleted.
+GRANT SELECT, INSERT ON collab_drafts, collab_draft_editors, collab_draft_revisions TO eduos_app;
+GRANT UPDATE (title, subject, grade_level, body, version, updated_by, updated_at) ON collab_drafts TO eduos_app;
+GRANT UPDATE (left_at) ON collab_draft_editors TO eduos_app;
+REVOKE DELETE, TRUNCATE ON collab_drafts, collab_draft_editors, collab_draft_revisions FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_is_draft_editor(uuid) TO eduos_app;

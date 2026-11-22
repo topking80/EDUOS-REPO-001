@@ -292,12 +292,13 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
   if (tab === "history") return "history";
   if (tab === "capsule") return "capsules";
+  if (tab === "draft") return "network";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
   if (tab === "staffing") return "staffing";
@@ -313,7 +314,7 @@ async function go(tab, { push = true } = {}) {
     : ["safety", "me", ...(state.me?.role === "parent" && live.some(i => i.status === "reunification") ? ["pickup"] : [])];
   if (live.length && !open.includes(tab)) tab = "safety";
   document.body.classList.toggle("sos-mode", liveIncidents().length > 0);
-  clearInterval(state.quizTimer);
+  clearInterval(state.quizTimer); clearInterval(state.draftTimer);
   state.tab = tab;
   if (push && location.hash !== `#/${tab}`) history.pushState(null, "", `#/${tab}`);
   renderTabs();
@@ -1472,7 +1473,7 @@ async function previewMaterial(id) {
     m.summary ? h("p", {}, m.summary) : null,
     h("div", { class: "preview" }, m.kind === "unit" ? [m.body.summary ? h("p", { class: "small" }, m.body.summary) : null, ...m.body.lessons.map(lessonBlock)] : lessonBlock(m.body))], value: () => undefined }), null);
 }
-async function copyMaterial(m) {
+async function copyMaterial(m, endpoint = `/api/materials/${m.id}/copy`) {
   const courses = ((await api.get("/api/learning/courses")).data.courses || []);
   if (!courses.length) return toast("Make a course first, then copy into it.");
   const target = await dialogForm(`Copy “${m.title}”`, () => {
@@ -1491,10 +1492,10 @@ async function copyMaterial(m) {
   }, "Copy");
   if (!target) return;
   try {
-    const r = (await api.post(`/api/materials/${m.id}/copy`, target)).data;
+    const r = (await api.post(endpoint, target)).data;
     toast("Copied into your course as a draft.");
     r.kind === "lesson" ? openView("lesson", { lessonId: r.id }) : openView("course", { courseId: target.courseId });
-  } catch { toast("Couldn't copy it."); }
+  } catch (e) { toast(e.body?.error === "draft_incomplete" ? "Fill in every title, goal and lesson text first." : "Couldn't copy it."); }
 }
 async function materialsSection() {
   const f = state.matFilters ||= { q: "", kind: "" };
@@ -1511,14 +1512,114 @@ async function materialsSection() {
         m.summary ? h("p", { class: "small" }, m.summary) : null)),
       h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", "aria-label": `Preview ${m.title}`, onclick: () => previewMaterial(m.id) }, "Preview"),
         ["teacher", "principal"].includes(state.me.role) ? h("button", { class: "btn small primary", type: "button", "aria-label": `Copy to my course: ${m.title}`, onclick: () => copyMaterial(m) }, "Copy to my course") : null,
+        ["teacher", "principal"].includes(state.me.role) ? h("button", { class: "btn small", type: "button", "aria-label": `Co-write from: ${m.title}`, onclick: () => startDraft({ from: "material", sourceId: m.id }) }, "Co-write from") : null,
         m.mine ? h("button", { class: "btn small", type: "button", "aria-label": `Stop sharing ${m.title}`, onclick: async () => { if (!(await ask({ title: "Stop sharing?", text: "Colleagues won't see it any more. Copies they already made stay theirs.", confirm: "Stop sharing" }))) return;
           try { await api.post(`/api/materials/${m.id}/withdraw`, {}); toast("No longer shared."); go("network", { push: false }); } catch { toast("Couldn't change it."); } } }, "Stop sharing") : null))))
       : empty(f.q || f.kind ? "Nothing matches." : "Nothing shared yet. Share a lesson from Courses to start the library."))];
 }
+// ---- TEACH-03: co-writing ------------------------------------------------
+async function startDraft(spec) {
+  try { const r = (await api.post("/api/drafts", spec)).data; toast("Draft started. Add colleagues to write it together."); openView("draft", { draftId: r.id }); }
+  catch { toast("Couldn't start the draft."); }
+}
+async function draftsSection() {
+  const list = (await api.get("/api/drafts")).data;
+  const kind = h("select", { id: "dr-kind" }, h("option", { value: "lesson" }, "A lesson"), h("option", { value: "unit" }, "A unit"));
+  const title = h("input", { id: "dr-title", maxlength: 120, placeholder: "Working title" });
+  const subject = h("input", { id: "dr-subject", maxlength: 40, required: true, placeholder: "e.g. Math" });
+  const grade = h("input", { id: "dr-grade", maxlength: 4, required: true, placeholder: "e.g. 4", inputmode: "text" });
+  return [h("p", { class: "muted small" }, "Write a lesson or unit together with colleagues at any school. Drafts sit outside your courses, so no students or class lists are shared. When it's ready, copy it into your course or put it in the library."),
+    h("section", { class: "card", "aria-label": "Your drafts" }, h("h3", {}, "Your drafts"), list.length ? h("ul", { class: "list" }, list.map(d => h("li", { class: "row" },
+      h("div", { class: "grow" }, h("b", {}, d.title), h("p", { class: "small muted" }, `${d.kind === "unit" ? "Unit" : "Lesson"} · ${d.subject} · Grade ${d.grade_level}${d.with_names ? ` · with ${d.with_names}` : " · just you so far"} · saved by ${d.updated_by} ${ago(d.updated_at)}`)),
+      h("button", { class: "btn", type: "button", "aria-label": `Open draft: ${d.title}`, onclick: () => openView("draft", { draftId: d.id }) }, "Open"))))
+      : empty("No drafts yet. Start one here, or choose Co-write on a lesson or a shared material.")),
+    h("section", { class: "card", "aria-label": "Start a draft" }, h("h3", {}, "Start a draft"),
+      h("form", { class: "stack", onsubmit: e => { e.preventDefault(); startDraft({ from: "blank", kind: kind.value, title: title.value.trim(), subject: subject.value.trim(), gradeLevel: grade.value.trim() }); } },
+        h("label", { for: kind.id }, "What are you writing?"), kind, h("label", { for: title.id }, "Title (optional)"), title,
+        h("div", { class: "row" }, h("div", { class: "grow" }, h("label", { for: subject.id }, "Subject"), subject), h("div", { class: "grow" }, h("label", { for: grade.id }, "Grade"), grade)),
+        h("button", { class: "btn primary", type: "submit" }, "Start writing")))];
+}
+const blankLesson = () => ({ title: "", objective: "", content: "", standards: [], sources: [] });
+VIEWS.draft = async () => {
+  if (!state.draftId) { state.netView = "drafts"; return VIEWS.network(); }
+  const d = (await api.get(`/api/drafts/${state.draftId}`)).data;
+  const ed = state.draftEdit && state.draftEdit.id === d.id ? state.draftEdit : (state.draftEdit = { id: d.id, version: d.version, body: structuredClone(d.body), dirty: false, notice: null, theirs: null });
+  const note = h("div", { "aria-live": "polite" }, ed.notice ? h("p", { class: `notice${ed.notice.warn ? " warn" : ""}` }, ed.notice.text) : null);
+  const field = (obj, key, label, id, multi, max) => {
+    const el = h(multi ? "textarea" : "input", { id, maxlength: max, ...(multi ? { rows: 6 } : {}) });
+    el.value = obj[key] || "";
+    el.addEventListener("input", () => { obj[key] = el.value; ed.dirty = true; });
+    const mine = ed.theirs?.[id];
+    return [h("label", { for: id }, label), el, mine != null ? h("details", { class: "yours", open: true }, h("summary", {}, "Your text (not saved: copy what you need)"), h("p", { class: "small" }, mine || "(empty)")) : null];
+  };
+  const lessonFields = (l, at, i = null) => [
+    ...field(l, "title", "Title", `${at}title`, false, 120), ...field(l, "objective", "Goal (what learners will be able to do)", `${at}objective`, false, 300),
+    ...field(l, "content", "Lesson text", `${at}content`, true, 8000),
+    l.standards?.length ? h("p", { class: "small muted" }, `Standards: ${l.standards.map(s => s.code).join(", ")}`) : null,
+    i !== null && ed.body.lessons.length > 1 ? h("button", { class: "btn small danger", type: "button", "aria-label": `Remove lesson ${i + 1}`, onclick: () => { ed.body.lessons.splice(i, 1); ed.dirty = true; go("draft", { push: false }); } }, "Remove lesson") : null];
+  const editor = d.kind === "lesson" ? h("div", { class: "stack" }, ...lessonFields(ed.body, "d-"))
+    : h("div", { class: "stack" }, ...field(ed.body, "title", "Unit title", "d-title", false, 120), ...field(ed.body, "summary", "Unit summary", "d-summary", true, 1000),
+        ed.body.lessons.map((l, i) => h("fieldset", { class: "card" }, h("legend", {}, `Lesson ${i + 1}`), ...lessonFields(l, `d-l${i}-`, i))),
+        ed.body.lessons.length < 30 ? h("button", { class: "btn", type: "button", onclick: () => { ed.body.lessons.push(blankLesson()); ed.dirty = true; go("draft", { push: false }); } }, "Add a lesson") : null);
+  const save = async () => {
+    try {
+      const r = (await api.req("PUT", `/api/drafts/${d.id}`, { baseVersion: ed.version, body: ed.body })).data;
+      Object.assign(ed, { version: r.version, body: r.body, dirty: false, theirs: null,
+        notice: r.warnings.length ? { warn: true, text: `Saved. These words match students in the district: ${r.warnings.join(", ")}. Shared drafts must not name students.` }
+          : { text: r.merged ? "Saved, together with a colleague's changes made at the same time." : "Saved." } });
+    } catch (e) {
+      if (e.body?.error !== "edit_conflict") { toast("Couldn't save."); return; }
+      // Theirs goes in the editor; mine stays visible beside each field that clashed.
+      const at = p => p.replace(/^lessons\[(\d+)\]\.(\w+)$/, "d-l$1-$2").replace(/^(\w+)$/, "d-$1");
+      const get = (b, p) => p.split(/[.[\]]+/).filter(Boolean).reduce((o, k) => o?.[k], b);
+      ed.theirs = Object.fromEntries(e.body.conflicts.filter(p => p !== "lessons").map(p => [at(p), String(get(ed.body, p) ?? "")]));
+      Object.assign(ed, { version: e.body.current.version, body: structuredClone(e.body.current.body), dirty: true,
+        notice: { warn: true, text: `${e.body.current.updatedBy} changed the same ${e.body.conflicts.length > 1 ? "parts" : "part"} while you were writing. Their version is in the editor now; your text is shown below each part. Edit, then save again.` } });
+    }
+    go("draft", { push: false });
+  };
+  // Pick up colleagues' saves while you aren't typing; while you are, a save merges.
+  state.draftTimer = setInterval(async () => {
+    const now = (await safe(api.get(`/api/drafts/${d.id}`)))?.data;
+    if (!now || now.version === ed.version || state.tab !== "draft") return;
+    if (!ed.dirty) { Object.assign(ed, { version: now.version, body: structuredClone(now.body), notice: { text: `${now.updatedBy} saved a newer version.` } }); go("draft", { push: false }); }
+    else if (!ed.notice?.newer) { ed.notice = { newer: true, text: `${now.updatedBy} saved a newer version. Saving will combine your changes with theirs.` }; note.replaceChildren(h("p", { class: "notice" }, ed.notice.text)); }
+  }, 20000);
+  return [h("button", { class: "btn", type: "button", onclick: () => { state.draftEdit = null; state.netView = "drafts"; go("network"); } }, "‹ Co-write"),
+    h("section", { class: "card", "aria-label": "Draft" }, h("p", { class: "small muted" }, `${d.kind === "unit" ? "Unit" : "Lesson"} draft · ${d.subject} · Grade ${d.gradeLevel} · version ${ed.version}`),
+      h("h2", {}, d.title), h("p", { class: "small" }, `Writing together: ${d.editors.map(e => `${e.name}${e.school ? ` (${e.school})` : ""}`).join(", ")}`),
+      h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: async () => {
+          const people = await pickColleagues({ title: "Invite colleagues to co-write", confirm: "Invite", exclude: d.editors.map(e => e.user_id) }); if (!people) return;
+          try { const r = await api.post(`/api/drafts/${d.id}/editors`, { userIds: people.map(c => c.user_id) }); toast(`Invited ${r.data.added}`); go("draft", { push: false }); } catch { toast("Couldn't invite them."); } } }, icon("people"), "Invite colleagues"),
+        h("button", { class: "btn", type: "button", onclick: async () => { if (!(await ask({ title: "Leave this draft?", text: "You won't see it any more. Another editor can invite you back.", confirm: "Leave" }))) return;
+          try { await api.post(`/api/drafts/${d.id}/leave`, {}); state.draftEdit = null; state.netView = "drafts"; go("network"); } catch { toast("Couldn't leave."); } } }, "Leave"))),
+    note,
+    h("form", { class: "card", "aria-label": "Edit the draft", onsubmit: e => { e.preventDefault(); save(); } }, editor, h("button", { class: "btn primary block", type: "submit" }, "Save")),
+    h("section", { class: "card", "aria-label": "When it's ready" }, h("h3", {}, "When it's ready"),
+      h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => copyMaterial({ id: d.id, kind: d.kind, title: d.title }, `/api/drafts/${d.id}/copy`) }, "Copy to my course"),
+        h("button", { class: "btn", type: "button", onclick: async () => {
+          const post = confirmNotStudents => api.post(`/api/drafts/${d.id}/publish`, { confirmNotStudents });
+          try { await post(false); toast("In the library for every school."); }
+          catch (e) {
+            if (e.body?.error === "draft_incomplete") return toast("Fill in every title, goal and lesson text first.");
+            if (e.body?.error !== "may_mention_students") return toast(e.body?.error === "not_the_author" ? "Another editor published it; they can update it." : "Couldn't publish it.");
+            if (await ask({ title: "Does this mention a student?", text: `These words match students in the district: ${e.body.words.join(", ")}. Edit the draft, or publish if they aren't students.`, confirm: "They aren't students: publish", cancel: "Edit first" }))
+              try { await post(true); toast("In the library for every school."); } catch { toast("Couldn't publish it."); }
+          } } }, "Put in the library"))),
+    h("details", { class: "card" }, h("summary", {}, `History (${d.revisions.length})`), h("ul", { class: "list" }, d.revisions.map(r => h("li", { class: "row" },
+      h("span", { class: "grow small" }, `Version ${r.version} · ${r.edited_by} · ${ago(r.edited_at)}${r.merged ? " · combined with a colleague's changes" : ""}`),
+      h("button", { class: "btn small", type: "button", "aria-label": `View version ${r.version}`, onclick: async () => {
+        const v = (await api.get(`/api/drafts/${d.id}/revisions/${r.version}`)).data;
+        const ls = v.body.lessons || [v.body];
+        await dialogForm(`Version ${v.version} · ${v.edited_by}`, () => ({ fields: [h("div", { class: "preview" }, v.body.summary ? h("p", {}, v.body.summary) : null,
+          ls.map(l => [h("h3", {}, l.title || "(untitled)"), h("p", {}, h("b", {}, "Goal: "), l.objective || "–"), h("div", { class: "lesson-text" }, (l.content || "–").split(/\n+/).map(p => h("p", {}, p)))]))], value: () => undefined }), null);
+      } }, "View")))))];
+};
 VIEWS.network = async () => {
   const view = state.netView || "people";
-  const tabs = seg([["people", "Colleagues"], ["groups", "Groups"], ["materials", "Materials"]], view, v => { state.netView = v; go("network", { push: false }); });
+  const tabs = seg([["people", "Colleagues"], ["groups", "Groups"], ["materials", "Materials"], ["drafts", "Co-write"]], view, v => { state.netView = v; go("network", { push: false }); });
   const intro = h("p", { class: "muted small" }, "Teachers and principals at every school in the district. Conversations here are between colleagues: no student records, and families and students can't join.");
+  if (view === "drafts") return [h("h2", {}, "Colleagues"), tabs, ...await draftsSection()];
   if (view === "materials") return [h("h2", {}, "Colleagues"), tabs, h("p", { class: "muted small" }, "Lessons and units shared by teachers across the district. Copy one into your course and make it yours."), ...await materialsSection()];
   if (view === "groups") {
     const groups = (await api.get("/api/network/groups")).data;
@@ -2127,7 +2228,9 @@ VIEWS.lesson = async () => {
       h("div", { class: "lesson-text" }, l.content.split(/\n+/).map(p => h("p", {}, p))),
       l.canManage ? h("p", { class: "small muted" }, l.approved ? "Approved: Christie may use this lesson's text for hints." : "Waiting for a school leader to approve it for Christie.") : null,
       l.adaptedFrom ? h("p", { class: "small muted" }, l.adaptedFrom.withdrawn ? "Adapted from a colleague's shared lesson (no longer shared)." : `Adapted from “${l.adaptedFrom.title}” by ${l.adaptedFrom.author}, ${l.adaptedFrom.school}.`) : null,
-      l.canManage && ["teacher", "principal"].includes(state.me.role) ? h("button", { class: "btn", type: "button", onclick: () => shareMaterial("lesson", l.id, l.title) }, icon("people"), "Share with colleagues") : null),
+      l.canManage && ["teacher", "principal"].includes(state.me.role) ? h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => shareMaterial("lesson", l.id, l.title) }, icon("people"), "Share with colleagues"),
+        h("button", { class: "btn", type: "button", onclick: () => startDraft({ from: "lesson", sourceId: l.id }) }, icon("chat"), "Co-write with colleagues")) : null),
     l.mastery ? h("section", { class: "card", "aria-label": "My mastery" }, h("h2", {}, "My mastery here"), h("ul", { class: "list" }, l.standards.map(s => h("li", { class: "row" },
       h("span", { class: "grow" }, s.code), l.mastery[s.id] ? levelChip(l.mastery[s.id].level, ` ${l.mastery[s.id].mastery}%`) : levelChip("not_started"))))) : null,
     l.sources.length ? [h("h2", {}, "Primary sources"), ...l.sources.map(s => sourceCard(s))] : null,

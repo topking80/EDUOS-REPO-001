@@ -23,7 +23,7 @@ const onlyNetwork = (req, res, next) => READERS.includes(req.actor?.role) ? next
 const onlyMembers = (req, res, next) => NETWORK_ROLES.includes(req.actor?.role) ? next() : res.status(403).json({ error: "teacher_network_members_only" });
 
 /** Active teachers and principals in the district, with their schools. */
-async function colleagues(client, a, { q = "", schoolId = null, ids = null, limit = 200 } = {}) {
+export async function colleagues(client, a, { q = "", schoolId = null, ids = null, limit = 200 } = {}) {
   return rows(client, `SELECT u.id AS user_id,u.display_name AS name,
         array_agg(DISTINCT m.role ORDER BY m.role) AS roles,
         json_agg(DISTINCT jsonb_build_object('id',s.id,'name',s.name)) AS schools
