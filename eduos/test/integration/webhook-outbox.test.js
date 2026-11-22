@@ -234,11 +234,27 @@ describe("37.4.0 webhook outbox lifecycle against real PostgreSQL", { skip }, ()
     const jobs = []; for (let i = 0; i < 6; i++) jobs.push(await job(s));
     const sends = [];
     const slow = async req => { sends.push(req.headers["X-EduOS-Delivery"]); await new Promise(r => setTimeout(r, 400)); return delivered(); };
-    // A claims all six with a 1 s lease and needs 400 ms each; B starts after A's claims ran out.
+    // A claims all six with a 1 s lease and sends them one at a time, 400 ms
+    // each, so the later claims run out while they wait. B starts as soon as
+    // one of A's claims has actually expired (polled, not a fixed sleep, so a
+    // slow machine can't make B look too early) and reclaims those jobs.
+    const leaseExpired = async () => (await admin.query(
+      "SELECT 1 FROM webhook_outbox WHERE id = ANY($1::uuid[]) AND status='processing' AND lease_until < now()", [jobs.map(j => j.id)])).rowCount > 0;
     const a = work(supt1, { send: slow, limit: 25, leaseSeconds: 1, jobDeadlineMs: 800 });
-    await new Promise(r => setTimeout(r, 1100));
+    for (const end = Date.now() + 5000; !(await leaseExpired()); await new Promise(r => setTimeout(r, 25)))
+      assert.ok(Date.now() < end, "one of A's claims should expire while it is still sending");
     const b = work(supt1, { send: slow, limit: 25, leaseSeconds: 1, jobDeadlineMs: 800 });
     await Promise.all([a, b]);
+    // Depending on timing, a job whose claim ran out after B looked is left
+    // for the next run (A, correctly, won't send it on a lost claim). Run the
+    // later passes the scheduler would, until nothing is left.
+    const unfinished = async () => (await admin.query(
+      "SELECT count(*)::int AS n FROM webhook_outbox WHERE id = ANY($1::uuid[]) AND status <> 'delivered'", [jobs.map(j => j.id)])).rows[0].n;
+    for (let pass = 0; pass < 5 && await unfinished(); pass++) {
+      await new Promise(r => setTimeout(r, 1100)); // let any lost claim expire
+      await work(supt1, { send: slow, limit: 25, leaseSeconds: 1, jobDeadlineMs: 800 });
+    }
+    // The property under test: never sent twice, and nothing lost.
     assert.equal(sends.length, new Set(sends).size, `a job was sent twice: ${sends.length} sends for ${new Set(sends).size} jobs`);
     assert.equal(new Set(sends).size, 6);
     for (const j of jobs) assert.equal((await outbox(j.id)).status, "delivered");

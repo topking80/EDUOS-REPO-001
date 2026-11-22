@@ -61,7 +61,7 @@ test("reviewers are limited to principal and superintendent and receive a pendin
   assert.ok(routes.includes('app.get("/api/history-contributions"'));
   assert.ok(routes.includes("c.status='submitted'"));
   assert.ok(ui.includes("VIEWS.history = async () =>"));
-  assert.ok(ui.includes('["history", "Family history", "book"]'));
+  assert.ok(ui.includes('["history", "Student history", "book"]'), "the review tab (renamed in TC-03: it holds family memories and teacher items)");
   assert.ok(ui.includes('decide("approve")'));
   assert.ok(ui.includes('decide("reject")'));
 });

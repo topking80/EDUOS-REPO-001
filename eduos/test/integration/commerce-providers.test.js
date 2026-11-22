@@ -2,7 +2,7 @@
 // runtime role. Every processor API call goes to an in-process mock of the
 // documented PayPal, Square and BTCPay endpoints (COMMERCE_TEST_API_BASE):
 // CI makes no network calls and holds no real keys.
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { createHash, createHmac } from "node:crypto";
@@ -433,10 +433,30 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
   /** Hold the next processor call matching re; resolves once it has arrived. */
   const gate = re => { let arrived, release; const g = { re, released: new Promise(r => { release = r; }) };
     const reached = new Promise(r => { g.arrived = r; }); mock.st.gate = g; return { reached, release }; };
+  // The reconcile sweep (which also runs the webhook worker) is OFF for this
+  // file: most tests claim and settle webhook events by hand, and a background
+  // worker would race them. The recovery tests below turn it on (sweepOn,
+  // crashAndRestart); after every test it is switched off again, pass or fail.
+  const SWEEP_ENV = { COMMERCE_RECONCILE_INTERVAL_SECONDS: "1", COMMERCE_RECONCILE_STALE_SECONDS: "10" };
+  let sweeping = false;
+  afterEach(async () => {
+    if (!sweeping) return;
+    await server.stop();
+    server = await startServer(serverEnv);
+    sweeping = false;
+  });
+  /** Run the rest of this test with the sweep on. */
+  const sweepOn = async () => {
+    if (sweeping) return;
+    await server.stop();
+    server = await startServer({ ...serverEnv, ...SWEEP_ENV });
+    sweeping = true;
+  };
   /** The API dies mid-call (SIGKILL: no cleanup), then a new instance starts with the reconcile sweep on. */
   const crashAndRestart = async () => {
     server.child.kill("SIGKILL"); await server.stop();
-    server = await startServer({ ...serverEnv, COMMERCE_RECONCILE_INTERVAL_SECONDS: "1", COMMERCE_RECONCILE_STALE_SECONDS: "10" });
+    server = await startServer({ ...serverEnv, ...SWEEP_ENV });
+    sweeping = true;
   };
 
   it("a processor that fails at checkout releases the seats; nothing is left half-done", async () => {
@@ -504,6 +524,7 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
   });
 
   it("an ambiguous refund response stays pending and is reconciled before tickets are released", async () => {
+    await sweepOn(); // reconciliation is the sweep's job
     const r = await buy("pa", "pprefuse", "paypal");
     const pid = r.body.data.payment.id;
     [...mock.st.paypal.values()].find(o => o.request.purchase_units[0].reference_id === pid).status = "APPROVED";
@@ -1263,14 +1284,6 @@ describe("37.7.1 district payment providers against real PostgreSQL", { skip }, 
   });
 
   it("provider retries are idempotent and conflicting event IDs are rejected", async () => {
-    // Earlier crash-recovery tests deliberately restart the API with the
-    // commerce sweep enabled. Stop that worker before these inbox-state and
-    // processor-boundary assertions: otherwise it can claim a newly inserted
-    // event between the receive and read, and its transaction can contaminate
-    // the pg_stat_activity probe in the following test.
-    await server.stop();
-    server = await startServer(serverEnv);
-
     const checkout = await buy("pa", "webhook-provider-retry", "paypal");
     assert.equal(checkout.status, 201, JSON.stringify(checkout.body));
     const pid = checkout.body.data.payment.id;

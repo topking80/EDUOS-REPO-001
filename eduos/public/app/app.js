@@ -117,17 +117,17 @@ function applyBranding(b) {
 
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
-  pupil: [["home", "Home", "home"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
-  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"]],
+  pupil: [["home", "Home", "home"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
+  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["messages", "Messages", "chat"]],
-  vice_principal: [["operations", "Operations", "grid"], ["capsules", "Time Capsules", "spark"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["messages", "Messages", "chat"]],
+  vice_principal: [["operations", "Operations", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["messages", "Messages", "chat"]],
   counselor: [["guidance", "Counseling", "heart"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
-  principal: [["overview", "School", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
-  superintendent: [["overview", "District", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Family history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
+  principal: [["overview", "School", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
+  superintendent: [["overview", "District", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
   it_admin: [["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
@@ -160,7 +160,7 @@ function renderTabs() {
 
 const VIEWS = {};
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "capsule"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
@@ -724,6 +724,196 @@ async function familyContributionsCard(k) {
   return h("section", { class: "card" }, h("details", {}, h("summary", {}, "Family memories"), form, list));
 }
 
+// ---------------- TC-03 teacher contributions ----------------
+const HISTORY_REASONS = [["needs_edits", "Needs edits"], ["inaccurate", "Not accurate"], ["privacy_concern", "Privacy concern"],
+  ["other_students_identifiable", "Other students can be identified"], ["not_appropriate", "Not appropriate"], ["duplicate", "Duplicate"],
+  ["not_relevant", "Not relevant"], ["family_preference", "Family preference"], ["other", "Other"]];
+const reasonText = code => (HISTORY_REASONS.find(r => r[0] === code) || [code, code])[1];
+const reasonSelect = (options = HISTORY_REASONS.filter(r => r[0] !== "family_preference")) =>
+  h("select", {}, h("option", { value: "" }, "Choose a reason"), ...options.map(([v, t]) => h("option", { value: v }, t)));
+const ITEM_STATUS = { draft: "Changes requested", submitted: "With the school", approved: "With the family", published: "In the student's history", restricted: "Not shared" };
+const DECISION_TEXT = { submitted: "Submitted", approved: "Approved by the school", changes_requested: "Changes requested",
+  rejected: "Rejected by the school", accepted: "Accepted by the family", declined: "Declined by the family" };
+const ENTRY_TYPES = [["project", "Project"], ["achievement", "Achievement"], ["coursework", "Coursework"], ["event", "Event"], ["reflection", "Reflection"]];
+const decisionList = decisions => decisions?.length ? h("ul", { class: "small muted" }, decisions.map(d => h("li", {},
+  `${DECISION_TEXT[d.decision] || d.decision}${d.reasonCode ? ` · ${reasonText(d.reasonCode)}` : ""}${d.note ? ` · “${d.note}”` : ""} · ${fmtTime(d.at)}`))) : null;
+const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+// Teacher: submit items for students on my roster; follow and fix them.
+VIEWS.contributions = async () => {
+  const [roster, mine] = await Promise.all([safe(api.get("/api/rosters?limit=500"), { data: [] }), api.get("/api/teacher/history-items")]);
+  const students = [...new Map((roster?.data || []).map(r => [r.student_id, r.student_name])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  const student = h("select", { required: true }, h("option", { value: "" }, "Choose a student"), ...students.map(([id, name]) => h("option", { value: id }, name)));
+  const type = h("select", {}, ...ENTRY_TYPES.map(([v, t]) => h("option", { value: v }, t)));
+  const title = h("input", { type: "text", maxlength: 180, required: true, placeholder: "What did the student do?" });
+  const body = h("textarea", { maxlength: 12000, rows: 3, placeholder: "Describe it for the family (optional)" });
+  const when = h("input", { type: "datetime-local", required: true, value: nowLocal() });
+  const form = h("form", { class: "stack", onsubmit: async event => {
+    event.preventDefault();
+    try {
+      await api.post(`/api/students/${student.value}/history/teacher-items`, { title: title.value, body: body.value, entryType: type.value, occurredAt: new Date(when.value).toISOString() });
+      toast("Sent to the school for review.");
+      go("contributions", { push: false });
+    } catch (error) { toast(error.message || "Could not submit this item."); }
+  } },
+    h("label", {}, h("span", {}, "Student"), student), h("label", {}, h("span", {}, "Kind"), type),
+    h("label", {}, h("span", {}, "Title"), title), h("label", {}, h("span", {}, "Details"), body),
+    h("label", {}, h("span", {}, "When did it happen?"), when),
+    h("p", { class: "small muted" }, "The school reviews it first, then the student's family decides whether to keep it in their history. Don't include other students."),
+    h("button", { class: "btn primary", type: "submit", disabled: !students.length }, "Submit for review"));
+  const items = (mine.data || []).map(item => {
+    let editor = null;
+    if (item.status === "draft") {
+      const t = h("input", { type: "text", maxlength: 180, required: true, value: item.title });
+      const b = h("textarea", { maxlength: 12000, rows: 3 }, item.body || "");
+      editor = h("form", { class: "stack", onsubmit: async event => {
+        event.preventDefault();
+        try {
+          await api.req("PATCH", `/api/teacher/history-items/${item.id}`, { title: t.value, body: b.value });
+          await api.post(`/api/teacher/history-items/${item.id}/submit`);
+          toast("Resubmitted to the school.");
+          go("contributions", { push: false });
+        } catch (error) { toast(error.message || "Could not resubmit this item."); }
+      } }, h("label", {}, h("span", {}, "Title"), t), h("label", {}, h("span", {}, "Details"), b),
+        h("button", { class: "btn primary", type: "submit" }, "Save and resubmit"));
+    }
+    return h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, ITEM_STATUS[item.status] || item.status)),
+      h("p", { class: "small muted" }, `${item.studentName} · ${fmtDay(item.occurredAt)}`),
+      item.body ? h("p", {}, item.body) : null, decisionList(item.decisions), editor);
+  });
+  return [h("h2", {}, "Student history items"),
+    h("section", { class: "card" }, h("details", { open: !(mine.data || []).length }, h("summary", {}, "Add an item"),
+      students.length ? form : empty("No students are on your roster yet."))),
+    ...(items.length ? items : [empty("You haven't submitted anything yet.")])];
+};
+
+// Reviewer: teacher items waiting for the school.
+async function teacherReviewSection() {
+  const res = await safe(api.get("/api/history-review"), null);
+  if (!res) return null;
+  const cards = (res.data || []).map(item => {
+    const reason = reasonSelect();
+    const note = h("textarea", { rows: 2, maxlength: 1000, placeholder: "Optional note for the teacher" });
+    const decide = async decision => {
+      if (decision !== "approve" && !reason.value) { toast("Choose a reason first."); reason.focus(); return; }
+      const titles = { approve: "Approve and send to the family?", request_changes: "Send back to the teacher for changes?", reject: "Reject this item?" };
+      if (!await ask({ title: titles[decision], text: "This decision is recorded in the student's history log.", confirm: "Confirm", danger: decision === "reject" })) return;
+      try {
+        await api.post(`/api/history-review/${item.id}`, { decision, ...(decision === "approve" ? {} : { reasonCode: reason.value }), note: note.value || undefined });
+        toast({ approve: "Approved; the family will decide.", request_changes: "Sent back to the teacher.", reject: "Rejected." }[decision]);
+        go("history", { push: false });
+      } catch (error) { toast(error.message || "Could not record this decision."); }
+    };
+    return h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, ITEM_STATUS.submitted)),
+      h("p", { class: "small muted" }, `${item.studentName} · from ${item.authorName || "a teacher"} · ${fmtDay(item.occurredAt)}`),
+      item.body ? h("p", {}, item.body) : null, decisionList(item.decisions),
+      h("label", {}, h("span", {}, "Reason (to send back or reject)"), reason),
+      h("label", {}, h("span", {}, "Note (optional)"), note),
+      h("div", { class: "btns" },
+        h("button", { class: "btn primary", type: "button", onclick: () => decide("approve") }, "Approve"),
+        h("button", { class: "btn", type: "button", onclick: () => decide("request_changes") }, "Ask for changes"),
+        h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
+  });
+  return [h("h3", {}, "Teacher contributions"), ...(cards.length ? cards : [h("p", { class: "small muted" }, "No teacher items are waiting for review.")])];
+}
+
+// Family: teacher items the school approved, waiting for our decision.
+async function teacherItemsCard(k) {
+  const res = await safe(api.get(`/api/family/children/${k.id}/history-items/pending`), null);
+  if (!res) return null;
+  const items = res.data || [];
+  const cards = items.map(item => {
+    const note = h("textarea", { rows: 2, maxlength: 1000, placeholder: "Optional note for the school" });
+    const decide = async decision => {
+      try {
+        await api.post(`/api/family/children/${k.id}/history-items/${item.id}`, { decision, note: note.value || undefined });
+        toast(decision === "accept" ? `Added to ${k.display_name}'s history.` : "Declined; it won't be shared.");
+        go("children", { push: false });
+      } catch (error) { toast(error.message || "Could not record your decision."); }
+    };
+    return h("article", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, item.title)),
+      h("p", { class: "small muted" }, `From ${item.authorName || "a teacher"} · ${fmtDay(item.occurredAt)}`),
+      item.body ? h("p", {}, item.body) : null,
+      h("label", {}, h("span", {}, "Note (optional)"), note),
+      h("div", { class: "btns" },
+        h("button", { class: "btn primary", type: "button", onclick: () => decide("accept") }, "Keep in history"),
+        h("button", { class: "btn", type: "button", onclick: () => decide("decline") }, "Decline")));
+  });
+  return h("section", { class: "card" }, h("details", { open: items.length > 0 },
+    h("summary", {}, items.length ? `From teachers (${items.length} to decide)` : "From teachers"),
+    h("p", { class: "small muted" }, "Teachers' items appear here after the school approves them. Nothing is added to the history until you keep it."),
+    ...(cards.length ? cards : [h("p", { class: "small muted" }, "Nothing waiting for you.")])));
+}
+
+// ---------------- TC-04 portfolio: a student's accepted history ----------------
+const PORTFOLIO_KIND = { official_record: "School record", family_memory: "Family memory", student_portfolio: "My work", teacher_artifact: "From a teacher", system_milestone: "Milestone" };
+const PORTFOLIO_TYPE = { achievement: "Achievement", project: "Project", coursework: "Coursework", reflection: "Reflection", event: "Event",
+  portfolio_artifact: "Portfolio piece", educator_note: "Teacher note", system_milestone: "Milestone" };
+VIEWS.portfolio = async () => {
+  const role = state.me.role;
+  if (role === "parent" && !state.learnerId) {
+    const kids = (await api.get("/api/home")).data.children || [];
+    if (!kids.length) return empty("No children are linked to your account yet.");
+    state.learnerId = kids[0].id;
+  }
+  const filters = state.portfolioFilters ||= {};
+  const query = extra => {
+    const p = new URLSearchParams();
+    if (role !== "pupil") p.set("studentId", state.learnerId);
+    for (const [k, v] of Object.entries({ ...filters, ...extra })) if (v) p.set(k, v);
+    return `/api/history/portfolio?${p}`;
+  };
+  const first = (await api.get(query())).data;
+  const f = first.facets;
+  const pick = (key, label, values, names) => {
+    const sel = h("select", { "aria-label": label, onchange: () => { filters[key] = sel.value || undefined; go("portfolio", { push: false }); } },
+      h("option", { value: "" }, label), ...values.map(v => h("option", { value: v, ...(filters[key] === v ? { selected: true } : {}) }, names?.[v] || v)));
+    return sel;
+  };
+  const search = h("input", { type: "search", maxlength: 100, placeholder: "Search titles and notes", "aria-label": "Search history", value: filters.q || "" });
+  const controls = h("form", { class: "btns", role: "search", onsubmit: event => { event.preventDefault(); filters.q = search.value.trim() || undefined; go("portfolio", { push: false }); } },
+    pick("year", "All school years", f.years), pick("kind", "All kinds", f.kinds, PORTFOLIO_KIND), pick("type", "All types", f.types, PORTFOLIO_TYPE),
+    search, h("button", { class: "btn", type: "submit" }, "Search"),
+    Object.values(filters).some(Boolean) ? h("button", { class: "btn", type: "button", onclick: () => { state.portfolioFilters = {}; go("portfolio", { push: false }); } }, "Clear") : null);
+
+  const list = h("div", { class: "stack" });
+  const sections = new Map();
+  const card = item => h("li", { class: "card" },
+    h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, PORTFOLIO_TYPE[item.entryType] || item.entryType)),
+    h("p", { class: "small muted" }, `${fmtDay(item.occurredAt)} · ${PORTFOLIO_KIND[item.kind] || item.kind}${item.authorName ? ` · ${item.authorName}` : ""}`),
+    item.body ? h("p", {}, item.body) : null);
+  const add = items => {
+    for (const item of items) {
+      let ul = sections.get(item.schoolYear);
+      if (!ul) {
+        const id = `year-${sections.size}`;
+        ul = h("ul", { class: "stack", "aria-labelledby": id });
+        sections.set(item.schoolYear, ul);
+        list.append(h("section", {}, h("h3", { id }, `School year ${item.schoolYear}`), ul));
+      }
+      ul.append(card(item));
+    }
+  };
+  add(first.items);
+  let cursor = first.nextCursor;
+  const more = h("button", { class: "btn block", type: "button", onclick: async () => {
+    more.disabled = true;
+    try {
+      const next = (await api.get(query({ cursor }))).data;
+      add(next.items); cursor = next.nextCursor;
+      if (!cursor) more.remove(); else more.disabled = false;
+    } catch (error) { more.disabled = false; toast(error.message || "Could not load more."); }
+  } }, "Show more");
+  const filtered = Object.values(filters).some(Boolean);
+  return [h("h2", {}, role === "pupil" ? "My history" : `${first.student.name}'s history`),
+    h("p", { class: "small muted" }, `${f.total} item${f.total === 1 ? "" : "s"} in the history. Only items that were accepted into it appear here.`),
+    f.total ? controls : null,
+    first.items.length ? list : empty(filtered ? "Nothing matches these filters." : "Nothing in the history yet."),
+    cursor ? more : null];
+};
 // ---------------- Time Capsules ----------------
 const MILESTONE_TEXT = { grade_5_completion: "Finishing grade 5", grade_8_completion: "Finishing grade 8", graduation: "Graduation", age_18: "Turning 18" };
 const CAPSULE_STATUS = { draft: "Draft", sealed: "Sealed, waiting for the milestone", scheduled: "Sealed", released: "Released", cancelled: "Cancelled" };
@@ -838,8 +1028,8 @@ VIEWS.capsule = async () => {
   return out;
 };
 VIEWS.history = async () => {
-  const response = await api.get("/api/history-contributions");
-  const items = response.data || [];
+  const response = await safe(api.get("/api/history-contributions"), null);
+  const items = response?.data || [];
   const content = items.length ? items.map(item => {
     const note = h("textarea", { rows: 2, maxlength: 1000, placeholder: "Optional note for the family" });
     const decide = async decision => {
@@ -860,10 +1050,12 @@ VIEWS.history = async () => {
         h("button", { class: "btn primary", type: "button", onclick: () => decide("approve") }, "Approve"),
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
-  return [h("div", { class: "row" }, h("h2", { class: "grow" }, "Family history review"),
+  const teacher = await teacherReviewSection();
+  return [h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
-    h("p", { class: "small muted" }, "Review family-submitted memories before they appear in a student's family history."),
-    ...content];
+    h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),
+    ...(response ? [h("h3", {}, "Family memories"), ...content] : []),
+    ...(teacher || [])];
 };
 VIEWS.children = async () => {
   const [home, bus] = await Promise.all([api.get("/api/home"), safe(api.get("/api/transport/today"))]);
@@ -875,12 +1067,15 @@ VIEWS.children = async () => {
     const days = (summary?.attendance || []).slice(0, 5);
     const ride = (bus?.data?.riders || []).find(r => r.id === k.id && r.direction === (new Date().getHours() < 12 ? "am" : "pm")) || (bus?.data?.riders || []).find(r => r.id === k.id);
     const familyMemories = await familyContributionsCard(k);
+    const fromTeachers = await teacherItemsCard(k);
     out.push(h("section", { class: "card", "aria-label": k.display_name },
       h("div", { class: "row" }, h("div", { class: "grow" }, h("h2", {}, k.display_name), h("p", { class: "small muted" }, `Grade ${k.grade_level} · ${k.school_name}`)),
         ride ? chip(ride.status) : null),
       h("div", { class: "stats" }, stat(k.absences_30d, "absences (30 days)", true), stat(k.due_7d, "due this week"), stat(k.overdue, "overdue", true), stat(k.to_acknowledge, "to acknowledge", true)),
       days.length ? h("div", {}, h("h3", {}, "Recent attendance"), h("div", { class: "btns" }, days.map(a => h("span", { class: `chip ${a.status}` }, `${fmtDay(a.event_date)}: ${STATUS_TEXT[a.status] || a.status}`)))) : null,
       familyMemories,
+      fromTeachers,
+      h("button", { class: "btn block", type: "button", "aria-label": `History & portfolio: ${k.display_name}`, onclick: () => openView("portfolio", { learnerId: k.id, portfolioFilters: {} }) }, icon("book"), "History & portfolio"),
       h("button", { class: "btn primary block", type: "button", "aria-label": `Grades & progress: ${k.display_name}`, onclick: () => openView("progress", { learnerId: k.id }) }, icon("book"), "Grades & progress"),
       ride ? h("button", { class: "btn block", type: "button", onclick: () => go("arrival") }, icon("bus"), `Bus: ${STATUS_TEXT[ride.status] || ride.status}`) : null));
   }

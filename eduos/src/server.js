@@ -44,6 +44,8 @@ import { registerLibraryCirculationRoutes } from "./library-circulation-routes.j
 import { registerLibraryIntelligenceRoutes } from "./library-intelligence-routes.js";
 import { registerClubsSportsRoutes } from "./clubs-sports-routes.js";
 import { registerStudentHistoryContributionRoutes } from "./student-history-contribution-routes.js";
+import { registerStudentHistoryTeacherRoutes } from "./student-history-teacher-routes.js";
+import { registerStudentHistoryPortfolioRoutes } from "./student-history-portfolio-routes.js";
 import { registerStudentHistoryCapsuleRoutes, startCapsuleReleaseSweep } from "./student-history-capsule-routes.js";
 import { registerSportsEligibilityRoutes } from "./sports-eligibility-routes.js";
 import { registerSchoolOperationsRoutes } from "./school-operations-routes.js";
@@ -1972,6 +1974,8 @@ registerLibraryCirculationRoutes(app);
 registerLibraryIntelligenceRoutes(app);
 registerClubsSportsRoutes(app);
 registerStudentHistoryContributionRoutes(app);
+registerStudentHistoryTeacherRoutes(app);
+registerStudentHistoryPortfolioRoutes(app);
 registerStudentHistoryCapsuleRoutes(app);
 registerSportsEligibilityRoutes(app);
 registerSchoolOperationsRoutes(app);

@@ -100,6 +100,18 @@ function mockApi(role, pathname, failWebhookLoads = false) {
           lastTest: p === "paypal" ? { at: now, ok: true, detail: "token_ok" } : null, updatedAt: now }]; })),
       methods: Object.values(METHODS).map(m => ({ id: m.id, label: m.label, description: m.description, processors: m.processors, setupProcessor: m.setupProcessor, checkout: !m.methodless,
         signup: m.signup || null, developer: m.developer || null, docs: m.docs || [], notes: m.notes || [], otherLinks: m.otherLinks || [], adapter: m.adapter, comingReason: m.comingReason || null })) } };
+    // TC-03 teacher contributions: one item in each state the screens handle.
+    case "/api/rosters": return { data: [{ teacher_user_id: "u1", teacher_name: "Smoke Test", student_id: "c1", student_name: "Alice A", school_id: "s1" }], page: { limit: 500, offset: 0, nextOffset: null } };
+    case "/api/teacher/history-items": return { data: [
+      { id: "h1", studentId: "c1", studentName: "Alice A", entryType: "project", title: "Volcano project", body: "Built a model.", occurredAt: now, status: "draft", updatedAt: now,
+        decisions: [{ decision: "submitted", reasonCode: null, note: null, by: "teacher", at: now }, { decision: "changes_requested", reasonCode: "needs_edits", note: "Add the date.", by: "school_lead", at: now }] },
+      { id: "h2", studentId: "c1", studentName: "Alice A", entryType: "achievement", title: "Spelling bee", body: "", occurredAt: now, status: "published", updatedAt: now, decisions: [] }] };
+    // TC-04 portfolio.
+    case "/api/history/portfolio": return { data: { student: { id: "c1", name: "Alice A" }, nextCursor: "next",
+      items: [{ id: "p1", entryType: "project", kind: "teacher_artifact", title: "Volcano project", body: "Built a model.", occurredAt: now, schoolYear: "2026-27", source: "teacher", authorName: "Teacher S1" },
+        { id: "p2", entryType: "event", kind: "family_memory", title: "Family day", body: "", occurredAt: "2025-09-10T12:00:00Z", schoolYear: "2025-26", source: "guardian", authorName: "Parent A" }],
+      facets: { years: ["2026-27", "2025-26"], types: ["event", "project"], kinds: ["family_memory", "teacher_artifact"], total: 2 } } };
+    case "/api/history-review": return { data: [{ id: "h3", studentId: "c1", studentName: "Alice A", entryType: "project", title: "Science fair", body: "Second place.", occurredAt: now, status: "submitted", authorName: "Teacher S1", updatedAt: now, decisions: [] }] };
     // Time Capsules: one invitation, one released to me, one draft of mine, one milestone to confirm.
     case "/api/history/capsules": return { data: [
       { id: "cap1", studentId: "c1", studentName: "Alice A", title: "For Alice at 18", status: "draft", releaseKind: "scheduled", releaseAt: "2034-06-01T13:00:00Z", mine: true },
@@ -116,6 +128,8 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/history/capsule-recipient-options": return { data: [{ userId: "u9", name: "Pupil A", type: "student" }, { userId: "u1", name: "Smoke Test", type: "guardian" }] };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
+      if (/^\/api\/family\/children\/[^/]+\/history-items\/pending$/.test(pathname))
+        return { data: [{ id: "h4", studentId: "c1", entryType: "project", title: "Volcano project", body: "Built a model.", occurredAt: now, status: "approved", authorName: "Teacher S1", updatedAt: now }] };
       return { data: [] };
   }
 }
@@ -170,7 +184,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
   const failures = [];
   // 37.7.0: commerce screens opened from Clubs & Sports (not tabs of their own);
   // 37.7.1: district payment setup from Ticketing & revenue or Data links.
-  const SUBVIEWS = { parent: ["tickets", "capsule"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
+  const SUBVIEWS = { parent: ["tickets", "portfolio", "capsule"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
   for (const [role, roleTabList] of Object.entries(roleTabs)) {
     for (const tab of [...roleTabList, ...(SUBVIEWS[role] || [])]) {
       state.role = role;
@@ -196,6 +210,15 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
             failures.push(`${role} #/payments: webhook operations panel is incomplete`);
           if (!text.includes("CAPTURE-123") || !text.includes("evt-123")) failures.push(`${role} #/payments: webhook recovery records did not render`);
         }
+        // TC-03: the teacher, reviewer and family screens show their items and actions.
+        const expect = { "teacher/contributions": ["Volcano project", "Changes requested · Needs edits", "Save and resubmit", "In the student's history"],
+          "principal/history": ["Teacher contributions", "Science fair", "Ask for changes", "Reject"],
+          "vice_principal/history": ["Teacher contributions", "Science fair", "Ask for changes"],
+          "superintendent/history": ["Teacher contributions", "Science fair"],
+          "parent/children": ["From teachers (1 to decide)", "Volcano project", "Keep in history", "Decline", "History & portfolio"],
+          "parent/portfolio": ["Alice A's history", "School year 2026-27", "Volcano project", "Search"],
+          "pupil/portfolio": ["My history", "School year 2026-27", "School year 2025-26", "Volcano project", "From a teacher", "Family day", "All school years", "Show more"] }[`${role}/${tab}`];
+        for (const want of expect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
       } finally {
         page.close();
       }

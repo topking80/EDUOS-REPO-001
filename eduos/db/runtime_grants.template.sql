@@ -448,12 +448,7 @@ GRANT UPDATE (last_seen_at, status, resolved_at, resolved_by, resolution_note)
   ON commerce_webhook_refund_cases TO eduos_app;
 REVOKE DELETE, TRUNCATE ON commerce_webhook_refund_cases FROM eduos_app;
 
--- 37.10.1 Timeline authorization foundation. Drafts remain append-only
--- until the audited revision/publication transition service is added.
-GRANT SELECT, INSERT ON timeline_entries TO eduos_app;
-REVOKE UPDATE, DELETE, TRUNCATE ON timeline_entries FROM eduos_app;
-GRANT EXECUTE ON FUNCTION eduos_timeline_can_read(uuid,uuid,uuid,uuid,text,text,uuid),
-  eduos_timeline_can_insert(uuid,uuid,uuid,uuid,text,text,uuid,text) TO eduos_app;
+-- 37.10.1 timeline_entries was retired in 089 (student history uses student_history_entries).
 -- TC-01 student history and Time Capsule persistence foundation.
 -- Revisions and lifecycle events are append-only; media bytes remain in the
 -- private object store and are never exposed through these metadata tables.
@@ -496,6 +491,13 @@ GRANT EXECUTE ON FUNCTION eduos_history_relation(uuid,uuid,uuid), eduos_history_
   eduos_history_entry_visible(uuid,uuid,uuid,text,text,text,uuid), eduos_history_entry_writable(uuid,uuid,uuid,text,text,text,text,uuid),
   eduos_history_entry_manageable(uuid,uuid,uuid,text,uuid), eduos_history_entry_access(uuid,text),
   eduos_capsule_role(uuid,uuid,uuid,uuid,uuid,text), eduos_capsule_access(uuid) TO eduos_app;
+
+-- 090 TC-03: teacher contributions. Steps (submit, school review, family
+-- decision) go through these functions; the decision log is read-only here.
+GRANT SELECT ON student_history_entry_decisions TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON student_history_entry_decisions FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_history_submit(uuid), eduos_history_review(uuid,text,text,text),
+  eduos_history_family_decide(uuid,text,text,text) TO eduos_app;
 
 -- 091 Time Capsule lifecycle. Seal, cancel, milestone release and the release
 -- sweep go through these functions; eduos_capsule_try_release and
