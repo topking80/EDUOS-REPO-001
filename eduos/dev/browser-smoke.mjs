@@ -51,13 +51,15 @@ function findAxe() {
   return c.find(p => fs.existsSync(p)) || null;
 }
 const AXE = findAxe();
+if (!AXE && process.env.EDUOS_REQUIRE_AXE === "1") { console.error("EDUOS_REQUIRE_AXE=1 but axe-core was not found (set EDUOS_AXE_PATH)"); process.exit(2); }
+if (!AXE) console.warn("axe-core not found: skipping the accessibility scan");
 const axeFindings = [];
 // WCAG 2.0/2.1 level A and AA rules only (what the brief and most district procurement asks for).
 async function axe(page, label) {
   if (!AXE) return;
   await page.evaluate(() => document.querySelectorAll("[data-eduos-toast]").forEach(x => x.remove()));
   if (!(await page.evaluate(() => Boolean(window.axe)))) await page.addScriptTag({ path: AXE });
-  const r = await page.evaluate(() => window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] }));
+  const r = await page.evaluate(() => window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"] }, resultTypes: ["violations"] }));
   for (const v of r.violations) axeFindings.push({ screen: label, id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.slice(0, 5).map(n => ({ target: n.target.join(" "), summary: n.failureSummary })) });
   console.log(`      axe ${label}: ${r.violations.length ? r.violations.map(v => `${v.id}(${v.nodes.length})`).join(", ") : "no violations"}`);
 }

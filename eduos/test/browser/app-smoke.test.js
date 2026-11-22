@@ -20,6 +20,59 @@ const ui = fs.readFileSync(new URL("app.js", APP_DIR), "utf8");
 
 const required = process.env.EDUOS_REQUIRE_BROWSER === "1";
 
+// CMP-02: axe-core scan of every screen. axe-core is not a project dependency
+// (CI installs a pinned copy, as it does playwright-core); EDUOS_AXE_PATH points
+// at its axe.min.js. Required in CI (EDUOS_REQUIRE_AXE=1).
+const AXE_PATH = process.env.EDUOS_AXE_PATH && fs.existsSync(process.env.EDUOS_AXE_PATH) ? process.env.EDUOS_AXE_PATH : null;
+const AXE_SOURCE = AXE_PATH ? fs.readFileSync(AXE_PATH, "utf8") : null;
+// WCAG 2.0, 2.1 and 2.2, levels A and AA.
+export const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"];
+// Keyboard focus, for checks axe can't make: every focusable control shows a
+// focus indicator (WCAG 2.4.7) and isn't hidden behind the sticky header or the
+// fixed tab bar when focused (2.4.11). One real Tab press puts Chrome in
+// keyboard mode, so focus() then matches :focus-visible as a Tab would.
+async function focusScan(page, label, out) {
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+  const found = await page.eval(`(() => {
+    const sel = 'a[href], button, input:not([type=hidden]), select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+    const els = [...document.querySelectorAll(sel)].filter(e => !e.disabled && !e.closest("[inert], dialog:not([open])") && e.getClientRects().length && getComputedStyle(e).visibility !== "hidden");
+    const bad = [];
+    const name = e => e.tagName.toLowerCase() + (e.id ? "#" + e.id : "") + " " + JSON.stringify((e.getAttribute("aria-label") || e.textContent || e.name || "").trim().slice(0, 30));
+    for (const e of els.slice(0, 80)) {
+      if (e.classList.contains("skip")) continue;
+      e.focus();
+      if (document.activeElement !== e) continue;
+      const cs = getComputedStyle(e);
+      const ring = (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0) || (cs.boxShadow && cs.boxShadow !== "none");
+      if (!ring) bad.push({ id: "focus-visible", node: name(e) });
+      const r = e.getBoundingClientRect();
+      const pts = [[r.left + r.width / 2, r.top + r.height / 2], [r.left + 2, r.top + 2], [r.right - 2, r.bottom - 2]]
+        .filter(([x, y]) => x >= 0 && y >= 0 && x < innerWidth && y < innerHeight);
+      const seen = pts.some(([x, y]) => { const hit = document.elementFromPoint(x, y); return hit && (hit === e || e.contains(hit) || hit.contains(e) || (e.labels && [...e.labels].some(l => l.contains(hit)))); });
+      if (!seen) bad.push({ id: "focus-obscured", node: name(e) + " at y=" + Math.round(r.top) + ".." + Math.round(r.bottom) + " of " + innerHeight });
+    }
+    document.activeElement?.blur?.();
+    scrollTo(0, 0);
+    return bad;
+  })()`);
+  if (!Array.isArray(found)) throw new Error(`focus check did not run on ${label}`);
+  const groups = {};
+  for (const b of found) (groups[b.id] ||= []).push(b.node);
+  for (const [id, nodes] of Object.entries(groups)) out.push({ screen: label, id, impact: "serious",
+    help: id === "focus-visible" ? "Focused control has no visible focus indicator (WCAG 2.4.7)" : "Focused control is hidden behind fixed or sticky content (WCAG 2.4.11)", nodes: nodes.slice(0, 4) });
+}
+
+async function axeScan(page, label, out) {
+  if (!AXE_SOURCE) return;
+  if (!(await page.eval("Boolean(window.axe)"))) await page.send("Runtime.evaluate", { expression: AXE_SOURCE });
+  const found = await page.eval(`window.axe.run(document, { runOnly: { type: "tag", values: ${JSON.stringify(AXE_TAGS)} }, resultTypes: ["violations"] })
+    .then(r => r.violations.map(v => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.slice(0, 3).map(n => n.target.join(" ") + " :: " + (n.html || "").slice(0, 120)) })))`);
+  if (!Array.isArray(found)) throw new Error(`axe did not run on ${label}: ${JSON.stringify(found)}`);
+  out.scanned = (out.scanned || 0) + 1;
+  for (const v of found) out.push({ screen: label, ...v });
+}
+
 // Role -> tab ids, read from ROLE_TABS so new tabs are covered automatically.
 const roleTabs = (() => {
   const block = ui.slice(ui.indexOf("const ROLE_TABS"), ui.indexOf("};", ui.indexOf("const ROLE_TABS")));
@@ -189,7 +242,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
     assert.deepEqual(page.errors, [], "app.js threw while loading, so /app/ never starts");
     assert.doesNotMatch(text, /^Loading/, "/app/ never got past Loading");
   }
-  const failures = [];
+  const failures = [], a11y = [];
+  assert.ok(AXE_SOURCE || process.env.EDUOS_REQUIRE_AXE !== "1", "EDUOS_REQUIRE_AXE=1 but axe-core was not found (set EDUOS_AXE_PATH)");
   // 37.7.0: commerce screens opened from Clubs & Sports (not tabs of their own);
   // 37.7.1: district payment setup from Ticketing & revenue or Data links.
   const SUBVIEWS = { parent: ["tickets", "portfolio", "capsule"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
@@ -207,6 +261,25 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           : !text ? "blank"
           : hash !== `#/${tab}` ? `was sent to ${hash}` : null;
         if (problem) failures.push(`${role} #/${tab}: ${problem}`);
+        await axeScan(page, `${role} #/${tab}`, a11y);
+        if (AXE_SOURCE) await focusScan(page, `${role} #/${tab}`, a11y);
+        // Phone width: axe again (target size, WCAG 2.5.8), then reflow at 320 CSS px (WCAG 1.4.10).
+        if (AXE_SOURCE) {
+          await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+          await axeScan(page, `${role} #/${tab} (390px)`, a11y);
+          await focusScan(page, `${role} #/${tab} (390px)`, a11y);
+          await page.send("Emulation.setDeviceMetricsOverride", { width: 320, height: 640, deviceScaleFactor: 1, mobile: true });
+          const overflow = await page.eval(`(() => { const w = document.documentElement.clientWidth;
+            const wide = [...document.querySelectorAll("#main *")].filter(e => { const r = e.getBoundingClientRect(); return r.width && r.right > w + 1 && getComputedStyle(e).position !== "fixed"
+              && !e.closest("table, pre, [data-scroll-x]") && ![...document.querySelectorAll("#main *")].some(p => p !== e && p.contains(e) && ["auto","scroll","hidden"].includes(getComputedStyle(p).overflowX)); });
+            return document.documentElement.scrollWidth > w + 1 ? wide.slice(0, 3).map(e => e.tagName.toLowerCase() + (e.className ? "." + String(e.className).split(" ")[0] : "") + " " + Math.round(e.getBoundingClientRect().right) + "px") : []; })()`);
+          // Every bottom tab is on screen or can be scrolled to within the bar.
+          const lostTabs = await page.eval(`[...document.querySelectorAll("#tabs a")].filter(a => { const r = a.getBoundingClientRect(), nav = a.parentElement;
+            return (r.right > innerWidth + 1 || r.left < -1) && !(nav.scrollWidth > nav.clientWidth && ["auto", "scroll"].includes(getComputedStyle(nav).overflowX)); }).map(a => a.textContent)`);
+          if (lostTabs?.length) a11y.push({ screen: `${role} #/${tab} (320px)`, id: "tabs-off-screen", impact: "serious", help: "Bottom tabs are off the screen and can't be reached", nodes: lostTabs });
+          if (overflow?.length) a11y.push({ screen: `${role} #/${tab} (320px)`, id: "reflow", impact: "serious", help: "Content needs sideways scrolling at 320 CSS px (WCAG 1.4.10)", nodes: overflow });
+          await page.send("Emulation.clearDeviceMetricsOverride");
+        }
         // Time Capsules: each screen shows its sample items and actions.
         const capsuleExpect = { "parent/capsules": ["Capsules for you", "From Grandma Rose", "Accept", "Opened for you", "Kindergarten memories", "Make a Time Capsule", "Capsules you made", "For Alice at 18", "Manage"],
           "pupil/capsules": ["Capsules for you", "Opened for you"],
@@ -246,6 +319,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       for (const want of ["Class rosters", "Classes found", "Would be added", "Would be removed", "Already on a roster entered by hand (left as is)",
         "New Hire · new.hire@d1.test · No EduOS teacher at that school has this email", "Teacher S1 (Maple)", "Save teacher matches", "a student in a class isn't in EduOS"])
         if (!text.includes(want)) failures.push(`superintendent integrations preview: "${want}" is missing`);
+      await axeScan(page, "superintendent integrations preview", a11y);
       if (page.errors.length) failures.push(`superintendent integrations preview: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
@@ -261,6 +335,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Who receives it"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
       for (const want of ["For Alice at 18", "The day you were born", "Add a memory", "First day of school", "Who receives it", "Pupil A (student): Hasn't answered", "Seal", "Cancel capsule"])
         if (!text.includes(want)) failures.push(`parent capsule detail: "${want}" is missing`);
+      await axeScan(page, "parent capsule detail", a11y);
       if (page.errors.length) failures.push(`parent capsule detail: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
@@ -274,6 +349,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       const text = await page.mainText();
       if (!text.includes("Refund cases couldn't be loaded") || !text.includes("Dead-letter events couldn't be loaded"))
         failures.push("superintendent #/payments: webhook API failures were presented as empty queues");
+      await axeScan(page, "superintendent #/payments (load failures)", a11y);
       if (page.errors.length) failures.push(`superintendent #/payments failure state: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
@@ -298,6 +374,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       };
 
       await clickButton("Issue / rotate URL");
+      await waitFor('document.querySelector("dialog[open]")');
+      await axeScan(page, "superintendent #/payments (issue URL dialog)", a11y);
       await clickDialogButton("Issue URL");
       if (!await waitFor('document.querySelector(\'[aria-label="PayPal one-time webhook URL"]\')?.value'))
         failures.push("superintendent #/payments: issuing a webhook URL did not reveal the one-time URL");
@@ -318,5 +396,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (page.errors.length) failures.push(`superintendent #/payments endpoint controls: ${page.errors[0].split("\\n")[0]}`);
     } finally { page.close(); }
   }
+  if (AXE_SOURCE) assert.ok(a11y.scanned >= 40, `axe scanned only ${a11y.scanned} screens`);
+  if (process.env.EDUOS_A11Y_REPORT) fs.writeFileSync(process.env.EDUOS_A11Y_REPORT, JSON.stringify(a11y, null, 2));
   assert.deepEqual(failures, []);
+  assert.deepEqual(a11y.map(v => `${v.screen}: ${v.id} (${v.impact}) ${v.help} :: ${v.nodes.join(" | ")}`), [], "accessibility violations (WCAG 2.2 A/AA, axe-core)");
 });
