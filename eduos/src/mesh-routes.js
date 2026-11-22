@@ -22,7 +22,8 @@ import { pageOf, pageSql, paged } from "./paging.js";
 import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig, ltiConfigFingerprint,
   newBrowserBinding, browserBindingMatches, bindingCookieName, AUTO_SUBMIT_SCRIPT, AUTO_SUBMIT_SCRIPT_HASH,
   DEEP_LINK_TTL_MS, decodeJwt, verifyToolJwt, acceptContentItems,
-  LTI_SCOPES, NRPS_SCOPE, SERVICE_TOKEN_TTL_MS, verifyClientAssertion, pairwiseSub, pairwiseContext } from "./lti.js";
+  LTI_SCOPES, NRPS_SCOPE, SERVICE_TOKEN_TTL_MS, verifyClientAssertion, pairwiseSub, pairwiseContext,
+  AGS_SCORE_SCOPE, AGS_LINEITEM_READ_SCOPE } from "./lti.js";
 import { request as outboundRequest } from "./integrations/http.js";
 import crypto from "node:crypto";
 import { getCookie, serialize as serializeCookie } from "./cookies.js";
@@ -703,7 +704,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           // LTI-03: the assignment's course (when the user can see it) becomes the
           // launch context, and its class list is offered if a teacher shared it.
           content = (await client.query(`SELECT l.id,l.title,l.url,l.custom,co.id AS course_id,co.title AS course_title,
-              (SELECT s.id FROM lti_course_sharing s WHERE s.course_id=co.id AND s.app_id=l.app_id) AS sharing_id
+              (SELECT s.id FROM lti_course_sharing s WHERE s.course_id=co.id AND s.app_id=l.app_id) AS sharing_id,
+              EXISTS(SELECT 1 FROM eduos_lti_ags_link(l.id, l.app_id)) AS grades_on
              FROM lti_content_links l JOIN assignments x ON x.id=l.assignment_id LEFT JOIN courses co ON co.id=x.course_id
             WHERE l.id=$1 AND l.app_id=$2`, [hint.k, app.id])).rows[0];
           if (!content) return { error: "content_not_available", status: 403 };
@@ -730,7 +732,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
       const context = ctx.content?.course_id ? { id: ctx.content.course_id, title: ctx.content.course_title } : null;
       const nrps = context && ctx.content.sharing_id && ctx.app.data_sharing_scope === "roster_basic" && ctx.app.integration_config?.namesRoles === true
         ? { url: `${issuer}/lti/nrps/${ctx.content.sharing_id}/memberships` } : null;
-      const idToken = signJwt(ltiKey, launchClaims({ key: ltiKey, issuer, app: ctx.app, launch: { role: ctx.launch.role, districtId: hint.d }, user: ctx.user, school: ctx.school, nonce: p.nonce, deepLinking, content, context, nrps }));
+      // LTI-04: the activity's line item, while grade passback is allowed end to end.
+      const ags = ctx.content?.grades_on && ctx.app.integration_config?.assignmentGrades === true ? { lineitem: `${issuer}/lti/ags/${ctx.content.id}/lineitem` } : null;
+      const idToken = signJwt(ltiKey, launchClaims({ key: ltiKey, issuer, app: ctx.app, launch: { role: ctx.launch.role, districtId: hint.d }, user: ctx.user, school: ctx.school, nonce: p.nonce, deepLinking, content, context, nrps, ags }));
       const esc = v => String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       const target = new URL(p.redirect_uri);
       res.setHeader("Cache-Control", "no-store");
@@ -886,17 +890,37 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; }
     finally { client.release(); }
   }
-  /** The approved, unchanged NRPS registration of an app in a district, or null. */
-  async function nrpsRegistration(districtId, appId) {
+  /**
+   * The approved, unchanged registration of an app in a district, with the
+   * service scopes it may be granted now, or null. Class lists need NRPS and
+   * roster_basic; grades need AGS registered and the district's grade policy on.
+   */
+  async function serviceRegistration(districtId, appId) {
     if (!validId(districtId) || !validId(appId)) return null;
-    const r = await serviceTx(districtId, c => c.query(`SELECT integration_config,data_sharing_scope,lti_approved_config_hash,lti_approved_at FROM apps
-       WHERE id=$1 AND status='active' AND integration_type='lti13' AND lti_registration_status='approved'`, [appId])).then(x => x.rows[0]);
+    const r = await serviceTx(districtId, c => c.query(`SELECT a.integration_config,a.data_sharing_scope,a.lti_approved_config_hash,a.lti_approved_at,
+        coalesce((SELECT p.enabled FROM lti_grade_policy p WHERE p.district_id=a.district_id), false) AS grades_on
+       FROM apps a WHERE a.id=$1 AND a.status='active' AND a.integration_type='lti13' AND a.lti_registration_status='approved'`, [appId])).then(x => x.rows[0]);
     if (!r) return null;
     const cfg = r.integration_config;
-    if (!validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" }) || cfg.namesRoles !== true || !cfg.jwksUrl || r.data_sharing_scope !== "roster_basic") return null;
+    if (!validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" }) || !cfg.jwksUrl) return null;
     const fp = ltiConfigFingerprint(cfg, r.data_sharing_scope);
     if (r.lti_approved_config_hash !== fp) return null;
-    return { districtId, cfg, fingerprint: fp, approvedAt: new Date(r.lti_approved_at).toISOString() };
+    const scopes = [];
+    if (cfg.namesRoles === true && r.data_sharing_scope === "roster_basic") scopes.push(NRPS_SCOPE);
+    if (cfg.assignmentGrades === true && r.grades_on) scopes.push(AGS_SCORE_SCOPE, AGS_LINEITEM_READ_SCOPE);
+    return scopes.length ? { districtId, cfg, fingerprint: fp, approvedAt: new Date(r.lti_approved_at).toISOString(), scopes } : null;
+  }
+  /** A service token's claims if it's ours, live, and grants one of `need`. */
+  async function serviceToken(req, need) {
+    const m = /^Bearer ([A-Za-z0-9._-]{20,4096})$/.exec(req.headers.authorization || "");
+    const tok = m && ltiKey ? readHint(ltiKey, m[1]) : null;
+    if (!tok || tok.t !== "svc" || !validId(tok.d) || !validId(tok.a) || typeof tok.sc !== "string") return null;
+    const granted = tok.sc.split(" ");
+    if (!need.some(x => granted.includes(x))) return null;
+    // The registration must still be approved and unchanged, and still allowed this scope.
+    const reg = await serviceRegistration(tok.d, tok.a);
+    if (!reg || reg.fingerprint !== tok.c || reg.approvedAt !== tok.v || !need.some(x => granted.includes(x) && reg.scopes.includes(x))) return null;
+    return tok;
   }
   const oauthError = (res, status, error) => { res.status(status).setHeader("Cache-Control", "no-store"); return res.json({ error }); };
   const tokenLimiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false });
@@ -917,10 +941,11 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         }
         if (f.grant_type !== "client_credentials") return oauthError(res, 400, "unsupported_grant_type");
         if (f.client_assertion_type !== "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" || typeof f.client_assertion !== "string") return oauthError(res, 401, "invalid_client");
-        const scopes = String(f.scope || "").split(" ").filter(Boolean);
-        if (!scopes.length || scopes.some(x => x !== NRPS_SCOPE)) return oauthError(res, 400, "invalid_scope");
-        const reg = await nrpsRegistration(req.params.districtId, req.params.appId);
+        const scopes = [...new Set(String(f.scope || "").split(" ").filter(Boolean))];
+        if (!scopes.length || scopes.some(x => ![NRPS_SCOPE, AGS_SCORE_SCOPE, AGS_LINEITEM_READ_SCOPE].includes(x))) return oauthError(res, 400, "invalid_scope");
+        const reg = await serviceRegistration(req.params.districtId, req.params.appId);
         if (!reg) return oauthError(res, 401, "invalid_client");
+        if (scopes.some(x => !reg.scopes.includes(x))) return oauthError(res, 400, "invalid_scope");
         const tokenUrl = `${issuer}/lti/token/${req.params.districtId}/${req.params.appId}`;
         let assertion;
         try {
@@ -934,9 +959,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           return true;
         });
         if (!fresh) return oauthError(res, 401, "invalid_client");
-        const token = makeHint(ltiKey, { t: "svc", d: reg.districtId, a: req.params.appId, c: reg.fingerprint, v: reg.approvedAt, sc: NRPS_SCOPE }, Date.now(), SERVICE_TOKEN_TTL_MS);
+        const token = makeHint(ltiKey, { t: "svc", d: reg.districtId, a: req.params.appId, c: reg.fingerprint, v: reg.approvedAt, sc: scopes.join(" ") }, Date.now(), SERVICE_TOKEN_TTL_MS);
         res.setHeader("Cache-Control", "no-store"); res.setHeader("Pragma", "no-cache");
-        return res.json({ access_token: token, token_type: "Bearer", expires_in: SERVICE_TOKEN_TTL_MS / 1000, scope: NRPS_SCOPE });
+        return res.json({ access_token: token, token_type: "Bearer", expires_in: SERVICE_TOKEN_TTL_MS / 1000, scope: scopes.join(" ") });
       } catch (e) { next(e); }
     });
   });
@@ -946,13 +971,9 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     const deny = (status, error) => { res.status(status).setHeader("Cache-Control", "no-store"); if (status === 401) res.setHeader("WWW-Authenticate", 'Bearer error="invalid_token"'); return res.json({ error }); };
     try {
       if (!ltiKey) return deny(503, "temporarily_unavailable");
-      const m = /^Bearer ([A-Za-z0-9._-]{20,4096})$/.exec(req.headers.authorization || "");
-      const tok = m ? readHint(ltiKey, m[1]) : null;
-      if (!tok || tok.t !== "svc" || tok.sc !== NRPS_SCOPE || !validId(tok.d) || !validId(tok.a)) return deny(401, "invalid_token");
+      const tok = await serviceToken(req, [NRPS_SCOPE]);
+      if (!tok) return deny(401, "invalid_token");
       if (!validId(req.params.sharingId)) return deny(404, "not_found");
-      // The registration must still be approved and unchanged since the token was issued.
-      const reg = await nrpsRegistration(tok.d, tok.a);
-      if (!reg || reg.districtId !== tok.d || reg.fingerprint !== tok.c || reg.approvedAt !== tok.v) return deny(401, "invalid_token");
       const roleFilter = req.query.role;
       if (roleFilter !== undefined && typeof roleFilter !== "string") return deny(400, "invalid_request");
       const want = roleFilter ? (/^(Learner|Instructor)$/.test(roleFilter.split("#").pop()) ? roleFilter.split("#").pop() : "none") : null;
@@ -973,6 +994,201 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
       res.type("application/vnd.ims.lti-nrps.v2.membershipcontainer+json");
       return res.send(JSON.stringify({ id: `${issuer}/lti/nrps/${req.params.sharingId}/memberships`,
         context: { id: pairwiseContext(ltiKey, tok.a, rows[0].course_id), title: rows[0].course_title }, members }));
+    } catch (e) { next(e); }
+  });
+
+  // ---- LTI-04: Assignment and Grade Services ----
+  const agsDeny = (res, status, error) => { res.status(status).setHeader("Cache-Control", "no-store"); if (status === 401) res.setHeader("WWW-Authenticate", 'Bearer error="invalid_token"'); return res.json({ error }); };
+  app.get("/lti/ags/:linkId/lineitem", tokenLimiter, async (req, res, next) => {
+    try {
+      const tok = await serviceToken(req, [AGS_LINEITEM_READ_SCOPE, AGS_SCORE_SCOPE]);
+      if (!tok) return agsDeny(res, 401, "invalid_token");
+      if (!validId(req.params.linkId)) return agsDeny(res, 404, "not_found");
+      const li = await serviceTx(tok.d, async c => {
+        const r = (await c.query("SELECT * FROM eduos_lti_ags_link($1,$2)", [req.params.linkId, tok.a])).rows[0];
+        if (r) await c.query("INSERT INTO lti_service_access_log(district_id,app_id,course_id,service) VALUES($1,$2,$3,'ags_lineitem')", [tok.d, tok.a, r.course_id]);
+        return r;
+      });
+      if (!li) return agsDeny(res, 404, "not_found");
+      res.setHeader("Cache-Control", "no-store");
+      res.type("application/vnd.ims.lis.v2.lineitem+json");
+      return res.send(JSON.stringify({ id: `${issuer}/lti/ags/${req.params.linkId}/lineitem`, label: li.title, scoreMaximum: Number(li.points), resourceLinkId: req.params.linkId }));
+    } catch (e) { next(e); }
+  });
+  const scoreBody = express.raw({ type: ["application/vnd.ims.lis.v1.score+json", "application/json"], limit: "8kb" });
+  const ACTIVITY = ["Initialized", "Started", "InProgress", "Submitted", "Completed"];
+  const GRADING = ["FullyGraded", "Pending", "PendingManual", "Failed", "NotReady"];
+  app.post("/lti/ags/:linkId/lineitem/scores", tokenLimiter, (req, res, next) => scoreBody(req, res, async error => {
+    if (error) return next(error);
+    try {
+      const tok = await serviceToken(req, [AGS_SCORE_SCOPE]);
+      if (!tok) return agsDeny(res, 401, "invalid_token");
+      if (!validId(req.params.linkId)) return agsDeny(res, 404, "not_found");
+      let b; try { b = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString("utf8") : ""); } catch { b = null; }
+      const num = v => v === undefined || v === null ? null : typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e6 ? v : NaN;
+      const given = num(b?.scoreGiven), max = num(b?.scoreMaximum), ts = Date.parse(b?.timestamp);
+      if (!b || typeof b !== "object" || typeof b.userId !== "string" || b.userId.length > 64 || Number.isNaN(given) || Number.isNaN(max) ||
+          (given !== null && (max === null || max <= 0)) || !ACTIVITY.includes(b.activityProgress) || !GRADING.includes(b.gradingProgress) ||
+          !Number.isFinite(ts) || ts > Date.now() + 300_000 || (b.comment !== undefined && (typeof b.comment !== "string" || b.comment.length > 1000)))
+        return agsDeny(res, 400, "invalid_score");
+      const outcome = await serviceTx(tok.d, async c => {
+        // The tool names the learner by the per-tool id it saw at launch.
+        const learners = (await c.query("SELECT * FROM eduos_lti_ags_learners($1,$2)", [req.params.linkId, tok.a])).rows;
+        const who = learners.find(l => pairwiseSub(ltiKey, tok.a, l.user_id) === b.userId);
+        if (!who) return learners.length ? "unknown_user" : "not_found";
+        const payload = { scoreGiven: given, scoreMaximum: max, activityProgress: b.activityProgress, gradingProgress: b.gradingProgress, timestamp: new Date(ts).toISOString() };
+        const r = (await c.query("SELECT eduos_lti_record_score($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) AS o",
+          [req.params.linkId, tok.a, who.student_id, given, max, b.activityProgress, b.gradingProgress, b.comment ?? null, new Date(ts), JSON.stringify(payload)])).rows[0].o;
+        if (r !== "not_found") await c.query("INSERT INTO lti_service_access_log(district_id,app_id,service) VALUES($1,$2,'ags_score')", [tok.d, tok.a]);
+        return r;
+      });
+      if (outcome === "not_found") return agsDeny(res, 404, "not_found");
+      if (outcome === "unknown_user") return agsDeny(res, 422, "user_not_in_activity");
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(204).end();
+    } catch (e) { next(e); }
+  }));
+
+  // District guidelines: grade passback on or off, and whether teachers review each score.
+  app.get("/api/lti/grade-policy", requireSession, async (req, res, next) => {
+    try {
+      const p = await withTenantTransaction(req.actor, c => c.query("SELECT enabled,teacher_review_required FROM lti_grade_policy WHERE district_id=$1", [req.actor.districtId]));
+      res.json({ data: { enabled: p.rows[0]?.enabled ?? false, teacherReviewRequired: p.rows[0]?.teacher_review_required ?? true, canEdit: isDistrictRole(req.actor.role) } });
+    } catch (e) { next(e); }
+  });
+  app.put("/api/lti/grade-policy", requireSession, requireCsrf, async (req, res, next) => {
+    if (!isDistrictRole(req.actor.role)) return res.status(403).json({ error: "district_administrator_required" });
+    const { enabled, teacherReviewRequired } = req.body || {};
+    if (typeof enabled !== "boolean" || typeof teacherReviewRequired !== "boolean") return res.status(400).json({ error: "invalid_policy" });
+    try {
+      await withTenantTransaction(req.actor, async c => {
+        await c.query(`INSERT INTO lti_grade_policy(district_id,enabled,teacher_review_required,updated_by) VALUES($1,$2,$3,$4)
+          ON CONFLICT (district_id) DO UPDATE SET enabled=EXCLUDED.enabled,teacher_review_required=EXCLUDED.teacher_review_required,updated_by=EXCLUDED.updated_by,updated_at=now()`,
+          [req.actor.districtId, enabled, teacherReviewRequired, req.actor.userId]);
+        await audit(c, req, "update", "lti_grade_policy", req.actor.districtId, { enabled, teacherReviewRequired });
+      });
+      res.json({ data: { enabled, teacherReviewRequired } });
+    } catch (e) { next(e); }
+  });
+
+  // School approvals: principals approve for their school; district leads oversee and can revoke.
+  app.get("/api/lti/grade-approvals", requireSession, async (req, res, next) => {
+    const district = isDistrictRole(req.actor.role);
+    if (!district && req.actor.role !== "principal") return res.status(403).json({ error: "forbidden" });
+    try {
+      const data = await withTenantTransaction(req.actor, async c => {
+        const approvals = (await c.query(`SELECT g.id,g.school_id AS "schoolId",sc.name AS "schoolName",g.app_id AS "appId",a.name AS "appName",
+            ua.display_name AS "approvedBy",g.approved_at AS "approvedAt",ur.display_name AS "revokedBy",g.revoked_at AS "revokedAt",g.revoke_reason AS "revokeReason",
+            (SELECT count(*)::int FROM lti_score_events e JOIN lti_content_links l ON l.id=e.content_link_id JOIN assignments x ON x.id=l.assignment_id
+              WHERE e.app_id=g.app_id AND x.school_id=g.school_id AND e.received_at>now()-interval '30 days') AS "scores30d"
+           FROM lti_school_grade_approvals g JOIN schools sc ON sc.id=g.school_id JOIN apps a ON a.id=g.app_id
+           JOIN users ua ON ua.id=g.approved_by LEFT JOIN users ur ON ur.id=g.revoked_by
+          WHERE ($1 OR g.school_id=$2::uuid) ORDER BY g.revoked_at IS NOT NULL, sc.name, a.name LIMIT 500`, [district, req.actor.schoolId || null])).rows;
+        // Tools this principal could approve: approved registrations with grade passback, available at the school.
+        const tools = district ? [] : (await availableApps(c, req.actor)).rows.filter(a => a.integration_type === "lti13");
+        const capable = tools.length ? (await c.query(`SELECT id,name FROM apps WHERE id=ANY($1::uuid[]) AND (integration_config->>'assignmentGrades')='true' AND lti_registration_status='approved'`,
+          [tools.map(t => t.id)])).rows : [];
+        const policy = (await c.query("SELECT enabled,teacher_review_required FROM lti_grade_policy WHERE district_id=$1", [req.actor.districtId])).rows[0];
+        return { policy: { enabled: policy?.enabled ?? false, teacherReviewRequired: policy?.teacher_review_required ?? true }, approvals,
+          candidates: capable.map(x => ({ appId: x.id, appName: x.name })), canApprove: !district };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data });
+    } catch (e) { next(e); }
+  });
+  app.put("/api/lti/grade-approvals", requireSession, requireCsrf, async (req, res, next) => {
+    const { appId, approved, schoolId = req.actor.schoolId, reason = null } = req.body || {};
+    if (!validId(appId) || typeof approved !== "boolean" || !validId(schoolId) || (reason !== null && (typeof reason !== "string" || reason.length > 500)))
+      return res.status(400).json({ error: "invalid_request" });
+    const district = isDistrictRole(req.actor.role);
+    if (approved && req.actor.role !== "principal") return res.status(403).json({ error: district ? "schools_approve_grade_passback" : "forbidden" });
+    if (!approved && !district && !(req.actor.role === "principal" && schoolId === req.actor.schoolId)) return res.status(403).json({ error: "forbidden" });
+    if (approved && schoolId !== req.actor.schoolId) return res.status(403).json({ error: "own_school_only" });
+    try {
+      const r = await withTenantTransaction(req.actor, async c => {
+        if (approved) {
+          const avail = (await availableApps(c, req.actor, appId)).rows[0];
+          const cfg = avail && (await c.query("SELECT integration_config,lti_registration_status FROM apps WHERE id=$1", [appId])).rows[0];
+          if (!cfg || avail.integration_type !== "lti13" || cfg.lti_registration_status !== "approved" || cfg.integration_config?.assignmentGrades !== true)
+            return fail(409, "tool_not_registered_for_grades");
+          try { await c.query("INSERT INTO lti_school_grade_approvals(district_id,school_id,app_id,approved_by) VALUES($1,$2,$3,$4)", [req.actor.districtId, schoolId, appId, req.actor.userId]); }
+          catch (e) { if (e.code !== "23505") throw e; }
+        } else {
+          const done = await c.query(`UPDATE lti_school_grade_approvals SET revoked_by=$4,revoked_at=now(),revoke_reason=$5
+              WHERE district_id=$1 AND school_id=$2 AND app_id=$3 AND revoked_at IS NULL`, [req.actor.districtId, schoolId, appId, req.actor.userId, reason]);
+          if (!done.rowCount) return fail(404, "approval_not_found");
+        }
+        await audit(c, req, approved ? "approve_grade_passback" : "revoke_grade_passback", "app", appId, { schoolId, reason }, schoolId);
+        return { status: 200, data: { appId, schoolId, approved } };
+      });
+      send(res, r);
+    } catch (e) { next(e); }
+  });
+
+  // A teacher turns grade passback on for one placed activity.
+  app.put("/api/lti/content-links/:id/grades", requireSession, requireCsrf, async (req, res, next) => {
+    if (!validId(req.params.id) || typeof req.body?.enabled !== "boolean") return res.status(400).json({ error: "invalid_request" });
+    try {
+      const r = await withTenantTransaction(req.actor, async c => {
+        const l = (await c.query(`SELECT l.id,l.app_id,l.assignment_id,x.school_id,eduos_can_manage_assignment(l.assignment_id) AS manage,
+            a.integration_config,a.lti_registration_status FROM lti_content_links l JOIN assignments x ON x.id=l.assignment_id JOIN apps a ON a.id=l.app_id WHERE l.id=$1`, [req.params.id])).rows[0];
+        if (!l?.manage) return fail(404, "content_link_not_found");
+        if (req.body.enabled) {
+          const policy = (await c.query("SELECT enabled FROM lti_grade_policy WHERE district_id=$1", [req.actor.districtId])).rows[0];
+          if (!policy?.enabled) return fail(409, "district_grade_passback_off");
+          if (l.lti_registration_status !== "approved" || l.integration_config?.assignmentGrades !== true) return fail(409, "tool_not_registered_for_grades");
+          const ok = await c.query("SELECT 1 FROM lti_school_grade_approvals WHERE school_id=$1 AND app_id=$2 AND revoked_at IS NULL", [l.school_id, l.app_id]);
+          if (!ok.rowCount) return fail(409, "school_has_not_approved_tool");
+        }
+        await c.query("UPDATE lti_content_links SET grades_enabled_by=$2,grades_enabled_at=$3 WHERE id=$1",
+          [l.id, req.body.enabled ? req.actor.userId : null, req.body.enabled ? new Date() : null]);
+        await audit(c, req, req.body.enabled ? "enable_grade_passback" : "disable_grade_passback", "assignment", l.assignment_id, { contentLinkId: l.id }, l.school_id);
+        return { status: 200, data: { id: l.id, gradesEnabled: req.body.enabled } };
+      });
+      send(res, r);
+    } catch (e) { next(e); }
+  });
+
+  // Teachers review tool scores: record into the gradebook, or dismiss.
+  app.get("/api/lti/scores", requireSession, async (req, res, next) => {
+    if (!validId(req.query?.assignmentId)) return res.status(400).json({ error: "invalid_assignment_id" });
+    try {
+      const rows = await withTenantTransaction(req.actor, c => c.query(`SELECT s.id,s.student_id AS "studentId",st.display_name AS "studentName",l.title AS activity,a.name AS "appName",
+          s.score_given::float8 AS "scoreGiven",s.score_maximum::float8 AS "scoreMaximum",s.grading_progress AS "gradingProgress",s.comment,s.status,
+          s.tool_timestamp AS "receivedFor",sub.score::float8 AS "gradebookScore",sub.grade_source AS "gradebookSource"
+         FROM lti_scores s JOIN students st ON st.id=s.student_id JOIN lti_content_links l ON l.id=s.content_link_id JOIN apps a ON a.id=l.app_id
+         LEFT JOIN assignment_submissions sub ON sub.assignment_id=s.assignment_id AND sub.student_id=s.student_id AND sub.graded_at IS NOT NULL
+        WHERE s.assignment_id=$1 ORDER BY st.display_name LIMIT 1000`, [req.query.assignmentId]));
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data: rows.rows });
+    } catch (e) { next(e); }
+  });
+  app.post("/api/lti/scores/:id/:action", requireSession, requireCsrf, async (req, res, next) => {
+    if (!validId(req.params.id) || !["record", "dismiss"].includes(req.params.action)) return res.status(404).json({ error: "not_found" });
+    try {
+      const r = await withTenantTransaction(req.actor, async c => {
+        const s = (await c.query(`SELECT s.*,x.points_possible FROM lti_scores s JOIN assignments x ON x.id=s.assignment_id WHERE s.id=$1 FOR UPDATE OF s`, [req.params.id])).rows[0];
+        if (!s) return fail(404, "score_not_found");
+        if (req.params.action === "dismiss") {
+          await c.query("UPDATE lti_scores SET status='dismissed',reviewed_by=$2,reviewed_at=now(),updated_at=now() WHERE id=$1", [s.id, req.actor.userId]);
+        } else {
+          if (s.status === "not_final" || s.score_given === null) return fail(409, "score_not_final");
+          const existing = (await c.query("SELECT grade_source FROM assignment_submissions WHERE assignment_id=$1 AND student_id=$2 AND graded_at IS NOT NULL",
+            [s.assignment_id, s.student_id])).rows[0];
+          // A teacher's own grade is replaced only when they say so.
+          if (existing && existing.grade_source !== "lti" && req.body?.overwrite !== true) return fail(409, "teacher_grade_exists");
+          const ratio = Math.min(Number(s.score_given) / Number(s.score_maximum), 1);
+          await c.query(`INSERT INTO assignment_submissions(district_id,assignment_id,student_id,score,points_earned,graded_by,graded_at,grade_source)
+              VALUES($1,$2,$3,$4,$5,$6,now(),'lti')
+              ON CONFLICT (assignment_id,student_id) DO UPDATE SET score=EXCLUDED.score,points_earned=EXCLUDED.points_earned,graded_by=EXCLUDED.graded_by,graded_at=now(),grade_source='lti'`,
+            [req.actor.districtId, s.assignment_id, s.student_id, Math.round(ratio * 10000) / 100, Math.round(ratio * Number(s.points_possible) * 100) / 100, req.actor.userId]);
+          await c.query("UPDATE lti_scores SET status='recorded',reviewed_by=$2,reviewed_at=now(),updated_at=now() WHERE id=$1", [s.id, req.actor.userId]);
+        }
+        await audit(c, req, req.params.action === "record" ? "record_tool_score" : "dismiss_tool_score", "assignment", s.assignment_id,
+          { scoreId: s.id, studentId: s.student_id, overwrite: req.body?.overwrite === true });
+        return { status: 200, data: { id: s.id, status: req.params.action === "record" ? "recorded" : "dismissed" } };
+      });
+      send(res, r);
     } catch (e) { next(e); }
   });
 
@@ -1032,7 +1248,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     try {
       const rows = await withTenantTransaction(req.actor, client => client.query(
         `SELECT l.id,l.assignment_id AS "assignmentId",l.app_id AS "appId",a.name AS "appName",l.title,l.description,l.created_at AS "createdAt",
-                eduos_can_manage_assignment(l.assignment_id) AS "canRemove"
+                eduos_can_manage_assignment(l.assignment_id) AS "canRemove",(l.grades_enabled_at IS NOT NULL) AS "gradesEnabled",
+                (a.integration_config->>'assignmentGrades')='true' AS "gradesCapable"
            FROM lti_content_links l JOIN apps a ON a.id=l.app_id JOIN assignments x ON x.id=l.assignment_id
           WHERE ($1::uuid IS NULL OR x.course_id=$1::uuid) AND ($2::uuid IS NULL OR l.assignment_id=$2::uuid)
           ORDER BY l.created_at LIMIT 500`, [courseId, assignmentId]));

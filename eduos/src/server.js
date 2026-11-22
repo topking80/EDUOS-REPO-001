@@ -1226,7 +1226,7 @@ app.post("/api/assignments/:assignmentId/submissions/:submissionId/grade",requir
   try{
     const result=await withTenantTransaction(req.actor,async client=>{
       const updated=await client.query(
-        `UPDATE assignment_submissions sub SET score=$1,feedback=$2,graded_by=$3,graded_at=now()
+        `UPDATE assignment_submissions sub SET score=$1,feedback=$2,graded_by=$3,graded_at=now(),grade_source='teacher'
           FROM assignments a
          WHERE sub.id=$4 AND sub.assignment_id=$5 AND a.id=sub.assignment_id
            AND ($6='superintendent' OR a.school_id=$7)
