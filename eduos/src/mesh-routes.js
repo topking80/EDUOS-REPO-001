@@ -16,12 +16,13 @@
 //  - Every catalog change and every launch is audited with its scope.
 import { requireSession, requireCsrf } from "./auth.js";
 import { requirePermission, isDistrictRole, canPerform } from "./policy.js";
-import { withTenantTransaction } from "./db.js";
+import { withTenantTransaction, pool } from "./db.js";
 import { config } from "./config.js";
 import { pageOf, pageSql, paged } from "./paging.js";
 import { loadPlatformKey, signJwt, makeHint, readHint, consumeHintDurably, launchClaims, validLtiConfig, ltiConfigFingerprint,
   newBrowserBinding, browserBindingMatches, bindingCookieName, AUTO_SUBMIT_SCRIPT, AUTO_SUBMIT_SCRIPT_HASH,
-  DEEP_LINK_TTL_MS, decodeJwt, verifyToolJwt, acceptContentItems } from "./lti.js";
+  DEEP_LINK_TTL_MS, decodeJwt, verifyToolJwt, acceptContentItems,
+  LTI_SCOPES, NRPS_SCOPE, SERVICE_TOKEN_TTL_MS, verifyClientAssertion, pairwiseSub, pairwiseContext } from "./lti.js";
 import { request as outboundRequest } from "./integrations/http.js";
 import crypto from "node:crypto";
 import { getCookie, serialize as serializeCookie } from "./cookies.js";
@@ -146,7 +147,9 @@ function validateAppBody(body, partial) {
     if (hasSecretConfigKey(c)) return "integration_config_must_not_hold_secrets";
   }
   if (!partial && b.integrationType === "lti13" && !validLtiConfig(b.integrationConfig)) return "invalid_lti_config";
-  if (!partial && b.integrationType === "lti13" && !["none", "identity"].includes(b.dataSharingScope || "none")) return "unsupported_lti_data_scope";
+  if (!partial && b.integrationType === "lti13" && !LTI_SCOPES.includes(b.dataSharingScope || "none")) return "unsupported_lti_data_scope";
+  // Class lists (roster_basic) go to a tool only through NRPS (LTI-03).
+  if (!partial && b.integrationType === "lti13" && b.dataSharingScope === "roster_basic" && b.integrationConfig?.namesRoles !== true) return "roster_scope_needs_names_roles";
   return null;
 }
 
@@ -294,7 +297,8 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         const nextCfg = b.integrationConfig ?? cur.integration_config;
         const nextScope = b.dataSharingScope ?? cur.data_sharing_scope;
         if (nextType === "lti13" && !validLtiConfig(nextCfg)) return fail(400, "invalid_lti_config");
-        if (nextType === "lti13" && !["none", "identity"].includes(nextScope)) return fail(400, "unsupported_lti_data_scope");
+        if (nextType === "lti13" && !LTI_SCOPES.includes(nextScope)) return fail(400, "unsupported_lti_data_scope");
+        if (nextType === "lti13" && nextScope === "roster_basic" && nextCfg?.namesRoles !== true) return fail(400, "roster_scope_needs_names_roles");
         const map = { name: "name", vendor: "vendor", description: "description", category: "category", launchUrl: "launch_url", integrationType: "integration_type",
           dataSharingScope: "data_sharing_scope", dpaStatus: "dpa_status", dpaExpiresOn: "dpa_expires_on", coppaCompliant: "coppa_compliant",
           ferpaSchoolOfficial: "ferpa_school_official", ownerSchoolId: "owner_school_id", status: "status" };
@@ -684,7 +688,7 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         if (!app.lti_approved_at || hint.v !== new Date(app.lti_approved_at).toISOString())
           return { error: "lti_approval_changed", status: 409 };
         if (app.integration_type !== "lti13" || p.client_id !== cfg.clientId) return { error: "client_mismatch", status: 400 };
-        if (!["none", "identity"].includes(app.data_sharing_scope)) return { error: "unsupported_lti_data_scope", status: 403 };
+        if (!LTI_SCOPES.includes(app.data_sharing_scope) || (app.data_sharing_scope === "roster_basic" && cfg.namesRoles !== true)) return { error: "unsupported_lti_data_scope", status: 403 };
         if (!Array.isArray(cfg.redirectUris) || !cfg.redirectUris.includes(p.redirect_uri)) return { error: "redirect_uri_not_registered", status: 400 };
         // Claim the launch atomically in the same tenant transaction as the
         // authorization checks. This prevents replay across processes/restarts.
@@ -696,7 +700,12 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
           if (!assignment?.ok) return { error: "assignment_not_manageable", status: 403 };
         } else if (hint.k !== undefined) {
           if (!validId(hint.k)) return { error: "invalid_or_expired_launch", status: 400 };
-          content = (await client.query("SELECT id,title,url,custom FROM lti_content_links WHERE id=$1 AND app_id=$2", [hint.k, app.id])).rows[0];
+          // LTI-03: the assignment's course (when the user can see it) becomes the
+          // launch context, and its class list is offered if a teacher shared it.
+          content = (await client.query(`SELECT l.id,l.title,l.url,l.custom,co.id AS course_id,co.title AS course_title,
+              (SELECT s.id FROM lti_course_sharing s WHERE s.course_id=co.id AND s.app_id=l.app_id) AS sharing_id
+             FROM lti_content_links l JOIN assignments x ON x.id=l.assignment_id LEFT JOIN courses co ON co.id=x.course_id
+            WHERE l.id=$1 AND l.app_id=$2`, [hint.k, app.id])).rows[0];
           if (!content) return { error: "content_not_available", status: 403 };
         }
         const consumed = await consumeHintDurably(client, hint.d, hint.l, new Date(hint.exp));
@@ -718,7 +727,10 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
         deepLinking = { returnUrl: `${issuer}/lti/deep-link/return`, data, title: `Add to: ${String(ctx.assignment.title).slice(0, 120)}` };
       }
       const content = ctx.content ? { id: ctx.content.id, title: ctx.content.title, url: ctx.content.url, custom: ctx.content.custom } : null;
-      const idToken = signJwt(ltiKey, launchClaims({ key: ltiKey, issuer, app: ctx.app, launch: { role: ctx.launch.role, districtId: hint.d }, user: ctx.user, school: ctx.school, nonce: p.nonce, deepLinking, content }));
+      const context = ctx.content?.course_id ? { id: ctx.content.course_id, title: ctx.content.course_title } : null;
+      const nrps = context && ctx.content.sharing_id && ctx.app.data_sharing_scope === "roster_basic" && ctx.app.integration_config?.namesRoles === true
+        ? { url: `${issuer}/lti/nrps/${ctx.content.sharing_id}/memberships` } : null;
+      const idToken = signJwt(ltiKey, launchClaims({ key: ltiKey, issuer, app: ctx.app, launch: { role: ctx.launch.role, districtId: hint.d }, user: ctx.user, school: ctx.school, nonce: p.nonce, deepLinking, content, context, nrps }));
       const esc = v => String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       const target = new URL(p.redirect_uri);
       res.setHeader("Cache-Control", "no-store");
@@ -860,6 +872,158 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
     });
   });
 
+  // ---- LTI-03: services for tools (OAuth 2.0 client credentials + NRPS) ----
+  // Tools aren't users: these run in a district-only transaction and read
+  // through checked SECURITY DEFINER functions.
+  async function serviceTx(districtId, callback) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.district_id',$1,true)", [String(districtId)]);
+      const out = await callback(client);
+      await client.query("COMMIT");
+      return out;
+    } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; }
+    finally { client.release(); }
+  }
+  /** The approved, unchanged NRPS registration of an app in a district, or null. */
+  async function nrpsRegistration(districtId, appId) {
+    if (!validId(districtId) || !validId(appId)) return null;
+    const r = await serviceTx(districtId, c => c.query(`SELECT integration_config,data_sharing_scope,lti_approved_config_hash,lti_approved_at FROM apps
+       WHERE id=$1 AND status='active' AND integration_type='lti13' AND lti_registration_status='approved'`, [appId])).then(x => x.rows[0]);
+    if (!r) return null;
+    const cfg = r.integration_config;
+    if (!validLtiConfig(cfg, { allowInsecureLoopback: config.nodeEnv !== "production" }) || cfg.namesRoles !== true || !cfg.jwksUrl || r.data_sharing_scope !== "roster_basic") return null;
+    const fp = ltiConfigFingerprint(cfg, r.data_sharing_scope);
+    if (r.lti_approved_config_hash !== fp) return null;
+    return { districtId, cfg, fingerprint: fp, approvedAt: new Date(r.lti_approved_at).toISOString() };
+  }
+  const oauthError = (res, status, error) => { res.status(status).setHeader("Cache-Control", "no-store"); return res.json({ error }); };
+  const tokenLimiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false });
+  // Each registration has its own token URL (district and app), so the tool's
+  // client ID needs no global uniqueness and the lookup stays inside the
+  // district's row-level security.
+  app.post("/lti/token/:districtId/:appId", tokenLimiter, (req, res, next) => {
+    if (!req.is("application/x-www-form-urlencoded")) return oauthError(res, 400, "invalid_request");
+    expressRawUrlencoded(req, res, async error => {
+      if (error) return next(error);
+      try {
+        if (!ltiKey) return oauthError(res, 503, "temporarily_unavailable");
+        const f = {};
+        for (const [k, v] of new URLSearchParams(req.body.toString("utf8"))) {
+          if (!["grant_type", "client_assertion_type", "client_assertion", "scope"].includes(k) || f[k] !== undefined) return oauthError(res, 400, "invalid_request");
+          switch (k) { case "grant_type": f.grant_type = v; break; case "client_assertion_type": f.client_assertion_type = v; break;
+            case "client_assertion": f.client_assertion = v; break; case "scope": f.scope = v; break; }
+        }
+        if (f.grant_type !== "client_credentials") return oauthError(res, 400, "unsupported_grant_type");
+        if (f.client_assertion_type !== "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" || typeof f.client_assertion !== "string") return oauthError(res, 401, "invalid_client");
+        const scopes = String(f.scope || "").split(" ").filter(Boolean);
+        if (!scopes.length || scopes.some(x => x !== NRPS_SCOPE)) return oauthError(res, 400, "invalid_scope");
+        const reg = await nrpsRegistration(req.params.districtId, req.params.appId);
+        if (!reg) return oauthError(res, 401, "invalid_client");
+        const tokenUrl = `${issuer}/lti/token/${req.params.districtId}/${req.params.appId}`;
+        let assertion;
+        try {
+          try { assertion = verifyClientAssertion(f.client_assertion, await toolJwks(reg.cfg.jwksUrl), { clientId: reg.cfg.clientId, tokenUrl }); }
+          catch (e) { if (e.code !== "jwt_key_not_found") throw e; assertion = verifyClientAssertion(f.client_assertion, await toolJwks(reg.cfg.jwksUrl, { refresh: true }), { clientId: reg.cfg.clientId, tokenUrl }); }
+        } catch { return oauthError(res, 401, "invalid_client"); }
+        const fresh = await serviceTx(reg.districtId, async c => {
+          try { await c.query("INSERT INTO lti_service_assertions(district_id,app_id,jti,expires_at) VALUES($1,$2,$3,to_timestamp($4))", [reg.districtId, req.params.appId, assertion.jti, assertion.exp]); }
+          catch (e) { if (e.code === "23505") return false; throw e; }
+          await c.query("INSERT INTO lti_service_access_log(district_id,app_id,service) VALUES($1,$2,'token')", [reg.districtId, req.params.appId]);
+          return true;
+        });
+        if (!fresh) return oauthError(res, 401, "invalid_client");
+        const token = makeHint(ltiKey, { t: "svc", d: reg.districtId, a: req.params.appId, c: reg.fingerprint, v: reg.approvedAt, sc: NRPS_SCOPE }, Date.now(), SERVICE_TOKEN_TTL_MS);
+        res.setHeader("Cache-Control", "no-store"); res.setHeader("Pragma", "no-cache");
+        return res.json({ access_token: token, token_type: "Bearer", expires_in: SERVICE_TOKEN_TTL_MS / 1000, scope: NRPS_SCOPE });
+      } catch (e) { next(e); }
+    });
+  });
+
+  // NRPS 2.0 membership container for one shared course.
+  app.get("/lti/nrps/:sharingId/memberships", tokenLimiter, async (req, res, next) => {
+    const deny = (status, error) => { res.status(status).setHeader("Cache-Control", "no-store"); if (status === 401) res.setHeader("WWW-Authenticate", 'Bearer error="invalid_token"'); return res.json({ error }); };
+    try {
+      if (!ltiKey) return deny(503, "temporarily_unavailable");
+      const m = /^Bearer ([A-Za-z0-9._-]{20,4096})$/.exec(req.headers.authorization || "");
+      const tok = m ? readHint(ltiKey, m[1]) : null;
+      if (!tok || tok.t !== "svc" || tok.sc !== NRPS_SCOPE || !validId(tok.d) || !validId(tok.a)) return deny(401, "invalid_token");
+      if (!validId(req.params.sharingId)) return deny(404, "not_found");
+      // The registration must still be approved and unchanged since the token was issued.
+      const reg = await nrpsRegistration(tok.d, tok.a);
+      if (!reg || reg.districtId !== tok.d || reg.fingerprint !== tok.c || reg.approvedAt !== tok.v) return deny(401, "invalid_token");
+      const roleFilter = req.query.role;
+      if (roleFilter !== undefined && typeof roleFilter !== "string") return deny(400, "invalid_request");
+      const want = roleFilter ? (/^(Learner|Instructor)$/.test(roleFilter.split("#").pop()) ? roleFilter.split("#").pop() : "none") : null;
+      let returned = [];
+      const rows = await serviceTx(tok.d, async c => {
+        const r = (await c.query("SELECT * FROM eduos_lti_nrps_members($1,$2)", [req.params.sharingId, tok.a])).rows;
+        returned = r.filter(x => !want || x.lti_role === want);
+        // Logged as what the tool actually receives.
+        if (r.length) await c.query("INSERT INTO lti_service_access_log(district_id,app_id,course_id,service,members) VALUES($1,$2,$3,'nrps_memberships',$4)",
+          [tok.d, tok.a, r[0].course_id, returned.length]);
+        return r;
+      });
+      if (!rows.length) return deny(404, "not_found");
+      const role = r => `http://purl.imsglobal.org/vocab/lis/v2/membership#${r}`;
+      const members = returned.map(r => ({
+        user_id: pairwiseSub(ltiKey, tok.a, r.user_id), status: "Active", roles: [role(r.lti_role)], name: r.display_name, email: r.email }));
+      res.setHeader("Cache-Control", "no-store");
+      res.type("application/vnd.ims.lti-nrps.v2.membershipcontainer+json");
+      return res.send(JSON.stringify({ id: `${issuer}/lti/nrps/${req.params.sharingId}/memberships`,
+        context: { id: pairwiseContext(ltiKey, tok.a, rows[0].course_id), title: rows[0].course_title }, members }));
+    } catch (e) { next(e); }
+  });
+
+  // Teachers choose, per course, which NRPS tools may read the class list.
+  app.get("/api/lti/course-sharing", requireSession, async (req, res, next) => {
+    if (!validId(req.query?.courseId)) return res.status(400).json({ error: "invalid_course_id" });
+    try {
+      const out = await withTenantTransaction(req.actor, async client => {
+        const course = (await client.query("SELECT id,eduos_can_manage_course(id) AS manage FROM courses WHERE id=$1", [req.query.courseId])).rows[0];
+        if (!course) return null;
+        const shared = (await client.query(`SELECT s.app_id AS "appId",a.name AS "appName",s.enabled_at AS "enabledAt",u.display_name AS "enabledBy"
+            FROM lti_course_sharing s JOIN apps a ON a.id=s.app_id JOIN users u ON u.id=s.enabled_by WHERE s.course_id=$1 ORDER BY a.name`, [course.id])).rows;
+        let candidates = [];
+        if (course.manage) {
+          const avail = (await availableApps(client, req.actor)).rows.filter(a => a.integration_type === "lti13" && a.data_sharing_scope === "roster_basic");
+          const cfgs = avail.length ? (await client.query("SELECT id,integration_config FROM apps WHERE id=ANY($1::uuid[])", [avail.map(a => a.id)])).rows : [];
+          candidates = avail.filter(a => cfgs.find(c => c.id === a.id)?.integration_config?.namesRoles === true).map(a => ({ appId: a.id, appName: a.name }));
+        }
+        return { canManage: course.manage, shared, candidates };
+      });
+      if (!out) return res.status(404).json({ error: "course_not_found" });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data: out });
+    } catch (e) { next(e); }
+  });
+  app.put("/api/lti/course-sharing", requireSession, requireCsrf, async (req, res, next) => {
+    const { courseId, appId, enabled } = req.body || {};
+    if (!validId(courseId) || !validId(appId) || typeof enabled !== "boolean") return res.status(400).json({ error: "invalid_request" });
+    try {
+      const r = await withTenantTransaction(req.actor, async client => {
+        const course = (await client.query("SELECT id,eduos_can_manage_course(id) AS manage FROM courses WHERE id=$1", [courseId])).rows[0];
+        if (!course?.manage) return fail(403, "course_not_manageable");
+        if (!enabled) {
+          await client.query("DELETE FROM lti_course_sharing WHERE course_id=$1 AND app_id=$2", [courseId, appId]);
+        } else {
+          const { rows } = await availableApps(client, req.actor, appId);
+          const a = rows[0];
+          if (!a || a.integration_type !== "lti13") return fail(403, "app_not_available");
+          const cfg = (await client.query("SELECT integration_config,lti_registration_status,lti_approved_config_hash FROM apps WHERE id=$1", [appId])).rows[0];
+          if (a.data_sharing_scope !== "roster_basic" || cfg.integration_config?.namesRoles !== true) return fail(409, "tool_not_approved_for_class_lists");
+          if (cfg.lti_registration_status !== "approved" || cfg.lti_approved_config_hash !== ltiConfigFingerprint(cfg.integration_config, a.data_sharing_scope)) return fail(409, "lti_approval_required");
+          await client.query("INSERT INTO lti_course_sharing(district_id,course_id,app_id,enabled_by) VALUES($1,$2,$3,$4) ON CONFLICT (district_id,course_id,app_id) DO NOTHING",
+            [req.actor.districtId, courseId, appId, req.actor.userId]);
+        }
+        await audit(client, req, enabled ? "share_class_list" : "stop_sharing_class_list", "course", courseId, { appId });
+        return { status: 200, data: { courseId, appId, enabled } };
+      });
+      send(res, r);
+    } catch (e) { next(e); }
+  });
+
   // Links on the assignments of one course (or one assignment) that this user can see.
   app.get("/api/lti/content-links", requireSession, async (req, res, next) => {
     const { courseId = null, assignmentId = null } = req.query || {};
@@ -973,4 +1137,5 @@ export function registerMeshRoutes(app, { emitServerFlow }) {
 // makes the 16KB cap apply before protocol-field validation and also covers
 // chunked requests without relying on Content-Length.
 import express from "express";
+import rateLimit from "express-rate-limit";
 const expressRawUrlencoded = express.raw({ type: "application/x-www-form-urlencoded", limit: "16kb" });

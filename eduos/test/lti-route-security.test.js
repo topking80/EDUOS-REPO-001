@@ -77,13 +77,16 @@ test("LTI callback rechecks current entitlement and launch identity before issui
 
 
 test("LTI app registration and updates reject unsupported roster, grade and attendance scopes", () => {
-  assert.match(source, /\["none", "identity"\]\.includes\(b\.dataSharingScope \|\| "none"\)/);
-  assert.match(source, /\["none", "identity"\]\.includes\(nextScope\)/);
+  assert.match(source, /!LTI_SCOPES\.includes\(b\.dataSharingScope \|\| "none"\)/);
+  assert.match(source, /!LTI_SCOPES\.includes\(nextScope\)/);
   assert.match(source, /unsupported_lti_data_scope/);
+  // Class lists (roster_basic) only with NRPS registered; roster_full, grades and attendance stay refused.
+  assert.match(source, /roster_scope_needs_names_roles/);
+  assert.match(lti, /LTI_SCOPES = Object\.freeze\(\["none", "identity", "roster_basic"\]\)/);
 });
 
 test("LTI authorization refuses legacy apps with unsupported data scopes", () => {
-  assert.match(source, /if \(!\["none", "identity"\]\.includes\(app\.data_sharing_scope\)\) return \{ error: "unsupported_lti_data_scope", status: 403 \}/);
+  assert.match(source, /if \(!LTI_SCOPES\.includes\(app\.data_sharing_scope\) \|\| \(app\.data_sharing_scope === "roster_basic" && cfg\.namesRoles !== true\)\) return \{ error: "unsupported_lti_data_scope", status: 403 \}/);
 });
 
 test("changing an LTI data-sharing scope invalidates approval in PostgreSQL", () => {

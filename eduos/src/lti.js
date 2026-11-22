@@ -112,6 +112,11 @@ export function bindingCookieName(launchId) {
 export const AUTO_SUBMIT_SCRIPT = 'document.getElementById("lti").submit()';
 export const AUTO_SUBMIT_SCRIPT_HASH = `sha256-${crypto.createHash("sha256").update(AUTO_SUBMIT_SCRIPT).digest("base64")}`;
 
+/** A stable per-app course identifier, like pairwiseSub. */
+export function pairwiseContext(key, appId, courseId) {
+  return crypto.createHmac("sha256", key.subjectKey || key.hintKey).update(`ctx\0${appId}\0${courseId}`).digest("base64url").slice(0, 32);
+}
+
 /** A stable per-app pseudonymous subject so tools cannot correlate users across apps. */
 export function pairwiseSub(key, appId, userId) {
   return crypto.createHmac("sha256", key.subjectKey || key.hintKey).update(`sub\0${appId}\0${userId}`).digest("base64url").slice(0, 32);
@@ -120,11 +125,15 @@ export function pairwiseSub(key, appId, userId) {
 // LTI Core currently supports only no identity or basic identity claims.
 // Roster, grade and attendance scopes remain unsupported until their
 // separately governed Advantage services exist.
-const SCOPE_RANK = Object.freeze({ none: 0, identity: 1 });
+const SCOPE_RANK = Object.freeze({ none: 0, identity: 1, roster_basic: 2 });
+/** Data scopes an LTI tool may be approved for. roster_basic (class lists) needs NRPS registered. */
+export const LTI_SCOPES = Object.freeze(["none", "identity", "roster_basic"]);
+export const NRPS_SCOPE = "https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly";
 /** Build id_token claims, limited by the app's data-sharing scope. */
-export function launchClaims({ key, issuer, app, launch, user, school, nonce, deepLinking = null, content = null, now = Math.floor(Date.now() / 1000) }) {
+export function launchClaims({ key, issuer, app, launch, user, school, nonce, deepLinking = null, content = null, context = null, nrps = null, now = Math.floor(Date.now() / 1000) }) {
   const cfg = app.integration_config || {};
-  const rank = SCOPE_RANK[app.data_sharing_scope] ?? 0;
+  // roster_basic counts only for a tool registered for NRPS; otherwise it fails closed.
+  const rank = app.data_sharing_scope === "roster_basic" && cfg.namesRoles !== true ? 0 : SCOPE_RANK[app.data_sharing_scope] ?? 0;
   const claims = {
     iss: issuer, aud: cfg.clientId, azp: cfg.clientId, sub: pairwiseSub(key, app.id, user.id),
     iat: now, exp: now + 300, nonce,
@@ -148,6 +157,12 @@ export function launchClaims({ key, issuer, app, launch, user, school, nonce, de
   } else {
     claims["https://purl.imsglobal.org/spec/lti/claim/resource_link"] = { id: app.id };
   }
+  if (context) {
+    // An EduOS course, under an identifier that differs per tool (tools can't correlate courses).
+    claims["https://purl.imsglobal.org/spec/lti/claim/context"] = { id: pairwiseContext(key, app.id, context.id), title: context.title,
+      type: ["http://purl.imsglobal.org/vocab/lis/v2/course#CourseOffering"] };
+    if (nrps) claims["https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice"] = { context_memberships_url: nrps.url, service_versions: ["2.0"] };
+  }
   if (rank >= 1) { claims.name = user.display_name; claims.email = user.email; }
   // School records are not LTI course contexts. Never disclose school IDs or
   // names as a substitute for an approved course mapping, even for identity scope.
@@ -156,14 +171,14 @@ export function launchClaims({ key, issuer, app, launch, user, school, nonce, de
 
 export function ltiConfigFingerprint(cfg, dataSharingScope) {
   if (!cfg || typeof cfg !== "object" || !Array.isArray(cfg.redirectUris) ||
-      !["none", "identity"].includes(dataSharingScope))
+      !LTI_SCOPES.includes(dataSharingScope) || (dataSharingScope === "roster_basic" && cfg.namesRoles !== true))
     throw new TypeError("invalid LTI registration configuration or data-sharing scope");
   // The approved fingerprint covers every setting that changes the student
   // data exposed to a tool, not just its OIDC endpoints and client identity.
   const registration = [cfg.clientId, cfg.deploymentId, cfg.loginUrl, [...cfg.redirectUris], cfg.targetLinkUri, dataSharingScope];
   // Deep Linking (LTI-02) settings are covered when present; registrations
   // without them keep the fingerprint (and approval) they already had.
-  if (cfg.deepLinkingUrl || cfg.jwksUrl) registration.push({ deepLinkingUrl: cfg.deepLinkingUrl, jwksUrl: cfg.jwksUrl });
+  if (cfg.deepLinkingUrl || cfg.jwksUrl || cfg.namesRoles) registration.push({ deepLinkingUrl: cfg.deepLinkingUrl, jwksUrl: cfg.jwksUrl, ...(cfg.namesRoles ? { namesRoles: true } : {}) });
   return crypto.createHash("sha256").update(JSON.stringify(registration)).digest("base64url");
 }
 
@@ -184,7 +199,12 @@ export function validLtiConfig(cfg, { allowInsecureLoopback = process.env.NODE_E
     url(cfg.loginUrl) && Array.isArray(cfg.redirectUris) && cfg.redirectUris.length >= 1 && cfg.redirectUris.length <= 10 &&
     cfg.redirectUris.every(url) && url(cfg.targetLinkUri) &&
     // Deep Linking is optional, and needs both its launch URL and the tool's public keys.
-    ((cfg.deepLinkingUrl === undefined && cfg.jwksUrl === undefined) || (url(cfg.deepLinkingUrl) && url(cfg.jwksUrl)));
+    // Services that verify the tool's own signatures need its public keys:
+    // Deep Linking (LTI-02) and Names and Role Provisioning (LTI-03).
+    (cfg.deepLinkingUrl === undefined || url(cfg.deepLinkingUrl)) &&
+    (cfg.namesRoles === undefined || typeof cfg.namesRoles === "boolean") &&
+    (cfg.jwksUrl === undefined ? cfg.deepLinkingUrl === undefined && cfg.namesRoles !== true
+      : url(cfg.jwksUrl) && (cfg.deepLinkingUrl !== undefined || cfg.namesRoles === true));
 }
 
 /**
@@ -226,7 +246,7 @@ export function decodeJwt(jwt) {
  * registration: issuer = client ID, audience includes the platform issuer,
  * current time window. Returns the payload or throws an Error with .code.
  */
-export function verifyToolJwt(jwt, jwks, { clientId, issuer, now = Math.floor(Date.now() / 1000), skew = 60 }) {
+export function verifyToolJwt(jwt, jwks, { clientId, issuer, audiences = [issuer], requireNonce = true, now = Math.floor(Date.now() / 1000), skew = 60 }) {
   const bad = code => Object.assign(new Error(code), { code });
   const decoded = decodeJwt(jwt);
   if (!decoded) throw bad("jwt_malformed");
@@ -246,10 +266,10 @@ export function verifyToolJwt(jwt, jwks, { clientId, issuer, now = Math.floor(Da
   if (!ok) throw bad("jwt_signature_invalid");
   const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   if (payload.iss !== clientId) throw bad("jwt_issuer_mismatch");
-  if (!aud.includes(issuer) || (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== undefined && payload.azp !== issuer)) throw bad("jwt_audience_mismatch");
+  if (!aud.some(x => audiences.includes(x)) || (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== undefined && !audiences.includes(payload.azp))) throw bad("jwt_audience_mismatch");
   if (!Number.isSafeInteger(payload.exp) || payload.exp <= now - skew) throw bad("jwt_expired");
   if (!Number.isSafeInteger(payload.iat) || payload.iat > now + skew || payload.iat < now - 3600) throw bad("jwt_iat_invalid");
-  if (typeof payload.nonce !== "string" || !payload.nonce || payload.nonce.length > 256) throw bad("jwt_nonce_missing");
+  if (requireNonce && (typeof payload.nonce !== "string" || !payload.nonce || payload.nonce.length > 256)) throw bad("jwt_nonce_missing");
   return payload;
 }
 
@@ -282,4 +302,22 @@ export function acceptContentItems(items, cfg, { allowInsecureLoopback = false }
     accepted.push({ title, text, url: url.href, custom, lineItemIgnored: it.lineItem !== undefined });
   }
   return { accepted, skipped };
+}
+
+// ---- LTI-03 service access (OAuth 2.0 client credentials, private_key_jwt) --
+
+export const SERVICE_TOKEN_TTL_MS = 60 * 60_000;
+
+/**
+ * A tool's client assertion (RFC 7523): signed by the tool, iss = sub = its
+ * client ID, audience = this registration's token URL, short-lived, with a jti
+ * (the caller records it so it can't be replayed).
+ */
+export function verifyClientAssertion(jwt, jwks, { clientId, tokenUrl, now = Math.floor(Date.now() / 1000) }) {
+  const payload = verifyToolJwt(jwt, jwks, { clientId, audiences: [tokenUrl], requireNonce: false, now });
+  const bad = code => Object.assign(new Error(code), { code });
+  if (payload.sub !== clientId) throw bad("assertion_subject_mismatch");
+  if (payload.exp <= payload.iat || payload.exp - payload.iat > 600 || payload.exp > now + 600) throw bad("assertion_lifetime_too_long");
+  if (typeof payload.jti !== "string" || !/^[\x21-\x7e]{8,200}$/.test(payload.jti)) throw bad("assertion_jti_missing");
+  return payload;
 }
