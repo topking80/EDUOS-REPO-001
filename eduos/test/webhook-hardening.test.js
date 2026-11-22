@@ -5,15 +5,16 @@ import { test } from "node:test";
 import http from "node:http";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { isBlockedAddress, parseRetryAfter, signatureHeader, verifySignature, deliverOnce, deliverWebhook } from "../src/webhooks.js";
+import { isBlockedAddress, validateWebhookUrl, parseRetryAfter, signatureHeader, verifySignature, deliverOnce, deliverWebhook } from "../src/webhooks.js";
 import { createLimiter } from "../src/webhook-outbox.js";
 
 test("special-purpose IPv4 and IPv6 ranges are refused; ordinary public addresses aren't", () => {
   for (const a of ["2001:0:4136:e378:8000:63bf:3fff:fdd2" /* Teredo */, "2001::1", "2001:2::1" /* benchmarking */, "2001:10::1", "2001:20::1" /* ORCHID */,
     "2001:1ff::1", "5f00::1" /* SRv6 */, "3fff::1", "3fff:fff::1" /* documentation */, "2620:4f:8000::1" /* AS112 */,
+    "4000::1", "6000::1", "200::1" /* outside IPv6 global-unicast allocation */,
     "192.31.196.1", "192.52.193.9", "192.175.48.6", "::ffff:192.175.48.6"])
     assert.equal(isBlockedAddress(a), true, a);
-  for (const a of ["2001:4860:4860::8888", "2606:4700:4700::1111", "2001:200::1", "2620:4f:8001::1", "4000::1", "8.8.8.8", "1.1.1.1", "192.31.197.1"])
+  for (const a of ["2001:4860:4860::8888", "2606:4700:4700::1111", "2001:200::1", "2620:4f:8001::1", "8.8.8.8", "1.1.1.1", "192.31.197.1"])
     assert.equal(isBlockedAddress(a), false, a);
 });
 
@@ -116,4 +117,13 @@ test("production refuses webhooks with no receiver allowlist unless any public h
   assert.match(load({ WEBHOOK_ALLOWED_HOSTS: "h.example.org", WEBHOOK_SIGNING_KEY_PREVIOUS: "short" }), /PREVIOUS must be at least 32/);
   assert.match(load({ WEBHOOK_ALLOWED_HOSTS: "h.example.org", WEBHOOK_SIGNING_KEY_PREVIOUS: "k".repeat(40) }), /must differ/);
   assert.equal(load({ WEBHOOK_ALLOWED_HOSTS: "h.example.org", WEBHOOK_SIGNING_KEY_PREVIOUS: "o".repeat(40) }), "LOADED");
+});
+
+
+test("IPv6 URL literals outside global-unicast space are rejected before delivery", () => {
+  for (const address of ["4000::1", "6000::1", "200::1"]) {
+    const checked = validateWebhookUrl(`https://[${address}]/receiver`);
+    assert.deepEqual([checked.ok, checked.reason], [false, "address_not_allowed"], address);
+  }
+  assert.equal(validateWebhookUrl("https://[2001:4860:4860::8888]/receiver").ok, true);
 });

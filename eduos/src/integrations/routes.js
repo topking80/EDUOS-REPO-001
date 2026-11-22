@@ -16,7 +16,7 @@ import { checkUrl, IntegrationError } from "./http.js";
 import * as oneroster from "./oneroster.js";
 import * as edfi from "./edfi.js";
 import * as powerschool from "./powerschool.js";
-import { planImport, loadPlanInputs, applyPlan } from "./sync.js";
+import { planImport, loadPlanInputs, applyPlan, planRosters, loadRosterInputs, applyRosters } from "./sync.js";
 
 const MANAGERS = ["superintendent", "it_admin"];
 const KINDS = { oneroster, edfi, powerschool };
@@ -72,6 +72,11 @@ function readFields(b, partial) {
   if (!partial || b.clientSecret !== undefined) { if (!cleanText(b.clientSecret, 2000)) bad("clientSecret"); out.secret = b.clientSecret.trim(); }
   if (b.scope !== undefined && b.scope !== null && b.scope !== "") { if (!cleanText(b.scope, 1000)) bad("scope"); out.scope = b.scope.trim(); }
   else if (b.scope === null || b.scope === "") out.scope = null;
+  // SIS-04: also import class rosters (teachers, sections, enrollments).
+  if (b.classRosters !== undefined) {
+    if (typeof b.classRosters !== "boolean") bad("classRosters");
+    out.data_scope = b.classRosters ? ["students", "class_rosters"] : ["students"];
+  }
   return out;
 }
 
@@ -92,8 +97,16 @@ export function registerIntegrationRoutes(app) {
         const maps = await rows(c, `SELECT m.connector_id, m.external_id, m.school_id, s.name AS school_name FROM integration_school_map m
           JOIN schools s ON s.id=m.school_id WHERE m.district_id=$1 ORDER BY s.name`, [req.actor.districtId]);
         const schools = await rows(c, "SELECT id, name FROM schools WHERE district_id=$1 AND status='active' ORDER BY name", [req.actor.districtId]);
-        return { enabled: true, schools, connectors: list.map(x => ({ ...shape(x), canApprove: x.updated_by !== req.actor.userId,
-          schoolMap: maps.filter(m => m.connector_id === x.id).map(m => ({ externalId: m.external_id, schoolId: m.school_id, schoolName: m.school_name })) })) };
+        const staffMaps = await rows(c, `SELECT m.connector_id, m.external_id, m.user_id, u.display_name FROM integration_staff_map m
+          JOIN users u ON u.id=m.user_id WHERE m.district_id=$1 ORDER BY u.display_name`, [req.actor.districtId]);
+        // For matching SIS teachers by hand (SIS-04): the district's active teachers.
+        const teachers = await rows(c, `SELECT DISTINCT ON (u.id) u.id, u.display_name, lower(u.email) AS email, s.name AS school_name
+            FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN schools s ON s.id=m.school_id
+           WHERE m.district_id=$1 AND m.role='teacher' AND m.status='active' ORDER BY u.id, s.name`, [req.actor.districtId]);
+        return { enabled: true, schools, teachers: teachers.map(t => ({ id: t.id, name: t.display_name, email: t.email, school: t.school_name }))
+          .sort((a, b) => a.name.localeCompare(b.name)), connectors: list.map(x => ({ ...shape(x), canApprove: x.updated_by !== req.actor.userId,
+          schoolMap: maps.filter(m => m.connector_id === x.id).map(m => ({ externalId: m.external_id, schoolId: m.school_id, schoolName: m.school_name })),
+          staffMap: staffMaps.filter(m => m.connector_id === x.id).map(m => ({ externalId: m.external_id, userId: m.user_id, name: m.display_name })) })) };
       });
       res.setHeader("Cache-Control", "no-store");
       res.json({ data });
@@ -106,9 +119,9 @@ export function registerIntegrationRoutes(app) {
       const data = await withTenantTransaction(req.actor, async (c) => {
         const a = req.actor, id = crypto.randomUUID();
         if (await one(c, "SELECT 1 FROM integration_connectors WHERE district_id=$1 AND name=$2", [a.districtId, f.name])) throw new HttpError(409, "connector_name_taken");
-        await c.query(`INSERT INTO integration_connectors(id, district_id, kind, name, base_url, token_url, client_id, client_secret_enc, scope, created_by, updated_by)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`, [id, a.districtId, f.kind, f.name, f.base_url, f.token_url, f.client_id,
-          encryptSecret(config.integrationsKey, a.districtId, id, f.secret), f.scope ?? null, a.userId]);
+        await c.query(`INSERT INTO integration_connectors(id, district_id, kind, name, base_url, token_url, client_id, client_secret_enc, scope, created_by, updated_by, data_scope)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11)`, [id, a.districtId, f.kind, f.name, f.base_url, f.token_url, f.client_id,
+          encryptSecret(config.integrationsKey, a.districtId, id, f.secret), f.scope ?? null, a.userId, f.data_scope ?? ["students"]]);
         await audit(c, req, "create", "integration_connector", id, `kind=${f.kind}; base_url=${f.base_url}`);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [id]));
       });
@@ -128,14 +141,14 @@ export function registerIntegrationRoutes(app) {
         if (!cur) throw new HttpError(404, "connector_not_found");
         const sets = [], args = [cur.id];
         const add = (col, v) => { args.push(v); sets.push(`${col}=$${args.length}`); };
-        for (const col of ["name", "base_url", "token_url", "client_id", "scope"]) if (col in f) add(col, f[col]);
+        for (const col of ["name", "base_url", "token_url", "client_id", "scope", "data_scope"]) if (col in f) add(col, f[col]);
         if (f.secret) add("client_secret_enc", encryptSecret(config.integrationsKey, a.districtId, cur.id, f.secret));
         if (!sets.length) throw new HttpError(400, "nothing_to_change");
         add("updated_by", a.userId);
         await c.query(`UPDATE integration_connectors SET ${sets.join(", ")}, updated_at=now(), config_version=config_version+1, status='pending_approval', approved_by=NULL, approved_at=NULL WHERE id=$1`, args)
           .catch(e => { if (e.code === "23505") throw new HttpError(409, "connector_name_taken"); throw e; });
         await invalidateScheduleForConnector(c,a.districtId,cur.id,"connector_configuration_changed");
-        await audit(c, req, "update", "integration_connector", cur.id, `changed=${Object.keys(f).map(k => k === "secret" ? "client_secret" : k).join(",")}; needs approval`);
+        await audit(c, req, "update", "integration_connector", cur.id, `changed=${Object.keys(f).map(k => k === "secret" ? "client_secret" : k === "data_scope" ? `data_scope(${f.data_scope.join("+")})` : k).join(",")}; needs approval`);
         return shape(await one(c, `SELECT ${COLS} ${FROM} WHERE c.id=$1`, [cur.id]));
       });
       res.json({ data });
@@ -202,12 +215,41 @@ export function registerIntegrationRoutes(app) {
     } catch (e) { sendError(res, next, e); }
   });
 
+  // SIS-04: match SIS teachers whose email doesn't match an EduOS teacher by
+  // hand. Who a teacher is decides which students they can see, so, like
+  // school mapping, a change needs a different district lead's approval.
+  app.put(`${base}/:id/staff-map`, requireSession, requireCsrf, manager, async (req, res, next) => {
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_connector_id" });
+    const list = req.body?.mappings;
+    if (!Array.isArray(list) || list.length > 1000 || !list.every(m => cleanText(m?.externalId, 255) && (m.userId === null || validId(m.userId))))
+      return res.status(400).json({ error: "invalid_staff_map" });
+    try {
+      await withTenantTransaction(req.actor, async (c) => {
+        const a = req.actor;
+        if (!await one(c, "SELECT 1 FROM integration_connectors WHERE id=$1 AND district_id=$2 FOR UPDATE", [req.params.id, a.districtId])) throw new HttpError(404, "connector_not_found");
+        for (const m of list) {
+          if (m.userId === null) { await c.query("DELETE FROM integration_staff_map WHERE connector_id=$1 AND external_id=$2", [req.params.id, m.externalId.trim()]); continue; }
+          if (!await one(c, "SELECT 1 FROM memberships WHERE user_id=$1 AND district_id=$2 AND role='teacher' AND status='active'", [m.userId, a.districtId]))
+            throw new HttpError(400, "teacher_not_found", { userId: m.userId });
+          await c.query(`INSERT INTO integration_staff_map(district_id, connector_id, external_id, user_id, mapped_by) VALUES ($1,$2,$3,$4,$5)
+            ON CONFLICT (connector_id, external_id) DO UPDATE SET user_id=EXCLUDED.user_id, mapped_by=EXCLUDED.mapped_by, mapped_at=now()`,
+            [a.districtId, req.params.id, m.externalId.trim(), m.userId, a.userId]);
+        }
+        await c.query(`UPDATE integration_connectors SET updated_by=$2, updated_at=now(), config_version=config_version+1,
+            status=CASE WHEN status='disabled' THEN status ELSE 'pending_approval' END, approved_by=NULL, approved_at=NULL WHERE id=$1`, [req.params.id, a.userId]);
+        await invalidateScheduleForConnector(c, a.districtId, req.params.id, "staff_mapping_changed");
+        await audit(c, req, "update", "integration_staff_map", req.params.id, `${list.map(m => `${m.externalId}=>${m.userId ?? "none"}`).join("; ")}; needs approval`);
+      });
+      res.json({ data: { saved: list.length, status: "pending_approval" } });
+    } catch (e) { sendError(res, next, e); }
+  });
+
   // SIS-02: schedules are separately approved from connector configuration.
   app.get(`${base}/:id/schedule`, requireSession, manager, async (req,res,next) => {
     if(!validId(req.params.id))return res.status(400).json({error:"invalid_connector_id"});
     try {
       const data=await withTenantTransaction(req.actor,c=>one(c,
-        `SELECT s.id,s.enabled,s.interval_minutes,s.next_run_at,s.paused_at,s.pause_reason,
+        `SELECT s.id,s.enabled,s.interval_minutes,s.incremental,s.full_sync_hours,s.next_run_at,s.paused_at,s.pause_reason,
                 s.config_version,s.approved_at,u.display_name AS approved_by,
                 s.updated_at,uu.display_name AS updated_by
            FROM integration_sync_schedules s
@@ -224,6 +266,10 @@ export function registerIntegrationRoutes(app) {
     const interval=req.body?.intervalMinutes;
     if(!Number.isInteger(interval)||interval<15||interval>10080)
       return res.status(400).json({error:"invalid_schedule_interval",minimumMinutes:15,maximumMinutes:10080});
+    // SIS-06: read only changes between full syncs (at least every fullSyncHours).
+    const incremental=req.body?.incremental??false, fullSyncHours=req.body?.fullSyncHours??24;
+    if(typeof incremental!=="boolean"||!Number.isInteger(fullSyncHours)||fullSyncHours<1||fullSyncHours>168)
+      return res.status(400).json({error:"invalid_schedule_options",fullSyncHours:{minimum:1,maximum:168}});
     try{
       const data=await withTenantTransaction(req.actor,async c=>{
         const a=req.actor;
@@ -231,15 +277,16 @@ export function registerIntegrationRoutes(app) {
         if(!connector)throw new HttpError(404,"connector_not_found");
         if(connector.status!=="active")throw new HttpError(409,"connector_not_approved");
         const saved=await one(c,
-          `INSERT INTO integration_sync_schedules(district_id,connector_id,interval_minutes,created_by,updated_by,config_version)
-           VALUES($1,$2,$3,$4,$4,$5)
+          `INSERT INTO integration_sync_schedules(district_id,connector_id,interval_minutes,created_by,updated_by,config_version,incremental,full_sync_hours)
+           VALUES($1,$2,$3,$4,$4,$5,$6,$7)
            ON CONFLICT(district_id,connector_id) DO UPDATE SET interval_minutes=EXCLUDED.interval_minutes,
+             incremental=EXCLUDED.incremental,full_sync_hours=EXCLUDED.full_sync_hours,
              updated_by=EXCLUDED.updated_by,updated_at=now(),config_version=EXCLUDED.config_version,
              enabled=false,next_run_at=NULL,paused_at=NULL,pause_reason=NULL,approved_by=NULL,approved_at=NULL
-           RETURNING id,enabled,interval_minutes,config_version`,
-          [a.districtId,connector.id,interval,a.userId,connector.config_version]);
+           RETURNING id,enabled,interval_minutes,config_version,incremental,full_sync_hours`,
+          [a.districtId,connector.id,interval,a.userId,connector.config_version,incremental,fullSyncHours]);
         await cancelScheduleJobs(c,a.districtId,saved.id,"schedule_reconfigured");
-        await audit(c,req,"configure","integration_sync_schedule",saved.id,`interval_minutes=${interval}; requires separate approval`);
+        await audit(c,req,"configure","integration_sync_schedule",saved.id,`interval_minutes=${interval}; incremental=${incremental}; full_sync_hours=${fullSyncHours}; requires separate approval`);
         return saved;
       });
       res.status(200).json({data});
@@ -384,6 +431,12 @@ export function registerIntegrationRoutes(app) {
           mappedSchoolIds: mapped.map((m) => m.external_id),
           maxStudentRecords: config.powerschoolMaxStudents,
         });
+        // SIS-04: class rosters, if this connector was approved to import them.
+        if (conn.data_scope?.includes("class_rosters")) roster.classes = await KINDS[conn.kind].fetchClasses({
+          baseUrl: conn.base_url, tokenUrl: conn.token_url, clientId: conn.client_id,
+          clientSecret: secret, scope: conn.scope, options: urlOptions(),
+          mappedSchoolIds: mapped.map((m) => m.external_id),
+        });
       } catch (e) {
         // An unreadable secret means INTEGRATIONS_KEY changed: re-enter the secret.
         const code = e instanceof IntegrationError ? e.code : e.message === "secret_unreadable" || /unable to authenticate data/i.test(e.message) ? "connector_secret_unreadable" : null;
@@ -401,10 +454,27 @@ export function registerIntegrationRoutes(app) {
           throw Object.assign(new Error("connector_changed_during_sync"), { code: "SYNC_STALE" });
         const inputs = await loadPlanInputs(c, a.districtId, conn.id, roster.students.map(s => s.localStudentNumber));
         const plan = planImport(roster, inputs.map, inputs.existing, inputs.schools);
-        if (mode === "apply") plan.counts.imported = await applyPlan(c, a, conn, runId, plan, req.requestId);
-        await record(c, mode === "apply" ? "completed" : "previewed", { counts: plan.counts, rejected: plan.rejected });
-        await audit(c, req, `sync_${mode}`, "integration_connector", conn.id, `run=${runId}; to_import=${plan.counts.toImport}; not_mapped=${plan.counts.notMapped}; rejected=${plan.counts.rejected}`);
-        return { runId, mode, counts: plan.counts, rejected: plan.rejected, externalSchools: plan.externalSchools };
+        let rosters = null;
+        if (mode === "apply") {
+          plan.counts.imported = await applyPlan(c, a, conn, runId, plan, req.requestId);
+          if (roster.classes) {
+            rosters = planRosters(roster.classes, roster, await loadRosterInputs(c, a.districtId, conn.id, roster.classes, roster));
+            rosters.counts.applied = await applyRosters(c, a.districtId, conn.id, rosters);
+          }
+        } else if (roster.classes) {
+          // A true dry run: import the students, plan the rosters, roll it all back.
+          await c.query("SAVEPOINT preview_rosters");
+          await applyPlan(c, a, conn, runId, plan, req.requestId).catch(() => {});
+          rosters = planRosters(roster.classes, roster, await loadRosterInputs(c, a.districtId, conn.id, roster.classes, roster));
+          await c.query("ROLLBACK TO SAVEPOINT preview_rosters");
+        }
+        if (rosters) plan.counts.rosters = rosters.counts;
+        const rejected = [...plan.rejected, ...(rosters?.rejected || [])].slice(0, 200);
+        await record(c, mode === "apply" ? "completed" : "previewed", { counts: plan.counts, rejected });
+        await audit(c, req, `sync_${mode}`, "integration_connector", conn.id, `run=${runId}; to_import=${plan.counts.toImport}; not_mapped=${plan.counts.notMapped}; rejected=${plan.counts.rejected}`
+          + (rosters ? `; roster_add=${rosters.counts.toAdd}; roster_remove=${rosters.counts.toRemove}; teachers_unmatched=${rosters.counts.teachersUnmatched}` : ""));
+        return { runId, mode, counts: plan.counts, rejected, externalSchools: plan.externalSchools,
+          ...(rosters ? { unmatchedTeachers: rosters.unmatchedTeachers } : {}) };
       });
       res.json({ data: out });
     } catch (e) {
@@ -412,7 +482,7 @@ export function registerIntegrationRoutes(app) {
         try { await fail("connector_changed_during_sync"); } catch { /* the response still explains */ }
         return res.status(409).json({ error: "connector_changed_during_sync", runId });
       }
-      if (e.code === "SIS_STUDENT_SCHOOL_CONFLICT" || e.code === "DISTRICT_LIMIT_MAX_STUDENTS" || e.code === "SYNC_SCHOOL_FAILED") {
+      if (e.code === "SIS_STUDENT_SCHOOL_CONFLICT" || e.code === "DISTRICT_LIMIT_MAX_STUDENTS" || e.code === "SYNC_SCHOOL_FAILED" || e.code === "SYNC_ROSTER_EMPTY") {
         // Nothing was imported (the transaction rolled back); say why.
         const detail = e.detail || e.code.toLowerCase();
         try { await fail("sync_not_applied", detail); } catch { /* the response still explains */ }

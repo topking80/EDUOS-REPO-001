@@ -81,8 +81,8 @@ html:not([data-eduos-mode="demo"]) .eduos-demo-only{display:none}
 #eduos-api-data .api-status.closed{background:#eceff3;color:#4b5563}
 #eduos-api-data fieldset{border:1px solid #d6e0ea;border-radius:8px;margin:8px 0;padding:6px 10px}
 #eduos-api-data .api-check{display:inline-flex;align-items:center;gap:6px;margin-right:12px;font-weight:400;white-space:nowrap;width:auto}
-#eduos-api-data .api-check input{width:auto;min-width:18px;height:18px;margin:0}
-#eduos-api-data .api-grades{display:flex;flex-wrap:wrap;gap:6px 4px}
+#eduos-api-data .api-check input{width:auto;min-width:24px;height:24px;margin:0}
+#eduos-api-data .api-grades{display:flex;flex-wrap:wrap;gap:6px 8px}
 #eduos-api-data .api-table td:last-child>button,#eduos-api-data .api-table td:last-child .api-row button{white-space:nowrap}
 #eduos-api-data .api-welcome p{max-width:760px}
 #eduos-api-data .api-notices{display:grid;gap:8px;margin:12px 0}
@@ -154,7 +154,7 @@ html:not([data-eduos-mode="demo"]) .eduos-demo-only{display:none}
 #eduos-api-data .api-inline-form button{margin-bottom:10px}
 #eduos-api-data .api-manage td{background:#f6f9fc!important}
 #eduos-api-data .api-manage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
-#eduos-api-data .api-grades{display:flex;flex-wrap:wrap;gap:2px 4px}
+#eduos-api-data .api-grades{display:flex;flex-wrap:wrap;gap:6px 8px}
 #eduos-api-data details>summary{cursor:pointer;list-style-position:inside}
 #eduos-api-data button.danger{background:#9b1c1c;border-color:#7f1d1d}
 #eduos-api-data .api-status.pending{background:#fff4dc;color:#6b3d00}

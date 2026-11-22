@@ -20,6 +20,59 @@ const ui = fs.readFileSync(new URL("app.js", APP_DIR), "utf8");
 
 const required = process.env.EDUOS_REQUIRE_BROWSER === "1";
 
+// CMP-02: axe-core scan of every screen. axe-core is not a project dependency
+// (CI installs a pinned copy, as it does playwright-core); EDUOS_AXE_PATH points
+// at its axe.min.js. Required in CI (EDUOS_REQUIRE_AXE=1).
+const AXE_PATH = process.env.EDUOS_AXE_PATH && fs.existsSync(process.env.EDUOS_AXE_PATH) ? process.env.EDUOS_AXE_PATH : null;
+const AXE_SOURCE = AXE_PATH ? fs.readFileSync(AXE_PATH, "utf8") : null;
+// WCAG 2.0, 2.1 and 2.2, levels A and AA.
+export const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"];
+// Keyboard focus, for checks axe can't make: every focusable control shows a
+// focus indicator (WCAG 2.4.7) and isn't hidden behind the sticky header or the
+// fixed tab bar when focused (2.4.11). One real Tab press puts Chrome in
+// keyboard mode, so focus() then matches :focus-visible as a Tab would.
+async function focusScan(page, label, out) {
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+  const found = await page.eval(`(() => {
+    const sel = 'a[href], button, input:not([type=hidden]), select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+    const els = [...document.querySelectorAll(sel)].filter(e => !e.disabled && !e.closest("[inert], dialog:not([open])") && e.getClientRects().length && getComputedStyle(e).visibility !== "hidden");
+    const bad = [];
+    const name = e => e.tagName.toLowerCase() + (e.id ? "#" + e.id : "") + " " + JSON.stringify((e.getAttribute("aria-label") || e.textContent || e.name || "").trim().slice(0, 30));
+    for (const e of els.slice(0, 80)) {
+      if (e.classList.contains("skip")) continue;
+      e.focus();
+      if (document.activeElement !== e) continue;
+      const cs = getComputedStyle(e);
+      const ring = (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0) || (cs.boxShadow && cs.boxShadow !== "none");
+      if (!ring) bad.push({ id: "focus-visible", node: name(e) });
+      const r = e.getBoundingClientRect();
+      const pts = [[r.left + r.width / 2, r.top + r.height / 2], [r.left + 2, r.top + 2], [r.right - 2, r.bottom - 2]]
+        .filter(([x, y]) => x >= 0 && y >= 0 && x < innerWidth && y < innerHeight);
+      const seen = pts.some(([x, y]) => { const hit = document.elementFromPoint(x, y); return hit && (hit === e || e.contains(hit) || hit.contains(e) || (e.labels && [...e.labels].some(l => l.contains(hit)))); });
+      if (!seen) bad.push({ id: "focus-obscured", node: name(e) + " at y=" + Math.round(r.top) + ".." + Math.round(r.bottom) + " of " + innerHeight });
+    }
+    document.activeElement?.blur?.();
+    scrollTo(0, 0);
+    return bad;
+  })()`);
+  if (!Array.isArray(found)) throw new Error(`focus check did not run on ${label}`);
+  const groups = {};
+  for (const b of found) (groups[b.id] ||= []).push(b.node);
+  for (const [id, nodes] of Object.entries(groups)) out.push({ screen: label, id, impact: "serious",
+    help: id === "focus-visible" ? "Focused control has no visible focus indicator (WCAG 2.4.7)" : "Focused control is hidden behind fixed or sticky content (WCAG 2.4.11)", nodes: nodes.slice(0, 4) });
+}
+
+async function axeScan(page, label, out) {
+  if (!AXE_SOURCE) return;
+  if (!(await page.eval("Boolean(window.axe)"))) await page.send("Runtime.evaluate", { expression: AXE_SOURCE });
+  const found = await page.eval(`window.axe.run(document, { runOnly: { type: "tag", values: ${JSON.stringify(AXE_TAGS)} }, resultTypes: ["violations"] })
+    .then(r => r.violations.map(v => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.slice(0, 3).map(n => n.target.join(" ") + " :: " + (n.html || "").slice(0, 120)) })))`);
+  if (!Array.isArray(found)) throw new Error(`axe did not run on ${label}: ${JSON.stringify(found)}`);
+  out.scanned = (out.scanned || 0) + 1;
+  for (const v of found) out.push({ screen: label, ...v });
+}
+
 // Role -> tab ids, read from ROLE_TABS so new tabs are covered automatically.
 const roleTabs = (() => {
   const block = ui.slice(ui.indexOf("const ROLE_TABS"), ui.indexOf("};", ui.indexOf("const ROLE_TABS")));
@@ -37,7 +90,8 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: "s1", memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: [], canInitiate: false, canLead: false } };
-    case "/api/home": return { data: { school_name: "Maple", students: 4, absent_today: 1, open_cases: 0, overdue_follow_ups: 0, pending_invitations: 0, schools: 1, urgent_cases: 0, absences_7d: 1 } };
+    case "/api/home": if (role === "parent") return { data: { children: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_name: "Maple", absences_30d: 0, due_7d: 0, overdue: 0, to_acknowledge: 0 }] } };
+      return { data: { school_name: "Maple", students: 4, absent_today: 1, open_cases: 0, overdue_follow_ups: 0, pending_invitations: 0, schools: 1, urgent_cases: 0, absences_7d: 1 } };
     case "/api/attendance": return { data: [{ id: "e1", event_date: today(), status: "absent", display_name: "Bob B" }] };
     case "/api/attendance/day": return { data: { date: today(), counts: { present: 3, absent: 1, tardy: 0, excused: 0 }, exceptions: [{ student_id: "s1", status: "absent", display_name: "Bob B" }] } };
     case "/api/school-operations/command-center": return { data: { summary: [], work: [{ id: "w1", domain: "facilities", kind: "repair", status: "open", priority: "high", summary: "Gym door", escalation_level: 0, created_at: now }] } };
@@ -64,9 +118,16 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       releases: [{ id: "r1", version: "45.20261117.3.0", stage: "canary", approved_at: now, approved_by_name: "Supt",
         gate: { ready: false, blockers: ["1 of 2 canaries healthy on it"], soaked: 0, required: 2, soakHours: 24 } },
         { id: "r0", version: "45.20261110.3.0", stage: "promoted", approved_at: now, promoted_at: now, approved_by_name: "Supt", promoted_by_name: "IT" }] } };
-    case "/api/integrations/connectors": return { data: { enabled: true, schools: [{ id: "s1", name: "Maple" }], connectors: [
-      { id: "c1", kind: "oneroster", name: "District SIS", baseUrl: "https://sis.example.org/ims/oneroster/rostering/v1p2", status: "active", updatedBy: "IT", approvedBy: "Supt", canApprove: false, lastSyncAt: now, lastSyncStatus: "completed", schoolMap: [] },
+    case "/api/integrations/connectors": return { data: { enabled: true, schools: [{ id: "s1", name: "Maple" }],
+      teachers: [{ id: "u7", name: "Teacher S1", email: "t1@d1.test", school: "Maple" }], connectors: [
+      { id: "c1", kind: "oneroster", name: "District SIS", baseUrl: "https://sis.example.org/ims/oneroster/rostering/v1p2", status: "active", updatedBy: "IT", approvedBy: "Supt", canApprove: false, lastSyncAt: now, lastSyncStatus: "completed", schoolMap: [],
+        dataScope: ["students", "class_rosters"], staffMap: [] },
       { id: "c2", kind: "edfi", name: "State Ed-Fi", baseUrl: "https://edfi.example.org/api/data", status: "pending_approval", updatedBy: "IT", canApprove: true, schoolMap: [] }] } };
+    // SIS-04: a preview with class rosters and one unmatched teacher.
+    case "/api/integrations/connectors/c1/sync": return { data: { runId: "r1", mode: "preview", rejected: [{ externalId: "u-x", reason: "student_not_imported" }],
+      externalSchools: [], counts: { studentsFetched: 3, toImport: 2, notMapped: 0, rejected: 1,
+        rosters: { sectionsFetched: 4, sectionsNotMapped: 0, enrollmentsFetched: 20, teachersUnmatched: 1, rosterLinks: 15, toAdd: 12, toRemove: 1, keptManual: 2 } },
+      unmatchedTeachers: [{ externalId: "tch-2", reason: "no_matching_eduos_teacher", name: "New Hire", email: "new.hire@d1.test" }] } };
     // 37.7.0 commerce (sandbox) screens.
     case "/api/events": return { data: [{ id: "e1", activity_id: "a1", school_id: "s1", title: "Friday Night Football", starts_at: new Date(Date.now() + 864e5).toISOString(),
       ends_at: new Date(Date.now() + 9e7).toISOString(), venue: "Main field", status: "published", school_name: "Maple" }] };
@@ -99,8 +160,36 @@ function mockApi(role, pathname, failWebhookLoads = false) {
           lastTest: p === "paypal" ? { at: now, ok: true, detail: "token_ok" } : null, updatedAt: now }]; })),
       methods: Object.values(METHODS).map(m => ({ id: m.id, label: m.label, description: m.description, processors: m.processors, setupProcessor: m.setupProcessor, checkout: !m.methodless,
         signup: m.signup || null, developer: m.developer || null, docs: m.docs || [], notes: m.notes || [], otherLinks: m.otherLinks || [], adapter: m.adapter, comingReason: m.comingReason || null })) } };
+    // TC-03 teacher contributions: one item in each state the screens handle.
+    case "/api/rosters": return { data: [{ teacher_user_id: "u1", teacher_name: "Smoke Test", student_id: "c1", student_name: "Alice A", school_id: "s1" }], page: { limit: 500, offset: 0, nextOffset: null } };
+    case "/api/teacher/history-items": return { data: [
+      { id: "h1", studentId: "c1", studentName: "Alice A", entryType: "project", title: "Volcano project", body: "Built a model.", occurredAt: now, status: "draft", updatedAt: now,
+        decisions: [{ decision: "submitted", reasonCode: null, note: null, by: "teacher", at: now }, { decision: "changes_requested", reasonCode: "needs_edits", note: "Add the date.", by: "school_lead", at: now }] },
+      { id: "h2", studentId: "c1", studentName: "Alice A", entryType: "achievement", title: "Spelling bee", body: "", occurredAt: now, status: "published", updatedAt: now, decisions: [] }] };
+    // TC-04 portfolio.
+    case "/api/history/portfolio": return { data: { student: { id: "c1", name: "Alice A" }, nextCursor: "next",
+      items: [{ id: "p1", entryType: "project", kind: "teacher_artifact", title: "Volcano project", body: "Built a model.", occurredAt: now, schoolYear: "2026-27", source: "teacher", authorName: "Teacher S1" },
+        { id: "p2", entryType: "event", kind: "family_memory", title: "Family day", body: "", occurredAt: "2025-09-10T12:00:00Z", schoolYear: "2025-26", source: "guardian", authorName: "Parent A" }],
+      facets: { years: ["2026-27", "2025-26"], types: ["event", "project"], kinds: ["family_memory", "teacher_artifact"], total: 2 } } };
+    case "/api/history-review": return { data: [{ id: "h3", studentId: "c1", studentName: "Alice A", entryType: "project", title: "Science fair", body: "Second place.", occurredAt: now, status: "submitted", authorName: "Teacher S1", updatedAt: now, decisions: [] }] };
+    // Time Capsules: one invitation, one released to me, one draft of mine, one milestone to confirm.
+    case "/api/history/capsules": return { data: [
+      { id: "cap1", studentId: "c1", studentName: "Alice A", title: "For Alice at 18", status: "draft", releaseKind: "scheduled", releaseAt: "2034-06-01T13:00:00Z", mine: true },
+      { id: "cap2", studentId: "c1", studentName: "Alice A", title: "Kindergarten memories", status: "released", releaseKind: "milestone", milestone: "grade_5_completion", mine: false }] };
+    case "/api/history/capsule-invitations": return { data: [{ capsuleId: "cap3", studentId: "c1", studentName: "Alice A", from: "Grandma Rose", status: "scheduled",
+      releaseKind: "scheduled", releaseAt: "2030-01-01T00:00:00Z", consent: "pending" }] };
+    case "/api/history/capsule-milestones": return { data: role === "principal" ? [{ capsuleId: "cap4", studentId: "c1", studentName: "Alice A", from: "Parent A",
+      milestone: "graduation", sealedAt: now, accepted: 1 }] : [] };
+    case "/api/history/capsules/cap1": return { data: { id: "cap1", studentId: "c1", studentName: "Alice A", title: "For Alice at 18", message: "Open when you're grown.",
+      status: "draft", releaseKind: "scheduled", releaseAt: "2034-06-01T13:00:00Z", mine: true,
+      items: [{ position: 0, entryId: "e1", withheld: false, entryType: "reflection", kind: "family_memory", title: "The day you were born", body: "So happy.", occurredAt: now }],
+      recipients: [{ userId: "u9", name: "Pupil A", type: "student", consent: "pending" }], events: [] } };
+    case "/api/history/capsules/cap1/candidates": return { data: [{ id: "e2", title: "First day of school", entryType: "event", kind: "family_memory", occurredAt: now }] };
+    case "/api/history/capsule-recipient-options": return { data: [{ userId: "u9", name: "Pupil A", type: "student" }, { userId: "u1", name: "Smoke Test", type: "guardian" }] };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
+      if (/^\/api\/family\/children\/[^/]+\/history-items\/pending$/.test(pathname))
+        return { data: [{ id: "h4", studentId: "c1", entryType: "project", title: "Volcano project", body: "Built a model.", occurredAt: now, status: "approved", authorName: "Teacher S1", updatedAt: now }] };
       return { data: [] };
   }
 }
@@ -123,7 +212,8 @@ function startServer() {
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
       }
-      const body = req.method === "GET" ? mockApi(state.role, pathname, state.failWebhookLoads) : { data: {} };
+      // GETs, and a connector sync (preview), answer from the sample data; other writes just succeed.
+      const body = req.method === "GET" || /^\/api\/integrations\/connectors\/[^/]+\/sync$/.test(pathname) ? mockApi(state.role, pathname, state.failWebhookLoads) : { data: {} };
       res.writeHead(body ? (req.method === "GET" ? 200 : 201) : 404, { "content-type": "application/json", "cache-control": "no-store" });
       return res.end(JSON.stringify(body ?? { error: "not_found" }));
     }
@@ -152,10 +242,11 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
     assert.deepEqual(page.errors, [], "app.js threw while loading, so /app/ never starts");
     assert.doesNotMatch(text, /^Loading/, "/app/ never got past Loading");
   }
-  const failures = [];
+  const failures = [], a11y = [];
+  assert.ok(AXE_SOURCE || process.env.EDUOS_REQUIRE_AXE !== "1", "EDUOS_REQUIRE_AXE=1 but axe-core was not found (set EDUOS_AXE_PATH)");
   // 37.7.0: commerce screens opened from Clubs & Sports (not tabs of their own);
   // 37.7.1: district payment setup from Ticketing & revenue or Data links.
-  const SUBVIEWS = { parent: ["tickets"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
+  const SUBVIEWS = { parent: ["tickets", "portfolio", "capsule"], pupil: ["tickets"], principal: ["commerce"], superintendent: ["commerce", "payments"], it_admin: ["payments"] };
   for (const [role, roleTabList] of Object.entries(roleTabs)) {
     for (const tab of [...roleTabList, ...(SUBVIEWS[role] || [])]) {
       state.role = role;
@@ -170,15 +261,83 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           : !text ? "blank"
           : hash !== `#/${tab}` ? `was sent to ${hash}` : null;
         if (problem) failures.push(`${role} #/${tab}: ${problem}`);
+        await axeScan(page, `${role} #/${tab}`, a11y);
+        if (AXE_SOURCE) await focusScan(page, `${role} #/${tab}`, a11y);
+        // Phone width: axe again (target size, WCAG 2.5.8), then reflow at 320 CSS px (WCAG 1.4.10).
+        if (AXE_SOURCE) {
+          await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+          await axeScan(page, `${role} #/${tab} (390px)`, a11y);
+          await focusScan(page, `${role} #/${tab} (390px)`, a11y);
+          await page.send("Emulation.setDeviceMetricsOverride", { width: 320, height: 640, deviceScaleFactor: 1, mobile: true });
+          const overflow = await page.eval(`(() => { const w = document.documentElement.clientWidth;
+            const wide = [...document.querySelectorAll("#main *")].filter(e => { const r = e.getBoundingClientRect(); return r.width && r.right > w + 1 && getComputedStyle(e).position !== "fixed"
+              && !e.closest("table, pre, [data-scroll-x]") && ![...document.querySelectorAll("#main *")].some(p => p !== e && p.contains(e) && ["auto","scroll","hidden"].includes(getComputedStyle(p).overflowX)); });
+            return document.documentElement.scrollWidth > w + 1 ? wide.slice(0, 3).map(e => e.tagName.toLowerCase() + (e.className ? "." + String(e.className).split(" ")[0] : "") + " " + Math.round(e.getBoundingClientRect().right) + "px") : []; })()`);
+          // Every bottom tab is on screen or can be scrolled to within the bar.
+          const lostTabs = await page.eval(`[...document.querySelectorAll("#tabs a")].filter(a => { const r = a.getBoundingClientRect(), nav = a.parentElement;
+            return (r.right > innerWidth + 1 || r.left < -1) && !(nav.scrollWidth > nav.clientWidth && ["auto", "scroll"].includes(getComputedStyle(nav).overflowX)); }).map(a => a.textContent)`);
+          if (lostTabs?.length) a11y.push({ screen: `${role} #/${tab} (320px)`, id: "tabs-off-screen", impact: "serious", help: "Bottom tabs are off the screen and can't be reached", nodes: lostTabs });
+          if (overflow?.length) a11y.push({ screen: `${role} #/${tab} (320px)`, id: "reflow", impact: "serious", help: "Content needs sideways scrolling at 320 CSS px (WCAG 1.4.10)", nodes: overflow });
+          await page.send("Emulation.clearDeviceMetricsOverride");
+        }
+        // Time Capsules: each screen shows its sample items and actions.
+        const capsuleExpect = { "parent/capsules": ["Capsules for you", "From Grandma Rose", "Accept", "Opened for you", "Kindergarten memories", "Make a Time Capsule", "Capsules you made", "For Alice at 18", "Manage"],
+          "pupil/capsules": ["Capsules for you", "Opened for you"],
+          "principal/capsules": ["Milestones to confirm", "Alice A: Graduation", "1 recipient accepted", "Confirm milestone"],
+          "parent/capsule": ["Choose a capsule from Time Capsules."] }[`${role}/${tab}`];
+        for (const want of capsuleExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
         if (["superintendent", "it_admin"].includes(role) && tab === "payments") {
           if (!text.includes("Payment webhook operations") || !text.includes("Late payment captures needing a refund") || !text.includes("Webhook events requiring investigation"))
             failures.push(`${role} #/payments: webhook operations panel is incomplete`);
           if (!text.includes("CAPTURE-123") || !text.includes("evt-123")) failures.push(`${role} #/payments: webhook recovery records did not render`);
         }
+        // TC-03: the teacher, reviewer and family screens show their items and actions.
+        const expect = { "teacher/contributions": ["Volcano project", "Changes requested · Needs edits", "Save and resubmit", "In the student's history"],
+          "principal/history": ["Teacher contributions", "Science fair", "Ask for changes", "Reject"],
+          "vice_principal/history": ["Teacher contributions", "Science fair", "Ask for changes"],
+          "superintendent/history": ["Teacher contributions", "Science fair"],
+          "parent/children": ["From teachers (1 to decide)", "Volcano project", "Keep in history", "Decline", "History & portfolio"],
+          "parent/portfolio": ["Alice A's history", "School year 2026-27", "Volcano project", "Search"],
+          "pupil/portfolio": ["My history", "School year 2026-27", "School year 2025-26", "Volcano project", "From a teacher", "Family day", "All school years", "Show more"] }[`${role}/${tab}`];
+        for (const want of expect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
       } finally {
         page.close();
       }
     }
+  }
+  // SIS-04: a connector preview shows class roster counts and unmatched teachers to match by hand.
+  state.role = "superintendent";
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/integrations` });
+      let text = await page.mainText();
+      if (!text.includes("students and class rosters")) failures.push("superintendent #/integrations: class rosters status is missing");
+      if (!text.includes("Stop class rosters")) failures.push("superintendent #/integrations: class rosters switch is missing");
+      await page.eval(`([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Preview") || {}).click?.()`);
+      for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Save teacher matches"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const want of ["Class rosters", "Classes found", "Would be added", "Would be removed", "Already on a roster entered by hand (left as is)",
+        "New Hire · new.hire@d1.test · No EduOS teacher at that school has this email", "Teacher S1 (Maple)", "Save teacher matches", "a student in a class isn't in EduOS"])
+        if (!text.includes(want)) failures.push(`superintendent integrations preview: "${want}" is missing`);
+      await axeScan(page, "superintendent integrations preview", a11y);
+      if (page.errors.length) failures.push(`superintendent integrations preview: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
+  }
+  // Time Capsules: open a draft from the list; its management controls render.
+  state.role = "parent";
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/capsules` });
+      await page.mainText();
+      await page.eval(`([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Manage") || {}).click?.()`);
+      let text = "";
+      for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Who receives it"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const want of ["For Alice at 18", "The day you were born", "Add a memory", "First day of school", "Who receives it", "Pupil A (student): Hasn't answered", "Seal", "Cancel capsule"])
+        if (!text.includes(want)) failures.push(`parent capsule detail: "${want}" is missing`);
+      await axeScan(page, "parent capsule detail", a11y);
+      if (page.errors.length) failures.push(`parent capsule detail: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   // Failed queue requests must be visibly different from genuinely empty queues.
   state.role = "superintendent";
@@ -190,6 +349,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       const text = await page.mainText();
       if (!text.includes("Refund cases couldn't be loaded") || !text.includes("Dead-letter events couldn't be loaded"))
         failures.push("superintendent #/payments: webhook API failures were presented as empty queues");
+      await axeScan(page, "superintendent #/payments (load failures)", a11y);
       if (page.errors.length) failures.push(`superintendent #/payments failure state: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
@@ -214,6 +374,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       };
 
       await clickButton("Issue / rotate URL");
+      await waitFor('document.querySelector("dialog[open]")');
+      await axeScan(page, "superintendent #/payments (issue URL dialog)", a11y);
       await clickDialogButton("Issue URL");
       if (!await waitFor('document.querySelector(\'[aria-label="PayPal one-time webhook URL"]\')?.value'))
         failures.push("superintendent #/payments: issuing a webhook URL did not reveal the one-time URL");
@@ -234,5 +396,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (page.errors.length) failures.push(`superintendent #/payments endpoint controls: ${page.errors[0].split("\\n")[0]}`);
     } finally { page.close(); }
   }
+  if (AXE_SOURCE) assert.ok(a11y.scanned >= 40, `axe scanned only ${a11y.scanned} screens`);
+  if (process.env.EDUOS_A11Y_REPORT) fs.writeFileSync(process.env.EDUOS_A11Y_REPORT, JSON.stringify(a11y, null, 2));
   assert.deepEqual(failures, []);
+  assert.deepEqual(a11y.map(v => `${v.screen}: ${v.id} (${v.impact}) ${v.help} :: ${v.nodes.join(" | ")}`), [], "accessibility violations (WCAG 2.2 A/AA, axe-core)");
 });
