@@ -92,7 +92,7 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
-let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false, checkins = [], attendanceSent = [], remoteJoins = [], adultStudent = false;
+let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false, checkins = [], attendanceSent = [], remoteJoins = [], adultStudent = false, liveLockdown = false, roomReports = [];
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   // TEACH-04: today's classes and one plan (any date).
@@ -127,7 +127,17 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/my/apps": return { data: [{ id: "a1", name: "Reading Room", category: "Reading", integrationType: "link" }, { id: "a2", name: "MathQuest", category: "Math", integrationType: "lti13" }] };
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: mockSchool, memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
-    case "/api/safety/status": return { data: { incidents: [], canInitiate: false, canLead: false } };
+    case "/api/safety/status": return { data: { incidents: liveLockdown ? [{ id: "inc1", schoolId: "s1", schoolName: "Maple", kind: "lockdown", label: "Lockdown", isDrill: true, status: "active",
+        startedAt: now, message: "Lock doors, lights off, out of sight.", audience: "staff", instructions: null }] : [], canInitiate: false, canLead: false } };
+    // SAFE-01: room status.
+    case "/api/safety/incidents/inc1/my-room": return { data: { incidentId: "inc1", live: true, rooms: [{ id: "r12", name: "Room 12", building: "North", kind: "classroom" }, { id: "r14", name: "Room 14", building: "North", kind: "classroom" }],
+        suggestedRoomId: "r12", last: null } };
+    case "/api/safety/incidents/inc1/rooms": return { data: { incident: { id: "inc1", kind: "lockdown", label: "Lockdown", isDrill: true, status: "active", schoolName: "Maple" },
+        totals: { rooms: 2, reported: 1, secured: 0, not_secured: 0, needs_help: 1, moved: 0, students: 2, adults: 1, waiting: 1 },
+        rooms: [{ roomId: "r12", name: "Room 12", building: "North", report: { status: "needs_help", need: "medical", students: 2, adults: 1, note: "Asthma", by: "Teacher S1", at: now } },
+          { roomId: "r14", name: "Room 14", building: "North", report: null }] } };
+    case "/api/safety/incidents/inc1/rollcall": return { data: { incident: {}, learners: [{ studentId: "c9", name: "Alice A", grade: "3", status: null, note: null }], extras: [], submittedAt: null } };
+    case "/api/safety/incidents/inc1/sro-status": return { data: { incident: {}, updates: [] } };
     case "/api/home": if (role === "parent") return { data: { children: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", absences_30d: 0, due_7d: 0, overdue: 0, to_acknowledge: 0 },
       { id: "c2", display_name: "Ben A", grade_level: "7", school_id: "s2", school_name: "Oak Middle", absences_30d: 1, due_7d: 2, overdue: 0, to_acknowledge: 0 }] } };
     // TEACH-01: the district teacher network.
@@ -384,6 +394,11 @@ function startServer() {
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { room: "Room 101", path: "/app/#/scan?r=x&d=y", qr: ["1110111", "1010101", "1110111", "0000000", "1110111", "1010101", "1110111"], note: "Print it now: it isn't shown again." } }));
       }
+      if (pathname === "/api/safety/incidents/inc1/room-status" && req.method === "POST") {
+        let raw = ""; req.on("data", c => { raw += c; });
+        return req.on("end", () => { roomReports.push(JSON.parse(raw || "{}"));
+          res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ data: { id: "rr1", status: "needs_help", room: "Room 12", alerted: 2, at: new Date().toISOString() } })); });
+      }
       if (pathname === "/api/attendance" && req.method === "POST") {
         let raw = ""; req.on("data", c => { raw += c; });
         return req.on("end", () => { attendanceSent.push(JSON.parse(raw || "{}"));
@@ -434,7 +449,7 @@ function startServer() {
   return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve({ server, state, port: server.address().port })));
 }
 
-test("web app boots and every role's tabs render", { skip: !CHROME && !required && "Chrome not installed (set EDUOS_REQUIRE_BROWSER=1 to require it)", timeout: 420000 }, async (t) => {
+test("web app boots and every role's tabs render", { skip: !CHROME && !required && "Chrome not installed (set EDUOS_REQUIRE_BROWSER=1 to require it)", timeout: 600000 }, async (t) => {
   assert.ok(CHROME, "EDUOS_REQUIRE_BROWSER=1 but no Chrome found (set CHROME_PATH)");
   assert.ok(Object.keys(roleTabs).length >= 10, "read ROLE_TABS from app.js");
   const { server, state, port } = await startServer();
@@ -1064,6 +1079,42 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "counselor: emergency access", a11y);
       if (page.errors.length) failures.push(`counselor emergency: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); adultStudent = false; }
+  }
+  // SAFE-01: in a lockdown a teacher reports their room (needs help: medical); the SRO and a nurse see their screens. All pass axe.
+  {
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    try {
+      liveLockdown = true; state.role = "teacher"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/safety` });
+      await page.mainText();
+      if (!(await waitFor(`!!document.querySelector("main #rs-room")`))) failures.push("teacher lockdown: no room status");
+      if ((await page.eval(`document.querySelector("#rs-room").value`)) !== "r12") failures.push("teacher lockdown: timetabled room not chosen");
+      await axeScan(page, "teacher: room status in a lockdown", a11y);
+      await page.eval(`[...document.querySelectorAll('main [aria-label="Room status"] button')].find(b => b.textContent === "Needs help").click()`);
+      await waitFor(`!!document.querySelector("main #rs-need")`);
+      await page.eval(`(() => { document.querySelector("#rs-st").value = "2"; [...document.querySelectorAll("main button")].find(b => b.textContent.includes("Send room status")).click(); })()`);
+      for (let k = 0; k < 50 && !roomReports.length; k++) await new Promise(r => setTimeout(r, 100));
+      const sent = roomReports.at(-1);
+      if (!sent || sent.status !== "needs_help" || sent.need !== "medical" || sent.roomId !== "r12" || sent.students !== 2) failures.push(`teacher lockdown: sent ${JSON.stringify(sent)}`);
+      if (page.errors.length) failures.push(`teacher lockdown: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+
+      state.role = "sro"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/safety` });
+      await page.mainText();
+      if (!(await waitFor(`(document.querySelector('main section[aria-label="Rooms"]')?.textContent || "").includes("Needs help: Medical")`))) failures.push("sro: no room board");
+      await waitFor(`!!document.querySelector("main #rs-room")`);
+      await axeScan(page, "sro: room board", a11y);
+      if (page.errors.length) failures.push(`sro board: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+
+      state.role = "nurse"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/safety` });
+      await page.mainText();
+      if (!(await waitFor(`!!document.querySelector("main #rs-room")`))) failures.push("nurse lockdown: no room status");
+      await axeScan(page, "nurse: room status", a11y);
+    } finally { page?.close(); liveLockdown = false; }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.
   {

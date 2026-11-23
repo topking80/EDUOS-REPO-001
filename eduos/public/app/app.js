@@ -2002,13 +2002,23 @@ VIEWS.safety = async () => {
         i.status === "reunification" ? h("button", { class: "btn primary block", type: "button", onclick: () => go("pickup") }, icon("qr"), "Show my pick-up pass") : null),
         h("p", { class: "notice" }, "Please don't call or come to the school unless asked. EduOS shares only what you need here; it never tracks anyone's location."));
     } else if (role === "teacher") {
+      out.push(await roomStatusCard(i));
       out.push(await rollCallCard(i));
       if (i.status === "reunification") out.push(h("button", { class: "btn school block", type: "button", onclick: () => go("pickup") }, icon("car"), "Pick-up line: release to approved adults"));
     } else if (role === "principal" || role === "superintendent") {
+      out.push(await roomBoardCard(i));
       out.push(await boardCards(i));
       out.push(await sroCoordinationCard(i));
+      if (role === "principal") out.push(await roomStatusCard(i, true));
     } else if (role === "sro") {
+      out.push(await roomBoardCard(i));
+      out.push(await roomStatusCard(i));
       out.push(await sroIncidentCard(i));
+    } else if (role === "vice_principal") {
+      out.push(await roomBoardCard(i));
+      out.push(await roomStatusCard(i));
+    } else if (ROOM_REPORTERS.includes(role)) {
+      out.push(await roomStatusCard(i));
     } else if (role === "pupil") {
       out.push(h("p", { class: "notice" }, "Stay with your teacher. Your phone does not need to do anything."));
     }
@@ -2099,6 +2109,64 @@ async function rollCallCard(i) {
   };
   draw();
   return card;
+}
+// ---- SAFE-01: room status during an emergency -------------------------------
+const ROOM_REPORTERS = ["teacher", "principal", "vice_principal", "sro", "librarian", "counselor", "nurse", "coach", "maintenance", "lunch_staff"];
+const ROOM_STATUS_TEXT = { secured: "Secured", not_secured: "Not secured", needs_help: "Needs help", moved: "We moved out" };
+const ROOM_NEED_TEXT = { medical: "Medical", threat: "Threat seen or heard", missing_student: "Missing student", other: "Other" };
+const ROOM_CHIP = { secured: "present", not_secured: "absent", needs_help: "absent", moved: "expected" };
+async function roomStatusCard(i, compact = false) {
+  const d = (await safe(api.get(`/api/safety/incidents/${i.id}/my-room`)))?.data;
+  const card = h(compact ? "details" : "section", { class: "card", "aria-label": "My room" });
+  if (!d) return null;
+  let status = d.last?.status || null, need = d.last?.need || "medical";
+  const draw = () => {
+    const room = h("select", { id: "rs-room" }, d.rooms.map(r => h("option", { value: r.id, selected: r.id === d.suggestedRoomId }, r.building ? `${r.name} (${r.building})` : r.name)),
+      h("option", { value: "", selected: !d.suggestedRoomId }, "Somewhere else"));
+    const place = h("input", { id: "rs-place", maxlength: 80, placeholder: "e.g. Gym, hallway B, bus loop", value: d.last?.place || "" });
+    const placeRow = h("div", { hidden: Boolean(d.suggestedRoomId) || undefined }, h("label", { for: "rs-place" }, "Where are you?"), place);
+    room.onchange = () => { placeRow.hidden = Boolean(room.value); };
+    const needSel = h("select", { id: "rs-need", onchange: e => { need = e.target.value; } }, Object.entries(ROOM_NEED_TEXT).map(([k, t]) => h("option", { value: k, selected: k === need }, t)));
+    const num = (id, label, max) => h("div", {}, h("label", { for: id }, label), h("input", { id, type: "number", inputmode: "numeric", min: 0, max, style: "width:6em" }));
+    const body = [h(compact ? "summary" : "h2", {}, "My room"),
+      d.last ? h("p", { class: "small" }, chip(ROOM_CHIP[d.last.status], ROOM_STATUS_TEXT[d.last.status]), ` Sent ${fmtTime(d.last.at)}. Send again whenever it changes.`)
+        : h("p", { class: "small muted" }, "Tell the office how your room stands. Send again whenever it changes."),
+      h("label", { for: "rs-room" }, "Room"), room, placeRow,
+      h("div", { class: "seg", role: "group", "aria-label": "Room status" }, Object.entries(ROOM_STATUS_TEXT).map(([k, t]) =>
+        h("button", { type: "button", class: k === "secured" ? "present" : k === "moved" ? "" : "missing", "aria-pressed": String(status === k), onclick: () => { status = k; draw(); } }, t))),
+      status === "needs_help" ? h("div", {}, h("label", { for: "rs-need" }, "What help?"), needSel) : null,
+      h("div", { class: "row wrap" }, num("rs-st", "Students with me", 500), num("rs-ad", "Adults", 50)),
+      h("label", { for: "rs-note" }, "Note (optional, no student names)"), h("input", { id: "rs-note", maxlength: 200 }),
+      h("button", { class: "btn primary block big", type: "button", onclick: async () => {
+        if (!status) return toast("Choose how your room stands.");
+        const n = id => { const v = document.getElementById(id).value; return v === "" ? null : Number(v); };
+        const body = { status, ...(status === "needs_help" ? { need } : {}), students: n("rs-st"), adults: n("rs-ad"), note: document.getElementById("rs-note").value.trim() || null,
+          ...(room.value ? { roomId: room.value } : { place: place.value.trim() }) };
+        if (!room.value && !body.place) return toast("Say where you are.");
+        try {
+          const sent = await api.post(`/api/safety/incidents/${i.id}/room-status`, body);
+          if (sent.queued) { toast("Saved on this phone. It sends as soon as you're back online."); return; }
+          d.last = { status, need: body.need, at: new Date().toISOString(), place: body.place || null }; d.suggestedRoomId = body.roomId || null;
+          toast(status === "needs_help" || status === "not_secured" ? "Sent. The office and the SRO were alerted." : "Sent."); draw();
+        } catch { toast("Couldn't send. Try again."); }
+      } }, icon("check"), "Send room status")];
+    card.replaceChildren(...body.filter(Boolean));
+  };
+  draw();
+  return card;
+}
+async function roomBoardCard(i) {
+  const b = (await safe(api.get(`/api/safety/incidents/${i.id}/rooms`)))?.data;
+  if (!b) return null;
+  const t = b.totals;
+  return h("section", { class: "card", "aria-label": "Rooms" }, h("div", { class: "row" }, h("h2", { class: "grow" }, "Rooms"), h("span", { class: "small muted" }, `${t.reported} of ${t.rooms} rooms reported`)),
+    h("div", { class: "stats" }, stat(t.needs_help, "need help", true), stat(t.not_secured, "not secured", true), stat(t.secured, "secured"), stat(t.moved, "moved out"), stat(t.waiting, "not heard from", true)),
+    b.rooms.length ? h("ul", { class: "list" }, b.rooms.map(r => h("li", {}, h("div", { class: "row wrap" }, h("strong", { class: "grow" }, r.building ? `${r.name} · ${r.building}` : r.name),
+        r.report ? chip(ROOM_CHIP[r.report.status], r.report.status === "needs_help" ? `Needs help: ${ROOM_NEED_TEXT[r.report.need]}` : ROOM_STATUS_TEXT[r.report.status]) : chip("expected", "Not heard from")),
+      r.report ? h("p", { class: "small muted" }, [r.report.students !== null ? `${r.report.students} students` : null, r.report.adults !== null ? `${r.report.adults} adults` : null,
+        r.report.by, fmtTime(r.report.at)].filter(Boolean).join(" · ") + (r.report.note ? ` · ${r.report.note}` : "")) : null)))
+      : empty("No rooms are set up for this school. Staff can still report where they are."),
+    h("p", { class: "small muted" }, "Rooms report themselves; EduOS doesn't track anyone's location."));
 }
 // What the alert reached. In-app notices are in each person's app; email,
 // SMS and push are only queued until a channel confirms them, and nothing
@@ -4611,7 +4679,7 @@ async function verifyLicense(l, decision) {
 // release is deliberately online-only (identity must be checked live).
 const OQ = {
   db: null, key: null, MAX: 200, TTL: 24 * 3600 * 1000, count: 0, flushing: false,
-  PATHS: [/^\/api\/safety\/incidents\/[0-9a-f-]{36}\/rollcall$/, /^\/api\/transport\/runs\/[0-9a-f-]{36}\/checkins$/, /^\/api\/attendance$/],
+  PATHS: [/^\/api\/safety\/incidents\/[0-9a-f-]{36}\/rollcall$/, /^\/api\/safety\/incidents\/[0-9a-f-]{36}\/room-status$/, /^\/api\/transport\/runs\/[0-9a-f-]{36}\/checkins$/, /^\/api\/attendance$/],
   queueable(method, path) { return method === "POST" && this.PATHS.some(r => r.test(path)); },
   held: 0,
   async open() {

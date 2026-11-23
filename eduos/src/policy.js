@@ -102,7 +102,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     schools: ["read"], branding: ["read"], safety: ["read", "sro_update"]
   },
   // 36.0.0: dedicated school librarian; library-only access.
-  librarian: { schools: ["read"], branding: ["read"], library: ["read", "circulate", "manage"] },
+  librarian: { schools: ["read"], branding: ["read"], safety: ["read"], library: ["read", "circulate", "manage"] },
   // 36.4.0 specialized school operations roles.
   // The registry lists only what the routes actually let a role do (2026-11-16
   // audit). Vice principals had cases, pickup, safety:initiate and
@@ -112,15 +112,17 @@ export const ROLE_PERMISSIONS = Object.freeze({
   // the "counseling" operations queue. Granting any of these later means
   // changing the route and its row policies too, with tests.
   vice_principal: { schools:["read"], students:["read"], attendance:["read","create"], safety:["read"], transport:["read"], branding:["read"] },
-  counselor: { schools:["read"], wellbeing:["queue"] }, // 37.6.0: own school's check-ins and crisis alerts
-  nurse: { schools:["read"], health_office:["read","create","update"] },
-  maintenance: { schools:["read"], facilities:["read","create","update"] },
-  lunch_staff: { schools:["read"], meal_service:["read","create","update"] },
+  counselor: { schools:["read"], wellbeing:["queue"], safety:["read"] }, // 37.6.0: own school's check-ins and crisis alerts
+  nurse: { schools:["read"], safety:["read"], health_office:["read","create","update"] },
+  maintenance: { schools:["read"], safety:["read"], facilities:["read","create","update"] },
+  lunch_staff: { schools:["read"], safety:["read"], meal_service:["read","create","update"] },
   // COACH-01: a coach profile at a school where the person coaches or advises
   // a team but doesn't teach. It reaches only the teams they're assigned to
   // (activity_staff, db/060 + db/105); it is created and disabled by those
   // assignments, never managed by hand.
-  coach: { schools:["read"], branding:["read"] }
+  // SAFE-01: every adult at a school sees a live alert there and reports their
+  // room (safety:read); starting and leading alerts stay with principals/teachers.
+  coach: { schools:["read"], branding:["read"], safety:["read"] }
 });
 
 // District-level roles hold memberships without a school (school_id NULL).
