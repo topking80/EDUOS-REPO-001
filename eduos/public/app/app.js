@@ -295,14 +295,14 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room", "scan", "roll"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room", "scan", "roll", "mywork", "portfolioreview"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
   if (tab === "history") return "history";
   if (tab === "capsule") return "capsules";
   if (tab === "draft") return "network";
-  if (["states", "stateinfo", "licenses"].includes(tab)) return "me";
+  if (["states", "stateinfo", "licenses", "mywork", "portfolioreview"].includes(tab)) return "me";
   if (tab === "plan" || tab === "present" || tab === "room") return "classes";
   if (tab === "scan") return tabsFor()[0]?.[0];
   if (tab === "roll") return tabsFor().some(t => t[0] === "classes") ? "classes" : tabsFor().some(t => t[0] === "mediacenter") ? "mediacenter" : "devices";
@@ -3574,6 +3574,8 @@ VIEWS.me = async () => {
   return [h("h2", {}, "Account"), h("section", { class: "card" }, h("h3", {}, state.me.displayName), h("p", { class: "muted" }, `${APP_NAME[state.me.role] || state.me.role} · ${state.brand?.school?.name || state.brand?.districtName || ""}`)),
     memberships.length > 1 ? h("section", { class: "card", "aria-label": "Switch profile" }, h("h3", {}, "Switch profile"), profileList(switchProfile)) : null,
     LICENSED.includes(state.me.role) ? await licenseCard() : null,
+    state.me.role === "teacher" ? h("button", { class: "btn block", type: "button", onclick: () => go("mywork") }, icon("spark"), "My work: take it with you") : null,
+    ["principal", "superintendent"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("portfolioreview") }, icon("check"), "Teachers' work: rights and transfers") : null,
     h("button", { class: "btn block", type: "button", onclick: () => go("states") }, icon("book"), "State index"),
     ["superintendent", "principal"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("licenses") }, icon("people"), "Staff licenses") : null,
     h("a", { class: "btn block", href: "/" }, "Open the full EduOS site"),
@@ -3963,6 +3965,121 @@ async function remoteLessonsCard() {
           : pupil ? h("span", { class: "small muted" }, x.joined ? "You joined." : "Opens ten minutes before the start.") : null,
         pupil && x.lessonId ? h("button", { class: "btn small", type: "button", "aria-label": `Open lesson: ${x.lesson}`, onclick: () => openView("lesson", { lessonId: x.lessonId }) }, "Open lesson") : null,
         !pupil ? h("button", { class: "btn small", type: "button", "aria-label": `Open plan: ${x.course}, ${x.date}`, onclick: () => openView("plan", { planCourseId: x.courseId, planDate: x.date, planEdit: null }) }, "Open plan") : null)))));
+}
+// ---- TEACH-05: the portable teacher profile --------------------------------
+const WORK_KIND = { unit: "Unit", lesson: "Lesson", coaching_plan: "Coaching plan" };
+const CLAIM_STATUS = { pending: ["expected", "Waiting for review"], approved: ["present", "Approved"], rejected: ["absent", "Not approved"], withdrawn: ["absent", "Withdrawn"] };
+VIEWS.mywork = async () => {
+  const [pv, claims, pkgs, imports, library] = await Promise.all([api.get("/api/portfolio/preview").then(r => r.data), api.get("/api/portfolio/claims").then(r => r.data),
+    api.get("/api/portfolio/packages").then(r => r.data), api.get("/api/portfolio/imports").then(r => r.data), api.get("/api/portfolio/library").then(r => r.data)]);
+  const reload = () => go("mywork", { push: false });
+  const openClaim = it => claims.find(c => c.itemId === it.id && ["pending", "approved"].includes(c.status));
+  return [back("me", "Account"), h("h2", {}, "My work: take it with you"),
+    h("p", { class: "small muted" }, "Your units, lessons and coaching plans are yours to take to another school or district, with your licenses. Packages never include student information. The school keeps its copy unless you hold the copyright or a patent and the school or district approves your claim."),
+    h("section", { class: "card", "aria-label": "Your work here" }, h("h3", {}, "Your work here"),
+      pv.items.length ? h("ul", { class: "list" }, pv.items.map(it => { const c = openClaim(it);
+        return h("li", {}, h("div", { class: "row wrap" }, h("b", { class: "grow" }, `${WORK_KIND[it.kind]}: ${it.title}`),
+            it.rights ? chip("present", "Your rights: school won't keep a copy") : c ? chip(...CLAIM_STATUS[c.status]) : chip("expected", "School keeps a copy")),
+          it.approval ? h("p", { class: "small muted" }, `Approved by ${it.approval.by}, ${it.approval.at}`) : null,
+          !c && !it.rights ? h("button", { class: "btn small", type: "button", "aria-label": `Claim rights: ${it.title}`, onclick: () => claimRights(it) }, "Claim rights")
+            : c?.status === "pending" ? h("button", { class: "btn small", type: "button", "aria-label": `Withdraw claim: ${it.title}`, onclick: async () => {
+              try { await api.post(`/api/portfolio/claims/${c.id}/withdraw`, {}); toast("Withdrawn."); reload(); } catch { toast("Couldn't withdraw it."); } } }, "Withdraw claim") : null); }))
+        : empty("Nothing of yours here yet."),
+      pv.excluded.length ? [h("h4", {}, "Left out until you edit them"), h("p", { class: "small muted" }, "These may name a student. Edit them, then make a new package."),
+        h("ul", { class: "list small" }, pv.excluded.map(x => h("li", {}, `${WORK_KIND[x.kind]}: ${x.title}`)))] : null,
+      h("button", { class: "btn primary", type: "button", onclick: async () => {
+        try { const p = (await api.post("/api/portfolio/packages", {})).data;
+          toast(`Package ready: ${p.items} item${p.items === 1 ? "" : "s"}, ${p.licenses} license${p.licenses === 1 ? "" : "s"}${p.signed ? ", signed" : ""}.`); reload(); }
+        catch (e) { toast(e.body?.error === "nothing_to_package" ? "There's nothing to package yet." : "Couldn't make the package."); } } }, "Make a package")),
+    h("section", { class: "card", "aria-label": "Your packages" }, h("h3", {}, "Your packages"),
+      pkgs.length ? h("ul", { class: "list" }, pkgs.map(p => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, h("b", {}, `From ${p.district}`), h("br"), h("span", { class: "small muted" }, `${new Date(p.issuedAt).toLocaleDateString()} · ${p.items} items · ${p.signed ? "signed" : "not signed"}${p.withdrawn ? " · withdrawn" : ""}`)),
+        !p.withdrawn && !p.fromHere ? h("button", { class: "btn small primary", type: "button", "aria-label": `Bring into this district: package from ${p.district}`, onclick: async () => {
+          try { await api.post("/api/portfolio/imports", { packageId: p.id }); toast("Sent for review here."); reload(); }
+          catch (e) { toast({ already_exists: "You've already brought this package in.", package_failed_its_check: "This package failed its check and can't be used." }[e.body?.error] || "Couldn't bring it in."); } } }, "Bring into this district") : null,
+        !p.withdrawn ? h("button", { class: "btn small", type: "button", "aria-label": `Withdraw package from ${p.district}, ${new Date(p.issuedAt).toLocaleDateString()}`, onclick: async () => {
+          try { await api.post(`/api/portfolio/packages/${p.id}/withdraw`, {}); toast("Withdrawn."); reload(); } catch { toast("Couldn't withdraw it."); } } }, "Withdraw") : null)))
+        : h("p", { class: "small muted" }, "No packages yet. A package you make here follows you to any district on EduOS.")),
+    imports.length ? h("section", { class: "card", "aria-label": "Brought into this district" }, h("h3", {}, "Brought into this district"),
+      h("ul", { class: "list" }, imports.map(i => h("li", {}, h("div", { class: "row wrap" }, h("b", { class: "grow" }, `From ${i.fromDistrict}`), chip(i.status === "pending" ? "expected" : "present", i.status === "pending" ? "Waiting for review" : "Reviewed")),
+        i.status === "reviewed" ? h("p", { class: "small muted" }, `${i.items.filter(x => x.decision === "approved").length} of ${i.items.length} approved by ${i.reviewedBy}${i.note ? ` · ${i.note}` : ""}`) : null,
+        i.licenses.length ? h("button", { class: "btn small", type: "button", "aria-label": `Add my ${i.licenses.length} license${i.licenses.length === 1 ? "" : "s"} here, from ${i.fromDistrict}`, onclick: async () => {
+          try { const r = (await api.post(`/api/portfolio/imports/${i.id}/licenses`, {})).data; toast(r.added ? `Added ${r.added}. This district verifies them.` : "They're already on your profile."); }
+          catch { toast("Couldn't add them."); } } }, `Add my ${i.licenses.length} license${i.licenses.length === 1 ? "" : "s"} here`) : null)))) : null,
+    h("section", { class: "card", "aria-label": "Your library here" }, h("h3", {}, "Your library here"),
+      library.length ? h("ul", { class: "list" }, library.map(l => h("li", {}, h("div", { class: "row wrap" }, h("b", { class: "grow" }, `${WORK_KIND[l.kind]}: ${l.title}`), l.rights ? chip("present", "Your rights") : null),
+        h("p", { class: "small muted" }, `From ${l.origin}${l.priorApproval ? ` (approved there by ${l.priorApproval.by})` : ""} · approved here by ${l.approvedBy}`),
+        h("button", { class: "btn small primary", type: "button", "aria-label": `Copy into a course: ${l.title}`, onclick: () => copyLibraryItem(l) }, l.kind === "coaching_plan" ? "Add to my plans" : "Copy into a course"))))
+        : h("p", { class: "small muted" }, "Work you bring in shows here once this district approves it."))];
+};
+async function claimRights(it) {
+  const v = await dialogForm(`Claim rights: ${it.title}`, () => {
+    const type = h("select", { id: "cr-t" }, h("option", { value: "copyright" }, "Copyright"), h("option", { value: "patent" }, "Patent"));
+    const inp = (id, label, attrs) => [h("label", { for: id }, label), h("input", { id, ...attrs })];
+    const stmt = h("textarea", { id: "cr-s", rows: 3, maxlength: 1000, required: true, placeholder: "How you own it: e.g. written before joining, registered on…" });
+    return { fields: [h("p", { class: "small" }, "If the school or district approves, the school won't keep a copy of this work when you leave. You need evidence: a registration or patent number, or a link to the record."),
+      h("label", { for: "cr-t" }, "Kind of right"), type, inp("cr-r", "Registration or patent number", { maxlength: 80 }), inp("cr-u", "Link to the record (https://…)", { type: "url", maxlength: 500 }),
+      h("label", { for: "cr-s" }, "Statement"), stmt],
+      value: () => { const g = id => document.getElementById(id).value.trim();
+        if (!g("cr-r") && !g("cr-u")) { toast("Add a registration number or a link."); return undefined; }
+        return { itemKind: it.kind, itemId: it.id, claimType: type.value, registration: g("cr-r") || null, evidenceUrl: g("cr-u") || null, statement: stmt.value.trim() }; } };
+  }, "Send for review");
+  if (!v) return;
+  try { await api.post("/api/portfolio/claims", v); toast("Sent to your principal for review."); go("mywork", { push: false }); }
+  catch (e) { toast({ invalid_claim: "Check the link and write a short statement (10+ characters).", already_exists: "There's already a claim on this work." }[e.body?.error] || "Couldn't send it."); }
+}
+async function copyLibraryItem(l) {
+  if (l.kind === "coaching_plan") {
+    try { await api.post(`/api/portfolio/library/${l.id}/copy`, {}); toast("Added to your coaching plans."); } catch { toast("Couldn't add it."); }
+    return;
+  }
+  const courses = (await api.get("/api/learning/courses")).data.courses || [];
+  if (!courses.length) return toast("Make a course first, then copy into it.");
+  const v = await dialogForm(`Copy “${l.title}”`, () => {
+    const unit = h("select", { id: "cl-u" });
+    const fill = async id => { const d = (await safe(api.get(`/api/learning/courses/${id}`)))?.data; unit.replaceChildren(...(d?.units || []).map(u => h("option", { value: u.id }, u.title))); };
+    const course = h("select", { id: "cl-c", onchange: () => fill(course.value) }, courses.map(c => h("option", { value: c.id }, c.title)));
+    if (l.kind === "lesson") fill(courses[0].id);
+    return { fields: [h("label", { for: "cl-c" }, "Course"), course, l.kind === "lesson" ? [h("label", { for: "cl-u" }, "Unit"), unit] : h("p", { class: "small muted" }, "It's added as a new unit at the end, with its lessons as drafts.")],
+      value: () => ({ courseId: course.value, ...(l.kind === "lesson" ? { unitId: unit.value } : {}) }) };
+  }, "Copy");
+  if (!v) return;
+  try { await api.post(`/api/portfolio/library/${l.id}/copy`, v); toast("Copied as a draft. Review it before publishing."); } catch { toast("Couldn't copy it."); }
+}
+VIEWS.portfolioreview = async () => {
+  const [claims, imports] = await Promise.all([api.get("/api/portfolio/claims").then(r => r.data), api.get("/api/portfolio/imports").then(r => r.data)]);
+  const pending = claims.filter(c => c.status === "pending"), approved = claims.filter(c => c.status === "approved");
+  const decide = async (c, decision) => {
+    const note = await ask({ title: decision === "approved" ? `Approve ${c.owner}'s ${c.claimType} claim?` : `Don't approve ${c.owner}'s claim?`,
+      text: decision === "approved" ? "The school won't keep a copy of this work when they leave." : null, label: decision === "approved" ? "Note (what you checked)" : "Why not", confirm: decision === "approved" ? "Approve" : "Don't approve" });
+    if (!note) return;
+    try { await api.post(`/api/portfolio/claims/${c.id}/decision`, { decision, note }); toast("Saved."); go("portfolioreview", { push: false }); } catch { toast("Couldn't save it."); }
+  };
+  return [back("me", "Account"), h("h2", {}, "Teachers' work: rights and transfers"),
+    h("section", { class: "card", "aria-label": "Rights claims to review" }, h("h3", {}, "Rights claims to review"),
+      pending.length ? h("ul", { class: "list" }, pending.map(c => h("li", {}, h("b", {}, `${c.owner}: ${WORK_KIND[c.itemKind]} “${c.title}”`),
+        h("p", { class: "small" }, `${c.claimType === "patent" ? "Patent" : "Copyright"}${c.registration ? ` · ${c.registration}` : ""}`, c.evidenceUrl ? [" · ", h("a", { href: c.evidenceUrl, target: "_blank", rel: "noopener noreferrer" }, "record")] : null),
+        h("p", { class: "small muted" }, c.statement),
+        h("div", { class: "btns" }, h("button", { class: "btn small primary", type: "button", "aria-label": `Approve claim: ${c.title}`, onclick: () => decide(c, "approved") }, "Approve"),
+          h("button", { class: "btn small", type: "button", "aria-label": `Don't approve claim: ${c.title}`, onclick: () => decide(c, "rejected") }, "Don't approve")))))
+        : empty("No claims waiting.")),
+    approved.length ? h("section", { class: "card", "aria-label": "Works the school doesn't keep" }, h("h3", {}, "Works the school doesn't keep when the teacher leaves"),
+      h("p", { class: "small muted" }, "Nothing is removed automatically. When the teacher leaves, retire or replace these."),
+      h("ul", { class: "list small" }, approved.map(c => h("li", {}, `${c.owner}: ${WORK_KIND[c.itemKind]} “${c.title}” · approved by ${c.reviewedBy}`)))) : null,
+    h("section", { class: "card", "aria-label": "Work brought in from other districts" }, h("h3", {}, "Work brought in from other districts"),
+      imports.filter(i => i.status === "pending").length ? imports.filter(i => i.status === "pending").map(i => reviewImportCard(i)) : empty("Nothing waiting."))];
+};
+function reviewImportCard(i) {
+  const pick = {};
+  return h("div", { class: "stack" }, h("p", {}, h("b", {}, i.owner), ` from ${i.fromDistrict} · ${i.signed ? "signed package, checked" : "unsigned package, checked"}`),
+    h("ul", { class: "list" }, i.items.map(x => h("li", {}, h("b", {}, `${WORK_KIND[x.kind]}: ${x.title}`),
+      h("p", { class: "small muted" }, [x.approval ? `Approved at ${x.approval.district} by ${x.approval.by}` : "Not approved before", x.rights ? `Teacher's ${x.rights.type}` : ""].filter(Boolean).join(" · ")),
+      h("div", { class: "btns", role: "group", "aria-label": `Decision: ${x.title}` }, ["approved", "rejected"].map(d => h("label", { class: "check" },
+        h("input", { type: "radio", name: `imp-${i.id}-${x.index}`, value: d, onchange: () => { pick[x.index] = d; } }), d === "approved" ? " Approve" : " Don't approve")))))),
+    h("button", { class: "btn primary", type: "button", onclick: async () => {
+      if (Object.keys(pick).length !== i.items.length) return toast("Decide every item.");
+      try { await api.post(`/api/portfolio/imports/${i.id}/review`, { decisions: Object.entries(pick).map(([index, decision]) => ({ index: Number(index), decision })) });
+        toast("Saved. Approved items are in the teacher's library."); go("portfolioreview", { push: false }); } catch { toast("Couldn't save it."); } } }, `Save decisions for ${i.owner}`));
 }
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
