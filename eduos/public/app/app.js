@@ -295,14 +295,14 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room", "scan", "roll", "mywork", "portfolioreview"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room", "scan", "roll", "mywork", "portfolioreview", "rankings"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
   if (tab === "history") return "history";
   if (tab === "capsule") return "capsules";
   if (tab === "draft") return "network";
-  if (["states", "stateinfo", "licenses", "mywork", "portfolioreview"].includes(tab)) return "me";
+  if (["states", "stateinfo", "licenses", "mywork", "portfolioreview", "rankings"].includes(tab)) return "me";
   if (tab === "plan" || tab === "present" || tab === "room") return "classes";
   if (tab === "scan") return tabsFor()[0]?.[0];
   if (tab === "roll") return tabsFor().some(t => t[0] === "classes") ? "classes" : tabsFor().some(t => t[0] === "mediacenter") ? "mediacenter" : "devices";
@@ -3581,6 +3581,7 @@ VIEWS.me = async () => {
     LICENSED.includes(state.me.role) ? await licenseCard() : null,
     state.me.role === "teacher" ? h("button", { class: "btn block", type: "button", onclick: () => go("mywork") }, icon("spark"), "My work: take it with you") : null,
     ["principal", "superintendent"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("portfolioreview") }, icon("check"), "Teachers' work: rights and transfers") : null,
+    ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => openView("rankings", { rankSchool: null }) }, icon("grid"), "U.S. News indicators") : null,
     h("button", { class: "btn block", type: "button", onclick: () => go("states") }, icon("book"), "State index"),
     ["superintendent", "principal"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("licenses") }, icon("people"), "Staff licenses") : null,
     h("a", { class: "btn block", href: "/" }, "Open the full EduOS site"),
@@ -4311,6 +4312,67 @@ function connectorPanel(a, cx, reopen) {
     cx.runs.length ? (() => { const recent = cx.runs.slice(0, 4), failed = recent.find(r => !r.ok && r.message !== "not offered by this account"), missing = recent.filter(r => r.message === "not offered by this account");
       return h("p", { class: "small muted" }, `Last sync: ${cx.runs[0].by}, ${new Date(cx.runs[0].at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`,
         missing.length ? ` · not offered by this account: ${missing.map(r => RUN_TEXT[r.action].split(" ")[0].toLowerCase()).join(", ")}` : "", failed ? ` · something failed: ${failed.message}` : ""); })() : null];
+}
+// ---- RANK-01: the U.S. News indicators dashboard ----------------------------
+const fmtVal = (k, v) => typeof v === "number" && !/rank/i.test(k) ? `${v}${["Gap"].includes(k) ? " pts" : "%"}` : String(v);
+VIEWS.rankings = async () => {
+  const defs = (await api.get("/api/rankings/indicators")).data;
+  if (state.me.role !== "superintendent" && !state.rankSchool) state.rankSchool = state.me.schoolId;
+  if (!state.rankSchool) {
+    const d = (await api.get(`/api/rankings/schools${state.rankYear ? `?year=${state.rankYear}` : ""}`)).data;
+    return [back("me", "Account"), h("h2", {}, "U.S. News indicators"), h("p", { class: "small muted" }, defs.note),
+      d.years.length > 1 ? h("div", { class: "btns", role: "group", "aria-label": "School year" }, d.years.map(y => h("button", { class: `btn small${y === d.year ? " primary" : ""}`, type: "button", "aria-pressed": String(y === d.year), onclick: () => openView("rankings", { rankYear: y }) }, y))) : null,
+      h("section", { class: "card", "aria-label": "Schools" }, h("h3", {}, d.year ? `Figures for ${d.year}` : "No figures yet"),
+        h("ul", { class: "list" }, d.schools.map(x => h("li", {},
+          h("div", { class: "row wrap" }, h("b", { class: "grow" }, x.name), chip(x.entered === 6 ? "present" : "expected", `${x.entered} of 6 · ${x.weightCovered}% of the weight`),
+            x.verified ? chip("present", `${x.verified} verified`) : null),
+          x.missing.length ? h("p", { class: "small muted" }, `Missing: ${x.missing.map(k => defs.indicators.find(i => i.key === k).name).join(", ")}`) : null,
+          h("button", { class: "btn small", type: "button", "aria-label": `Open: ${x.name}`, onclick: () => openView("rankings", { rankSchool: x.id }) }, "Open")))))];
+  }
+  const d = (await api.get(`/api/rankings/schools/${state.rankSchool}`)).data;
+  const latest = d.years[0] || null;
+  const canEnter = ["principal", "superintendent"].includes(state.me.role), supt = state.me.role === "superintendent";
+  const card = (ind, def) => {
+    const cur = ind.byYear[0], prev = ind.byYear[1];
+    return h("section", { class: "card", "aria-label": ind.name },
+      h("div", { class: "row wrap" }, h("h3", { class: "grow" }, ind.name), ind.weight != null ? chip("expected", `${ind.weight}% of the ranking`) : null),
+      h("p", { class: "small muted" }, def.about),
+      cur ? [h("div", { class: "stats" }, Object.entries(cur.shown).map(([k, v]) => stat(fmtVal(k, v), k))),
+        prev ? h("p", { class: "small muted" }, `${prev.year}: ${Object.entries(prev.shown).map(([k, v]) => `${k} ${fmtVal(k, v)}`).join(" · ")}`) : null,
+        h("p", { class: "small" }, `${cur.year} · source: `, cur.sourceUrl ? h("a", { href: cur.sourceUrl, target: "_blank", rel: "noopener noreferrer" }, cur.sourceNote || "link") : cur.sourceNote,
+          ` · entered by ${cur.enteredBy}`),
+        cur.verifiedBy ? chip("present", `Verified by ${cur.verifiedBy}`) : chip("expected", "Not verified yet"),
+        supt && !cur.verifiedBy && cur.enteredBy !== state.me.displayName ? h("button", { class: "btn small", type: "button", "aria-label": `Verify: ${ind.name}`, onclick: async () => {
+          try { await api.post(`/api/rankings/entries/${cur.id}/verify`, {}); toast("Verified."); go("rankings", { push: false }); }
+          catch (e) { toast(e.body?.error === "someone_else_verifies" ? "Someone else verifies what you entered." : "Couldn't verify it."); } } }, "Verify") : null]
+        : h("p", { class: "small muted" }, "No figures yet."),
+      canEnter ? h("button", { class: "btn small primary", type: "button", "aria-label": `Enter figures: ${ind.name}`, onclick: () => enterRanking(d, ind, def, latest) }, "Enter figures") : null);
+  };
+  return [supt ? h("button", { class: "btn back", type: "button", onclick: () => openView("rankings", { rankSchool: null }) }, "‹ All schools") : back("me", "Account"),
+    h("h2", {}, `${d.name}: U.S. News indicators`), h("p", { class: "small muted" }, defs.note),
+    d.changesKept ? h("p", { class: "small muted" }, `${d.changesKept} earlier figure${d.changesKept === 1 ? " is" : "s are"} kept as history.`) : null,
+    ...d.indicators.filter(i => i.key !== "published_rank").map(ind => card(ind, defs.indicators.find(x => x.key === ind.key))),
+    card(d.indicators.find(i => i.key === "published_rank"), defs.published)];
+};
+async function enterRanking(d, ind, def, latest) {
+  const thisYear = (() => { const n = new Date(), y = n.getMonth() >= 6 ? n.getFullYear() : n.getFullYear() - 1; return `${y}-${String((y + 1) % 100).padStart(2, "0")}`; })();
+  const cur = ind.byYear[0];
+  const v = await dialogForm(`${ind.name}: ${d.name}`, () => {
+    const year = h("input", { id: "rk-y", required: true, pattern: "\\d{4}-\\d{2}", value: latest || thisYear, placeholder: "2025-26" });
+    const inputs = def.fields.map(f => [h("label", { for: `rk-${f.key}` }, f.label), h("input", { id: `rk-${f.key}`, ...(f.key === "note" ? { maxlength: 300 } : { type: "number", step: "any", min: 0 }), value: cur?.values?.[f.key] ?? "" })]);
+    return { fields: [h("p", { class: "small muted" }, def.about), h("label", { for: "rk-y" }, "School year (data year)"), year, ...inputs,
+      h("label", { for: "rk-su" }, "Source link (https://…)"), h("input", { id: "rk-su", type: "url", maxlength: 500 }),
+      h("label", { for: "rk-sn" }, "Or name the source"), h("input", { id: "rk-sn", maxlength: 300, placeholder: "e.g. State report card 2024-25, AP school report" }),
+      h("p", { class: "small muted" }, "Every figure needs its source. The superintendent verifies it; a change needs verifying again.")],
+      value: () => { const g = id => document.getElementById(id)?.value.trim() ?? "";
+        const values = Object.fromEntries(def.fields.map(f => [f.key, f.key === "note" ? g(`rk-${f.key}`) : g(`rk-${f.key}`) === "" ? null : Number(g(`rk-${f.key}`))]));
+        if (!g("rk-su") && !g("rk-sn")) { toast("Add the source."); return undefined; }
+        return { year: g("rk-y"), body: { values, sourceUrl: g("rk-su") || null, sourceNote: g("rk-sn") || null } }; } };
+  }, "Save");
+  if (!v) return;
+  try { await api.put(`/api/rankings/schools/${d.id}/${v.year}/${ind.key}`, v.body); toast("Saved. It needs verifying."); go("rankings", { push: false }); }
+  catch (e) { toast({ check_the_figures: "Check the figures: counts can't be larger than the total, and percentages are 0 to 100.", invalid_entry: "Use a school year like 2025-26.",
+    invalid_source: "The source link must start with https://." }[e.body?.error] || "Couldn't save it."); }
 }
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
