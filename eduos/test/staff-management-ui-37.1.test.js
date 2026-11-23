@@ -7,7 +7,9 @@ const root = new URL('../', import.meta.url);
 
 test('37.1 staff workspace is reachable from all intended staff role tabs', async () => {
   const app = await readFile(new URL('public/app/app.js', root), 'utf8');
-  for (const role of ['teacher','principal','vice_principal','superintendent','counselor','nurse','maintenance','lunch_staff']) {
+  // A vice principal gets every principal tab (db/121), staffing included.
+  assert.match(app, /const tabsFor = \(\) => isVP\(\) \? \[\.\.\.ROLE_TABS\.vice_principal, \.\.\.ROLE_TABS\.principal\]/);
+  for (const role of ['teacher','principal','superintendent','counselor','nurse','maintenance','lunch_staff']) {
     const line = app.split('\n').find(x => x.startsWith(`  ${role}:`));
     assert.ok(line, `${role} role tab definition exists`);
     assert.match(line, /\["staffing", "Staffing", "people"\]/, `${role} can open staffing`);

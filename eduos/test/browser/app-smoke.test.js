@@ -78,6 +78,9 @@ const roleTabs = (() => {
   const block = ui.slice(ui.indexOf("const ROLE_TABS"), ui.indexOf("};", ui.indexOf("const ROLE_TABS")));
   const out = {};
   for (const m of block.matchAll(/^\s*(\w+):\s*\[(.*)\],?\s*$/gm)) out[m[1]] = [...m[2].matchAll(/\["(\w+)", "/g)].map(x => x[1]);
+  // A vice principal sees the principal screens (db/121); those run under
+  // "principal" already, so here: their own queue and two principal screens.
+  out.vice_principal = [...out.vice_principal, "overview", "history"];
   return out;
 })();
 
@@ -125,7 +128,7 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/apps": return { data: [{ id: "app3", name: "New LTI Tool", vendor: "Tool Co", integrationType: "lti13", registrationStatus: "pending" }] };
     case "/api/app-requests": return { data: [{ id: "r1", status: "pending" }] };
     case "/api/my/apps": return { data: [{ id: "a1", name: "Reading Room", category: "Reading", integrationType: "link" }, { id: "a2", name: "MathQuest", category: "Math", integrationType: "lti13" }] };
-    case "/api/me": return { userId: "u1", displayName: "Smoke Test", role, districtId: "d1", schoolId: mockSchool, memberships: [] };
+    case "/api/me": return { userId: "u1", displayName: "Smoke Test", role: role === "vice_principal" ? "principal" : role, membershipRole: role, districtId: "d1", schoolId: mockSchool, memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: liveLockdown ? [{ id: "inc1", schoolId: "s1", schoolName: "Maple", kind: "lockdown", label: "Lockdown", isDrill: true, status: "active",
         startedAt: now, message: "Lock doors, lights off, out of sight.", audience: "staff", instructions: null }] : [], canInitiate: false, canLead: false } };
@@ -435,7 +438,7 @@ function startServer() {
           res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ role: state.role, schoolId: mockSchool, csrfToken: "smoke2" })); });
       }
       // GETs, and a connector sync (preview), answer from the sample data; other writes just succeed.
-      const body = req.method === "GET" || /^\/api\/integrations\/connectors\/[^/]+\/sync$/.test(pathname) ? mockApi(state.role, pathname, state.failWebhookLoads) : { data: {} };
+      const body = req.method === "GET" || /^\/api\/integrations\/connectors\/[^/]+\/sync$/.test(pathname) ? (pathname === "/api/me" ? mockApi(state.role, pathname) : mockApi(state.role === "vice_principal" ? "principal" : state.role, pathname, state.failWebhookLoads)) : { data: {} };
       res.writeHead(body ? (req.method === "GET" ? 200 : 201) : 404, { "content-type": "application/json", "cache-control": "no-store" });
       return res.end(JSON.stringify(body ?? { error: "not_found" }));
     }

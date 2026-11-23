@@ -702,3 +702,6 @@ GRANT EXECUTE ON FUNCTION eduos_safety_room_reporter(uuid), eduos_safety_room_vi
 
 -- SAFE-01b (db/120): vice principals start and lead safety alerts.
 GRANT EXECUTE ON FUNCTION eduos_safety_incident_staff(uuid), eduos_safety_incident_lead(uuid) TO eduos_app;
+
+-- db/121: vice principals act with the principal's authority, except assigning roles.
+GRANT EXECUTE ON FUNCTION eduos_ctx_membership_role(), eduos_ctx_is_vice_principal(), eduos_refuse_vice_principal_assignment(), eduos_audit_membership_role() TO eduos_app;

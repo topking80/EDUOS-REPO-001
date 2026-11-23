@@ -1,6 +1,6 @@
 // 37.6.0: Clubs, sports, school events and deliberately gated media commerce.
 import { randomBytes, createHash } from "node:crypto";
-import { requireSession, requireCsrf } from "./auth.js";
+import { requireSession, requireCsrf, principalOnly } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
 import { startTicketCheckout, replayTicketCheckout } from "./commerce/service.js";
@@ -54,7 +54,7 @@ export function registerClubsSportsRoutes(app) {
    await audit(c,req,"create","school_activity",r.id,`kind=${r.kind};status=${r.status}`);return safeActivity(r);
   });res.status(201).json({data});}catch(e){sendError(res,next,e)}
  });
- app.post("/api/activities/:id/staff",requireSession,requireCsrf,async(req,res,next)=>{
+ app.post("/api/activities/:id/staff",requireSession,principalOnly,requireCsrf,async(req,res,next)=>{
   const a=req.actor,b=req.body||{};if(!LEAD(a.role))return res.status(403).json({error:"school_lead_required"});
   if(!validId(req.params.id)||!validId(b.userId)||!["advisor","coach"].includes(b.staffRole))return res.status(400).json({error:"invalid_activity_staff"});
   try{const data=await withTenantTransaction(a,async c=>{
@@ -87,7 +87,7 @@ export function registerClubsSportsRoutes(app) {
    FROM activity_staff s JOIN users u ON u.id=s.user_id WHERE s.district_id=$1 AND s.activity_id=$2 AND s.ended_at IS NULL ORDER BY u.display_name`,[a.districtId,activity.id]);
  }));
  // COACH-01: end an assignment; a coach profile with no remaining team at that school is disabled.
- app.post("/api/activities/:id/staff/:userId/end",requireSession,requireCsrf,async(req,res,next)=>{
+ app.post("/api/activities/:id/staff/:userId/end",requireSession,principalOnly,requireCsrf,async(req,res,next)=>{
   const a=req.actor;if(!LEAD(a.role))return res.status(403).json({error:"school_lead_required"});
   if(!validId(req.params.id)||!validId(req.params.userId))return res.status(400).json({error:"invalid_activity_staff"});
   try{const data=await withTenantTransaction(a,async c=>{

@@ -96,7 +96,8 @@ describe("Leo and Edison against real PostgreSQL", { skip }, () => {
   });
 
   it("Leo: only course managers; curriculum only; saved as an unapproved draft with provenance", async () => {
-    for (const who of ["pu", "pa", "vp1"]) assert.equal((await as(who)("POST", "/api/leo/drafts", draftBody())).status, 403, who);
+    for (const who of ["pu", "pa"]) assert.equal((await as(who)("POST", "/api/leo/drafts", draftBody())).status, 403, who);
+    assert.equal((await as("vp1")("POST", "/api/leo/drafts", { ...draftBody(), standardIds: [] })).status, 400, "a vice principal acts as the principal");
     assert.equal((await as("p2")("POST", "/api/leo/drafts", draftBody())).status, 404, "other school's principal");
     assert.equal((await as("t1")("POST", "/api/leo/drafts", { ...draftBody(), standardIds: [] })).status, 400);
     assert.equal((await as("t1")("POST", "/api/leo/drafts", { ...draftBody(), standardIds: [STD, STD2, STD, STD2, STD] })).status, 400);

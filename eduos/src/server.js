@@ -174,7 +174,7 @@ app.get("/api/app-config",(_req,res)=>{res.setHeader("Cache-Control","no-store")
 app.get("/api/memberships",requireSession,listMemberships);
 app.post("/api/session/membership",requireSession,requireCsrf,switchMembership);
 
-app.get("/api/me",requireSession,(req,res)=>res.json({userId:req.actor.userId,displayName:req.actor.displayName,role:req.actor.role,districtId:req.actor.districtId,schoolId:req.actor.schoolId}));
+app.get("/api/me",requireSession,(req,res)=>res.json({userId:req.actor.userId,displayName:req.actor.displayName,role:req.actor.role,membershipRole:req.actor.membershipRole||req.actor.role,districtId:req.actor.districtId,schoolId:req.actor.schoolId}));
 
 app.get("/api/schools",requireSession,requirePermission("schools","read"),async(req,res,next)=>{
   try {

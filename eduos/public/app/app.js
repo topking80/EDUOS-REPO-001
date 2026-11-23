@@ -139,7 +139,8 @@ const ROLE_TABS = {
   teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["mediacenter", "Media center", "check"], ["messages", "Messages", "chat"]],
-  vice_principal: [["operations", "Operations", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["devices", "Rooms & devices", "server"], ["messages", "Messages", "chat"]],
+  // A vice principal gets this plus every principal tab (tabsFor).
+  vice_principal: [["operations", "Operations", "grid"]],
   counselor: [["guidance", "Counseling", "heart"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
@@ -164,9 +165,9 @@ function renderTop() {
       : h("span", { class: "mascot initials", "aria-hidden": "true" }, String(b?.school?.name || b?.districtName || "EduOS").replace(/\(.*?\)/g, "").split(/\s+/).filter(w => /^[A-Z]/.test(w)).slice(0, 2).map(w => w[0]).join("") || "E"),
     h("div", { class: "who" },
       (state.profiles || []).length > 1
-        ? h("button", { class: "school switch", type: "button", "aria-haspopup": "dialog", "aria-label": `${b?.school?.name || b?.districtName || "EduOS"} · ${APP_NAME[me.role] || me.role}. Switch profile`, onclick: openProfiles },
-            `${b?.school?.name || b?.districtName || "EduOS"} · ${APP_NAME[me.role] || me.role}`, h("span", { class: "caret", "aria-hidden": "true" }, " ▾"))
-        : h("p", { class: "school" }, `${b?.school?.name || b?.districtName || "EduOS"} · ${APP_NAME[me.role] || me.role}`),
+        ? h("button", { class: "school switch", type: "button", "aria-haspopup": "dialog", "aria-label": `${b?.school?.name || b?.districtName || "EduOS"} · ${roleName()}. Switch profile`, onclick: openProfiles },
+            `${b?.school?.name || b?.districtName || "EduOS"} · ${roleName()}`, h("span", { class: "caret", "aria-hidden": "true" }, " ▾"))
+        : h("p", { class: "school" }, `${b?.school?.name || b?.districtName || "EduOS"} · ${roleName()}`),
       h("h1", {}, `Hi, ${first(me.displayName)}`)),
     h("button", { class: "iconbtn", type: "button", "aria-label": state.unread ? `Alerts, ${state.unread} unread` : "Alerts", onclick: () => go(tabsFor().some(t => t[0] === "alerts") ? "alerts" : "me") },
       icon("bell"), state.unread ? h("span", { class: "dot", "aria-hidden": "true" }, String(Math.min(state.unread, 99))) : null),
@@ -174,14 +175,18 @@ function renderTop() {
     h("button", { class: "iconbtn", type: "button", "aria-label": "Account", onclick: () => go("me") }, icon("me")));
   for (const n of [...top.childNodes]) if (n.nodeType === Node.TEXT_NODE) n.remove(); // replaceChildren() turns a null slot into "null"
 }
-const tabsFor = () => ROLE_TABS[state.me?.role] || [];
+// A vice principal acts with the principal's authority (except assigning
+// roles): the principal's screens, plus their operations queue.
+const isVP = () => state.me?.membershipRole === "vice_principal";
+const tabsFor = () => isVP() ? [...ROLE_TABS.vice_principal, ...ROLE_TABS.principal] : ROLE_TABS[state.me?.role] || [];
+const roleName = () => APP_NAME[isVP() ? "vice_principal" : state.me?.role] || state.me?.role;
 // UI-03: on a phone the bar shows at most five items: the role's four everyday
 // tabs, then "More" for the rest. The desktop rail still lists every tab.
 const PHONE_TABS = {
   pupil: ["home", "courses", "christie", "library"],
   teacher: ["classes", "grading", "courses", "messages"],
   parent: ["children", "pickup", "messages", "alerts"],
-  vice_principal: ["operations", "attendance", "safety", "messages"],
+  vice_principal: ["operations", "overview", "history", "messages"],
   principal: ["overview", "history", "messages", "alerts"],
   superintendent: ["overview", "apps", "alerts", "integrations"]
 };
@@ -190,7 +195,7 @@ const PHONE_LABEL = { devices: "Devices", history: "History", capsules: "Capsule
 function phoneSplit() {
   const all = tabsFor();
   if (all.length <= 5) return { main: all, extra: [] };
-  const pick = PHONE_TABS[state.me?.role] || all.slice(0, 4).map(t => t[0]);
+  const pick = PHONE_TABS[isVP() ? "vice_principal" : state.me?.role] || all.slice(0, 4).map(t => t[0]);
   return { main: all.filter(t => pick.includes(t[0])), extra: all.filter(t => !pick.includes(t[0])) };
 }
 function renderTabs() {
@@ -766,9 +771,9 @@ async function manageCoaches(a) {
     h("p", { class: "small muted" }, `A teacher here, or a teacher at another school in the district, can be this ${a.kind === "sport" ? "team's" : "club's"} ${word}. Someone from another school gets a ${word} profile here that reaches only this ${a.kind === "sport" ? "team" : "club"}.`),
     staff.length ? h("ul", { class: "list" }, staff.map(p => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, p.name), h("br"), h("span", { class: "small muted" }, `${p.home_school || ""}${p.visiting ? " · visiting " + word : ""}`)),
       h("button", { class: "btn small", type: "button", "aria-label": `Remove ${p.name}`, onclick: async () => { if (!(await ask({ title: `Remove ${p.name}?`, text: p.visiting ? `Their ${word} profile at this school ends if this was their last team here.` : "They stay a teacher here.", confirm: "Remove" }))) return;
-        try { await api.post(`/api/activities/${a.id}/staff/${p.user_id}/end`, {}); toast("Removed."); done(null); manageCoaches(a); } catch { toast("Couldn't remove them."); } } }, "Remove"))))
+        try { await api.post(`/api/activities/${a.id}/staff/${p.user_id}/end`, {}); toast("Removed."); done(null); manageCoaches(a); } catch { toast("Couldn't remove them."); } }, hidden: isVP() || undefined }, "Remove"))))
       : empty(`No ${word} yet.`),
-    h("button", { class: "btn primary", type: "button", onclick: async () => {
+    isVP() ? h("p", { class: "small muted" }, `Only the principal assigns ${word}s.`) : h("button", { class: "btn primary", type: "button", onclick: async () => {
       const people = await pickColleagues({ title: `Choose a ${word}`, confirm: "Assign", multiple: false, exclude: staff.map(p => p.user_id) }); if (!people) return;
       try { const r = (await api.post(`/api/activities/${a.id}/staff`, { userId: people[0].user_id, staffRole: word })).data;
         toast(r.coachProfile ? `${people[0].name} can now ${word} here from their ${word} profile.` : `${people[0].name} is the ${word}.`); done(null); manageCoaches(a); }
@@ -2195,7 +2200,7 @@ async function boardCards(i) {
       i.status === "active" ? h("button", { class: "btn school", type: "button", onclick: async () => {
         const point = await ask({ title: "Start reunification", text: "Families are told where to go and to bring photo ID and their pick-up pass. Students are released only through pick-up verification.", label: "Reunification point", confirm: "Start reunification" });
         if (point) { await api.post(`/api/safety/incidents/${i.id}/reunification`, { point }); await checkSafety(); }
-      } }, "Start reunification") : state.me.role === "vice_principal" ? null : h("button", { class: "btn school", type: "button", onclick: () => go("pickup") }, icon("car"), "Release at pick-up"),
+      } }, "Start reunification") : h("button", { class: "btn school", type: "button", onclick: () => go("pickup") }, icon("car"), "Release at pick-up"),
       h("button", { class: "btn primary", type: "button", onclick: async () => {
         if (!(await ask({ title: `All clear: end the ${i.isDrill ? "drill" : KIND_TEXT[i.kind].toLowerCase()}?`, text: "Everyone at the school, its drivers and families are told that normal operations resume.", confirm: "Yes, all clear", danger: true }))) return;
         try { await api.post(`/api/safety/incidents/${i.id}/all-clear`, { kind: i.kind }); toast("All clear sent"); await checkSafety(); } catch { toast("Couldn't send the all clear."); }
@@ -3395,8 +3400,8 @@ async function specializedOpsView() {
     h("button", { class: "btn primary", type: "submit" }, "Add work item"));
   const canCreate = creatable.some(d => ({ facilities: ["maintenance", "principal", "vice_principal"], health_office: ["nurse"], counseling: ["counselor"], meal_service: ["lunch_staff", "principal", "vice_principal"] })[d].includes(state.me.role));
   return [
-    h("section", { class: "card hero" }, h("p", { class: "small muted" }, "SCHOOL OPERATIONS"), h("h2", {}, OPS_ROLE[state.me.role]?.[0] || (domain ? OPS_TEXT[domain] : "Operations")),
-      h("p", { class: "muted" }, OPS_ROLE[state.me.role]?.[1] || (domain ? "Your team's work queue." : "Work queues for facilities, meal service, counseling and the health office."))),
+    h("section", { class: "card hero" }, h("p", { class: "small muted" }, "SCHOOL OPERATIONS"), h("h2", {}, OPS_ROLE[state.me.membershipRole || state.me.role]?.[0] || (domain ? OPS_TEXT[domain] : "Operations")),
+      h("p", { class: "muted" }, OPS_ROLE[state.me.membershipRole || state.me.role]?.[1] || (domain ? "Your team's work queue." : "Work queues for facilities, meal service, counseling and the health office."))),
     h("div", { class: "stats" }, stat(sum("active"), "open"), stat(sum("urgent"), "urgent", true), stat(sum("overdue"), "overdue", true)),
     canCreate ? form : null,
     h("section", { class: "card", "aria-label": "Work items" }, h("h2", {}, domain ? "Work queue" : "Open work"),
@@ -3644,7 +3649,7 @@ VIEWS.apps = async () => {
 VIEWS.me = async () => {
   await loadProfiles();
   const memberships = state.profiles;
-  return [h("h2", {}, "Account"), h("section", { class: "card" }, h("h3", {}, state.me.displayName), h("p", { class: "muted" }, `${APP_NAME[state.me.role] || state.me.role} · ${state.brand?.school?.name || state.brand?.districtName || ""}`)),
+  return [h("h2", {}, "Account"), h("section", { class: "card" }, h("h3", {}, state.me.displayName), h("p", { class: "muted" }, `${roleName()} · ${state.brand?.school?.name || state.brand?.districtName || ""}`)),
     memberships.length > 1 ? h("section", { class: "card", "aria-label": "Switch profile" }, h("h3", {}, "Switch profile"), profileList(switchProfile)) : null,
     LICENSED.includes(state.me.role) ? await licenseCard() : null,
     state.me.role === "teacher" ? h("button", { class: "btn block", type: "button", onclick: () => go("mywork") }, icon("spark"), "My work: take it with you") : null,
@@ -3777,6 +3782,9 @@ const dayText = ds => ds.length === 5 && [1, 2, 3, 4, 5].every(d => ds.includes(
 const timeText = t => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 async function roomTimetable(r) {
   const [slots, teachers] = await Promise.all([api.get(`/api/rooms/${r.id}/timetable`).then(x => x.data), api.get(`/api/rooms/${r.id}/teachers`).then(x => x.data)]);
+  if (isVP()) return dialogForm(`Timetable: ${r.name}`, () => ({ fields: [h("p", { class: "small muted" }, "Only the principal sets room timetables."),
+    slots.length ? h("ul", { class: "list" }, slots.map(x => h("li", {}, h("b", {}, x.teacher), h("br"), h("span", { class: "small muted" }, `${dayText(x.weekdays)} · ${x.starts}–${x.ends}${x.course ? ` · ${x.course}` : ""}${x.label ? ` · ${x.label}` : ""}`))))
+      : h("p", { class: "small" }, "No one is timetabled here yet.")], value: () => undefined }), null);
   const v = await dialogForm(`Timetable: ${r.name}`, done => {
     const course = h("select", { id: "tt-c" }, h("option", { value: "" }, "No course"));
     const sel = h("select", { id: "tt-t", required: true, onchange: () => course.replaceChildren(h("option", { value: "" }, "No course"),

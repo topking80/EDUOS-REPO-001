@@ -39,7 +39,7 @@ test("tenant transaction sets district, user, role and school context transactio
     assert.equal(result, "ok");
     const context = client.calls.find(c => c.sql.includes("set_config"));
     assert.ok(context);
-    assert.deepEqual(context.params, ["district-a", "user-a", "teacher", "school-a"]);
+    assert.deepEqual(context.params, ["district-a", "user-a", "teacher", "school-a", "teacher"]);
     assert.match(context.sql, /set_config\('app\.district_id', \$1, true\)/);
     assert.ok(client.calls.some(c => c.sql === "COMMIT"));
     assert.equal(client.released, true);
@@ -56,7 +56,7 @@ test("tenant transaction clears school context for district-level actors", async
       async () => true
     );
     const context = client.calls.find(c => c.sql.includes("set_config"));
-    assert.deepEqual(context.params, ["district-a", "admin-a", "superintendent", ""]);
+    assert.deepEqual(context.params, ["district-a", "admin-a", "superintendent", "", "superintendent"]);
   } finally { pool.connect = original; }
 });
 
@@ -105,4 +105,16 @@ test("runtime database role guard rejects superuser, BYPASSRLS, and an owner of 
     pool.query = async () => ({ rows: [{ name: "eduos_app", rolsuper: false, rolbypassrls: false, owned_relations: null, owned_functions: null }] });
     assert.equal(await assertSafeRuntimeRole(pool), "eduos_app");
   } finally { pool.query = original; }
+});
+
+test("a vice principal's transaction runs with the principal's authority and keeps the membership role", async () => {
+  const client = fakeClient();
+  const original = pool.connect;
+  pool.connect = async () => client;
+  try {
+    await withTenantTransaction({ districtId: "district-a", userId: "vp-a", role: "principal", membershipRole: "vice_principal", schoolId: "school-a" }, async () => true);
+    const context = client.calls.find(c => c.sql.includes("set_config"));
+    assert.match(context.sql, /set_config\('app\.membership_role', \$5, true\)/);
+    assert.deepEqual(context.params, ["district-a", "vp-a", "principal", "school-a", "vice_principal"]);
+  } finally { pool.connect = original; }
 });
