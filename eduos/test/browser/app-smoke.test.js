@@ -92,7 +92,7 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
-let mockSchool = "s1", switches = [], copies = [];
+let mockSchool = "s1", switches = [], copies = [], draftSaves = [];
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   if (withCourse) switch (pathname) {
@@ -130,6 +130,12 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       { id: "m2", kind: "unit", title: "Fractions", subject: "Math", grade_level: "4", summary: null, version: 2, status: "shared", updated_at: now, author: "Smoke Test", school: "Maple", mine: true, copies: 0, lessons: 2 }] };
     case "/api/materials/m1": return { data: { id: "m1", kind: "lesson", title: "Fraction strips", subject: "Math", grade_level: "4", summary: "Hands-on start", version: 1, status: "shared", author: "Teacher Two", school: "Oak Middle", mine: false, copies: 3,
       body: { title: "Fraction strips", objective: "Show equivalent fractions", content: "Fold strips.\nCompare lengths.", standards: [{ id: "sd1", code: "4.NF.A.1", description: "Equivalent fractions" }], sources: [] } } };
+    // TEACH-03: co-written drafts.
+    case "/api/drafts": return { data: [{ id: "d1", kind: "lesson", title: "Fraction strips", subject: "Math", grade_level: "4", version: 3, updated_at: now, updated_by: "Teacher Two", with_names: "Teacher Two" }] };
+    case "/api/drafts/d1": return { data: { id: "d1", kind: "lesson", title: "Fraction strips", subject: "Math", gradeLevel: "4", version: 3, updatedAt: now, updatedBy: "Teacher Two",
+      body: { title: "Fraction strips", objective: "Show halves", content: "Fold strips.", standards: [{ id: "sd1", code: "4.NF.A.1", description: "" }], sources: [] },
+      editors: [{ user_id: "u1", name: "Smoke Test", school: "Maple" }, { user_id: "u7", name: "Teacher Two", school: "Oak Middle" }],
+      revisions: [{ version: 3, edited_by: "Teacher Two", edited_at: now, merged: true }, { version: 2, edited_by: "Smoke Test", edited_at: now, merged: false }] } };
     // UI-04: a family with children at two schools and an account at each.
     case "/api/family/children": return { data: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", relationship: "parent" },
       { id: "c2", display_name: "Ben A", grade_level: "7", school_id: "s2", school_name: "Oak Middle", relationship: "parent" }] };
@@ -257,6 +263,15 @@ function startServer() {
         state.endpointOps.revoked++;
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
+      }
+      // TEACH-03: the first save of the draft conflicts with a colleague's; the next one merges.
+      if (pathname === "/api/drafts/d1" && req.method === "PUT") {
+        let raw = ""; req.on("data", c => { raw += c; });
+        return req.on("end", () => { const b = JSON.parse(raw || "{}"); draftSaves.push(b);
+          const theirs = { title: "Fraction strips", objective: "Show halves", content: "Fold strips into quarters.", standards: [], sources: [] };
+          res.writeHead(draftSaves.length === 1 ? 409 : 200, { "content-type": "application/json", "cache-control": "no-store" });
+          res.end(JSON.stringify(draftSaves.length === 1 ? { error: "edit_conflict", conflicts: ["content"], current: { version: 4, body: theirs, updatedBy: "Teacher Two", updatedAt: new Date().toISOString() } }
+            : { data: { version: 5, merged: true, body: b.body, warnings: [] } })); });
       }
       if (/^\/api\/materials\/[^/]+\/copy$/.test(pathname) && req.method === "POST") {
         let raw = ""; req.on("data", c => { raw += c; });
@@ -471,6 +486,37 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (JSON.stringify(copies) !== '[{"path":"/api/materials/m2/copy","body":{"courseId":"k1","unitId":null}}]') failures.push(`copy request: ${JSON.stringify(copies)}`);
       if (page.errors.length) failures.push(`materials: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); withCourse = false; }
+  }
+  // TEACH-03: Co-write: open a draft, a save that clashes keeps my text visible, the next save merges.
+  {
+    state.role = "teacher"; draftSaves = [];
+    const page = await Page.open(chrome.port);
+    const until = async (js, n = 40) => { for (let i = 0; i < n; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/network` });
+      await page.mainText();
+      await page.eval(`[...document.querySelectorAll(".seg button")].find(b => b.textContent === "Co-write").click()`);
+      await until(`document.getElementById("main").innerText.includes("Your drafts")`);
+      const list = await page.eval(`document.getElementById("main").innerText`);
+      for (const want of ["Fraction strips", "Lesson · Math · Grade 4 · with Teacher Two", "Start a draft"]) if (!list.includes(want)) failures.push(`co-write list: missing "${want}"`);
+      await axeScan(page, "teacher #/network co-write", a11y);
+      await page.eval(`document.querySelector('[aria-label="Open draft: Fraction strips"]').click()`);
+      await until(`!!document.getElementById("d-content")`);
+      const head = await page.eval(`document.getElementById("main").innerText`);
+      for (const want of ["Writing together: Smoke Test (Maple), Teacher Two (Oak Middle)", "Standards: 4.NF.A.1", "version 3", "History (2)"]) if (!head.includes(want)) failures.push(`draft: missing "${want}"`);
+      await axeScan(page, "teacher: draft editor", a11y);
+      await page.eval(`const c = document.getElementById("d-content"); c.value = "Fold strips in half."; c.dispatchEvent(new Event("input")); document.querySelector('form[aria-label="Edit the draft"] button[type=submit]').click()`);
+      await until(`!!document.querySelector("details.yours")`);
+      const clash = await page.eval(`({ editor: document.getElementById("d-content").value, mine: document.querySelector("details.yours")?.innerText || "", note: document.querySelector(".notice.warn")?.innerText || "" })`);
+      if (clash.editor !== "Fold strips into quarters." || !clash.mine.includes("Fold strips in half.") || !/Teacher Two changed the same part/.test(clash.note)) failures.push(`edit conflict: ${JSON.stringify(clash)}`);
+      if (draftSaves[0]?.baseVersion !== 3) failures.push(`first save sent baseVersion ${draftSaves[0]?.baseVersion}`);
+      await axeScan(page, "teacher: draft edit conflict", a11y);
+      await page.eval(`document.querySelector('form[aria-label="Edit the draft"] button[type=submit]').click()`);
+      await until(`document.getElementById("main").innerText.includes("together with a colleague's changes")`);
+      if (draftSaves[1]?.baseVersion !== 4) failures.push(`second save sent baseVersion ${draftSaves[1]?.baseVersion} (should build on theirs, 4)`);
+      if (!(await page.eval(`document.getElementById("main").innerText.includes("version 5")`))) failures.push("draft didn't move to version 5 after the merged save");
+      if (page.errors.length) failures.push(`co-write: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   // UI-05: any profile can be chosen from the header; the dialog passes axe.
   {

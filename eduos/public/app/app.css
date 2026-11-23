@@ -384,3 +384,10 @@ html[data-appearance="light"] .top .mascot.initials { background: rgba(255,255,2
 /* TEACH-02: shared materials preview */
 .dialog .preview { max-height: 55vh; overflow-y: auto; border-top: 1px solid var(--line); padding-top: 8px; }
 .dialog .preview h3 { margin: 14px 0 4px; }
+
+/* TEACH-03: co-writing */
+.notice.warn { border-color: var(--warn); }
+details.yours { margin: 4px 0 8px; padding: 6px 10px; border-left: 3px solid var(--warn); background: var(--surface-2); border-radius: 6px; }
+details.yours summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+fieldset.card { margin: 10px 0; }
+fieldset.card legend { font-weight: 700; padding: 0 4px; }

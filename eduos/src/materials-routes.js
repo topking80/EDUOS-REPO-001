@@ -49,7 +49,7 @@ async function lessonSnapshot(client, id) {
 }
 
 /** The lesson or unit, if this person manages its course; and its snapshot. */
-async function source(client, kind, id) {
+export async function source(client, kind, id) {
   if (kind === "lesson") {
     const l = await one(client, `SELECT l.id,c.subject,c.grade_level FROM lessons l JOIN courses c ON c.id=l.course_id WHERE l.id=$1 AND eduos_can_manage_course(l.course_id)`, [id]);
     if (!l) return null;
@@ -69,12 +69,12 @@ async function source(client, kind, id) {
   return { title: u.title, subject: u.subject, grade: u.grade_level, body: { title: u.title, summary: u.summary, lessons } };
 }
 
-const textOf = (body, summary) => [summary, body.title, body.summary, body.objective, body.content,
+export const textOf = (body, summary) => [summary, body.title, body.summary, body.objective, body.content,
   ...(body.lessons || []).flatMap(l => [l.title, l.objective, l.content, ...l.sources.flatMap(s => s.prompts)]),
   ...(body.sources || []).flatMap(s => s.prompts)].filter(Boolean).join("\n");
 
 /** Copy one lesson snapshot into a unit the person manages, as a draft. */
-async function copyLesson(client, a, courseId, unitId, l, materialId) {
+export async function copyLesson(client, a, courseId, unitId, l, materialId) {
   const seq = (await one(client, `SELECT coalesce(max(seq),0)+1 AS n FROM lessons WHERE unit_id=$1`, [unitId])).n;
   if (seq > 200) throw new HttpError(409, "unit_full");
   const row = await one(client, `INSERT INTO lessons(district_id,course_id,unit_id,seq,title,objective,content,status,created_by,adapted_from)
@@ -87,6 +87,21 @@ async function copyLesson(client, a, courseId, unitId, l, materialId) {
     if (await one(client, `SELECT 1 FROM primary_sources WHERE id=$1 AND status='approved'`, [s.sourceId]))
       await client.query(`INSERT INTO lesson_sources(lesson_id,source_id,district_id,seq,prompts) VALUES($1,$2,$3,$4,$5)`, [row.id, s.sourceId, a.districtId, n++, s.prompts]);
   return row.id;
+}
+
+/** Put a snapshot in the library, or update the live share of the same source (version + 1). */
+export async function publish(client, req, { kind, sourceId, src, summary, confirmed }) {
+  const a = req.actor;
+  const existing = await one(client, `SELECT id,version FROM shared_materials WHERE kind=$1 AND source_id=$2 AND status='shared'`, [kind, sourceId]);
+  const m = existing
+    ? await one(client, `UPDATE shared_materials SET title=$2,subject=$3,grade_level=$4,summary=$5,body=$6,version=version+1,updated_at=now()
+        WHERE id=$1 RETURNING id,version`, [existing.id, src.title, src.subject, src.grade, summary?.trim() || null, src.body])
+    : await one(client, `INSERT INTO shared_materials(district_id,school_id,author_user_id,kind,source_id,title,subject,grade_level,summary,body)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,version`,
+        [a.districtId, a.schoolId, a.userId, kind, sourceId, src.title, src.subject, src.grade, summary?.trim() || null, src.body]);
+  if (!m) throw new HttpError(403, "not_the_author");
+  await audit(client, req, existing ? "update" : "share", "shared_material", m.id, `kind=${kind};version=${m.version}${confirmed ? ";confirmed_not_students" : ""}`);
+  return { status: existing ? 200 : 201, body: { data: m } };
 }
 
 export function registerMaterialsRoutes(app) {
@@ -135,16 +150,7 @@ export function registerMaterialsRoutes(app) {
         if (!src) throw new HttpError(404, `${kind}_not_found`);
         const words = await studentWordsIn(client, a.districtId, textOf(src.body, summary));
         if (words.length && !confirmNotStudents) return { status: 409, body: { error: "may_mention_students", words } };
-        const existing = await one(client, `SELECT id,version FROM shared_materials WHERE kind=$1 AND source_id=$2 AND status='shared'`, [kind, sourceId]);
-        const m = existing
-          ? await one(client, `UPDATE shared_materials SET title=$2,subject=$3,grade_level=$4,summary=$5,body=$6,version=version+1,updated_at=now()
-              WHERE id=$1 RETURNING id,version`, [existing.id, src.title, src.subject, src.grade, summary?.trim() || null, src.body])
-          : await one(client, `INSERT INTO shared_materials(district_id,school_id,author_user_id,kind,source_id,title,subject,grade_level,summary,body)
-              VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,version`,
-              [a.districtId, a.schoolId, a.userId, kind, sourceId, src.title, src.subject, src.grade, summary?.trim() || null, src.body]);
-        if (!m) throw new HttpError(403, "not_the_author");
-        await audit(client, req, existing ? "update" : "share", "shared_material", m.id, `kind=${kind};version=${m.version}${words.length ? ";confirmed_not_students" : ""}`);
-        return { status: existing ? 200 : 201, body: { data: m } };
+        return publish(client, req, { kind, sourceId, src, summary, confirmed: words.length > 0 });
       });
       res.status(out.status).json(out.body);
     } catch (e) { sendError(res, next, e); }
