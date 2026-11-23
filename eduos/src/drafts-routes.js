@@ -19,13 +19,16 @@ import { config } from "./config.js";
 import { enqueueNotifications } from "./notify.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
 import { mergeDraft, cleanDraftBody, missingForCourse } from "./draft-merge.js";
+import { planText } from "./coaching-plan.js";
 import { colleagues } from "./teacher-network-routes.js";
 import { source, copyLesson, studentWordsIn, textOf, publish } from "./materials-routes.js";
 
 const WRITERS = ["teacher", "principal"];
+const draftText = (kind, body, summary) => kind === "practice" || kind === "playbook" ? [summary, planText(body.title, body)].filter(Boolean).join("\n") : textOf(body, summary);
 const onlyWriters = (req, res, next) => WRITERS.includes(req.actor?.role) ? next() : res.status(403).json({ error: "teachers_and_principals_only" });
 const blank = kind => kind === "lesson" ? { title: "", objective: "", content: "", standards: [], sources: [] }
-  : { title: "", summary: null, lessons: [{ title: "", objective: "", content: "", standards: [], sources: [] }] };
+  : kind === "unit" ? { title: "", summary: null, lessons: [{ title: "", objective: "", content: "", standards: [], sources: [] }] }
+  : { title: "", sport: "", summary: null, items: [{ kind: "drill", title: "", minutes: null, description: "", equipment: "" }] };
 
 async function draftFor(client, id, { lock = false } = {}) {
   return one(client, `SELECT d.* FROM collab_drafts d WHERE d.id=$1 AND eduos_is_draft_editor(d.id)${lock ? " FOR UPDATE" : ""}`, [id]);
@@ -62,13 +65,18 @@ export function registerDraftsRoutes(app) {
   // Start a draft: blank, from a lesson or unit you manage, or from the library.
   app.post("/api/drafts", ...write, async (req, res, next) => {
     const { from, kind = null, sourceId = null, title = "", subject, gradeLevel } = req.body || {};
-    if (!["blank", "lesson", "unit", "material"].includes(from) || (from === "blank" && (!["lesson", "unit"].includes(kind) || !cleanText(subject, 40) || !cleanText(gradeLevel, 4)))
+    if (!["blank", "lesson", "unit", "material", "plan"].includes(from) || (from === "blank" && (!["lesson", "unit", "practice", "playbook"].includes(kind) || !cleanText(subject, 40) || !cleanText(gradeLevel, 4)))
         || (from !== "blank" && !validId(sourceId)) || (title && !cleanText(title, 120))) return res.status(400).json({ error: "invalid_draft" });
     try {
       const out = await withTenantTransaction(req.actor, async client => {
         const a = req.actor;
         let d;
-        if (from === "blank") d = { kind, subject: subject.trim(), grade: gradeLevel.trim(), body: { ...blank(kind), title: title.trim() } };
+        if (from === "blank") d = { kind, subject: subject.trim(), grade: gradeLevel.trim(), body: { ...blank(kind), title: title.trim(), ...(kind === "practice" || kind === "playbook" ? { sport: subject.trim() } : {}) } };
+        else if (from === "plan") {
+          const p = await one(client, `SELECT kind,title,sport,level,body FROM coaching_plans WHERE id=$1 AND archived_at IS NULL`, [sourceId]);
+          if (!p) throw new HttpError(404, "plan_not_found");
+          d = { kind: p.kind, subject: p.sport, grade: p.level, body: { title: p.title, sport: p.sport, ...p.body } };
+        }
         else if (from === "material") {
           const m = await one(client, `SELECT kind,subject,grade_level,body FROM shared_materials WHERE id=$1 AND status='shared'`, [sourceId]);
           if (!m) throw new HttpError(404, "material_not_found");
@@ -152,7 +160,7 @@ export function registerDraftsRoutes(app) {
           [d.id, label, body, a.userId]);
         await client.query(`INSERT INTO collab_draft_revisions(draft_id,district_id,version,title,body,edited_by,merged) VALUES($1,$2,$3,$4,$5,$6,$7)`,
           [d.id, a.districtId, saved.version, label, body, a.userId, merged]);
-        const warnings = await studentWordsIn(client, a.districtId, textOf(body, null));
+        const warnings = await studentWordsIn(client, a.districtId, draftText(d.kind, body, null));
         await audit(client, req, "update", "collab_draft", d.id, `version=${saved.version}${merged ? ";merged" : ""}`);
         return { status: 200, body: { data: { version: saved.version, merged, body, warnings } } };
       });
@@ -190,8 +198,8 @@ export function registerDraftsRoutes(app) {
 
   // Into your own course, as drafts the school leader still approves.
   app.post("/api/drafts/:id/copy", ...write, async (req, res, next) => {
-    const { courseId, unitId = null } = req.body || {};
-    if (!validId(req.params.id) || !validId(courseId) || (unitId !== null && !validId(unitId))) return res.status(400).json({ error: "invalid_copy" });
+    const { courseId = null, unitId = null } = req.body || {};
+    if (!validId(req.params.id) || (courseId !== null && !validId(courseId)) || (unitId !== null && !validId(unitId))) return res.status(400).json({ error: "invalid_copy" });
     try {
       const out = await withTenantTransaction(req.actor, async client => {
         const a = req.actor;
@@ -199,6 +207,14 @@ export function registerDraftsRoutes(app) {
         if (!d) throw new HttpError(404, "draft_not_found");
         const gaps = missingForCourse(d.kind, d.body);
         if (gaps.length) return { status: 409, body: { error: "draft_incomplete", missing: gaps } };
+        if (d.kind === "practice" || d.kind === "playbook") {
+          const { title, sport, ...plan } = d.body;
+          const p = await one(client, `INSERT INTO coaching_plans(district_id,owner_user_id,kind,title,sport,level,body) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+            [a.districtId, a.userId, d.kind, title.trim(), sport.trim(), d.grade_level, plan]);
+          await audit(client, req, "copy", "collab_draft", d.id, `kind=${d.kind};version=${d.version};into=coaching_plan`);
+          return { status: 201, body: { data: { kind: d.kind, id: p.id } } };
+        }
+        if (!courseId) throw new HttpError(400, "invalid_copy");
         const course = await one(client, `SELECT id FROM courses WHERE id=$1 AND eduos_can_manage_course(id)`, [courseId]);
         if (!course) throw new HttpError(404, "course_not_found");
         let created;
@@ -230,7 +246,7 @@ export function registerDraftsRoutes(app) {
         if (!d) throw new HttpError(404, "draft_not_found");
         const gaps = missingForCourse(d.kind, d.body);
         if (gaps.length) return { status: 409, body: { error: "draft_incomplete", missing: gaps } };
-        const words = await studentWordsIn(client, req.actor.districtId, textOf(d.body, summary));
+        const words = await studentWordsIn(client, req.actor.districtId, draftText(d.kind, d.body, summary));
         if (words.length && !confirmNotStudents) return { status: 409, body: { error: "may_mention_students", words } };
         return publish(client, req, { kind: d.kind, sourceId: d.id, src: { title: d.title, subject: d.subject, grade: d.grade_level, body: d.body }, summary, confirmed: words.length > 0 });
       });

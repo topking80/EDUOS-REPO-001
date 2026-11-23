@@ -43,7 +43,8 @@ export function registerCoachRoutes(app) {
           }
           const results = await rows(c, `SELECT e.title,e.starts_at,r.opponent,r.home_score,r.away_score,r.status FROM activity_event_results r JOIN school_events e ON e.id=r.event_id
               WHERE r.activity_id=$1 ORDER BY e.starts_at DESC LIMIT 3`, [t.id]);
-          out.push({ id: t.id, kind: t.kind, title: t.title, role: t.staff_role, meetingDetails: t.meeting_details, status: t.status, events, results,
+          const plans = await rows(c, `SELECT id,kind,title,updated_at FROM coaching_plans WHERE team_id=$1 AND owner_user_id=$2 AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 10`, [t.id, a.userId]);
+          out.push({ id: t.id, kind: t.kind, title: t.title, role: t.staff_role, plans, meetingDetails: t.meeting_details, status: t.status, events, results,
             slip: slip ? { id: slip.id, title: slip.title, dueOn: slip.due_on, granted: roster.filter(r => answers.get(r.student_id) === "granted").length,
               declined: roster.filter(r => answers.get(r.student_id) === "declined").length, pending: roster.filter(r => !answers.has(r.student_id)).length } : null,
             roster: roster.map(r => ({ studentId: r.student_id, name: r.name, grade: r.grade, jersey: r.jersey,

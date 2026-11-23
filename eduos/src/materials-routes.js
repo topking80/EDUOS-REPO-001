@@ -165,6 +165,7 @@ export function registerMaterialsRoutes(app) {
         const a = req.actor;
         const m = await one(client, `SELECT m.id,m.kind,m.title,m.body,m.version FROM shared_materials m WHERE m.id=$1 AND m.status='shared'`, [req.params.id]);
         if (!m) throw new HttpError(404, "material_not_found");
+        if (m.kind === "practice" || m.kind === "playbook") throw new HttpError(400, "copy_coaching_plans_with_coaching_library");
         const course = await one(client, `SELECT id FROM courses WHERE id=$1 AND eduos_can_manage_course(id)`, [courseId]);
         if (!course) throw new HttpError(404, "course_not_found");
         let created, lessons = [];
