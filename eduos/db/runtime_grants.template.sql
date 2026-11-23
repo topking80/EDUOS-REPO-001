@@ -622,3 +622,12 @@ GRANT EXECUTE ON FUNCTION eduos_is_school_teacher(uuid, uuid), eduos_school_teac
 GRANT SELECT ON classroom_commands TO eduos_app;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON classroom_commands FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_classroom_command(uuid, text, jsonb), eduos_classroom_agent_take(uuid, text), eduos_classroom_agent_result(uuid, text, uuid, boolean, text) TO eduos_app;
+
+-- ROOM-01 (db/111): scanning into a room. Check-ins and check-in codes are
+-- written only by the SECURITY DEFINER functions.
+GRANT UPDATE (kind, door_secret_hash, door_secret_set_at) ON classroom_rooms TO eduos_app;
+GRANT SELECT ON room_checkins TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON room_checkins FROM eduos_app;
+REVOKE ALL ON classroom_checkin_codes FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_can_read_room_checkins(uuid, uuid), eduos_room_slot_now(uuid), eduos_room_local_date(uuid),
+  eduos_classroom_agent_checkin_code(uuid, text, text), eduos_room_checkin(uuid, text, text), eduos_classroom_agent_kiosk_checkin(uuid, text, text), eduos_my_room_checkins() TO eduos_app;

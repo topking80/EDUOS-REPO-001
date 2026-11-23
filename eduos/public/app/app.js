@@ -138,7 +138,7 @@ const ROLE_TABS = {
   pupil: [["home", "Home", "home"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
   teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
-  librarian: [["library", "Library desk", "book"], ["messages", "Messages", "chat"]],
+  librarian: [["library", "Library desk", "book"], ["mediacenter", "Media center", "check"], ["messages", "Messages", "chat"]],
   vice_principal: [["operations", "Operations", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["devices", "Rooms & devices", "server"], ["messages", "Messages", "chat"]],
   counselor: [["guidance", "Counseling", "heart"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
@@ -295,7 +295,7 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room", "scan", "roll"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
@@ -304,6 +304,8 @@ function parentTab(tab) {
   if (tab === "draft") return "network";
   if (["states", "stateinfo", "licenses"].includes(tab)) return "me";
   if (tab === "plan" || tab === "present" || tab === "room") return "classes";
+  if (tab === "scan") return tabsFor()[0]?.[0];
+  if (tab === "roll") return tabsFor().some(t => t[0] === "classes") ? "classes" : tabsFor().some(t => t[0] === "mediacenter") ? "mediacenter" : "devices";
   if (["teams", "coachplan", "coachlib"].includes(tab)) return tabsFor().some(t => t[0] === "teams") ? "teams" : "activities";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
@@ -411,6 +413,7 @@ VIEWS.home = async () => {
   const current = skills.find(s => s.state === "current") || skills[0];
   const mastered = skills.filter(s => s.state === "mastered").length;
   return [
+    await scanCard(),
     h("section", { class: "card hero", "aria-label": "Today" },
       h("div", { class: "row" }, current ? ring(current.mastery, current.title) : null,
         h("div", { class: "grow" }, h("p", { class: "muted small" }, current ? `${current.subject} · up next` : "Learning path"),
@@ -880,6 +883,7 @@ VIEWS.classes = async () => {
     h("div", { class: "stats" }, stat(d.students, "learners"), stat(d.to_grade, "to grade", true), stat(d.open_assignments, "open assignments"), stat(d.absences_7d, "absences (7 days)", true)),
     actionCenter,
     classroom,
+    await scanCard(),
     await todayCard(),
     h("section", { class: "card", "aria-label": "Bus riders" }, h("h2", {}, "Bus riders on my roster"),
       riders.length ? h("ul", { class: "list" }, riders.map(k => h("li", { class: "row" }, h("span", { class: "grow" }, `${k.display_name} · ${k.bus_label} ${k.direction.toUpperCase()}`), chip(k.status)))) : empty("None of your learners ride today.")),
@@ -3576,9 +3580,9 @@ VIEWS.me = async () => {
 };
 
 // ---- DEV-01: rooms and the classroom device registry ----------------------
-const DEVICE_KIND = { display: "Display", student_device: "Student devices", equipment: "Room equipment" };
-const DEVICE_CAPS = { display: ["show", "blank", "input", "volume", "power"], student_device: ["lock", "unlock", "open_link", "focus"], equipment: ["power", "volume", "input", "lights"] };
-const CAP_TEXT = { show: "Show a teacher's screen", blank: "Blank the screen", input: "Switch input", volume: "Volume", power: "Power on/off", lights: "Lights",
+const DEVICE_KIND = { display: "Display", student_device: "Student devices", equipment: "Room equipment", kiosk: "Check-in kiosk" };
+const DEVICE_CAPS = { display: ["show", "blank", "input", "volume", "power"], student_device: ["lock", "unlock", "open_link", "focus"], equipment: ["power", "volume", "input", "lights"], kiosk: ["checkin"] };
+const CAP_TEXT = { checkin: "Check students in with their ID card", show: "Show a teacher's screen", blank: "Blank the screen", input: "Switch input", volume: "Volume", power: "Power on/off", lights: "Lights",
   lock: "Lock", unlock: "Unlock", open_link: "Open a link for the class", focus: "Focus mode (one app or site)" };
 const DEV_STATUS = { pending: ["expected", "Waiting for district IT"], approved: ["present", "Approved"], rejected: ["absent", "Not approved"], retired: ["absent", "Retired"] };
 VIEWS.devices = async () => {
@@ -3613,9 +3617,11 @@ VIEWS.devices = async () => {
     filter === "paired" ? await pairingsCard() :
     filter === "rooms"
       ? h("section", { class: "card", "aria-label": "Rooms" }, rooms.length ? h("ul", { class: "list" }, rooms.map(r => h("li", {},
-          h("div", { class: "row wrap" }, h("b", { class: "grow" }, r.name), h("span", { class: "small muted" }, [it ? r.school : "", r.building, r.capacity ? `${r.capacity} seats` : ""].filter(Boolean).join(" · "))),
+          h("div", { class: "row wrap" }, h("b", { class: "grow" }, r.name), h("span", { class: "small muted" }, [r.kind === "media_center" ? "Media center" : "", it ? r.school : "", r.building, r.capacity ? `${r.capacity} seats` : ""].filter(Boolean).join(" · "))),
           h("p", { class: "small" }, r.devices.length ? r.devices.map(d => d.name).join(", ") : "No devices yet."),
           h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", "aria-label": `Timetable: ${r.name}`, onclick: () => roomTimetable(r) }, "Timetable"),
+            h("button", { class: "btn small", type: "button", "aria-label": `Roll: ${r.name}`, onclick: () => openView("roll", { rollRoomId: r.id }) }, "Roll"),
+            h("button", { class: "btn small", type: "button", "aria-label": `${r.doorQr ? "New door QR" : "Door QR"}: ${r.name}`, onclick: () => doorQr(r) }, r.doorQr ? "New door QR" : "Door QR"),
             h("button", { class: "btn small", type: "button", "aria-label": `Edit room: ${r.name}`, onclick: () => editRoom(r, schools) }, "Edit"),
             h("button", { class: "btn small", type: "button", "aria-label": `Archive room: ${r.name}`, onclick: async () => {
               if (!(await ask({ title: `Archive ${r.name}?`, text: r.devices.length ? "Its devices leave the room and stay approved." : "It leaves the list.", confirm: "Archive" }))) return;
@@ -3629,9 +3635,10 @@ const schoolField = (schools, value) => schools ? [h("label", { for: "dv-school"
 async function editRoom(r, schools) {
   const v = await dialogForm(r ? `Edit ${r.name}` : "Add a room", () => {
     const inp = (id, label, val, attrs = {}) => [h("label", { for: id }, label), h("input", { id, value: val ?? "", ...attrs })];
-    return { fields: [!r ? schoolField(schools) : null, inp("rm-n", "Room name or number", r?.name, { required: true, maxlength: 80 }), inp("rm-b", "Building (optional)", r?.building, { maxlength: 80 }),
-      inp("rm-c", "Seats (optional)", r?.capacity, { type: "number", min: 1, max: 1000 })],
-      value: () => { const g = id => document.getElementById(id)?.value.trim(); return { schoolId: g("dv-school") || undefined, name: g("rm-n"), building: g("rm-b") || null, capacity: g("rm-c") || null }; } };
+    const kind = h("select", { id: "rm-k" }, [["classroom", "Classroom"], ["media_center", "Media center"]].map(([v, t]) => h("option", { value: v, selected: (r?.kind || "classroom") === v }, t)));
+    return { fields: [!r ? schoolField(schools) : null, inp("rm-n", "Room name or number", r?.name, { required: true, maxlength: 80 }), h("label", { for: "rm-k" }, "Kind of room"), kind,
+      inp("rm-b", "Building (optional)", r?.building, { maxlength: 80 }), inp("rm-c", "Seats (optional)", r?.capacity, { type: "number", min: 1, max: 1000 })],
+      value: () => { const g = id => document.getElementById(id)?.value.trim(); return { schoolId: g("dv-school") || undefined, name: g("rm-n"), kind: kind.value, building: g("rm-b") || null, capacity: g("rm-c") || null }; } };
   }, r ? "Save" : "Add");
   if (!v) return;
   try { await (r ? api.put(`/api/rooms/${r.id}`, v) : api.post("/api/rooms", v)); toast("Saved."); openView("devices", { devFilter: "rooms" }); }
@@ -3688,24 +3695,27 @@ const timeText = t => new Date(t).toLocaleTimeString([], { hour: "numeric", minu
 async function roomTimetable(r) {
   const [slots, teachers] = await Promise.all([api.get(`/api/rooms/${r.id}/timetable`).then(x => x.data), api.get(`/api/rooms/${r.id}/teachers`).then(x => x.data)]);
   const v = await dialogForm(`Timetable: ${r.name}`, done => {
-    const sel = h("select", { id: "tt-t", required: true }, h("option", { value: "", disabled: true, selected: true }, "Choose a teacher…"), teachers.map(t => h("option", { value: t.id }, t.name)));
+    const course = h("select", { id: "tt-c" }, h("option", { value: "" }, "No course"));
+    const sel = h("select", { id: "tt-t", required: true, onchange: () => course.replaceChildren(h("option", { value: "" }, "No course"),
+      ...(teachers.find(t => t.id === sel.value)?.courses || []).map(c => h("option", { value: c.id }, c.title))) },
+      h("option", { value: "", disabled: true, selected: true }, "Choose a teacher…"), teachers.map(t => h("option", { value: t.id }, t.name)));
     const days = h("fieldset", { class: "caps" }, h("legend", {}, "Days"), WEEKDAYS.map(([n, t]) => h("label", { class: "check" }, h("input", { type: "checkbox", value: n, checked: n <= 5 }), ` ${t}`)));
     const inp = (id, label, attrs) => [h("label", { for: id }, label), h("input", { id, ...attrs })];
     return { fields: [
       h("p", { class: "small muted" }, "A teacher can pair their own phone or laptop with this room's devices only while they're timetabled here (from ten minutes before)."),
       slots.length ? h("ul", { class: "list" }, slots.map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, x.teacher), h("br"),
-        h("span", { class: "small muted" }, `${dayText(x.weekdays)} · ${x.starts}–${x.ends}${x.label ? ` · ${x.label}` : ""}`)),
+        h("span", { class: "small muted" }, `${dayText(x.weekdays)} · ${x.starts}–${x.ends}${x.course ? ` · ${x.course}` : ""}${x.label ? ` · ${x.label}` : ""}`)),
         h("button", { class: "btn small", type: "button", "aria-label": `Remove: ${x.teacher} ${x.starts}`, onclick: async () => {
           try { await api.post(`/api/room-timetable/${x.id}/end`, {}); toast("Removed."); done(null); roomTimetable(r); } catch { toast("Couldn't remove it."); } } }, "Remove"))))
         : h("p", { class: "small" }, "No one is timetabled here yet."),
       h("h3", {}, "Add a time"), teachers.length ? null : h("p", { class: "small muted" }, "No teachers at this school yet."),
-      h("label", { for: "tt-t" }, "Teacher"), sel, days, inp("tt-s", "Starts", { type: "time", required: true, value: "08:00" }), inp("tt-e", "Ends", { type: "time", required: true, value: "09:00" }),
+      h("label", { for: "tt-t" }, "Teacher"), sel, h("label", { for: "tt-c" }, "Course (its class list is the room's roll)"), course, days, inp("tt-s", "Starts", { type: "time", required: true, value: "08:00" }), inp("tt-e", "Ends", { type: "time", required: true, value: "09:00" }),
       inp("tt-l", "Class or period (optional)", { maxlength: 80, placeholder: "e.g. Period 1 · Math 3" })],
       value: () => { const weekdays = [...days.querySelectorAll("input:checked")].map(i => Number(i.value));
         const g = id => document.getElementById(id).value.trim();
         if (!weekdays.length) { toast("Choose at least one day."); return undefined; }
         if (g("tt-e") <= g("tt-s")) { toast("The end has to be after the start."); return undefined; }
-        return { teacherId: sel.value, weekdays, starts: g("tt-s"), ends: g("tt-e"), label: g("tt-l") || null }; } };
+        return { teacherId: sel.value, courseId: course.value || null, weekdays, starts: g("tt-s"), ends: g("tt-e"), label: g("tt-l") || null }; } };
   }, "Add");
   if (!v) return;
   try { await api.post(`/api/rooms/${r.id}/timetable`, v); toast("Added."); roomTimetable(r); } catch { toast("Couldn't add it."); }
@@ -3743,7 +3753,8 @@ async function myClassroomCard() {
           h("button", { class: "btn small", type: "button", "aria-label": `End pairing: ${r.name}`, onclick: async () => {
             try { await api.post(`/api/pairings/${r.pairing.id}/end`, {}); toast("Unpaired."); go(state.tab, { push: false }); } catch { toast("Couldn't unpair."); } } }, "End pairing")]
         : r.now && r.devices.length ? h("button", { class: "btn small primary", type: "button", "aria-label": `Pair this device: ${r.name}`, onclick: () => pairRoom(r) }, "Pair this device")
-        : null)))));
+        : null,
+        h("button", { class: "btn small", type: "button", "aria-label": `Roll: ${r.name}`, onclick: () => openView("roll", { rollRoomId: r.id }) }, "Roll"))))));
 }
 async function pairRoom(r) {
   const v = await dialogForm(`Pair with ${r.name}`, () => {
@@ -3812,6 +3823,96 @@ VIEWS.room = async () => {
     h("section", { class: "card", "aria-label": "Sent" }, h("h3", {}, "Sent"), h("div", { id: "room-log" }, h("p", { class: "small muted" }, "Loading…"))),
     h("button", { class: "btn danger block", type: "button", onclick: async () => {
       try { await api.post(`/api/pairings/${r.pairing.id}/end`, {}); toast("Unpaired."); go("classes"); } catch { toast("Couldn't unpair."); } } }, "End pairing")];
+};
+// ---- ROOM-01: scanning into a classroom or the media center ----------------
+const SCAN_METHOD = { display_qr: "room display", door_qr: "door poster", kiosk_id: "ID card" };
+// A scanned link (#/scan?r=…&c=… or &d=…) is kept for this tab, so it survives signing in.
+function takeScanLink() {
+  const m = /^#\/scan\?(.*)$/.exec(location.hash);
+  if (!m) return false;
+  const q = new URLSearchParams(m[1]), r = q.get("r"), c = q.get("c"), d = q.get("d");
+  if (/^[0-9a-f-]{36}$/i.test(r || "") && /^[A-Za-z0-9_-]{22,64}$/.test(c || d || "")) {
+    try { sessionStorage.setItem("eduos-scan", JSON.stringify({ r, ...(c ? { c } : { d }) })); } catch {}
+  }
+  history.replaceState(history.state, "", `${location.pathname}${location.search}#/scan`);
+  return true;
+}
+takeScanLink();
+const canScan = () => state.me && !["parent", "it_admin", "superintendent", "driver", "sro"].includes(state.me.role);
+async function scanCard() {
+  if (!canScan()) return null;
+  const mine = (await safe(api.get("/api/my/checkins")))?.data || [];
+  return h("section", { class: "card", "aria-label": "Scan in" }, h("div", { class: "row wrap" }, h("h2", { class: "grow" }, "Scan in"),
+      h("button", { class: "btn small", type: "button", onclick: () => go("scan") }, icon("qr"), "How to scan in")),
+    mine.length ? h("p", { class: "small muted" }, `Today: ${mine.slice(0, 3).map(k => `${k.room}${k.class ? ` (${k.class})` : ""} at ${timeText(k.at)}`).join(" · ")}`)
+      : h("p", { class: "small muted" }, "Scan the QR on your classroom's screen or the media center door when you arrive."));
+}
+async function submitScan(link) {
+  try {
+    const r = (await api.post(`/api/rooms/${link.r}/checkin`, link.c ? { code: link.c } : { door: link.d })).data;
+    return h("section", { class: "card", "aria-label": "Checked in" }, h("h2", {}, r.already ? `You're already checked in to ${r.room}` : `Checked in to ${r.room}`),
+      h("p", {}, `${r.class ? `${r.class} · ` : ""}${timeText(r.checkedInAt)}`), state.me.role === "pupil" ? h("p", { class: "small muted" }, "Your teacher confirms attendance.") : null);
+  } catch (e) {
+    return h("section", { class: "card", "aria-label": "Couldn't check in" }, h("h2", {}, "Couldn't check in"),
+      h("p", {}, { code_expired: "That QR has changed. Scan the one on the screen now.", room_not_found: "That room isn't at your school.", not_allowed: "Only students and staff check into rooms.",
+        not_a_student_here: "Your account isn't linked to a student at this school." }[e.body?.error] || (e.status === 429 ? "Too many scans. Wait a minute." : "Please try again.")));
+  }
+}
+VIEWS.scan = async () => {
+  let link = null; try { link = JSON.parse(sessionStorage.getItem("eduos-scan") || "null"); sessionStorage.removeItem("eduos-scan"); } catch {}
+  const result = link ? await submitScan(link) : null;
+  // EduOS doesn't use the camera (privacy): the QR holds an EduOS link, so the
+  // phone's own camera app opens it here.
+  return [h("h2", {}, "Scan in"), result,
+    h("section", { class: "card", "aria-label": "How to scan in" }, h("ol", { class: "steps" },
+      h("li", {}, "Open your phone's camera app."), h("li", {}, "Point it at the QR on the classroom screen or the media center door."), h("li", {}, "Tap the link it shows. EduOS opens and checks you in.")),
+      h("p", { class: "small muted" }, "No phone? Ask about the ID-card kiosk, or your teacher can mark you on the roll."))];
+};
+async function doorQr(r) {
+  if (r.doorQr && !(await ask({ title: `New door QR for ${r.name}?`, text: "The old poster stops working. Print the new one.", confirm: "Make a new one" }))) return;
+  let d; try { d = (await api.post(`/api/rooms/${r.id}/door-qr`, {})).data; } catch { return toast("Couldn't make it."); }
+  await dialogForm(`Door QR: ${r.name}`, () => ({ fields: [
+    h("div", { class: "print-qr" }, h("h3", {}, `Scan in: ${r.name}`), qrSvg(d.qr, `QR code to scan into ${r.name}`), h("p", { class: "small" }, "Students and staff scan this with the EduOS app or the phone camera.")),
+    h("p", { class: "small muted" }, d.note), h("button", { class: "btn", type: "button", onclick: () => window.print() }, "Print")], value: () => undefined }), null);
+  go("devices", { push: false });
+}
+const ATT_STATUS = { present: ["present", "Present"], absent: ["absent", "Absent"], tardy: ["expected", "Tardy"], excused: ["expected", "Excused"] };
+async function confirmAttendance(date, ids, status) {
+  let n = 0;
+  for (const id of ids) { try { await api.post("/api/attendance", { studentId: id, eventDate: date, status }); n++; } catch {} }
+  toast(n === ids.length ? `Saved ${n}.` : `Saved ${n} of ${ids.length}.`);
+  go("roll", { push: false });
+}
+VIEWS.roll = async () => {
+  if (!state.rollRoomId) return [empty("Choose a room first.")];
+  const d = (await api.get(`/api/rooms/${state.rollRoomId}/roll`)).data;
+  const backTo = tabsFor().some(t => t[0] === "classes") ? back("classes", "Classes") : tabsFor().some(t => t[0] === "mediacenter") ? back("mediacenter", "Media center") : back("devices", "Rooms & devices");
+  const who = (x, at, method) => [h("span", { class: "grow" }, h("b", {}, x), at ? h("span", { class: "small muted" }, ` · ${timeText(at)}, ${SCAN_METHOD[method]}`) : null)];
+  return [backTo, h("h2", {}, `${d.name}: roll`), h("p", { class: "small muted" }, `${d.date}. A check-in shows who scanned in; you confirm attendance.${d.kind === "media_center" ? "" : " A door-poster scan could come from a photo of the poster."}`),
+    d.periods.map(p => {
+      const waiting = p.roster.filter(s => s.checkedInAt && !s.attendance);
+      return h("section", { class: "card", "aria-label": `${p.class || "Period"} ${p.starts}` },
+        h("div", { class: "row wrap" }, h("h3", { class: "grow" }, `${p.starts}–${p.ends} · ${p.class || "No class named"}`), p.now ? chip("present", "Now") : null),
+        h("p", { class: "small muted" }, `${p.teacher}${p.roster.length ? ` · ${p.roster.filter(s => s.checkedInAt).length} of ${p.roster.length} checked in` : ""}`),
+        p.roster.length ? h("ul", { class: "list" }, p.roster.map(s => h("li", { class: "row wrap" }, ...who(s.name, s.checkedInAt, s.method),
+          s.attendance ? chip(...ATT_STATUS[s.attendance]) : s.checkedInAt ? chip("expected", "Checked in") : chip("absent", "Not checked in"),
+          state.me.role === "teacher" && !s.attendance ? h("div", { class: "btns" },
+            h("button", { class: "btn small", type: "button", "aria-label": `Present: ${s.name}`, onclick: () => confirmAttendance(d.date, [s.studentId], "present") }, "Present"),
+            h("button", { class: "btn small", type: "button", "aria-label": `Absent: ${s.name}`, onclick: () => confirmAttendance(d.date, [s.studentId], "absent") }, "Absent")) : null)))
+          : h("p", { class: "small muted" }, "No course is set for this period, so there's no class list. The school can set one in the room's timetable."),
+        p.others.length ? [h("h4", {}, "Also checked in"), h("ul", { class: "list" }, p.others.map(o => h("li", { class: "row" }, ...who(o.name, o.at, o.method), o.kind === "staff" ? chip("present", "Staff") : null)))] : null,
+        state.me.role === "teacher" && waiting.length ? h("button", { class: "btn primary", type: "button", onclick: () => confirmAttendance(d.date, waiting.map(s => s.studentId), "present") },
+          `Mark the ${waiting.length} checked in present`) : null);
+    }),
+    d.unscheduled.length || d.kind === "media_center" ? h("section", { class: "card", "aria-label": "Checked in outside a period" }, h("h3", {}, d.kind === "media_center" ? "Checked in today" : "Outside a period"),
+      d.unscheduled.length ? h("ul", { class: "list" }, d.unscheduled.map(o => h("li", { class: "row" }, ...who(o.name, o.at, o.method), o.kind === "staff" ? chip("present", "Staff") : null))) : empty("No one yet.")) : null];
+};
+VIEWS.mediacenter = async () => {
+  const rooms = (await api.get("/api/rooms?kind=media_center")).data;
+  if (rooms.length === 1) { state.rollRoomId = rooms[0].id; return VIEWS.roll(); }
+  return [h("h2", {}, "Media center"), h("section", { class: "card", "aria-label": "Media centers" }, rooms.length ? h("ul", { class: "list" }, rooms.map(r => h("li", { class: "row" }, h("b", { class: "grow" }, r.name),
+    h("button", { class: "btn small", type: "button", "aria-label": `Who's checked in: ${r.name}`, onclick: () => openView("roll", { rollRoomId: r.id }) }, "Who's checked in"))))
+    : empty("Your school hasn't set up a media center room yet. A principal adds one under Rooms & devices."))];
 };
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
@@ -4672,6 +4773,6 @@ async function boot() {
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkSafety(); });
 window.addEventListener("popstate", () => { const t = location.hash.replace(/^#\//, ""); if (state.me && t) go(t, { push: false }); });
-window.addEventListener("hashchange", () => { const t = location.hash.replace(/^#\//, ""); if (state.me && t && t !== state.tab) go(t, { push: false }); });
+window.addEventListener("hashchange", () => { if (takeScanLink() && state.me) return go("scan", { push: false }); const t = location.hash.replace(/^#\//, ""); if (state.me && t && t !== state.tab) go(t, { push: false }); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/app/sw.js", { scope: "/app/" }).catch(() => {});
 boot();

@@ -21,7 +21,7 @@ import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
 import { parseDevice } from "./device-registry.js";
 
-const READERS = ["it_admin", "superintendent", "principal", "vice_principal", "teacher"];
+const READERS = ["it_admin", "superintendent", "principal", "vice_principal", "teacher", "librarian"];
 const MANAGERS = ["it_admin", "principal", "vice_principal"];
 const optText = (v, max) => v == null || v === "" ? true : cleanText(v, max);
 const orNull = v => typeof v === "string" && v.trim() ? v.trim() : null;
@@ -61,20 +61,22 @@ export function registerDeviceRoutes(app) {
   // ---------- rooms ----------
   app.get("/api/rooms", requireSession, only(READERS), run(async (c, req) => {
     const school = validId(req.query.schoolId) ? req.query.schoolId : null;
-    const list = await rows(c, `SELECT r.id,r.school_id,s.name AS school,r.name,r.building,r.capacity FROM classroom_rooms r JOIN schools s ON s.id=r.school_id
-        WHERE r.archived_at IS NULL AND ($1::uuid IS NULL OR r.school_id=$1) ORDER BY s.name,r.name`, [school]);
+    const kind = ["classroom", "media_center"].includes(req.query.kind) ? req.query.kind : null;
+    const list = await rows(c, `SELECT r.id,r.school_id,s.name AS school,r.name,r.building,r.capacity,r.kind,r.door_secret_hash IS NOT NULL AS door_qr FROM classroom_rooms r JOIN schools s ON s.id=r.school_id
+        WHERE r.archived_at IS NULL AND ($1::uuid IS NULL OR r.school_id=$1) AND ($2::text IS NULL OR r.kind=$2) ORDER BY s.name,r.name`, [school, kind]);
     const devices = await rows(c, `SELECT id,room_id,kind,name FROM classroom_devices WHERE room_id IS NOT NULL AND status='approved' ORDER BY name`);
-    return list.map(r => ({ id: r.id, schoolId: r.school_id, school: r.school, name: r.name, building: r.building, capacity: r.capacity,
+    return list.map(r => ({ id: r.id, schoolId: r.school_id, school: r.school, name: r.name, building: r.building, capacity: r.capacity, kind: r.kind, doorQr: r.door_qr,
       devices: devices.filter(d => d.room_id === r.id).map(d => ({ id: d.id, kind: d.kind, name: d.name })) }));
   }));
 
   const parseRoom = b => cleanText(b.name, 80) && optText(b.building, 80) && (b.capacity == null || b.capacity === "" || (Number.isInteger(+b.capacity) && +b.capacity >= 1 && +b.capacity <= 1000))
-    ? [b.name.trim(), orNull(b.building), b.capacity == null || b.capacity === "" ? null : +b.capacity] : null;
+    && (b.kind == null || ["classroom", "media_center"].includes(b.kind))
+    ? [b.name.trim(), orNull(b.building), b.capacity == null || b.capacity === "" ? null : +b.capacity, b.kind || "classroom"] : null;
 
   app.post("/api/rooms", limiter, requireSession, requireCsrf, only(MANAGERS), run(async (c, req) => {
     const v = parseRoom(req.body || {});
     if (!v) throw new HttpError(400, "invalid_room");
-    const r = await one(c, `INSERT INTO classroom_rooms(district_id,school_id,name,building,capacity,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+    const r = await one(c, `INSERT INTO classroom_rooms(district_id,school_id,name,building,capacity,kind,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
       [req.actor.districtId, schoolFor(req, req.body.schoolId), ...v, req.actor.userId]);
     await audit(c, req, "create", "classroom_room", r.id, v[0]);
     return r;
@@ -83,7 +85,7 @@ export function registerDeviceRoutes(app) {
   app.put("/api/rooms/:id", limiter, requireSession, requireCsrf, only(MANAGERS), run(async (c, req) => {
     const v = parseRoom(req.body || {});
     if (!validId(req.params.id) || !v) throw new HttpError(400, "invalid_room");
-    const r = await one(c, `UPDATE classroom_rooms SET name=$2,building=$3,capacity=$4 WHERE id=$1 AND archived_at IS NULL RETURNING id`, [req.params.id, ...v]);
+    const r = await one(c, `UPDATE classroom_rooms SET name=$2,building=$3,capacity=$4,kind=$5 WHERE id=$1 AND archived_at IS NULL RETURNING id`, [req.params.id, ...v]);
     if (!r) throw new HttpError(404, "room_not_found");
     await audit(c, req, "update", "classroom_room", r.id, v[0]);
     return r;

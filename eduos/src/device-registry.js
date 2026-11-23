@@ -5,7 +5,8 @@ import { cleanText } from "./role-app-util.js";
 export const DEVICE_CAPS = Object.freeze({
   display: ["show", "blank", "input", "volume", "power"],
   student_device: ["lock", "unlock", "open_link", "focus"],
-  equipment: ["power", "volume", "input", "lights"]
+  equipment: ["power", "volume", "input", "lights"],
+  kiosk: ["checkin"] // ROOM-01: reads student ID cards to check them into the room
 });
 const optText = (v, max) => v == null || v === "" ? true : cleanText(v, max);
 const orNull = v => typeof v === "string" && v.trim() ? v.trim() : null;
