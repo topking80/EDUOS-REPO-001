@@ -631,3 +631,12 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON room_checkins FROM eduos_app;
 REVOKE ALL ON classroom_checkin_codes FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_can_read_room_checkins(uuid, uuid), eduos_room_slot_now(uuid), eduos_room_local_date(uuid),
   eduos_classroom_agent_checkin_code(uuid, text, text), eduos_room_checkin(uuid, text, text), eduos_classroom_agent_kiosk_checkin(uuid, text, text), eduos_my_room_checkins() TO eduos_app;
+
+-- ROOM-02 (db/112): remote lessons on the teacher's daily schedule. Remote
+-- check-ins are written only by eduos_remote_lesson_join(). Cancelled, never deleted.
+GRANT SELECT, INSERT ON class_remote_lessons TO eduos_app;
+GRANT UPDATE (starts, ends, join_url, lesson_id, note, updated_at, cancelled_at) ON class_remote_lessons TO eduos_app;
+GRANT SELECT ON remote_lesson_checkins TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON remote_lesson_checkins FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON class_remote_lessons FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_teaches_course(uuid), eduos_enrolled_pupil_student(uuid), eduos_remote_lesson_join(uuid) TO eduos_app;

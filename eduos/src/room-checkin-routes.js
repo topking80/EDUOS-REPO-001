@@ -108,10 +108,13 @@ export function registerRoomCheckinRoutes(app) {
             (SELECT a.status FROM attendance_events a WHERE a.student_id=s.id AND a.event_date=$2 ORDER BY a.observed_at DESC LIMIT 1) AS attendance
             FROM course_enrollments e JOIN students s ON s.id=e.student_id WHERE e.course_id=$1 AND e.status='active' ORDER BY s.display_name`, [t.course_id, today]) : [];
         const here = checkins.filter(k => k.slot_id === t.id);
+        // ROOM-02: students who joined the class's remote lesson today.
+        const remote = t.course_id ? await rows(c, `SELECT k.student_id,k.checked_in_at FROM remote_lesson_checkins k JOIN class_remote_lessons s ON s.id=k.session_id
+            WHERE s.course_id=$1 AND s.lesson_date=$2 AND s.cancelled_at IS NULL`, [t.course_id, today]) : [];
         here.forEach(k => shown.add(k.id));
         out.push({ id: t.id, starts: hhmm(t.starts), ends: hhmm(t.ends), class: t.label || t.course, course: t.course, courseId: t.course_id, teacher: t.teacher, now: t.id === room.now_slot,
-          roster: roster.map(s => { const k = here.find(x => x.student_id === s.id);
-            return { studentId: s.id, name: s.name, checkedInAt: k?.checked_in_at ?? null, method: k?.method ?? null, attendance: s.attendance ?? null }; }),
+          roster: roster.map(s => { const k = here.find(x => x.student_id === s.id), rm = remote.find(x => x.student_id === s.id);
+            return { studentId: s.id, name: s.name, checkedInAt: k?.checked_in_at ?? rm?.checked_in_at ?? null, method: k?.method ?? (rm ? "remote" : null), attendance: s.attendance ?? null }; }),
           others: here.filter(k => !roster.some(s => s.id === k.student_id)).map(k => ({ name: k.name, kind: k.person_kind, at: k.checked_in_at, method: k.method })) });
       }
       // Outside a period (or in the media center): everyone who checked in today.
