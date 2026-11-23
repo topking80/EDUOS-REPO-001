@@ -705,3 +705,7 @@ GRANT EXECUTE ON FUNCTION eduos_safety_incident_staff(uuid), eduos_safety_incide
 
 -- db/121: vice principals act with the principal's authority, except assigning roles.
 GRANT EXECUTE ON FUNCTION eduos_ctx_membership_role(), eduos_ctx_is_vice_principal(), eduos_refuse_vice_principal_assignment(), eduos_audit_membership_role() TO eduos_app;
+
+-- SAFE-02 (db/122): classroom displays follow a safety alert. The device's
+-- safety columns are written only by eduos_classroom_agent_safety.
+GRANT EXECUTE ON FUNCTION eduos_classroom_agent_safety(uuid, text), eduos_safety_live_at(uuid), eduos_safety_displays(uuid) TO eduos_app;

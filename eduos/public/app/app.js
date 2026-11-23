@@ -2158,8 +2158,9 @@ async function roomStatusCard(i, compact = false) {
   return card;
 }
 async function roomBoardCard(i) {
-  const b = (await safe(api.get(`/api/safety/incidents/${i.id}/rooms`)))?.data;
+  const [b, dv] = await Promise.all([safe(api.get(`/api/safety/incidents/${i.id}/rooms`)).then(r => r?.data), safe(api.get(`/api/safety/incidents/${i.id}/displays`)).then(r => r?.data)]);
   if (!b) return null;
+  const late = dv ? dv.devices.filter(d => !d.switched) : [];
   const t = b.totals;
   return h("section", { class: "card", "aria-label": "Rooms" }, h("div", { class: "row" }, h("h2", { class: "grow" }, "Rooms"), h("span", { class: "small muted" }, `${t.reported} of ${t.rooms} rooms reported`)),
     h("div", { class: "stats" }, stat(t.needs_help, "need help", true), stat(t.not_secured, "not secured", true), stat(t.secured, "secured"), stat(t.moved, "moved out"), stat(t.waiting, "not heard from", true)),
@@ -2168,6 +2169,8 @@ async function roomBoardCard(i) {
       r.report ? h("p", { class: "small muted" }, [r.report.students !== null ? `${r.report.students} students` : null, r.report.adults !== null ? `${r.report.adults} adults` : null,
         r.report.by, fmtTime(r.report.at)].filter(Boolean).join(" · ") + (r.report.note ? ` · ${r.report.note}` : "")) : null)))
       : empty("No rooms are set up for this school. Staff can still report where they are."),
+    dv?.total ? h("p", { class: "small" }, `Classroom screens: ${dv.switched} of ${dv.total} switched${i.kind === "lockdown" && i.status === "active" ? " (dark and silent)" : ""}.`,
+      late.length ? ` Not yet: ${late.slice(0, 6).map(d => `${d.name}${d.room ? ` (${d.room})` : ""}${d.lastSeenAt ? `, last heard ${fmtTime(d.lastSeenAt)}` : ", never heard from"}`).join("; ")}${late.length > 6 ? ` and ${late.length - 6} more` : ""}.` : "") : null,
     h("p", { class: "small muted" }, "Rooms report themselves; EduOS doesn't track anyone's location."));
 }
 // What the alert reached. In-app notices are in each person's app; email,

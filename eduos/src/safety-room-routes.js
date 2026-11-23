@@ -88,6 +88,24 @@ export function registerSafetyRoomRoutes(app) {
     } catch (e) { sendError(res, next, e); }
   });
 
+  // SAFE-02: which displays, kiosks and student devices have switched to the alert.
+  app.get("/api/safety/incidents/:id/displays", requireSession, requirePermission("safety", "read"), async (req, res, next) => {
+    const a = req.actor;
+    if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_incident_id" });
+    if (!VIEWER_ROLES.includes(a.role)) return res.status(403).json({ error: "role_not_allowed" });
+    try {
+      const data = await withTenantTransaction(a, async client => {
+        const i = await loadIncident(client, req.params.id);
+        if (!i || (a.role !== "superintendent" && i.school_id !== a.schoolId)) throw new HttpError(404, "incident_not_found");
+        const list = await rows(client, `SELECT * FROM eduos_safety_displays($1)`, [i.id]);
+        return { total: list.length, switched: list.filter(d => d.switched).length,
+          devices: list.map(d => ({ id: d.id, name: d.name, kind: d.kind, room: d.room, lastSeenAt: d.last_seen_at, switched: d.switched })) };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
   // The room board: leads, vice principals, resource officers, the superintendent.
   app.get("/api/safety/incidents/:id/rooms", requireSession, requirePermission("safety", "read"), async (req, res, next) => {
     const a = req.actor;

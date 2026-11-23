@@ -99,3 +99,22 @@ export function releaseDecision(row, { incidentStatus = null } = {}) {
   if (incidentStatus === "active") return { ok: false, reason: "safety_incident_live" };
   return { ok: true, custodyOrder: Boolean(row.custody_order) };
 }
+
+// ---- SAFE-02: what a classroom device shows during an alert ----
+// Displays and kiosks: a lockdown turns the screen dark and silent (a lit
+// screen through a door window gives the room away); any other alert shows a
+// full-screen notice with the student instructions, muted. Student devices:
+// a lockdown is a quiet, dim notice; otherwise the same notice. Nothing here
+// locks a student device or opens anything on it.
+export function deviceSafetyView(s) {
+  if (!s) return null;
+  const quiet = s.deviceKind === "student_device";
+  if (!s.incident) return s.allClearAt ? { mode: "all_clear", title: "All clear", message: "Normal school operations resume.", volume: null, at: s.allClearAt } : { mode: "normal" };
+  const i = s.incident, drill = i.isDrill ? " (drill)" : "";
+  const title = i.status === "reunification" ? `Reunification${drill}` : `${KIND_LABEL[i.kind]}${drill}`;
+  const message = incidentMessage(i.kind, i.status, "student", { reunificationPoint: i.reunificationPoint });
+  if (i.kind === "lockdown" && i.status === "active")
+    return quiet ? { mode: "quiet", title, message: "Silence this device and stay out of sight.", volume: 0, incidentId: i.id }
+      : { mode: "dark", title, message: null, volume: 0, incidentId: i.id };
+  return { mode: "alert", title, message, volume: 0, incidentId: i.id };
+}
