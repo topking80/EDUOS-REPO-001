@@ -92,7 +92,7 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
-let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false;
+let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false, checkins = [], attendanceSent = [];
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   // TEACH-04: today's classes and one plan (any date).
@@ -221,6 +221,10 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/rooms/rm1/timetable": return { data: [{ id: "tt1", roomId: "rm1", teacherId: "u1", teacher: "Teacher S1", weekdays: [1, 2, 3, 4, 5], starts: "08:00", ends: "09:00", label: "Math 3" }] };
     case "/api/rooms/rm1/teachers": return { data: [{ id: "u1", name: "Teacher S1" }, { id: "u2", name: "Teacher Two" }] };
     case "/api/pairings": return { data: [{ id: "pp1", roomId: "rm1", room: "Room 101", teacherId: "u1", teacher: "Teacher S1", controller: "My phone", pairedAt: now, until: new Date(Date.now() + 36e5).toISOString(), via: "Front board" }] };
+    // ROOM-01: today's roll for a room.
+    case "/api/rooms/rm1/roll": return { data: { id: "rm1", name: "Room 101", kind: "classroom", date: now.slice(0, 10), unscheduled: [], periods: [{ id: "tt1", starts: "08:00", ends: "09:00", class: "Math 3", course: "Math 3", courseId: "k1", teacher: "Smoke Test", now: true,
+      roster: [{ studentId: "c1", name: "Alice A", checkedInAt: now, method: "display_qr", attendance: null }, { studentId: "c2", name: "Bob B", checkedInAt: now, method: "door_qr", attendance: null },
+        { studentId: "c3", name: "Cara C", checkedInAt: null, method: null, attendance: "absent" }], others: [{ name: "Ms Aide", kind: "staff", at: now, method: "display_qr" }] }] } };
     // STATE-01: the state index and licenses.
     case "/api/states": return { data: { districtState: "TX", categories: {}, states: [["TX", "Texas"], ["OH", "Ohio"]].map(([code, name]) => ({ code, name, counts: { licensing: 0, athletics: 1, agency: 1, records: 0 }, complete: false })) } };
     case "/api/states/TX": return { data: { code: "TX", name: "Texas", sections: [
@@ -312,6 +316,22 @@ function startServer() {
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
       }
+      const checkin = /^\/api\/rooms\/([^/]+)\/checkin$/.exec(pathname);
+      if (checkin && req.method === "POST") {
+        let raw = ""; req.on("data", c => { raw += c; });
+        return req.on("end", () => { checkins.push({ room: checkin[1], ...JSON.parse(raw || "{}") });
+          res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" });
+          res.end(JSON.stringify({ data: { room: "Room 101", kind: "classroom", class: "Math 3", checkedInAt: new Date().toISOString(), already: false, method: "display_qr" } })); });
+      }
+      if (/^\/api\/rooms\/[^/]+\/door-qr$/.test(pathname) && req.method === "POST") {
+        res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        return res.end(JSON.stringify({ data: { room: "Room 101", path: "/app/#/scan?r=x&d=y", qr: ["1110111", "1010101", "1110111", "0000000", "1110111", "1010101", "1110111"], note: "Print it now: it isn't shown again." } }));
+      }
+      if (pathname === "/api/attendance" && req.method === "POST") {
+        let raw = ""; req.on("data", c => { raw += c; });
+        return req.on("end", () => { attendanceSent.push(JSON.parse(raw || "{}"));
+          res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ data: { id: "at1" } })); });
+      }
       const cmd = /^\/api\/devices\/([^/]+)\/commands$/.exec(pathname);
       if (cmd && req.method === "POST") {
         let raw = ""; req.on("data", c => { raw += c; });
@@ -357,7 +377,7 @@ function startServer() {
   return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve({ server, state, port: server.address().port })));
 }
 
-test("web app boots and every role's tabs render", { skip: !CHROME && !required && "Chrome not installed (set EDUOS_REQUIRE_BROWSER=1 to require it)", timeout: 180000 }, async (t) => {
+test("web app boots and every role's tabs render", { skip: !CHROME && !required && "Chrome not installed (set EDUOS_REQUIRE_BROWSER=1 to require it)", timeout: 300000 }, async (t) => {
   assert.ok(CHROME, "EDUOS_REQUIRE_BROWSER=1 but no Chrome found (set CHROME_PATH)");
   assert.ok(Object.keys(roleTabs).length >= 10, "read ROLE_TABS from app.js");
   const { server, state, port } = await startServer();
@@ -755,6 +775,49 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "teacher: classroom controls", a11y);
       if (page.errors.length) failures.push(`classroom controls: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); pairedRoom = false; }
+  }
+  // ROOM-01: a scanned room link checks a student in (and survives the app starting); the teacher's roll confirms attendance; the door QR prints. All pass axe.
+  {
+    checkins = []; attendanceSent = [];
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    const clickLabel = l => page.eval(`(() => { const b = document.querySelector('main button[aria-label=${JSON.stringify(l)}], dialog[open] button[aria-label=${JSON.stringify(l)}]'); if (!b) return false; b.click(); return true; })()`);
+    try {
+      state.role = "pupil"; page = await Page.open(chrome.port);
+      const code = "Abcdefghijklmnopqrstuv";
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/scan?r=00000000-0000-4000-8000-00000000a001&c=${code}` });
+      await page.mainText();
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Checked in to Room 101")`))) failures.push(`pupil scan: ${(await page.eval(`document.querySelector("main")?.textContent || ""`)).slice(0, 160)}`);
+      if (JSON.stringify(checkins) !== JSON.stringify([{ room: "00000000-0000-4000-8000-00000000a001", code }])) failures.push(`scan sent: ${JSON.stringify(checkins)}`);
+      if ((await page.eval("location.hash")) !== "#/scan") failures.push("the code stays in the address bar");
+      await axeScan(page, "pupil: checked in", a11y);
+      if (page.errors.length) failures.push(`pupil scan: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+
+      state.role = "teacher"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/classes` });
+      await page.mainText();
+      await waitFor(`!!document.querySelector('main button[aria-label="Roll: Room 101"]')`);
+      if (!(await clickLabel("Roll: Room 101"))) failures.push("teacher: no Roll button");
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("2 of 3 checked in")`))) failures.push("teacher roll: counts");
+      await axeScan(page, "teacher: room roll", a11y);
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent.startsWith("Mark the 2 checked in present")).click()`);
+      for (let i = 0; i < 50 && attendanceSent.length < 2; i++) await new Promise(r => setTimeout(r, 100));
+      const att = JSON.stringify(attendanceSent.map(a => [a.studentId, a.status]));
+      if (att !== JSON.stringify([["c1", "present"], ["c2", "present"]])) failures.push(`roll confirmed: ${att}`);
+      if (page.errors.length) failures.push(`teacher roll: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+
+      state.role = "principal"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/devices` });
+      await page.mainText();
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent === "Rooms").click()`);
+      await waitFor(`!!document.querySelector('main button[aria-label="Door QR: Room 101"]')`);
+      await clickLabel("Door QR: Room 101");
+      if (!(await waitFor(`!!document.querySelector("dialog[open] .print-qr svg")`))) failures.push("principal: no door QR");
+      await axeScan(page, "principal: door QR", a11y);
+      if (page.errors.length) failures.push(`door QR: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.
   {

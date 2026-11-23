@@ -35,11 +35,13 @@ export function parseSlot(b) {
   if (!validId(b.teacherId) || !days?.length || !days.every(d => Number.isInteger(d) && d >= 1 && d <= 7)) return null;
   if (!TIME_RE.test(b.starts || "") || !TIME_RE.test(b.ends || "") || b.ends <= b.starts) return null;
   if (b.label != null && b.label !== "" && !cleanText(b.label, 80)) return null;
-  return { teacherId: b.teacherId, weekdays: days, starts: b.starts, ends: b.ends, label: typeof b.label === "string" && b.label.trim() ? b.label.trim() : null };
+  if (b.courseId != null && b.courseId !== "" && !validId(b.courseId)) return null;
+  return { teacherId: b.teacherId, weekdays: days, starts: b.starts, ends: b.ends, label: typeof b.label === "string" && b.label.trim() ? b.label.trim() : null, courseId: b.courseId || null };
 }
 
 const hhmm = t => String(t).slice(0, 5);
-const slotOut = t => ({ id: t.id, roomId: t.room_id, teacherId: t.teacher_user_id, teacher: t.teacher, weekdays: t.weekdays.map(Number), starts: hhmm(t.starts), ends: hhmm(t.ends), label: t.label });
+const slotOut = t => ({ id: t.id, roomId: t.room_id, teacherId: t.teacher_user_id, teacher: t.teacher, weekdays: t.weekdays.map(Number), starts: hhmm(t.starts), ends: hhmm(t.ends), label: t.label,
+  courseId: t.course_id ?? null, course: t.course ?? null });
 const pairingOut = p => ({ id: p.id, roomId: p.room_id, room: p.room, teacherId: p.teacher_user_id, teacher: p.teacher, controller: p.controller_name, pairedAt: p.paired_at, until: p.expires_at, via: p.via });
 
 export function registerPairingRoutes(app) {
@@ -62,15 +64,17 @@ export function registerPairingRoutes(app) {
   app.get("/api/rooms/:id/timetable", requireSession, only([...LEADERS, "teacher"]), run(async (c, req) => {
     if (!validId(req.params.id)) throw new HttpError(400, "invalid_id");
     if (!(await one(c, `SELECT 1 FROM classroom_rooms WHERE id=$1 AND archived_at IS NULL`, [req.params.id]))) throw new HttpError(404, "room_not_found");
-    return (await rows(c, `SELECT t.*,u.display_name AS teacher FROM classroom_room_teachers t JOIN users u ON u.id=t.teacher_user_id
-        WHERE t.room_id=$1 AND t.ended_at IS NULL ORDER BY t.starts,u.display_name`, [req.params.id])).map(slotOut);
+    return (await rows(c, `SELECT t.*,u.display_name AS teacher,co.title AS course FROM classroom_room_teachers t JOIN users u ON u.id=t.teacher_user_id
+        LEFT JOIN courses co ON co.id=t.course_id WHERE t.room_id=$1 AND t.ended_at IS NULL ORDER BY t.starts,u.display_name`, [req.params.id])).map(slotOut);
   }));
 
   app.get("/api/rooms/:id/teachers", requireSession, only(MANAGERS), run(async (c, req) => {
     if (!validId(req.params.id)) throw new HttpError(400, "invalid_id");
     const room = await one(c, `SELECT school_id FROM classroom_rooms WHERE id=$1 AND archived_at IS NULL`, [req.params.id]);
     if (!room) throw new HttpError(404, "room_not_found");
-    return rows(c, `SELECT user_id AS id,name FROM eduos_school_teachers($1)`, [room.school_id]);
+    const teachers = await rows(c, `SELECT user_id AS id,name FROM eduos_school_teachers($1)`, [room.school_id]);
+    const courses = await rows(c, `SELECT id,title,teacher_user_id FROM courses WHERE school_id=$1 AND status<>'archived' ORDER BY title`, [room.school_id]);
+    return teachers.map(t => ({ ...t, courses: courses.filter(x => x.teacher_user_id === t.id).map(x => ({ id: x.id, title: x.title })) }));
   }));
 
   app.post("/api/rooms/:id/timetable", limiter, requireSession, requireCsrf, only(MANAGERS), run(async (c, req) => {
@@ -80,8 +84,10 @@ export function registerPairingRoutes(app) {
     if (!room) throw new HttpError(404, "room_not_found");
     const ok = (await one(c, `SELECT eduos_is_school_teacher($1,$2) AS ok`, [v.teacherId, room.school_id])).ok;
     if (!ok) throw new HttpError(400, "teacher_at_this_school_required");
-    const t = await one(c, `INSERT INTO classroom_room_teachers(district_id,school_id,room_id,teacher_user_id,weekdays,starts,ends,label,created_by)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, [req.actor.districtId, room.school_id, room.id, v.teacherId, v.weekdays, v.starts, v.ends, v.label, req.actor.userId]);
+    if (v.courseId && !(await one(c, `SELECT 1 FROM courses WHERE id=$1 AND school_id=$2 AND teacher_user_id=$3 AND status<>'archived'`, [v.courseId, room.school_id, v.teacherId])))
+      throw new HttpError(400, "course_of_this_teacher_required");
+    const t = await one(c, `INSERT INTO classroom_room_teachers(district_id,school_id,room_id,teacher_user_id,weekdays,starts,ends,label,course_id,created_by)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, [req.actor.districtId, room.school_id, room.id, v.teacherId, v.weekdays, v.starts, v.ends, v.label, v.courseId, req.actor.userId]);
     await audit(c, req, "create", "room_timetable", t.id, `${v.weekdays.join("")} ${v.starts}-${v.ends}`);
     return t;
   }, 201));

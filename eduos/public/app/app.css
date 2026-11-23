@@ -420,3 +420,8 @@ fieldset.caps { border: 1px solid var(--line, #3a4560); border-radius: 10px; pad
 fieldset.caps legend { padding: 0 4px; font-weight: 600; }
 fieldset.caps label.check { display: flex; align-items: center; gap: 6px; min-height: 36px; }
 #pr-code { font-size: 1.5rem; letter-spacing: .3em; max-width: 12ch; }
+
+/* ROOM-01: scanning in and the printable door QR */
+.print-qr { text-align: center; }
+.print-qr .qr { max-width: 320px; margin: 0 auto; }
+@media print { body * { visibility: hidden; } dialog[open] .print-qr, dialog[open] .print-qr * { visibility: visible; } dialog[open] .print-qr { position: fixed; inset: 0; } }
