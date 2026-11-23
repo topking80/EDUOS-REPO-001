@@ -18,11 +18,18 @@ test("every curated link is https, sourced, dated, in a known category and a kno
   NATIONAL.forEach(checkEntry);
   function checkEntry(e) {
     assert.ok(CATEGORIES[e.category], e.title);
-    for (const u of [e.url, e.source]) assert.match(u, /^https:\/\/(www\.)?(ed\.gov|nfhs\.org)\//, e.title);
+    for (const u of [e.url, e.source]) assert.match(u, /^https:\/\/[a-z0-9.-]+\.(gov|org|com|net|cc)\//, e.title);
+    assert.match(e.source, /^https:\/\/(www\.ed\.gov|nfhs\.org|assets\.nfhs\.org)\//, `${e.title}: sourced from ed.gov or NFHS`);
     assert.match(e.checked, /^\d{4}-\d{2}-\d{2}$/);
   }
 });
 
+test("coverage: agency pages for 49, athletics associations for 50", () => {
+  const n = cat => Object.values(ENTRIES).filter(l => l.some(e => e.category === cat)).length;
+  assert.equal(n("agency"), 49);
+  assert.equal(n("athletics"), 50);
+});
+
 test("a state with no entries still gets the national directories", () => {
-  assert.ok(curatedFor("WY").every(e => e.scope === "national") && curatedFor("WY").length === NATIONAL.length);
+  assert.ok(curatedFor("ZZ").every(e => e.scope === "national") && curatedFor("ZZ").length === NATIONAL.length);
 });
