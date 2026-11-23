@@ -92,7 +92,7 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
-let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false, checkins = [], attendanceSent = [];
+let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false, checkins = [], attendanceSent = [], remoteJoins = [];
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   // TEACH-04: today's classes and one plan (any date).
@@ -221,6 +221,9 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/rooms/rm1/timetable": return { data: [{ id: "tt1", roomId: "rm1", teacherId: "u1", teacher: "Teacher S1", weekdays: [1, 2, 3, 4, 5], starts: "08:00", ends: "09:00", label: "Math 3" }] };
     case "/api/rooms/rm1/teachers": return { data: [{ id: "u1", name: "Teacher S1" }, { id: "u2", name: "Teacher Two" }] };
     case "/api/pairings": return { data: [{ id: "pp1", roomId: "rm1", room: "Room 101", teacherId: "u1", teacher: "Teacher S1", controller: "My phone", pairedAt: now, until: new Date(Date.now() + 36e5).toISOString(), via: "Front board" }] };
+    // ROOM-02: remote lessons (students get the link only from Join).
+    case "/api/my/remote-lessons": return { data: [{ id: "rl1", courseId: "k1", course: "Math 3", date: now.slice(0, 10), starts: "08:00", ends: "09:00", provider: "Zoom", lessonId: "ls1", lesson: "Fraction strips",
+      note: "Have your workbook ready", today: true, open: true, joined: false, ...(role === "teacher" ? { joinUrl: "https://zoom.us/j/123" } : {}) }] };
     // ROOM-01: today's roll for a room.
     case "/api/rooms/rm1/roll": return { data: { id: "rm1", name: "Room 101", kind: "classroom", date: now.slice(0, 10), unscheduled: [], periods: [{ id: "tt1", starts: "08:00", ends: "09:00", class: "Math 3", course: "Math 3", courseId: "k1", teacher: "Smoke Test", now: true,
       roster: [{ studentId: "c1", name: "Alice A", checkedInAt: now, method: "display_qr", attendance: null }, { studentId: "c2", name: "Bob B", checkedInAt: now, method: "door_qr", attendance: null },
@@ -316,6 +319,11 @@ function startServer() {
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
       }
+      if (/^\/api\/remote-lessons\/[^/]+\/join$/.test(pathname) && req.method === "POST") {
+        remoteJoins.push(pathname);
+        res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" });
+        return res.end(JSON.stringify({ data: { joinUrl: "https://zoom.us/j/123", already: false } }));
+      }
       const checkin = /^\/api\/rooms\/([^/]+)\/checkin$/.exec(pathname);
       if (checkin && req.method === "POST") {
         let raw = ""; req.on("data", c => { raw += c; });
@@ -377,7 +385,7 @@ function startServer() {
   return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve({ server, state, port: server.address().port })));
 }
 
-test("web app boots and every role's tabs render", { skip: !CHROME && !required && "Chrome not installed (set EDUOS_REQUIRE_BROWSER=1 to require it)", timeout: 300000 }, async (t) => {
+test("web app boots and every role's tabs render", { skip: !CHROME && !required && "Chrome not installed (set EDUOS_REQUIRE_BROWSER=1 to require it)", timeout: 420000 }, async (t) => {
   assert.ok(CHROME, "EDUOS_REQUIRE_BROWSER=1 but no Chrome found (set CHROME_PATH)");
   assert.ok(Object.keys(roleTabs).length >= 10, "read ROLE_TABS from app.js");
   const { server, state, port } = await startServer();
@@ -817,6 +825,34 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`!!document.querySelector("dialog[open] .print-qr svg")`))) failures.push("principal: no door QR");
       await axeScan(page, "principal: door QR", a11y);
       if (page.errors.length) failures.push(`door QR: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); }
+  }
+  // ROOM-02: a student joins a remote lesson from home (checked in, then the link); the teacher's plan has the remote lesson form. Both pass axe.
+  {
+    remoteJoins = [];
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    try {
+      state.role = "pupil"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/home` });
+      await page.mainText();
+      if (!(await waitFor(`!!document.querySelector('main button[aria-label="Join: Math 3"]')`))) failures.push("pupil: no remote lesson Join");
+      if (await page.eval(`!!document.querySelector('main a[href*="zoom.us"]')`)) failures.push("pupil: the link shows before joining");
+      await page.eval(`document.querySelector('main button[aria-label="Join: Math 3"]').click()`);
+      if (!(await waitFor(`!!document.querySelector('main a[href="https://zoom.us/j/123"][rel~="noopener"]')`))) failures.push("pupil: no Open Zoom link after joining");
+      if (JSON.stringify(remoteJoins) !== JSON.stringify(["/api/remote-lessons/rl1/join"])) failures.push(`remote joins: ${JSON.stringify(remoteJoins)}`);
+      await axeScan(page, "pupil: remote lesson joined", a11y);
+      if (page.errors.length) failures.push(`pupil remote: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+
+      state.role = "teacher"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/classes` });
+      await page.mainText();
+      await waitFor(`!!document.querySelector('main button[aria-label^="Open plan: Math 3"]')`);
+      await page.eval(`document.querySelector('main button[aria-label^="Open plan: Math 3"]').click()`);
+      if (!(await waitFor(`!!document.querySelector("main #rl-u")`))) failures.push("teacher plan: no remote lesson form");
+      await axeScan(page, "teacher: plan with remote lesson", a11y);
+      if (page.errors.length) failures.push(`teacher remote: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.

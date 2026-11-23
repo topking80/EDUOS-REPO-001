@@ -414,6 +414,7 @@ VIEWS.home = async () => {
   const mastered = skills.filter(s => s.state === "mastered").length;
   return [
     await scanCard(),
+    await remoteLessonsCard(),
     h("section", { class: "card hero", "aria-label": "Today" },
       h("div", { class: "row" }, current ? ring(current.mastery, current.title) : null,
         h("div", { class: "grow" }, h("p", { class: "muted small" }, current ? `${current.subject} · up next` : "Learning path"),
@@ -883,6 +884,7 @@ VIEWS.classes = async () => {
     h("div", { class: "stats" }, stat(d.students, "learners"), stat(d.to_grade, "to grade", true), stat(d.open_assignments, "open assignments"), stat(d.absences_7d, "absences (7 days)", true)),
     actionCenter,
     classroom,
+    await remoteLessonsCard(),
     await scanCard(),
     await todayCard(),
     h("section", { class: "card", "aria-label": "Bus riders" }, h("h2", {}, "Bus riders on my roster"),
@@ -955,6 +957,7 @@ VIEWS.plan = async () => {
     h("section", { class: "card hero", "aria-label": "Plan" }, h("p", { class: "small muted" }, `${d.course.subject} · Grade ${d.course.grade_level}`), h("h2", {}, `Plan: ${d.course.title}`),
       h("p", { class: "small" }, `${ed.blocks.length} step${ed.blocks.length === 1 ? "" : "s"}${minutes ? ` · ${minutes} min planned` : ""}${d.plan ? ` · last saved by ${d.plan.updatedBy}` : ""}`)),
     h("div", { class: "row wrap" }, h("div", { class: "grow" }, h("label", { for: dateIn.id }, "Day"), dateIn), h("div", { class: "grow" }, h("label", { for: title.id }, "Plan title (optional)"), title)),
+    await remotePlanCard(state.planCourseId, date, d.choices.lessons),
     h("div", { "aria-live": "polite" }, ed.notice ? h("p", { class: `notice${ed.notice.warn ? " warn" : ""}` }, ed.notice.text, ed.notice.reload ? [" ", h("button", { class: "btn small", type: "button", onclick: () => openView("plan", { planEdit: null }) }, "Reload")] : null) : null),
     ed.blocks.length ? h("ol", { class: "plan-blocks" }, ed.blocks.map(blockCard)) : h("section", { class: "card" }, empty("No steps yet. Add a warm-up, a lesson, a timer…"),
       h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault(); if (!from.value) return;
@@ -3825,7 +3828,7 @@ VIEWS.room = async () => {
       try { await api.post(`/api/pairings/${r.pairing.id}/end`, {}); toast("Unpaired."); go("classes"); } catch { toast("Couldn't unpair."); } } }, "End pairing")];
 };
 // ---- ROOM-01: scanning into a classroom or the media center ----------------
-const SCAN_METHOD = { display_qr: "room display", door_qr: "door poster", kiosk_id: "ID card" };
+const SCAN_METHOD = { display_qr: "room display", door_qr: "door poster", kiosk_id: "ID card", remote: "joined remotely" };
 // A scanned link (#/scan?r=…&c=… or &d=…) is kept for this tab, so it survives signing in.
 function takeScanLink() {
   const m = /^#\/scan\?(.*)$/.exec(location.hash);
@@ -3914,6 +3917,53 @@ VIEWS.mediacenter = async () => {
     h("button", { class: "btn small", type: "button", "aria-label": `Who's checked in: ${r.name}`, onclick: () => openView("roll", { rollRoomId: r.id }) }, "Who's checked in"))))
     : empty("Your school hasn't set up a media center room yet. A principal adds one under Rooms & devices."))];
 };
+// ---- ROOM-02: remote lessons on the teacher's daily schedule ----------------
+const dayName = iso => new Date(`${iso}T12:00:00`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+async function remotePlanCard(courseId, date, lessons) {
+  const cur = ((await safe(api.get(`/api/courses/${courseId}/remote-lessons?from=${date}&to=${date}`)))?.data || [])[0] || null;
+  const f = { starts: h("input", { id: "rl-s", type: "time", required: true, value: cur?.starts || "08:00" }), ends: h("input", { id: "rl-e", type: "time", required: true, value: cur?.ends || "09:00" }),
+    url: h("input", { id: "rl-u", type: "url", maxlength: 500, required: true, value: cur?.joinUrl || "", placeholder: "https://meet.google.com/… or Zoom, Teams, Webex" }),
+    lesson: h("select", { id: "rl-l" }, h("option", { value: "" }, "No lesson"), lessons.map(l => h("option", { value: l.id, selected: l.id === cur?.lessonId }, l.title))),
+    note: h("input", { id: "rl-n", maxlength: 500, value: cur?.note || "", placeholder: "e.g. Have your workbook ready" }) };
+  const save = async e => {
+    e.preventDefault();
+    try { await api.put(`/api/courses/${courseId}/remote-lessons/${date}`, { starts: f.starts.value, ends: f.ends.value, joinUrl: f.url.value.trim(), lessonId: f.lesson.value || null, note: f.note.value.trim() || null });
+      toast(cur ? "Remote lesson updated." : "Remote lesson added. Students in this class will see it."); go("plan", { push: false }); }
+    catch (err) { toast({ meeting_link_not_allowed: "Use a Google Meet, Zoom, Microsoft Teams or Webex link.", lesson_must_be_published_in_this_course: "Publish that lesson first so remote students can open it.",
+      invalid_times: "The end has to be after the start." }[err.body?.error] || "Couldn't save it."); }
+  };
+  return h("section", { class: "card", "aria-label": "Remote lesson" },
+    h("div", { class: "row wrap" }, h("h3", { class: "grow" }, "Remote lesson"), cur ? chip("present", `${cur.provider} · ${cur.starts}–${cur.ends}`) : null),
+    h("p", { class: "small muted" }, "Students learning from home join from EduOS, which checks them in as remote on your roll. You still confirm attendance."),
+    cur?.joined?.length ? h("p", { class: "small" }, `Joined: ${cur.joined.map(j => `${j.name} (${timeText(j.at)})`).join(", ")}`) : null,
+    h("form", { onsubmit: save },
+      h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "rl-s" }, "Starts"), f.starts), h("div", {}, h("label", { for: "rl-e" }, "Ends"), f.ends)),
+      h("label", { for: "rl-u" }, "Video call link"), f.url, h("label", { for: "rl-l" }, "Lesson for remote students"), f.lesson, h("label", { for: "rl-n" }, "Note (optional)"), f.note,
+      h("div", { class: "btns" }, h("button", { class: "btn primary", type: "submit" }, cur ? "Save remote lesson" : "Add remote lesson"),
+        cur ? h("button", { class: "btn", type: "button", onclick: async () => {
+          if (!(await ask({ title: "Cancel the remote lesson?", text: "It comes off students' schedules.", confirm: "Cancel it", cancel: "Keep it" }))) return;
+          try { await api.post(`/api/remote-lessons/${cur.id}/cancel`, {}); toast("Cancelled."); go("plan", { push: false }); } catch { toast("Couldn't cancel it."); } } }, "Cancel remote lesson") : null)));
+}
+async function remoteLessonsCard() {
+  if (!["teacher", "pupil"].includes(state.me?.role)) return null;
+  const list = (await safe(api.get("/api/my/remote-lessons")))?.data || [];
+  if (!list.length) return null;
+  const pupil = state.me.role === "pupil";
+  return h("section", { class: "card", "aria-label": "Remote lessons" }, h("h2", {}, "Remote lessons"),
+    h("ul", { class: "list" }, list.map(x => h("li", {},
+      h("div", { class: "row wrap" }, h("b", { class: "grow" }, x.course), chip(x.open ? "present" : "expected", `${x.today ? "Today" : dayName(x.date)} ${x.starts}–${x.ends}`)),
+      h("p", { class: "small muted" }, [x.provider, x.lesson ? `Lesson: ${x.lesson}` : "", x.note || ""].filter(Boolean).join(" · ")),
+      h("div", { class: "btns" },
+        pupil && x.open ? (state.joined?.[x.id]
+          ? h("a", { class: "btn small primary", href: state.joined[x.id], target: "_blank", rel: "noopener noreferrer" }, `Open ${x.provider}`)
+          : h("button", { class: "btn small primary", type: "button", "aria-label": `Join: ${x.course}`, onclick: async () => {
+              try { const r = (await api.post(`/api/remote-lessons/${x.id}/join`, {})).data; state.joined = { ...(state.joined || {}), [x.id]: r.joinUrl };
+                toast("You're checked in as remote."); go(state.tab, { push: false }); }
+              catch (e) { toast(e.body?.error === "not_now" ? "It opens ten minutes before the start." : "Couldn't join."); } } }, x.joined ? "Join again" : "Join"))
+          : pupil ? h("span", { class: "small muted" }, x.joined ? "You joined." : "Opens ten minutes before the start.") : null,
+        pupil && x.lessonId ? h("button", { class: "btn small", type: "button", "aria-label": `Open lesson: ${x.lesson}`, onclick: () => openView("lesson", { lessonId: x.lessonId }) }, "Open lesson") : null,
+        !pupil ? h("button", { class: "btn small", type: "button", "aria-label": `Open plan: ${x.course}, ${x.date}`, onclick: () => openView("plan", { planCourseId: x.courseId, planDate: x.date, planEdit: null }) }, "Open plan") : null)))));
+}
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
 const LIC_STATUS = { self_reported: ["expected", "Not verified yet"], verified: ["present", "Verified by the district"], not_verified: ["absent", "Couldn't be verified"] };
