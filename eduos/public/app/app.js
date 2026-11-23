@@ -295,13 +295,14 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
   if (tab === "history") return "history";
   if (tab === "capsule") return "capsules";
   if (tab === "draft") return "network";
+  if (["states", "stateinfo", "licenses"].includes(tab)) return "me";
   if (tab === "plan" || tab === "present") return "classes";
   if (["teams", "coachplan", "coachlib"].includes(tab)) return tabsFor().some(t => t[0] === "teams") ? "teams" : "activities";
   const role = state.me?.role;
@@ -3564,11 +3565,118 @@ VIEWS.me = async () => {
   const memberships = state.profiles;
   return [h("h2", {}, "Account"), h("section", { class: "card" }, h("h3", {}, state.me.displayName), h("p", { class: "muted" }, `${APP_NAME[state.me.role] || state.me.role} · ${state.brand?.school?.name || state.brand?.districtName || ""}`)),
     memberships.length > 1 ? h("section", { class: "card", "aria-label": "Switch profile" }, h("h3", {}, "Switch profile"), profileList(switchProfile)) : null,
+    LICENSED.includes(state.me.role) ? await licenseCard() : null,
+    h("button", { class: "btn block", type: "button", onclick: () => go("states") }, icon("book"), "State index"),
+    ["superintendent", "principal"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("licenses") }, icon("people"), "Staff licenses") : null,
     h("a", { class: "btn block", href: "/" }, "Open the full EduOS site"),
     h("button", { class: "btn danger block", type: "button", onclick: async () => { if (OQ.count && !(await ask({ title: "Sign out with unsent changes?", text: `${OQ.count} saved change${OQ.count > 1 ? "s have" : " has"} not been sent yet. Signing out deletes them from this phone.`, confirm: "Sign out and delete", danger: true }))) return;
       await safe(api.post("/auth/logout")); await OQ.clear(); api.csrf = null; renderSignIn(); } }, "Sign out"),
     h("p", { class: "notice" }, "EduOS Mobile keeps school data on the server. This phone stores only the app's design files and your school's colours and logo so it opens quickly, plus, while you're offline, up to 200 encrypted roll call, bus check-in or attendance marks for at most 24 hours. Signing out deletes them.")];
 };
+
+// ---- STATE-01: the state index and educators' licenses ----------------------
+const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
+const LIC_STATUS = { self_reported: ["expected", "Not verified yet"], verified: ["present", "Verified by the district"], not_verified: ["absent", "Couldn't be verified"] };
+const expiryText = l => l.expiresOn == null ? "No expiry date" : l.daysLeft < 0 ? `Expired ${-l.daysLeft} day${l.daysLeft === -1 ? "" : "s"} ago` : l.daysLeft <= 90 ? `Expires in ${l.daysLeft} day${l.daysLeft === 1 ? "" : "s"} (${l.expiresOn})` : `Expires ${l.expiresOn}`;
+async function licenseCard() {
+  const list = (await safe(api.get("/api/licenses/mine")))?.data || [];
+  return h("section", { class: "card", "aria-label": "My licenses" }, h("h3", {}, "My licenses"),
+    list.length ? h("ul", { class: "list" }, list.map(l => h("li", {},
+      h("div", { class: "row wrap" }, h("b", { class: "grow" }, `${l.state}: ${l.type}`), chip(...LIC_STATUS[l.status])),
+      h("p", { class: "small muted" }, `No. ${l.number}${l.endorsements ? ` · ${l.endorsements}` : ""}`),
+      h("p", { class: `small${l.daysLeft != null && l.daysLeft <= 90 ? " warn" : ""}` }, expiryText(l)),
+      l.note ? h("p", { class: "small muted" }, `District note: ${l.note}`) : null,
+      h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", "aria-label": `Edit license: ${l.state} ${l.type}`, onclick: () => editLicense(l) }, "Edit"),
+        h("button", { class: "btn small", type: "button", "aria-label": `Remove license: ${l.state} ${l.type}`, onclick: async () => {
+          if (!(await ask({ title: "Remove this license?", text: "It leaves your profile. The district keeps its record.", confirm: "Remove" }))) return;
+          try { await api.post(`/api/licenses/${l.id}/retire`, {}); toast("Removed."); go("me", { push: false }); } catch { toast("Couldn't remove it."); } } }, "Remove")))))
+      : h("p", { class: "small muted" }, "Add your teaching or administrator licenses. You'll see a reminder 90 days before one expires, and the district checks each against the state's lookup."),
+    h("button", { class: "btn primary", type: "button", onclick: () => editLicense(null) }, "Add a license"));
+}
+async function editLicense(l) {
+  const states = (await api.get("/api/states")).data;
+  const v = await dialogForm(l ? "Edit license" : "Add a license", () => {
+    const sel = h("select", { id: "lic-st" }, states.states.map(x => h("option", { value: x.code, selected: (l?.stateCode || states.districtState) === x.code }, x.name)));
+    const inp = (id, label, val, attrs = {}) => [h("label", { for: id }, label), h("input", { id, value: val ?? "", ...attrs })];
+    return { fields: [h("label", { for: "lic-st" }, "State"), sel,
+      inp("lic-type", "License or certificate type", l?.type, { required: true, maxlength: 120, placeholder: "e.g. Standard teaching certificate" }),
+      inp("lic-no", "License number", l?.number, { required: true, maxlength: 40, autocomplete: "off" }),
+      inp("lic-end", "Endorsements or subjects (optional)", l?.endorsements, { maxlength: 300 }),
+      inp("lic-iss", "Issued (optional)", l?.issuedOn, { type: "date" }), inp("lic-exp", "Expires (optional)", l?.expiresOn, { type: "date" }),
+      l?.status === "verified" ? h("p", { class: "small muted" }, "Changing it means the district verifies it again.") : null],
+      value: () => { const g = id => document.getElementById(id).value.trim(); return { stateCode: g("lic-st"), type: g("lic-type"), number: g("lic-no"), endorsements: g("lic-end") || null, issuedOn: g("lic-iss") || null, expiresOn: g("lic-exp") || null }; } };
+  }, l ? "Save" : "Add");
+  if (!v) return;
+  try { await (l ? api.put(`/api/licenses/${l.id}`, v) : api.post("/api/licenses", v)); toast(l ? "Saved. The district will verify it again." : "Added."); go("me", { push: false }); }
+  catch { toast("Check the dates and fields, then try again."); }
+}
+VIEWS.states = async () => {
+  const d = (await api.get("/api/states")).data;
+  const tile = x => h("li", {}, h("button", { class: "row linkrow", type: "button", onclick: () => openView("stateinfo", { stateCode: x.code }) },
+    h("span", { class: "grow" }, h("b", {}, x.name), x.code === d.districtState ? h("span", { class: "small muted" }, " · your district") : null),
+    h("span", { class: "small muted" }, `${Object.values(x.counts).reduce((a, b) => a + b, 0)} links`), icon("chevron")));
+  const mine = d.states.find(x => x.code === d.districtState);
+  return [back("me", "Account"), h("h2", {}, "State index"),
+    h("p", { class: "small muted" }, "Each state's educator licensing, athletics association, education agency data and student records rules. Every link shows where it was confirmed and when."),
+    state.me.role === "superintendent" ? h("section", { class: "card", "aria-label": "District's state" }, h("label", { for: "dist-st" }, "Your district's state"),
+      h("select", { id: "dist-st", onchange: async e => { try { await api.put("/api/district/state", { stateCode: e.target.value }); toast("Saved."); go("states", { push: false }); } catch { toast("Couldn't save it."); } } },
+        h("option", { value: "", disabled: true, selected: !d.districtState }, "Choose…"), d.states.map(x => h("option", { value: x.code, selected: x.code === d.districtState }, x.name)))) : null,
+    mine ? h("section", { class: "card", "aria-label": "Your district" }, h("ul", { class: "list" }, tile(mine))) : null,
+    h("section", { class: "card", "aria-label": "All states" }, h("ul", { class: "list" }, d.states.map(tile)))];
+};
+VIEWS.stateinfo = async () => {
+  if (!state.stateCode) return VIEWS.states();
+  const d = (await api.get(`/api/states/${state.stateCode}`)).data;
+  const supt = state.me.role === "superintendent";
+  return [back("states", "State index"), h("h2", {}, d.name),
+    d.sections.map(sec => h("section", { class: "card", "aria-label": sec.label }, h("h3", {}, sec.label),
+      sec.entries.length ? h("ul", { class: "list" }, sec.entries.map(e => h("li", {},
+        h("a", { href: e.url, target: "_blank", rel: "noopener noreferrer" }, e.title), e.description ? h("p", { class: "small" }, e.description) : null,
+        h("p", { class: "small muted" }, `${e.from === "district" ? `Added by ${e.addedBy}` : e.from === "national" ? "National" : "EduOS"} · checked ${e.checked}${e.source && e.source !== e.url ? " · " : ""}`,
+          e.source && e.source !== e.url ? h("a", { href: e.source, target: "_blank", rel: "noopener noreferrer" }, "source") : null),
+        supt && e.from === "district" ? h("button", { class: "btn small", type: "button", "aria-label": `Remove link: ${e.title}`, onclick: async () => {
+          try { await api.post(`/api/state-entries/${e.id}/retire`, {}); toast("Removed."); go("stateinfo", { push: false }); } catch { toast("Couldn't remove it."); } } }, "Remove") : null)))
+        : h("p", { class: "small muted" }, supt ? "No confirmed link yet. Add the official page and where you confirmed it." : "No confirmed link yet. Your district can add one."),
+      supt ? h("button", { class: "btn small", type: "button", "aria-label": `Add a link: ${sec.label}`, onclick: () => addStateEntry(d, sec) }, "Add a link") : null))];
+};
+async function addStateEntry(d, sec) {
+  const v = await dialogForm(`${d.name}: ${sec.label}`, () => {
+    const inp = (id, label, attrs = {}) => [h("label", { for: id }, label), h("input", { id, ...attrs })];
+    return { fields: [h("p", { class: "small muted" }, "Use the official page (the state, its agency or its association). Everyone in the district sees it."),
+      inp("se-t", "Title", { required: true, maxlength: 160 }), inp("se-u", "Link (https://…)", { required: true, type: "url", maxlength: 500 }),
+      inp("se-d", "What it's for (optional)", { maxlength: 1000 }), inp("se-s", "Where you confirmed it (optional link)", { type: "url", maxlength: 500 }),
+      inp("se-c", "Checked on", { type: "date", required: true, value: new Date().toISOString().slice(0, 10), max: new Date().toISOString().slice(0, 10) })],
+      value: () => { const g = id => document.getElementById(id).value.trim(); return { category: sec.key, title: g("se-t"), url: g("se-u"), description: g("se-d") || null, sourceUrl: g("se-s") || null, verifiedOn: g("se-c") }; } };
+  }, "Add");
+  if (!v) return;
+  try { await api.post(`/api/states/${d.code}/entries`, v); toast("Added."); go("stateinfo", { push: false }); } catch { toast("Use an https link and a date that isn't in the future."); }
+}
+VIEWS.licenses = async () => {
+  const filter = state.licFilter || "soon";
+  const q = filter === "soon" ? "?expiringWithin=90" : filter === "unverified" ? "?status=self_reported" : "";
+  const list = (await api.get(`/api/licenses${q}`)).data;
+  const supt = state.me.role === "superintendent";
+  const seg = (key, label) => h("button", { class: `btn small${filter === key ? " primary" : ""}`, type: "button", "aria-pressed": String(filter === key), onclick: () => openView("licenses", { licFilter: key }) }, label);
+  return [back("me", "Account"), h("h2", {}, "Staff licenses"),
+    h("p", { class: "small muted" }, supt ? "Licenses staff recorded on their profiles. Check each against the state's lookup (see the State index), then mark it." : "Licenses recorded by people who work at your school. The district verifies them."),
+    h("div", { class: "btns", role: "group", "aria-label": "Show" }, seg("soon", "Expiring in 90 days"), seg("unverified", "Not verified yet"), seg("all", "All")),
+    h("section", { class: "card", "aria-label": "Licenses" }, list.length ? h("ul", { class: "list" }, list.map(l => h("li", {},
+      h("div", { class: "row wrap" }, h("b", { class: "grow" }, l.name), chip(...LIC_STATUS[l.status])),
+      h("p", { class: "small" }, `${l.state}: ${l.type} · No. ${l.number}${l.endorsements ? ` · ${l.endorsements}` : ""}`),
+      h("p", { class: `small${l.daysLeft != null && l.daysLeft <= 90 ? " warn" : " muted"}` }, expiryText(l)),
+      supt ? h("div", { class: "btns" },
+        h("button", { class: "btn small primary", type: "button", "aria-label": `Verified: ${l.name}, ${l.state}`, onclick: () => verifyLicense(l, "verified") }, "Verified"),
+        h("button", { class: "btn small", type: "button", "aria-label": `Couldn't verify: ${l.name}, ${l.state}`, onclick: () => verifyLicense(l, "not_verified") }, "Couldn't verify")) : null)))
+      : empty(filter === "soon" ? "No licenses expire in the next 90 days." : "No licenses here."))];
+};
+async function verifyLicense(l, decision) {
+  const note = await dialogForm(decision === "verified" ? `Verify ${l.name}'s license` : `Couldn't verify ${l.name}'s license`, () => {
+    const box = h("textarea", { id: "lv-note", maxlength: 500, rows: 2, placeholder: decision === "verified" ? "e.g. Checked on the state lookup" : "What didn't match" });
+    return { fields: [h("p", { class: "small" }, `${l.state}: ${l.type} · No. ${l.number}`), h("label", { for: box.id }, "Note (optional)"), box], value: () => box.value.trim() };
+  }, "Save");
+  if (note === null) return;
+  try { await api.post(`/api/licenses/${l.id}/verify`, { decision, note: note || null }); toast("Saved."); go("licenses", { push: false }); } catch { toast("Couldn't save it."); }
+}
 
 // ---- 32.7.0 offline write queue -------------------------------------------
 // When the phone (or the school's uplink) drops, a SMALL allowlist of writes

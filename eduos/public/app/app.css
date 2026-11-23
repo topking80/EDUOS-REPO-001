@@ -409,3 +409,8 @@ body.presenting main { padding: 0 !important; margin: 0 !important; max-width: n
 .present-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--surface); }
 @media (min-width: 1024px) { body.presenting { padding-left: 0 !important; } }
 body.presenting { padding-bottom: 0 !important; }
+
+/* STATE-01: state index rows and license expiry */
+button.linkrow { width: 100%; min-height: 44px; background: none; border: 0; padding: 6px 0; color: inherit; font: inherit; text-align: left; cursor: pointer; gap: 8px; align-items: center; }
+button.linkrow:focus-visible { outline: 3px solid var(--focus, currentColor); outline-offset: 2px; }
+p.small.warn { color: var(--warn-text, var(--text)); font-weight: 600; }
