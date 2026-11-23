@@ -576,3 +576,9 @@ GRANT UPDATE (title, subject, grade_level, body, version, updated_by, updated_at
 GRANT UPDATE (left_at) ON collab_draft_editors TO eduos_app;
 REVOKE DELETE, TRUNCATE ON collab_drafts, collab_draft_editors, collab_draft_revisions FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_is_draft_editor(uuid) TO eduos_app;
+
+-- TEACH-04 (db/104): daily class plans; edited in place, never deleted (an
+-- emptied plan has no blocks).
+GRANT SELECT, INSERT ON class_day_plans TO eduos_app;
+GRANT UPDATE (title, blocks, status, version, updated_by, updated_at) ON class_day_plans TO eduos_app;
+REVOKE DELETE, TRUNCATE ON class_day_plans FROM eduos_app;

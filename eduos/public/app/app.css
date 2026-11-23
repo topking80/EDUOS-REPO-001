@@ -391,3 +391,21 @@ details.yours { margin: 4px 0 8px; padding: 6px 10px; border-left: 3px solid var
 details.yours summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 fieldset.card { margin: 10px 0; }
 fieldset.card legend { font-weight: 700; padding: 0 4px; }
+
+/* TEACH-04: plan builder and present mode */
+.plan-blocks { list-style: none; margin: 0; padding: 0; }
+.plan-block .row .btn.small { min-width: 44px; }
+.plan-block input.minutes { width: 120px; }
+body.presenting .top, body.presenting .tabs, body.presenting #netbar { display: none !important; }
+body.presenting main { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+.present { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
+.present-body { flex: 1; padding: clamp(20px, 5vw, 64px); overflow-y: auto; }
+.present-body h1 { font-size: clamp(28px, 5vw, 56px); line-height: 1.15; margin: 0 0 16px; }
+.present-body .kicker { text-transform: uppercase; letter-spacing: .08em; font-size: 14px; color: var(--muted); margin: 0 0 8px; font-weight: 700; }
+.present-body .goal { font-size: clamp(18px, 2.4vw, 26px); color: var(--muted); }
+.present-body .lesson-text { font-size: clamp(18px, 2.2vw, 28px); line-height: 1.5; max-width: 60ch; }
+.present-body .clock { font-size: clamp(64px, 16vw, 200px); font-variant-numeric: tabular-nums; font-weight: 800; margin: 8px 0 24px; }
+.present-body .clock.done { color: var(--danger); }
+.present-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--surface); }
+@media (min-width: 1024px) { body.presenting { padding-left: 0 !important; } }
+body.presenting { padding-bottom: 0 !important; }

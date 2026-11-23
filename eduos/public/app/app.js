@@ -27,6 +27,8 @@ function svg(tag, attrs = {}, ...kids) {
 const ICONS = {
   apps: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6",
   more: "M5 12h.01M12 12h.01M19 12h.01",
+  calendar: "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4",
+  play: "M7 4l13 8-13 8z",
   chevron: "M9 6l6 6-6 6",
   home: "M3 11l9-8 9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z",
   chat: "M4 4h16v12H8l-4 4z",
@@ -292,13 +294,14 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
   if (tab === "history") return "history";
   if (tab === "capsule") return "capsules";
   if (tab === "draft") return "network";
+  if (tab === "plan" || tab === "present") return "classes";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
   if (tab === "staffing") return "staffing";
@@ -315,6 +318,7 @@ async function go(tab, { push = true } = {}) {
   if (live.length && !open.includes(tab)) tab = "safety";
   document.body.classList.toggle("sos-mode", liveIncidents().length > 0);
   clearInterval(state.quizTimer); clearInterval(state.draftTimer);
+  if (tab !== "present") { clearInterval(state.presentTimer); document.body.classList.remove("presenting"); }
   state.tab = tab;
   if (push && location.hash !== `#/${tab}`) history.pushState(null, "", `#/${tab}`);
   renderTabs();
@@ -735,13 +739,123 @@ VIEWS.classes = async () => {
     h("section", { class: "card hero", "aria-label": "Today" }, h("p", { class: "muted small" }, d.school_name || ""), h("h2", {}, "Today in class"),
       h("p", { class: "muted" }, copilot?.data?.suggestions?.[0] || "")),
     h("div", { class: "stats" }, stat(d.students, "learners"), stat(d.to_grade, "to grade", true), stat(d.open_assignments, "open assignments"), stat(d.absences_7d, "absences (7 days)", true)),
-    actionCenter, 
+    actionCenter,
+    await todayCard(),
     h("section", { class: "card", "aria-label": "Bus riders" }, h("h2", {}, "Bus riders on my roster"),
       riders.length ? h("ul", { class: "list" }, riders.map(k => h("li", { class: "row" }, h("span", { class: "grow" }, `${k.display_name} · ${k.bus_label} ${k.direction.toUpperCase()}`), chip(k.status)))) : empty("None of your learners ride today.")),
     h("button", { class: "btn block", type: "button", onclick: () => go("pickup") }, icon("car"), "Pick-up duty: check passes"),
     h("section", { class: "card", "aria-label": "Class announcement" }, h("h2", {}, "Post to my class"), announceForm("class")),
     h("section", { class: "card", "aria-label": "Announcements" }, h("h2", {}, "Announcements"), announcementsCard(news?.data, { limit: 5 }))
   ];
+};
+// ---- TEACH-04: today's classroom material ---------------------------------
+const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const BLOCK_LABEL = { warmup: "Warm-up question", lesson: "Lesson", assignment: "Assignment or quiz", text: "Instructions", timer: "Timer", link: "Link" };
+async function todayCard() {
+  const day = localDate();
+  const list = (await safe(api.get(`/api/class-plans?date=${day}`)))?.data;
+  if (!Array.isArray(list) || !list.length) return null;
+  return h("section", { class: "card", "aria-label": "Today's classes" }, h("h2", {}, "Today's classes"),
+    h("ul", { class: "list" }, list.map(c => h("li", { class: "row wrap" },
+      h("div", { class: "grow" }, h("b", {}, c.title), h("p", { class: "small muted" }, c.plan_id ? `${c.status === "ready" ? "Ready" : "Draft"} · ${c.blocks} step${c.blocks === 1 ? "" : "s"}${c.minutes ? ` · ${c.minutes} min` : ""}` : "Not planned yet")),
+      h("div", { class: "btns" },
+        h("button", { class: "btn small", type: "button", "aria-label": `${c.plan_id ? "Edit plan" : "Plan"}: ${c.title}`, onclick: () => openView("plan", { planCourseId: c.course_id, planDate: day, planEdit: null }) }, icon("calendar"), c.plan_id ? "Edit plan" : "Plan"),
+        c.plan_id && c.blocks ? h("button", { class: "btn small primary", type: "button", "aria-label": `Present: ${c.title}`, onclick: () => openView("present", { planCourseId: c.course_id, planDate: day, presentAt: 0 }) }, icon("play"), "Present") : null)))));
+}
+VIEWS.plan = async () => {
+  if (!state.planCourseId) return VIEWS.classes();
+  const date = state.planDate || localDate();
+  const d = (await api.get(`/api/class-plans/${state.planCourseId}/${date}`)).data;
+  const key = `${state.planCourseId}|${date}`;
+  const ed = state.planEdit?.key === key ? state.planEdit : (state.planEdit = { key, version: d.plan?.version ?? null, title: d.plan?.title || "", blocks: structuredClone((d.plan?.blocks || []).map(({ lesson, assignment, ...b }) => b)), notice: null });
+  const redraw = () => go("plan", { push: false });
+  const lessonName = id => d.choices.lessons.find(l => l.id === id)?.title || "(not in this course)";
+  const workName = id => d.choices.assignments.find(a => a.id === id)?.title || "(not in this course)";
+  const input = (b, k, label, id, attrs = {}, multi = false) => { const el = h(multi ? "textarea" : "input", { id, ...attrs }); el.value = b[k] ?? ""; el.addEventListener("input", () => { b[k] = el.value; }); return [h("label", { for: id }, label), el]; };
+  const blockCard = (b, i) => h("li", { class: "card plan-block", "aria-label": `Step ${i + 1}: ${BLOCK_LABEL[b.kind]}` },
+    h("div", { class: "row" }, h("b", { class: "grow" }, `${i + 1}. ${BLOCK_LABEL[b.kind]}`),
+      h("button", { class: "btn small", type: "button", "aria-label": `Move step ${i + 1} up`, disabled: i === 0, onclick: () => { [ed.blocks[i - 1], ed.blocks[i]] = [ed.blocks[i], ed.blocks[i - 1]]; redraw(); } }, "↑"),
+      h("button", { class: "btn small", type: "button", "aria-label": `Move step ${i + 1} down`, disabled: i === ed.blocks.length - 1, onclick: () => { [ed.blocks[i + 1], ed.blocks[i]] = [ed.blocks[i], ed.blocks[i + 1]]; redraw(); } }, "↓"),
+      h("button", { class: "btn small danger", type: "button", "aria-label": `Remove step ${i + 1}`, onclick: () => { ed.blocks.splice(i, 1); redraw(); } }, "Remove")),
+    b.kind === "lesson" ? (() => { const sel = h("select", { id: `pb-${i}-l`, "aria-label": `Lesson for step ${i + 1}` }, d.choices.lessons.map(l => h("option", { value: l.id, selected: l.id === b.lessonId }, `Unit ${l.unit_seq} · ${l.title}`)));
+        sel.addEventListener("change", () => { b.lessonId = sel.value; }); return sel; })()
+    : b.kind === "assignment" ? (() => { const sel = h("select", { id: `pb-${i}-a`, "aria-label": `Assignment for step ${i + 1}` }, d.choices.assignments.map(a => h("option", { value: a.id, selected: a.id === b.assignmentId }, `${a.title}${a.kind === "quiz" ? " (quiz)" : ""}`)));
+        sel.addEventListener("change", () => { b.assignmentId = sel.value; }); return sel; })()
+    : b.kind === "warmup" ? input(b, "prompt", "Question", `pb-${i}-p`, { maxlength: 500 })
+    : b.kind === "text" ? [...input(b, "title", "Heading (optional)", `pb-${i}-t`, { maxlength: 120 }), ...input(b, "body", "What the class should do", `pb-${i}-b`, { maxlength: 4000, rows: 3 }, true)]
+    : b.kind === "timer" ? input(b, "label", "What it's for", `pb-${i}-tl`, { maxlength: 80 })
+    : [...input(b, "label", "Link name", `pb-${i}-ll`, { maxlength: 120 }), ...input(b, "url", "Address (https://…)", `pb-${i}-lu`, { maxlength: 500, type: "url", inputmode: "url" })],
+    h("div", { class: "row" }, h("div", {}, ...input(b, "minutes", b.kind === "timer" ? "Minutes (timer length)" : "Minutes (planned)", `pb-${i}-m`, { type: "number", min: 0, max: 240, inputmode: "numeric", class: "minutes" }))),
+    h("details", {}, h("summary", {}, b.note ? "Private note" : "Add a private note"), ...input(b, "note", "Only you see this; it isn't shown when presenting", `pb-${i}-n`, { maxlength: 1000, rows: 2 }, true)));
+  const kind = h("select", { id: "pb-add", "aria-label": "Kind of step to add" }, Object.entries(BLOCK_LABEL).filter(([k]) => (k !== "lesson" || d.choices.lessons.length) && (k !== "assignment" || d.choices.assignments.length)).map(([k, v]) => h("option", { value: k }, v)));
+  const add = () => { const k = kind.value; ed.blocks.push({ kind: k, minutes: k === "timer" ? 5 : null, note: null,
+      ...(k === "lesson" ? { lessonId: d.choices.lessons[0]?.id } : k === "assignment" ? { assignmentId: d.choices.assignments[0]?.id } : k === "warmup" ? { prompt: "" } : k === "text" ? { title: "", body: "" } : k === "timer" ? { label: "" } : { label: "", url: "https://" }) }); redraw(); };
+  const save = async status => {
+    const body = { title: ed.title || null, status, baseVersion: ed.version, blocks: ed.blocks.map(b => ({ ...b, minutes: b.minutes === "" || b.minutes == null ? null : Number(b.minutes), note: b.note || null })) };
+    try { const r = (await api.req("PUT", `/api/class-plans/${state.planCourseId}/${date}`, body)).data; ed.version = r.version; ed.notice = { text: `Saved${status === "ready" ? " and ready to present" : ""}.` }; }
+    catch (e) {
+      const err = e.body?.error;
+      ed.notice = { warn: true, text: err === "plan_changed" ? `${e.body.updatedBy} changed this plan. Reload to see it (your changes here will be replaced).` :
+        err === "empty_plan" ? "Add at least one step before marking it ready." : err === "invalid_link" ? `Step ${e.body.index + 1}: links must start with https://` :
+        err === "timer_needs_minutes" ? `Step ${e.body.index + 1}: give the timer some minutes.` : err ? `Step ${(e.body.index ?? 0) + 1} isn't complete yet.` : "Couldn't save.", reload: err === "plan_changed" };
+    }
+    redraw();
+  };
+  const dateIn = h("input", { id: "plan-date", type: "date", value: date });
+  dateIn.addEventListener("change", () => { if (dateIn.value) openView("plan", { planDate: dateIn.value, planEdit: null }); });
+  const from = h("input", { id: "plan-from", type: "date" });
+  const title = h("input", { id: "plan-title", maxlength: 120, value: ed.title, placeholder: "e.g. Fractions with strips" });
+  title.addEventListener("input", () => { ed.title = title.value; });
+  const minutes = ed.blocks.reduce((n, b) => n + (Number(b.minutes) || 0), 0);
+  return [back("classes", "Classes"),
+    h("section", { class: "card hero", "aria-label": "Plan" }, h("p", { class: "small muted" }, `${d.course.subject} · Grade ${d.course.grade_level}`), h("h2", {}, `Plan: ${d.course.title}`),
+      h("p", { class: "small" }, `${ed.blocks.length} step${ed.blocks.length === 1 ? "" : "s"}${minutes ? ` · ${minutes} min planned` : ""}${d.plan ? ` · last saved by ${d.plan.updatedBy}` : ""}`)),
+    h("div", { class: "row wrap" }, h("div", { class: "grow" }, h("label", { for: dateIn.id }, "Day"), dateIn), h("div", { class: "grow" }, h("label", { for: title.id }, "Plan title (optional)"), title)),
+    h("div", { "aria-live": "polite" }, ed.notice ? h("p", { class: `notice${ed.notice.warn ? " warn" : ""}` }, ed.notice.text, ed.notice.reload ? [" ", h("button", { class: "btn small", type: "button", onclick: () => openView("plan", { planEdit: null }) }, "Reload")] : null) : null),
+    ed.blocks.length ? h("ol", { class: "plan-blocks" }, ed.blocks.map(blockCard)) : h("section", { class: "card" }, empty("No steps yet. Add a warm-up, a lesson, a timer…"),
+      h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault(); if (!from.value) return;
+        try { await api.post(`/api/class-plans/${state.planCourseId}/${date}/copy-from`, { fromDate: from.value }); toast("Copied. Change what you need."); openView("plan", { planEdit: null }); }
+        catch (err) { toast(err.body?.error === "plan_not_found" ? "No plan on that day." : "Couldn't copy it."); } } },
+        h("div", { class: "grow" }, h("label", { for: from.id }, "Or start from another day's plan"), from), h("button", { class: "btn", type: "submit" }, "Use that plan"))),
+    h("div", { class: "row wrap" }, h("div", { class: "grow" }, kind), h("button", { class: "btn", type: "button", onclick: add }, "Add step")),
+    h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => save("draft") }, "Save draft"),
+      h("button", { class: "btn primary", type: "button", onclick: () => save("ready") }, "Save as ready"),
+      ed.version ? h("button", { class: "btn", type: "button", onclick: () => openView("present", { presentAt: 0 }) }, icon("play"), "Present") : null)];
+};
+VIEWS.present = async () => {
+  if (!state.planCourseId) return VIEWS.classes();
+  const date = state.planDate || localDate();
+  const d = (await api.get(`/api/class-plans/${state.planCourseId}/${date}`)).data;
+  const blocks = d.plan?.blocks || [];
+  if (!blocks.length) return [back("plan", "Plan"), empty("This plan has no steps yet.")];
+  const i = Math.min(Math.max(state.presentAt || 0, 0), blocks.length - 1), b = blocks[i];
+  document.body.classList.add("presenting");
+  const move = n => { state.presentAt = Math.min(Math.max(i + n, 0), blocks.length - 1); clearInterval(state.presentTimer); go("present", { push: false }); };
+  const exit = () => { clearInterval(state.presentTimer); document.body.classList.remove("presenting"); document.removeEventListener("keydown", state.presentKeys); go("plan", { push: false }); };
+  document.removeEventListener("keydown", state.presentKeys);
+  state.presentKeys = e => { if (state.tab !== "present") return; if (["ArrowRight", "PageDown", " "].includes(e.key)) { e.preventDefault(); move(1); } else if (["ArrowLeft", "PageUp"].includes(e.key)) { e.preventDefault(); move(-1); } else if (e.key === "Escape") exit(); };
+  document.addEventListener("keydown", state.presentKeys);
+  let slide;
+  if (b.kind === "warmup") slide = [h("p", { class: "kicker" }, "Warm-up"), h("h1", {}, b.prompt)];
+  else if (b.kind === "lesson") slide = b.lesson ? [h("p", { class: "kicker" }, "Lesson"), h("h1", {}, b.lesson.title), h("p", { class: "goal" }, b.lesson.objective), h("div", { class: "lesson-text" }, b.lesson.content.split(/\n+/).map(p => h("p", {}, p)))] : [h("h1", {}, "This lesson isn't available")];
+  else if (b.kind === "assignment") slide = b.assignment ? [h("p", { class: "kicker" }, b.assignment.kind === "quiz" ? "Quiz" : "Work"), h("h1", {}, b.assignment.title), b.assignment.instructions ? h("div", { class: "lesson-text" }, b.assignment.instructions.split(/\n+/).map(p => h("p", {}, p))) : null] : [h("h1", {}, "This assignment isn't available")];
+  else if (b.kind === "text") slide = [b.title ? h("h1", {}, b.title) : null, h("div", { class: "lesson-text big" }, b.body.split(/\n+/).map(p => h("p", {}, p)))];
+  else if (b.kind === "link") slide = [h("p", { class: "kicker" }, "Link"), h("h1", {}, b.label), h("a", { class: "btn primary big", href: b.url, target: "_blank", rel: "noopener noreferrer" }, "Open ", new URL(b.url).host)];
+  else {
+    const out = h("p", { class: "clock", role: "timer", "aria-live": "off" });
+    let left = (state.presentLeft?.i === i ? state.presentLeft.s : b.minutes * 60), running = false;
+    const show = () => { out.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`; if (!left) { out.classList.add("done"); clearInterval(state.presentTimer); toggle.textContent = "Time's up"; toggle.disabled = true; } };
+    const toggle = h("button", { class: "btn primary big", type: "button", onclick: () => { running = !running; toggle.textContent = running ? "Pause" : "Start";
+      clearInterval(state.presentTimer); if (running) state.presentTimer = setInterval(() => { left = Math.max(0, left - 1); state.presentLeft = { i, s: left }; show(); }, 1000); } }, "Start");
+    show();
+    slide = [h("p", { class: "kicker" }, "Timer"), b.label ? h("h1", {}, b.label) : null, out, toggle];
+  }
+  return h("section", { class: "present", "aria-label": `Step ${i + 1} of ${blocks.length}` },
+    h("div", { class: "present-body" }, slide),
+    h("div", { class: "present-bar" }, h("button", { class: "btn", type: "button", onclick: exit }, "Exit"),
+      h("span", { class: "grow small" }, `${i + 1} / ${blocks.length}${b.minutes && b.kind !== "timer" ? ` · ${b.minutes} min` : ""}`),
+      h("button", { class: "btn", type: "button", "aria-label": "Previous step", disabled: i === 0, onclick: () => move(-1) }, "‹ Previous"),
+      h("button", { class: "btn primary", type: "button", "aria-label": "Next step", disabled: i === blocks.length - 1, onclick: () => move(1) }, "Next ›")));
 };
 function announceForm(scope) {
   const title = h("input", { id: `ann-title-${scope}`, maxlength: 120, required: true });
