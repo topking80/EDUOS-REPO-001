@@ -699,3 +699,6 @@ GRANT SELECT, INSERT ON safety_room_reports TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON safety_room_reports FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_safety_room_reporter(uuid), eduos_safety_room_viewer(uuid), eduos_safety_school_rooms(uuid),
   eduos_safety_my_room_now(), eduos_safety_room_alert_recipients(uuid) TO eduos_app;
+
+-- SAFE-01b (db/120): vice principals start and lead safety alerts.
+GRANT EXECUTE ON FUNCTION eduos_safety_incident_staff(uuid), eduos_safety_incident_lead(uuid) TO eduos_app;
