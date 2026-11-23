@@ -2,7 +2,26 @@
 
 **Feature branch:** `feature/student-history-time-capsule`  
 **Target:** `main`  
-**Status:** Planning baseline; implementation is split into the twelve scoped PRs below.
+**Status:** Progress reviewed against merged PRs on 2026-11-23. See the implementation status register below; a merged PR is not treated as full completion when its body explicitly leaves roadmap scope outstanding.
+
+## Implementation status register
+
+| Workstream | Status | Evidence and remaining scope |
+|---|---|---|
+| TC-01 — data model | **Complete** | #89 merged the mainline persistence foundation: history entries, revisions, attachments, capsule persistence, forced RLS and constrained grants. |
+| TC-02 — guardian contributions | **Partial** | #90 merged text-only moderated contributions. Multimedia uploads remain blocked pending production storage, malware scanning, image processing and authorization providers. |
+| TC-03 — teacher contributions | **Partial** | #93 merged school review and family approval, decision history and screens. Contributions are text-only; multimedia remains outstanding. |
+| TC-04 — portfolio/timeline | **Partial** | #94 merged the student/family portfolio, filters and pagination. Media previews and multimedia timeline remain outstanding. |
+| TC-05 — privacy and sharing | **Partial** | #91 merged database-enforced relationship/audience privacy and migration safeguards. The full roadmap scope (explicit sharing grants, custody/dispute and age-rights transitions, export controls, complete threat-model gates) is not evidenced as complete. |
+| TC-06 — lifelong access and transfer | **Not started / no merged PR found** | No merged implementation for cross-district transfer packages, receiving-district acceptance or lifelong continuity was found in the reviewed PR history. |
+| TC-07 — milestone releases | **Partial** | #96 merged capsule creation/sealing/consent/date-or-milestone release. Its PR explicitly leaves notifications, legal holds, export, photos/video and student/teacher capsule-creation screens outstanding. |
+| TC-08 — archival storage/capacity | **Not started / no merged PR found** | No merged implementation found for tiered storage, integrity/restore operations, atomic quotas and district capacity reporting. |
+| TC-09 — voluntary donations | **Not started / no merged PR found** | No merged donation collection/payment-provider workflow found. |
+| TC-10 — donation accounting | **Not started / no merged PR found** | No merged append-only donation ledger, reconciliation or receipt workflow found. |
+| TC-11 — family storage dashboard | **Not started / no merged PR found** | No merged family capacity/usage dashboard found. |
+| TC-12 — district preservation fund | **Not started / no merged PR found** | No merged district fund governance, disbursement or reporting workflow found. |
+
+**Important validation boundary:** the PR history establishes merged code, not production readiness. The merged contribution PRs state that media providers are not configured; #96 lists its deferred lifecycle features. District policy, legal/records review, production storage/scanning setup and operational verification remain release gates.
 
 ## Product intent
 
