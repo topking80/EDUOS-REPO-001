@@ -206,6 +206,14 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       body: { summary: "Possession day", items: [{ kind: "drill", title: "Rondo 5v2", minutes: 10, description: "Keep-away", equipment: "8 cones" }, { kind: "play", title: "Corner: near post", minutes: 5, description: "", equipment: "" }] } } };
     case "/api/coaching/library": return { data: [{ id: "sm9", kind: "playbook", title: "Set pieces", sport: "Soccer", level: "Var", summary: "Corners and free kicks", version: 1, updated_at: now, author: "Teacher Two", school: "Oak Middle", mine: false, copies: 4,
       body: { summary: null, items: [{ kind: "play", title: "Near-post corner", minutes: null, description: "Runner to the near post", equipment: "" }] } }] };
+    // STATE-01: the state index and licenses.
+    case "/api/states": return { data: { districtState: "TX", categories: {}, states: [["TX", "Texas"], ["OH", "Ohio"]].map(([code, name]) => ({ code, name, counts: { licensing: 0, athletics: 1, agency: 1, records: 0 }, complete: false })) } };
+    case "/api/states/TX": return { data: { code: "TX", name: "Texas", sections: [
+      { key: "licensing", label: "Educator licensing", entries: [{ id: "se1", category: "licensing", title: "Certificate lookup", url: "https://example.org/lookup", description: "Look up a certificate", source: "https://example.org/", checked: "2026-11-20", from: "district", addedBy: "Supt One" }] },
+      { key: "athletics", label: "Athletics", entries: [{ category: "athletics", title: "NFHS", url: "https://nfhs.org/about", source: "https://nfhs.org/about", checked: "2026-11-22", from: "national" }] },
+      { key: "agency", label: "Education agency & school data", entries: [] }, { key: "records", label: "Student records rules", entries: [] }] } };
+    case "/api/licenses/mine": return { data: [{ id: "l1", stateCode: "TX", state: "Texas", number: "TX-1", type: "Standard Teaching", endorsements: "Math 7-12", issuedOn: "2022-07-01", expiresOn: "2027-01-01", daysLeft: 40, status: "verified", verifiedBy: "Supt One", note: "Checked" }] };
+    case "/api/licenses": return { data: [{ id: "l1", userId: "u1", name: "Teacher S1", stateCode: "TX", state: "Texas", number: "TX-1", type: "Standard Teaching", endorsements: null, issuedOn: null, expiresOn: "2027-01-01", daysLeft: 40, status: "self_reported" }] };
     case "/api/events": return { data: [{ id: "e1", activity_id: "a1", school_id: "s1", title: "Friday Night Football", starts_at: new Date(Date.now() + 864e5).toISOString(),
       ends_at: new Date(Date.now() + 9e7).toISOString(), venue: "Main field", status: "published", school_name: "Maple" }] };
     case "/api/commerce/status": return { data: { provider: "sandbox", enabled: true, live: false, sandbox: false, canPay: ["parent", "superintendent"].includes(role),
@@ -637,6 +645,28 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (draftSaves[1]?.baseVersion !== 4) failures.push(`second save sent baseVersion ${draftSaves[1]?.baseVersion} (should build on theirs, 4)`);
       if (!(await page.eval(`document.getElementById("main").innerText.includes("version 5")`))) failures.push("draft didn't move to version 5 after the merged save");
       if (page.errors.length) failures.push(`co-write: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
+  }
+  // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.
+  {
+    state.role = "superintendent";
+    const page = await Page.open(chrome.port);
+    try {
+      for (const [hash, want] of [["me", "My licenses"], ["states", "State index"], ["licenses", "Staff licenses"]]) {
+        await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/${hash}` });
+        const text = await page.mainText();
+        if (!text.includes(want)) failures.push(`state index #/${hash}: ${text.slice(0, 120)}`);
+        await axeScan(page, `superintendent: #/${hash}`, a11y);
+      }
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent.includes("Expiring")).click()`);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/states` });
+      await page.mainText();
+      await page.eval(`document.querySelector("button.linkrow").click()`);
+      for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 100)); if ((await page.eval(`document.querySelector("main")?.textContent || ""`)).includes("Certificate lookup")) break; }
+      const info = await page.eval(`document.querySelector("main")?.textContent || ""`);
+      if (!info.includes("Certificate lookup") || !info.includes("Added by Supt One")) failures.push(`state info: ${info.slice(0, 160)}`);
+      await axeScan(page, "superintendent: state info", a11y);
+      if (page.errors.length) failures.push(`state index: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
   // UI-05: any profile can be chosen from the header; the dialog passes axe.

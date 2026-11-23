@@ -588,3 +588,12 @@ REVOKE DELETE, TRUNCATE ON class_day_plans FROM eduos_app;
 GRANT SELECT, INSERT ON coaching_plans TO eduos_app;
 GRANT UPDATE (title, sport, level, body, team_id, version, archived_at, updated_at) ON coaching_plans TO eduos_app;
 REVOKE DELETE, TRUNCATE ON coaching_plans FROM eduos_app;
+
+-- STATE-01 (db/107): the district's state, its own state-index entries, and
+-- educators' licenses. Retired, never deleted.
+GRANT SELECT, INSERT ON district_state_settings, district_state_entries, educator_licenses TO eduos_app;
+GRANT UPDATE (state_code, updated_by, updated_at) ON district_state_settings TO eduos_app;
+GRANT UPDATE (retired_at, retired_by) ON district_state_entries TO eduos_app;
+GRANT UPDATE (state_code, license_number, license_type, endorsements, issued_on, expires_on, status, verified_by, verified_at, verify_note, updated_at, retired_at) ON educator_licenses TO eduos_app;
+REVOKE DELETE, TRUNCATE ON district_state_settings, district_state_entries, educator_licenses FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_works_at_my_school(uuid) TO eduos_app;
