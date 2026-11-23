@@ -693,3 +693,9 @@ REVOKE DELETE, TRUNCATE ON student_custody_restrictions, student_rights_transiti
 GRANT EXECUTE ON FUNCTION eduos_custody_blocked(uuid, uuid), eduos_student_holds_rights(uuid), eduos_history_granted(uuid, uuid, text),
   eduos_history_emergency(uuid, uuid, uuid), eduos_history_own_after_transition(uuid, uuid, uuid), eduos_records_office(uuid),
   eduos_is_student_self(uuid), eduos_is_linked_guardian(uuid) TO eduos_app;
+
+-- SAFE-01 (db/119): room status during an emergency. Append-only.
+GRANT SELECT, INSERT ON safety_room_reports TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON safety_room_reports FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_safety_room_reporter(uuid), eduos_safety_room_viewer(uuid), eduos_safety_school_rooms(uuid),
+  eduos_safety_my_room_now(), eduos_safety_room_alert_recipients(uuid) TO eduos_app;

@@ -5,6 +5,7 @@ const policy=readFileSync(new URL('../src/policy.js',import.meta.url),'utf8');
 const admin=readFileSync(new URL('../src/admin-routes.js',import.meta.url),'utf8');
 const circ=readFileSync(new URL('../src/library-circulation-routes.js',import.meta.url),'utf8');
 const migration=readFileSync(new URL('../db/024_librarian_role_and_badges.sql',import.meta.url),'utf8');
-test('librarian role has library-only operational permissions',()=>{assert.match(policy,/librarian:\s*\{ schools: \["read"\], branding: \["read"\], library: \["read", "circulate", "manage"\] \}/);});
+// SAFE-01: like every adult at a school, a librarian sees a live alert and reports their room (safety: read).
+test('librarian role has library-only operational permissions',()=>{assert.match(policy,/librarian:\s*\{ schools: \["read"\], branding: \["read"\], safety: \["read"\], library: \["read", "circulate", "manage"\] \}/);});
 test('principals and district IT can provision librarian memberships',()=>{assert.match(admin,/PRINCIPAL_MANAGED = \[[^\]]*librarian/);assert.match(admin,/IT_MANAGED = \[[^\]]*librarian/);});
 test('student card barcodes are hashed and school scoped',()=>{assert.match(circ,/createHash\("sha256"\)/);assert.match(circ,/\/api\/library\/borrower-cards\/lookup/);assert.match(circ,/m\.role='pupil'/);assert.match(migration,/FORCE ROW LEVEL SECURITY/);});
