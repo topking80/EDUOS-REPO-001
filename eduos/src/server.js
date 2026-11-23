@@ -2011,11 +2011,15 @@ registerStudentHistoryTeacherRoutes(app);
 registerStudentHistoryPortfolioRoutes(app);
 registerStudentHistoryCapsuleRoutes(app);
 registerSportsEligibilityRoutes(app);
-registerSchoolOperationsRoutes(app);
 registerWellbeingRoutes(app);
+// 37.7.3: the fixed /api/school-operations/* paths (command-center, schedules,
+// notification-preferences) must be registered before the catch-all
+// /api/school-operations/:domain, or Express hands them to the work-queue
+// handler, which answers 403 operations_access_denied.
 registerUnifiedSchoolOperationsRoutes(app);
 registerSchoolOperationsAutomationRoutes(app);
 registerSchoolOperationsNotificationRoutes(app);
+registerSchoolOperationsRoutes(app);
 registerNotificationRoutes(app);
 registerStaffDailyWorkspaceRoutes(app);
 registerStaffManagementRoutes(app);

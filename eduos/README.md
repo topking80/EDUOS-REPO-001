@@ -1,6 +1,6 @@
-# EduOS District Edition 37.7.2
+# EduOS District Edition 37.7.3
 
-**Package version: 37.7.2.** This README's detailed feature inventory below is historical context, not a complete inventory of changes through 37.7.2. Consult `RELEASE-NOTES-37.7.2.md` for the notification reliability and release-audit fixes, `RELEASE-NOTES-37.7.1.md` for district payment providers, and `RELEASE-NOTES-37.7.0.md` (plus `RELEASE-NOTES-37.5.0.md` for monitoring additions) for earlier changes and deployment requirements.
+**Package version: 37.7.3.** This README's detailed feature inventory below is historical context, not a complete inventory of changes through 37.7.3. Consult `RELEASE-NOTES-37.7.3.md` for the broken-connections audit fixes, `RELEASE-NOTES-37.7.2.md` for the notification reliability and release-audit fixes, `RELEASE-NOTES-37.7.1.md` for district payment providers, and `RELEASE-NOTES-37.7.0.md` (plus `RELEASE-NOTES-37.5.0.md` for monitoring additions) for earlier changes and deployment requirements.
 - **School node:** a small box at each school (Pi 5-class profile; arm64 not
   yet tested on hardware). It runs one school's EduOS, so attendance, bus
   check-ins, SafetyOS roll call, pick-up, Christie and gradebook reads keep
