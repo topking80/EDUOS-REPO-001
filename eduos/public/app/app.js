@@ -295,7 +295,7 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
@@ -303,7 +303,7 @@ function parentTab(tab) {
   if (tab === "capsule") return "capsules";
   if (tab === "draft") return "network";
   if (["states", "stateinfo", "licenses"].includes(tab)) return "me";
-  if (tab === "plan" || tab === "present") return "classes";
+  if (tab === "plan" || tab === "present" || tab === "room") return "classes";
   if (["teams", "coachplan", "coachlib"].includes(tab)) return tabsFor().some(t => t[0] === "teams") ? "teams" : "activities";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
@@ -320,7 +320,7 @@ async function go(tab, { push = true } = {}) {
     : ["safety", "me", ...(state.me?.role === "parent" && live.some(i => i.status === "reunification") ? ["pickup"] : [])];
   if (live.length && !open.includes(tab)) tab = "safety";
   document.body.classList.toggle("sos-mode", liveIncidents().length > 0);
-  clearInterval(state.quizTimer); clearInterval(state.draftTimer);
+  clearInterval(state.quizTimer); clearInterval(state.draftTimer); clearInterval(state.roomTimer);
   if (tab !== "present") { clearInterval(state.presentTimer); document.body.classList.remove("presenting"); }
   state.tab = tab;
   if (push && location.hash !== `#/${tab}`) history.pushState(null, "", `#/${tab}`);
@@ -3739,7 +3739,7 @@ async function myClassroomCard() {
       h("p", { class: "small muted" }, r.slots.map(x => `${dayText(x.weekdays)} ${x.starts}–${x.ends}${x.label ? ` (${x.label})` : ""}`).join(" · ")),
       r.devices.length ? h("p", { class: "small" }, `Devices: ${r.devices.map(d => d.name).join(", ")}`) : h("p", { class: "small muted" }, "No approved devices in this room yet."),
       h("div", { class: "btns" },
-        r.pairing ? [h("span", { class: "small muted" }, `${r.pairing.controller} is paired.`),
+        r.pairing ? [h("button", { class: "btn small primary", type: "button", "aria-label": `Controls: ${r.name}`, onclick: () => openView("room", { roomId: r.id }) }, "Controls"),
           h("button", { class: "btn small", type: "button", "aria-label": `End pairing: ${r.name}`, onclick: async () => {
             try { await api.post(`/api/pairings/${r.pairing.id}/end`, {}); toast("Unpaired."); go(state.tab, { push: false }); } catch { toast("Couldn't unpair."); } } }, "End pairing")]
         : r.now && r.devices.length ? h("button", { class: "btn small primary", type: "button", "aria-label": `Pair this device: ${r.name}`, onclick: () => pairRoom(r) }, "Pair this device")
@@ -3758,6 +3758,61 @@ async function pairRoom(r) {
   catch (e) { toast({ wrong_code: "That code didn't match. Check the display and try again.", not_timetabled_now: "You can pair only while you're timetabled in this room." }[e.body?.error]
     || (e.status === 429 ? "Too many tries. Wait a few minutes." : "Couldn't pair.")); }
 }
+// ---- DEV-03: the paired teacher's classroom controls -----------------------
+const CMD_STATUS = { queued: ["expected", "Sending"], delivered: ["expected", "Sent"], done: ["present", "Done"], failed: ["absent", "Didn't work"] };
+const CMD_TEXT = c => ({ show: "Show my screen", blank: c.args.on ? "Blank screen" : "Unblank screen", power: c.args.on ? "Power on" : "Power off", input: `Input: ${c.args.source}`,
+  volume: `Volume ${c.args.level}`, lights: `Lights ${c.args.on ? "on" : "off"}${c.args.level != null ? ` (${c.args.level}%)` : ""}`, lock: "Lock", unlock: "Unlock",
+  open_link: `Open ${c.args.url}`, focus: c.args.off ? "End focus" : `Focus on ${c.args.url}` })[c.capability] || c.capability;
+async function sendCommand(d, capability, args = {}) {
+  try { await api.post(`/api/devices/${d.id}/commands`, { capability, args }); toast(`Sent to ${d.name}.`); refreshRoomLog(); }
+  catch (e) { toast({ not_paired: "You're not paired with this room any more.", device_not_ready: "This device isn't connected yet. Ask district IT.", not_approved_for_device: "That isn't approved for this device.",
+    invalid_command: "Check what you entered." }[e.body?.error] || (e.status === 429 ? "Slow down a little." : "Couldn't send it.")); }
+}
+async function refreshRoomLog() {
+  const box = document.getElementById("room-log"); if (!box || !state.roomId) return;
+  const log = (await safe(api.get(`/api/rooms/${state.roomId}/commands?limit=15`)))?.data;
+  if (!log || !document.getElementById("room-log")) return;
+  box.replaceChildren(...(log.length ? [h("ul", { class: "list" }, log.map(c => h("li", { class: "row wrap" },
+    h("span", { class: "grow small" }, h("b", {}, c.device), `: ${CMD_TEXT(c)}`, c.result ? h("span", { class: "muted" }, ` · ${c.result}`) : null), chip(...CMD_STATUS[c.status]))))] : [empty("Nothing sent yet.")]));
+}
+VIEWS.room = async () => {
+  const r = ((await api.get("/api/my/rooms")).data || []).find(x => x.id === state.roomId);
+  if (!r) return [back("classes", "Classes"), empty("This room isn't on your timetable.")];
+  if (!r.pairing) return [back("classes", "Classes"), h("h2", {}, r.name), h("section", { class: "card" }, h("p", {}, "This device isn't paired with the room. Pair it from Classes while you're timetabled here."))];
+  const btn = (label, aria, fn, primary) => h("button", { class: `btn small${primary ? " primary" : ""}`, type: "button", "aria-label": `${label}: ${aria}`, onclick: fn }, label);
+  const id = (d, k) => `rc-${d.id.slice(0, 8)}-${k}`;
+  const field = (d, k, label, attrs) => [h("label", { for: id(d, k) }, label), h("input", { id: id(d, k), ...attrs })];
+  const val = (d, k) => document.getElementById(id(d, k))?.value.trim() || "";
+  const controls = d => {
+    const has = c => d.capabilities.includes(c);
+    return [
+      d.kind === "student_device" ? h("p", { class: "small muted" }, "You can lock these devices or send them to a link. No one can see their screens.") : null,
+      h("div", { class: "btns" },
+        has("show") ? btn("Show my screen", d.name, () => sendCommand(d, "show"), true) : null,
+        has("blank") ? [btn("Blank", d.name, () => sendCommand(d, "blank", { on: true })), btn("Unblank", d.name, () => sendCommand(d, "blank", { on: false }))] : null,
+        has("power") ? [btn("On", d.name, () => sendCommand(d, "power", { on: true })), btn("Off", d.name, () => sendCommand(d, "power", { on: false }))] : null,
+        has("lights") ? [btn("Lights on", d.name, () => sendCommand(d, "lights", { on: true })), btn("Lights off", d.name, () => sendCommand(d, "lights", { on: false }))] : null,
+        has("lock") ? btn("Lock", d.name, () => sendCommand(d, "lock", val(d, "msg") ? { message: val(d, "msg") } : {}), true) : null,
+        has("unlock") ? btn("Unlock", d.name, () => sendCommand(d, "unlock")) : null,
+        has("focus") ? btn("End focus", d.name, () => sendCommand(d, "focus", { off: true })) : null),
+      has("lock") ? field(d, "msg", "Message on locked screens (optional)", { maxlength: 120, placeholder: "e.g. Eyes up front" }) : null,
+      has("volume") ? h("div", { class: "row wrap" }, field(d, "vol", "Volume", { type: "range", min: 0, max: 100, step: 5, value: 50 }),
+        btn("Set volume", d.name, () => sendCommand(d, "volume", { level: Number(val(d, "vol")) }))) : null,
+      has("input") ? h("div", { class: "row wrap" }, field(d, "in", "Input", { maxlength: 40, placeholder: "e.g. HDMI 1" }), btn("Switch input", d.name, () => sendCommand(d, "input", { source: val(d, "in") }))) : null,
+      has("open_link") || has("focus") ? h("div", {}, field(d, "url", "Link (https://…)", { type: "url", maxlength: 500 }),
+        h("div", { class: "btns" }, has("open_link") ? btn("Open link", d.name, () => sendCommand(d, "open_link", { url: val(d, "url") })) : null,
+          has("focus") ? btn("Focus on link", d.name, () => sendCommand(d, "focus", { url: val(d, "url") })) : null)) : null];
+  };
+  clearInterval(state.roomTimer);
+  state.roomTimer = setInterval(refreshRoomLog, 4000);
+  setTimeout(refreshRoomLog, 0);
+  return [back("classes", "Classes"), h("h2", {}, r.name),
+    h("p", { class: "small muted" }, `Paired: ${r.pairing.controller}, until ${timeText(r.pairing.until)}. Only what district IT approved for each device is here.`),
+    r.devices.map(d => h("section", { class: "card", "aria-label": d.name }, h("h3", {}, d.name, h("span", { class: "small muted" }, ` · ${DEVICE_KIND[d.kind]}`)), controls(d))),
+    h("section", { class: "card", "aria-label": "Sent" }, h("h3", {}, "Sent"), h("div", { id: "room-log" }, h("p", { class: "small muted" }, "Loading…"))),
+    h("button", { class: "btn danger block", type: "button", onclick: async () => {
+      try { await api.post(`/api/pairings/${r.pairing.id}/end`, {}); toast("Unpaired."); go("classes"); } catch { toast("Couldn't unpair."); } } }, "End pairing")];
+};
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
 const LIC_STATUS = { self_reported: ["expected", "Not verified yet"], verified: ["present", "Verified by the district"], not_verified: ["absent", "Couldn't be verified"] };

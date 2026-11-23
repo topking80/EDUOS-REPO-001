@@ -92,7 +92,7 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
-let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [];
+let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false;
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   // TEACH-04: today's classes and one plan (any date).
@@ -214,7 +214,10 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/devices/dv1/events": return { data: [{ event: "requested", detail: "show,blank,volume", at: now, by: "Principal S1" }, { event: "approved", detail: null, at: now, by: "District IT" }, { event: "placed", detail: "Room 101", at: now, by: "Principal S1" }] };
     // DEV-02: the room timetable and pairing.
     case "/api/my/rooms": return { data: [{ id: "rm1", name: "Room 101", now: true, slots: [{ id: "tt1", roomId: "rm1", teacherId: "u1", teacher: "Smoke Test", weekdays: [1, 2, 3, 4, 5], starts: "08:00", ends: "09:00", label: "Math 3" }],
-      devices: [{ id: "dv1", kind: "display", name: "Front board", capabilities: ["show", "blank", "volume"] }], pairing: null }] };
+      devices: [{ id: "dv1", kind: "display", name: "Front board", capabilities: ["show", "blank", "volume"] }, { id: "dv2", kind: "student_device", name: "Cart A", capabilities: ["lock", "unlock", "open_link", "focus"] }],
+      pairing: pairedRoom ? { id: "pp1", roomId: "rm1", room: "Room 101", controller: "My phone", pairedAt: now, until: new Date(Date.now() + 36e5).toISOString() } : null }] };
+    case "/api/rooms/rm1/commands": return { data: commandsSent.map((c, i) => ({ id: `c${i}`, deviceId: c.deviceId, device: c.deviceId === "dv1" ? "Front board" : "Cart A", capability: c.capability, args: c.args,
+      status: i === 0 ? "done" : "delivered", by: "Smoke Test", createdAt: now, finishedAt: null, result: null })).reverse() };
     case "/api/rooms/rm1/timetable": return { data: [{ id: "tt1", roomId: "rm1", teacherId: "u1", teacher: "Teacher S1", weekdays: [1, 2, 3, 4, 5], starts: "08:00", ends: "09:00", label: "Math 3" }] };
     case "/api/rooms/rm1/teachers": return { data: [{ id: "u1", name: "Teacher S1" }, { id: "u2", name: "Teacher Two" }] };
     case "/api/pairings": return { data: [{ id: "pp1", roomId: "rm1", room: "Room 101", teacherId: "u1", teacher: "Teacher S1", controller: "My phone", pairedAt: now, until: new Date(Date.now() + 36e5).toISOString(), via: "Front board" }] };
@@ -308,6 +311,12 @@ function startServer() {
         state.endpointOps.revoked++;
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
+      }
+      const cmd = /^\/api\/devices\/([^/]+)\/commands$/.exec(pathname);
+      if (cmd && req.method === "POST") {
+        let raw = ""; req.on("data", c => { raw += c; });
+        return req.on("end", () => { commandsSent.push({ deviceId: cmd[1], ...JSON.parse(raw || "{}") });
+          res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ data: { id: "c", status: "queued" } })); });
       }
       if (/^\/api\/class-plans\/k1\//.test(pathname) && req.method === "PUT") {
         let raw = ""; req.on("data", c => { raw += c; });
@@ -719,6 +728,33 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "principal: paired now", a11y);
       if (page.errors.length) failures.push(`principal timetable: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
+  }
+  // DEV-03: the paired teacher opens Controls, sends checked commands; no screen viewing anywhere; the screen passes axe.
+  {
+    pairedRoom = true; commandsSent = [];
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    const clickLabel = l => page.eval(`(() => { const b = document.querySelector('main button[aria-label=${JSON.stringify(l)}]'); if (!b) return false; b.click(); return true; })()`);
+    try {
+      state.role = "teacher"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/classes` });
+      await page.mainText();
+      await waitFor(`!!document.querySelector('main button[aria-label="Controls: Room 101"]')`);
+      if (!(await clickLabel("Controls: Room 101"))) failures.push("teacher: no Controls button when paired");
+      if (!(await waitFor(`!!document.querySelector('main button[aria-label="Blank: Front board"]')`))) failures.push("controls: no Blank button");
+      await clickLabel("Blank: Front board");
+      await page.eval(`document.querySelector("main input[type=url]").value = "https://example.org/lesson"`);
+      await clickLabel("Open link: Cart A");
+      await page.eval(`document.querySelector("main input[maxlength='120']").value = "Eyes up front"`);
+      await clickLabel("Lock: Cart A");
+      await waitFor(`(document.getElementById("room-log")?.textContent || "").includes("Lock")`);
+      const sent = JSON.stringify(commandsSent.map(c => [c.deviceId, c.capability, c.args]));
+      if (sent !== JSON.stringify([["dv1", "blank", { on: true }], ["dv2", "open_link", { url: "https://example.org/lesson" }], ["dv2", "lock", { message: "Eyes up front" }]])) failures.push(`commands sent: ${sent}`);
+      const text = await page.eval(`document.querySelector("main").textContent`);
+      if (/view (their|the) screen|screenshot|watch/i.test(text.replace("No one can see their screens", ""))) failures.push("controls offer screen viewing");
+      await axeScan(page, "teacher: classroom controls", a11y);
+      if (page.errors.length) failures.push(`classroom controls: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); pairedRoom = false; }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.
   {
