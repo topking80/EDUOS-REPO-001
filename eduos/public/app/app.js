@@ -295,14 +295,15 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room", "scan", "roll", "mywork", "portfolioreview", "rankings"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room", "scan", "roll", "mywork", "portfolioreview", "rankings", "historyprivacy", "emergencyrecords"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
   if (tab === "history") return "history";
   if (tab === "capsule") return "capsules";
   if (tab === "draft") return "network";
-  if (["states", "stateinfo", "licenses", "mywork", "portfolioreview", "rankings"].includes(tab)) return "me";
+  if (["states", "stateinfo", "licenses", "mywork", "portfolioreview", "rankings", "emergencyrecords"].includes(tab)) return "me";
+  if (tab === "historyprivacy") return "history";
   if (tab === "plan" || tab === "present" || tab === "room") return "classes";
   if (tab === "scan") return tabsFor()[0]?.[0];
   if (tab === "roll") return tabsFor().some(t => t[0] === "classes") ? "classes" : tabsFor().some(t => t[0] === "mediacenter") ? "mediacenter" : "devices";
@@ -1336,7 +1337,8 @@ VIEWS.portfolio = async () => {
     h("p", { class: "small muted" }, `${f.total} item${f.total === 1 ? "" : "s"} in the history. Only items that were accepted into it appear here.`),
     f.total ? controls : null,
     first.items.length ? list : empty(filtered ? "Nothing matches these filters." : "Nothing in the history yet."),
-    cursor ? more : null];
+    cursor ? more : null,
+    await studentSharingCard(first.student.id)];
 };
 // ---------------- Time Capsules ----------------
 const MILESTONE_TEXT = { grade_5_completion: "Finishing grade 5", grade_8_completion: "Finishing grade 8", graduation: "Graduation", age_18: "Turning 18" };
@@ -1475,7 +1477,8 @@ VIEWS.history = async () => {
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
   const teacher = await teacherReviewSection();
-  return [h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
+  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), state.me.role === "superintendent" ? await emergencyReviewCard() : null] : null;
+  return [privacy, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
     h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),
     ...(response ? [h("h3", {}, "Family memories"), ...content] : []),
@@ -3582,6 +3585,7 @@ VIEWS.me = async () => {
     state.me.role === "teacher" ? h("button", { class: "btn block", type: "button", onclick: () => go("mywork") }, icon("spark"), "My work: take it with you") : null,
     ["principal", "superintendent"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("portfolioreview") }, icon("check"), "Teachers' work: rights and transfers") : null,
     ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => openView("rankings", { rankSchool: null }) }, icon("grid"), "U.S. News indicators") : null,
+    ["counselor", "nurse", "sro"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("emergencyrecords") }, icon("shield"), "Emergency access to a student's records") : null,
     h("button", { class: "btn block", type: "button", onclick: () => go("states") }, icon("book"), "State index"),
     ["superintendent", "principal"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("licenses") }, icon("people"), "Staff licenses") : null,
     h("a", { class: "btn block", href: "/" }, "Open the full EduOS site"),
@@ -4374,6 +4378,124 @@ async function enterRanking(d, ind, def, latest) {
   catch (e) { toast({ check_the_figures: "Check the figures: counts can't be larger than the total, and percentages are 0 to 100.", invalid_entry: "Use a school year like 2025-26.",
     invalid_source: "The source link must start with https://." }[e.body?.error] || "Couldn't save it."); }
 }
+// ---- TC-05: history privacy controls --------------------------------------
+const CLASS_TEXT = { family_memory: "Family memories", student_portfolio: "My portfolio", teacher_artifact: "Teachers' items", official_record: "Official records" };
+const ACCESS_TEXT = { guardian: "guardian", student: "student", teacher: "teacher", school_lead: "school leader", district: "district office", grant: "shared by the student", emergency: "emergency access" };
+const BASIS_TEXT = { age_18: "turned 18", postsecondary: "attends college", emancipated: "emancipated", other: "other" };
+function recordsPrivacyCard() {
+  const box = h("div", {});
+  const q = h("input", { id: "rp-q", type: "search", maxlength: 100, placeholder: "Name or student number" });
+  return h("section", { class: "card", "aria-label": "Records and privacy" }, h("h3", {}, "Records & privacy"),
+    h("p", { class: "small muted" }, "Custody restrictions, a student taking over their own record rights, what they share, emergency access, and who looked."),
+    h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault();
+        const r = (await safe(api.get(`/api/students?q=${encodeURIComponent(q.value.trim())}&limit=10`)))?.data;
+        const list = Array.isArray(r) ? r : r?.students || r?.items || [];
+        box.replaceChildren(list.length ? h("ul", { class: "list" }, list.map(x => h("li", { class: "row" }, h("span", { class: "grow" }, x.display_name, h("span", { class: "small muted" }, ` · ${x.local_student_number || ""}`)),
+          h("button", { class: "btn small", type: "button", "aria-label": `Privacy: ${x.display_name}`, onclick: () => openView("historyprivacy", { privacyStudentId: x.id }) }, "Open")))) : empty("No students found.")); } },
+      h("div", { class: "grow" }, h("label", { for: "rp-q" }, "Find a student"), q), h("button", { class: "btn", type: "submit" }, "Search")), box);
+}
+VIEWS.historyprivacy = async () => {
+  if (!state.privacyStudentId) return VIEWS.history();
+  const d = (await api.get(`/api/students/${state.privacyStudentId}/history-privacy`)).data;
+  const log = (await safe(api.get(`/api/students/${d.student.id}/history-access-log`)))?.data || [];
+  const reload = () => go("historyprivacy", { push: false });
+  const restrict = async g => {
+    const v = await dialogForm(`Restrict ${g.name}'s access`, () => {
+      const kind = h("select", { id: "cr-k" }, h("option", { value: "court_order" }, "Court order"), h("option", { value: "disputed" }, "Disputed guardianship (until resolved)"));
+      return { fields: [h("p", { class: "small" }, `${g.name} won't see ${d.student.name}'s history or Time Capsules, anywhere, until this is lifted. Nothing is deleted.`),
+        h("label", { for: "cr-k" }, "Why"), kind, h("label", { for: "cr-b" }, "Basis (order number, what was received)"), h("input", { id: "cr-b", required: true, maxlength: 300 }),
+        h("label", { for: "cr-d" }, "Where the document is kept (optional)"), h("input", { id: "cr-d", maxlength: 200 }), h("label", { for: "cr-e" }, "Ends on (optional)"), h("input", { id: "cr-e", type: "date" })],
+        value: () => ({ userId: g.id, kind: kind.value, basis: document.getElementById("cr-b").value.trim(), documentRef: document.getElementById("cr-d").value.trim() || null, endsOn: document.getElementById("cr-e").value || null }) };
+    }, "Restrict");
+    if (!v) return;
+    try { await api.post(`/api/students/${d.student.id}/custody-restrictions`, v); toast("Restricted."); reload(); } catch { toast("Couldn't save it. The basis needs at least 5 characters."); }
+  };
+  return [back("history", "Student history"), h("h2", {}, `${d.student.name}: records & privacy`),
+    h("section", { class: "card", "aria-label": "Guardians" }, h("h3", {}, "Guardians"),
+      d.guardians.length ? h("ul", { class: "list" }, d.guardians.map(g => h("li", { class: "row wrap" }, h("span", { class: "grow" }, g.name), g.restricted ? chip("absent", "Restricted")
+        : h("button", { class: "btn small", type: "button", "aria-label": `Restrict access: ${g.name}`, onclick: () => restrict(g) }, "Restrict access")))) : empty("No guardians linked."),
+      d.restrictions.length ? [h("h4", {}, "Restrictions"), h("ul", { class: "list" }, d.restrictions.map(r => h("li", {}, h("b", {}, `${r.person}: ${r.kind === "court_order" ? "court order" : "disputed"}`),
+        h("p", { class: "small muted" }, `${r.basis}${r.documentRef ? ` · ${r.documentRef}` : ""} · set by ${r.setBy}${r.endsOn ? ` · ends ${r.endsOn}` : ""}${r.liftedAt ? ` · lifted: ${r.liftNote}` : ""}`),
+        !r.liftedAt ? h("button", { class: "btn small", type: "button", "aria-label": `Lift restriction: ${r.person}`, onclick: async () => {
+          const note = await ask({ title: `Lift the restriction on ${r.person}?`, label: "Why (e.g. order vacated)", confirm: "Lift" }); if (!note) return;
+          try { await api.post(`/api/custody-restrictions/${r.id}/lift`, { note }); toast("Lifted."); reload(); } catch { toast("Couldn't lift it."); } } }, "Lift") : null)))] : null),
+    h("section", { class: "card", "aria-label": "Record rights" }, h("h3", {}, "Record rights"),
+      d.transition ? [h("p", {}, `${d.student.name} holds their own record rights (${BASIS_TEXT[d.transition.basis]}, from ${d.transition.effectiveOn}, recorded by ${d.transition.recordedBy}). Guardians see only what they wrote and what ${first(d.student.name)} shares.`),
+        h("button", { class: "btn small", type: "button", onclick: async () => {
+          const note = await ask({ title: "Undo this? (recorded in error)", label: "Why", confirm: "Undo" }); if (!note) return;
+          try { await api.post(`/api/students/${d.student.id}/rights-transition/reverse`, { note }); toast("Undone."); reload(); } catch { toast("Couldn't undo it."); } } }, "Recorded in error")]
+      : [h("p", { class: "small muted" }, "When the student turns 18 or otherwise takes over their own record rights, record it here. Guardians then see only what the student shares with them."),
+        h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault(); const f = e.target.elements;
+            try { await api.post(`/api/students/${d.student.id}/rights-transition`, { basis: f[0].value, effectiveOn: f[1].value }); toast("Recorded."); reload(); } catch { toast("Choose a date."); } } },
+          h("div", {}, h("label", { for: "rt-b" }, "Because"), h("select", { id: "rt-b" }, Object.entries(BASIS_TEXT).map(([k, t]) => h("option", { value: k }, t)))),
+          h("div", {}, h("label", { for: "rt-d" }, "From"), h("input", { id: "rt-d", type: "date", required: true })), h("button", { class: "btn", type: "submit" }, "Record"))],
+      d.grants.length ? h("p", { class: "small" }, `Shared: ${d.grants.filter(g => !g.revoked).map(g => `${g.grantee} (${g.classifications.map(c => CLASS_TEXT[c]).join(", ")})`).join("; ") || "nothing now"}`) : null),
+    d.emergency.length ? h("section", { class: "card", "aria-label": "Emergency access" }, h("h3", {}, "Emergency access"),
+      h("ul", { class: "list small" }, d.emergency.map(a => h("li", {}, `${a.person} (${a.role}) · ${new Date(a.openedAt).toLocaleString()} · ${a.reason}${a.reviewed ? " · reviewed" : " · not reviewed yet"}`)))) : null,
+    accessLogCard(log)];
+};
+function accessLogCard(log) {
+  return h("section", { class: "card", "aria-label": "Who looked" }, h("h3", {}, "Who looked"),
+    log.length ? h("ul", { class: "list small" }, log.slice(0, 40).map(l => h("li", {}, `${l.who} (${ACCESS_TEXT[l.access] || l.access}) · ${new Date(l.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`)))
+      : empty("No one has opened this history yet."));
+}
+async function emergencyReviewCard() {
+  const list = (await safe(api.get("/api/history/emergency-access?review=pending")))?.data || [];
+  if (!list.length) return null;
+  return h("section", { class: "card", "aria-label": "Emergency access to review" }, h("h3", {}, "Emergency access to review"),
+    h("ul", { class: "list" }, list.map(a => h("li", {}, h("b", {}, `${a.person} (${a.role}) opened ${a.student}'s records`), h("p", { class: "small muted" }, `${a.school} · ${new Date(a.openedAt).toLocaleString()} · ${a.reason}`),
+      h("button", { class: "btn small", type: "button", "aria-label": `Review: ${a.person}, ${a.student}`, onclick: async () => {
+        const note = await ask({ title: "Review this emergency access", label: "Your note (was it appropriate?)", confirm: "Save review" }); if (!note) return;
+        try { await api.post(`/api/emergency-access/${a.id}/review`, { note }); toast("Reviewed."); go("history", { push: false }); } catch { toast("Couldn't save it."); } } }, "Review")))));
+}
+async function studentSharingCard(studentId) {
+  const me = state.me.role;
+  if (me === "parent") {
+    const log = (await safe(api.get(`/api/students/${studentId}/history-access-log`)))?.data || [];
+    const sh = (await safe(api.get("/api/history/sharing")))?.data;
+    const adult = sh?.holdsOwnRights?.some(a => a.studentId === studentId);
+    return [adult ? h("p", { class: "notice" }, "Your child now holds their own record rights. You see what you wrote and what they choose to share with you.") : null,
+      h("details", { class: "card" }, h("summary", {}, "Who looked at this history"), accessLogCard(log))];
+  }
+  if (me !== "pupil") return null;
+  const d = (await safe(api.get("/api/history/sharing")))?.data;
+  const log = (await safe(api.get(`/api/students/${studentId}/history-access-log`)))?.data || [];
+  const reload = () => go(state.tab, { push: false });
+  return [d?.holdsOwnRights ? h("section", { class: "card", "aria-label": "Sharing" }, h("h3", {}, "Sharing your history"),
+      h("p", { class: "small muted" }, "Your record rights are yours now. Your guardians see only what they wrote and what you share with them here. You can stop sharing any time."),
+      d.grants.filter(g => g.active).length ? h("ul", { class: "list" }, d.grants.filter(g => g.active).map(g => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, h("b", {}, g.grantee), h("span", { class: "small muted" }, ` · ${g.classifications.map(c => CLASS_TEXT[c]).join(", ")} · until ${new Date(g.expiresAt).toLocaleDateString()}`)),
+        h("button", { class: "btn small", type: "button", "aria-label": `Stop sharing with ${g.grantee}`, onclick: async () => {
+          try { await api.post(`/api/history/sharing/${g.id}/revoke`, {}); toast("Stopped."); reload(); } catch { toast("Couldn't stop it."); } } }, "Stop sharing")))) : h("p", { class: "small" }, "You aren't sharing anything."),
+      d.guardians.length ? h("button", { class: "btn", type: "button", onclick: async () => {
+        const v = await dialogForm("Share with a guardian", () => {
+          const who = h("select", { id: "sg-w" }, d.guardians.map(g => h("option", { value: g.id }, g.name)));
+          const boxes = Object.entries(CLASS_TEXT).map(([k, t]) => h("label", { class: "check" }, h("input", { type: "checkbox", value: k, checked: k === "official_record" }), ` ${t}`));
+          return { fields: [h("label", { for: "sg-w" }, "With"), who, h("fieldset", { class: "caps" }, h("legend", {}, "What"), boxes),
+            h("label", { for: "sg-d" }, "For how many days"), h("input", { id: "sg-d", type: "number", min: 1, max: 365, value: 90 })],
+            value: () => { const classifications = boxes.map(b => b.querySelector("input")).filter(i => i.checked).map(i => i.value);
+              if (!classifications.length) { toast("Choose what to share."); return undefined; }
+              return { granteeUserId: who.value, classifications, days: Number(document.getElementById("sg-d").value) }; } };
+        }, "Share");
+        if (!v) return;
+        try { await api.post("/api/history/sharing", v); toast("Shared."); reload(); } catch { toast("Couldn't share it."); } } }, "Share with a guardian") : null) : null,
+    h("details", { class: "card" }, h("summary", {}, "Who looked at your history"), accessLogCard(log))];
+}
+VIEWS.emergencyrecords = async () => {
+  const cur = state.emergency;
+  const records = cur ? (await safe(api.get(`/api/history/portfolio?studentId=${cur.studentId}`)))?.data : null;
+  return [back("me", "Account"), h("h2", {}, "Emergency access to a student's records"),
+    h("p", { class: "small muted" }, "For an emergency only: you see the student's official records (not family or private items) for up to four hours. Your reason is recorded, the student and family can see that you looked, and the superintendent reviews every use."),
+    cur && records ? h("section", { class: "card", "aria-label": `${cur.student}'s official records` }, h("div", { class: "row wrap" }, h("h3", { class: "grow" }, cur.student), chip("expected", `Until ${timeText(cur.expiresAt)}`)),
+        records.items.length ? h("ul", { class: "list" }, records.items.map(i => h("li", {}, h("b", {}, i.title), h("p", { class: "small muted" }, `${fmtDay(i.occurredAt)}${i.authorName ? ` · ${i.authorName}` : ""}`), i.body ? h("p", { class: "small" }, i.body) : null))) : empty("No official records."),
+        h("button", { class: "btn", type: "button", onclick: async () => { try { await api.post(`/api/emergency-access/${cur.id}/close`, {}); } catch {} state.emergency = null; go("emergencyrecords", { push: false }); } }, "Close access"))
+      : h("form", { class: "card", onsubmit: async e => { e.preventDefault(); const f = e.target.elements;
+          try { state.emergency = (await api.post("/api/history/emergency-access", { studentNumber: f[0].value.trim(), reason: f[1].value.trim() })).data; go("emergencyrecords", { push: false }); }
+          catch (err) { toast(err.body?.error === "student_not_found" ? "No student with that number at your school." : "Write the reason (at least 20 characters)."); } } },
+        h("label", { for: "em-n" }, "Student ID number"), h("input", { id: "em-n", required: true, maxlength: 40, autocomplete: "off" }),
+        h("label", { for: "em-r" }, "Reason"), h("textarea", { id: "em-r", required: true, minlength: 20, maxlength: 500, rows: 3 }),
+        h("button", { class: "btn danger", type: "submit" }, "Open records for four hours"))];
+};
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
 const LIC_STATUS = { self_reported: ["expected", "Not verified yet"], verified: ["present", "Verified by the district"], not_verified: ["absent", "Couldn't be verified"] };
