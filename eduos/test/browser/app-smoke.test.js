@@ -221,6 +221,10 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/rooms/rm1/timetable": return { data: [{ id: "tt1", roomId: "rm1", teacherId: "u1", teacher: "Teacher S1", weekdays: [1, 2, 3, 4, 5], starts: "08:00", ends: "09:00", label: "Math 3" }] };
     case "/api/rooms/rm1/teachers": return { data: [{ id: "u1", name: "Teacher S1" }, { id: "u2", name: "Teacher Two" }] };
     case "/api/pairings": return { data: [{ id: "pp1", roomId: "rm1", room: "Room 101", teacherId: "u1", teacher: "Teacher S1", controller: "My phone", pairedAt: now, until: new Date(Date.now() + 36e5).toISOString(), via: "Front board" }] };
+    // SPORTS-01: MaxPreps and Hudl.
+    case "/api/activities/a1/links": return { data: [{ service: "maxpreps", name: "MaxPreps", url: "https://www.maxpreps.com/x/falcons-soccer/" }] };
+    case "/api/activities/a1/exports": return { data: { team: "Falcons Soccer", services: { maxpreps: { included: 1, withheld: 1 }, hudl: { included: 0, withheld: 2 } }, log: [] } };
+    case "/api/family/sports-sharing": return { data: [{ studentId: "c1", name: "Ava Lee", teams: ["Falcons Soccer"], maxpreps: { since: now, by: "Smoke Test" }, hudl: null }] };
     // TEACH-06: approved storage.
     case "/api/storage/devices": return { data: [{ id: "sd1", owner: "Teacher S1", ownerId: "u1", name: "Blue drive", kind: "usb_drive", serial: "SN-42", status: role === "teacher" ? "approved" : "pending", requestedAt: now }] };
     case "/api/storage/settings": return { data: { cloudEnabled: true, retentionDays: 365 } };
@@ -914,6 +918,33 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`!!document.querySelector('main button[aria-label="Approve storage: Blue drive"]')`))) failures.push("IT: no storage approval");
       await axeScan(page, "it_admin: teachers' storage", a11y);
       if (page.errors.length) failures.push(`principal review: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); }
+  }
+  // SPORTS-01: a coach sees team pages and the MaxPreps/Hudl files; a family sees its opt-in. Both pass axe.
+  {
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    try {
+      state.role = "teacher"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/activities` });
+      await page.mainText();
+      await waitFor(`!!document.querySelector('main button[aria-label="MaxPreps & Hudl: Falcons Soccer"]')`);
+      await page.eval(`document.querySelector('main button[aria-label="MaxPreps & Hudl: Falcons Soccer"]').click()`);
+      if (!(await waitFor(`!!document.querySelector('dialog[open] button[aria-label="MaxPreps roster file"]')`))) failures.push("coach: no MaxPreps roster file");
+      const d = await page.eval(`document.querySelector("dialog[open]").textContent`);
+      if (!d.includes("roster: 1 opted in, 1 not") || !d.includes("Falcons Soccer on MaxPreps")) failures.push(`coach dialog: ${d.slice(0, 200)}`);
+      await axeScan(page, "teacher: MaxPreps & Hudl", a11y);
+      if (page.errors.length) failures.push(`coach sports: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+
+      state.role = "parent"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/activities` });
+      await page.mainText();
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Sharing with MaxPreps and Hudl")`))) failures.push("parent: no sharing card");
+      const boxes = await page.eval(`[...document.querySelectorAll('section[aria-label="Sharing with MaxPreps and Hudl"] input[type=checkbox]')].map(b => b.checked).join()`);
+      if (boxes !== "true,false") failures.push(`parent sharing: ${boxes}`);
+      await axeScan(page, "parent: sharing with MaxPreps and Hudl", a11y);
+      if (page.errors.length) failures.push(`parent sports: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.
