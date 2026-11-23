@@ -680,3 +680,16 @@ GRANT EXECUTE ON FUNCTION eduos_sports_lead(uuid) TO eduos_app;
 GRANT SELECT, INSERT ON school_ranking_entries TO eduos_app;
 GRANT UPDATE (verified_by, verified_at, superseded_at) ON school_ranking_entries TO eduos_app;
 REVOKE DELETE, TRUNCATE ON school_ranking_entries FROM eduos_app;
+
+-- TC-05 (db/118): history privacy controls. Lifted / reversed / revoked / closed, never deleted.
+GRANT SELECT, INSERT ON student_custody_restrictions, student_rights_transitions, history_sharing_grants, history_emergency_access, history_access_log TO eduos_app;
+GRANT USAGE ON SEQUENCE history_access_log_id_seq TO eduos_app;
+GRANT UPDATE (lifted_by, lifted_at, lift_note) ON student_custody_restrictions TO eduos_app;
+GRANT UPDATE (reversed_by, reversed_at, reverse_note) ON student_rights_transitions TO eduos_app;
+GRANT UPDATE (revoked_at, revoked_by) ON history_sharing_grants TO eduos_app;
+GRANT UPDATE (closed_at, reviewed_by, reviewed_at, review_note) ON history_emergency_access TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON history_access_log FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON student_custody_restrictions, student_rights_transitions, history_sharing_grants, history_emergency_access FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_custody_blocked(uuid, uuid), eduos_student_holds_rights(uuid), eduos_history_granted(uuid, uuid, text),
+  eduos_history_emergency(uuid, uuid, uuid), eduos_history_own_after_transition(uuid, uuid, uuid), eduos_records_office(uuid),
+  eduos_is_student_self(uuid), eduos_is_linked_guardian(uuid) TO eduos_app;

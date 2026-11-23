@@ -45,7 +45,15 @@ export function registerStudentHistoryPortfolioRoutes(app) {
         if (!studentId) throw new HttpError(400, "student_required");
         const student = await one(client, "SELECT id, school_id, display_name FROM students WHERE id=$1 AND district_id=$2", [studentId, req.actor.districtId]);
         const related = student && (await one(client, "SELECT eduos_history_relation($1,$2,$3) AS r", [req.actor.districtId, student.school_id, student.id])).r;
-        if (!related) throw new HttpError(404, "student_not_found");
+        // TC-05: read-only access by a sharing grant, an emergency window, or a
+        // guardian's own items after the student took over their rights.
+        const access = related || (student && (await one(client, `SELECT CASE
+            WHEN eduos_history_emergency($1,$2,$3) THEN 'emergency'
+            WHEN EXISTS (SELECT 1 FROM history_sharing_grants g WHERE g.student_id=$3 AND g.grantee_user_id=$4 AND g.revoked_at IS NULL AND g.expires_at>now())
+              AND NOT eduos_custody_blocked($3,$4) AND eduos_student_holds_rights($3) THEN 'grant'
+            WHEN eduos_student_holds_rights($3) AND eduos_is_linked_guardian($3) THEN 'guardian' END AS a`,
+          [req.actor.districtId, student.school_id, student.id, req.actor.userId])).a);
+        if (!access) throw new HttpError(404, "student_not_found");
 
         const params = [student.id, q.type ?? null, q.kind ?? null, q.year ?? null, q.q?.trim() ? likePattern(q.q.trim()) : null];
         const filters = `e.student_id=$1 AND e.status='published'
@@ -64,6 +72,8 @@ export function registerStudentHistoryPortfolioRoutes(app) {
           SELECT ${YEAR} AS school_year, e.entry_type, e.classification, count(*)::int AS n
             FROM student_history_entries e WHERE e.student_id=$1 AND e.status='published'
            GROUP BY 1,2,3`, [student.id])).rows;
+        await client.query(`INSERT INTO history_access_log(district_id,student_id,user_id,access,action,item_count) VALUES($1,$2,$3,$4,'view_history',$5)`,
+          [req.actor.districtId, student.id, req.actor.userId, access, Math.min(rows.length, PAGE)]);
         const more = rows.length > PAGE;
         const page = more ? rows.slice(0, PAGE) : rows;
         const distinct = key => [...new Set(facets.map(f => f[key]))].sort();

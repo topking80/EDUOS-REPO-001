@@ -92,7 +92,7 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
-let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false, checkins = [], attendanceSent = [], remoteJoins = [];
+let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false, checkins = [], attendanceSent = [], remoteJoins = [], adultStudent = false;
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   // TEACH-04: today's classes and one plan (any date).
@@ -225,6 +225,16 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/activities/a1/links": return { data: [{ service: "maxpreps", name: "MaxPreps", url: "https://www.maxpreps.com/x/falcons-soccer/" }] };
     case "/api/activities/a1/exports": return { data: { team: "Falcons Soccer", services: { maxpreps: { included: 1, withheld: 1 }, hudl: { included: 0, withheld: 2 } }, log: [] } };
     case "/api/family/sports-sharing": return { data: [{ studentId: "c1", name: "Ava Lee", teams: ["Falcons Soccer"], maxpreps: { since: now, by: "Smoke Test" }, hudl: null }] };
+    // TC-05: history privacy controls.
+    case "/api/history/sharing": return { data: role === "pupil" ? { holdsOwnRights: adultStudent, transition: adultStudent ? { basis: "age_18", effectiveOn: "2026-11-01" } : null,
+        guardians: adultStudent ? [{ id: "u1", name: "Smoke Parent" }] : [], grants: adultStudent ? [{ id: "g1", grantee: "Smoke Parent", classifications: ["official_record"], expiresAt: new Date(Date.now() + 864e6).toISOString(), active: true }] : [] }
+      : { grantsToMe: [], holdsOwnRights: [] } };
+    case "/api/students": return { data: [{ id: "c9", local_student_number: "S1-A", display_name: "Alice A", grade_level: "10", school_id: "s1", school_name: "Maple" }] };
+    case "/api/students/c9/history-privacy": return { data: { student: { id: "c9", name: "Alice A" }, guardians: [{ id: "u1", name: "Parent A", restricted: false }, { id: "u2", name: "Parent Two", restricted: true }],
+      restrictions: [{ id: "r1", person: "Parent Two", kind: "court_order", basis: "Order 2026-114", documentRef: null, setBy: "Principal S1", setAt: now, endsOn: null, liftedAt: null }],
+      transition: null, grants: [], emergency: [{ id: "e1", person: "Counselor S1", role: "counselor", reason: "Student in crisis; safety plan needed", openedAt: now, expiresAt: now, closed: true, reviewed: false }] } };
+    case "/api/students/c9/history-access-log": return { data: [{ who: "Teacher S1", access: "teacher", action: "view_history", items: 3, at: now }] };
+    case "/api/history/emergency-access": return { data: [{ id: "e1", person: "Counselor S1", role: "counselor", student: "Alice A", school: "Maple", reason: "Student in crisis; safety plan needed", openedAt: now, expiresAt: now }] };
     // RANK-01: the U.S. News indicators.
     case "/api/rankings/indicators": return { data: { note: "EduOS tracks your own figures; it doesn't compute or predict a rank.",
       indicators: [["college_readiness", "College readiness", 30], ["curriculum_breadth", "College curriculum breadth", 10], ["assessment_proficiency", "State assessment proficiency", 20],
@@ -1012,6 +1022,48 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "principal: enter figures", a11y);
       if (page.errors.length) failures.push(`principal rankings: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
+  }
+  // TC-05: the records office's privacy page; the superintendent's emergency reviews; an adult student's sharing; a counselor's emergency form. All pass axe.
+  {
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    try {
+      state.role = "superintendent"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/history` });
+      await page.mainText();
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Emergency access to review")`))) failures.push("superintendent: no emergency reviews");
+      if (!(await page.eval(`!!document.querySelector('section[aria-label="Records and privacy"]')`))) failures.push("superintendent: no records & privacy");
+      await axeScan(page, "superintendent: history with privacy controls", a11y);
+      page.close();
+
+      state.role = "principal"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/history` });
+      await page.mainText();
+      await waitFor(`!!document.querySelector("#rp-q")`);
+      await page.eval(`(() => { document.querySelector("#rp-q").value = "Alice"; document.querySelector("#rp-q").form.requestSubmit(); })()`);
+      await waitFor(`!!document.querySelector('main button[aria-label="Privacy: Alice A"]')`);
+      await page.eval(`document.querySelector('main button[aria-label="Privacy: Alice A"]').click()`);
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Alice A: records & privacy")`))) failures.push("principal: no privacy page");
+      const t = await page.eval(`document.querySelector("main").textContent`);
+      for (const w of ["Restricted", "Order 2026-114", "Who looked", "Teacher S1 (teacher)"]) if (!t.includes(w)) failures.push(`privacy page: ${w}`);
+      await axeScan(page, "principal: records & privacy", a11y);
+      if (page.errors.length) failures.push(`privacy page: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+
+      adultStudent = true; state.role = "pupil"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/portfolio` });
+      await page.mainText();
+      if (!(await waitFor(`!!document.querySelector('main button[aria-label="Stop sharing with Smoke Parent"]')`))) failures.push("adult student: no sharing controls");
+      await axeScan(page, "pupil: sharing my history", a11y);
+      page.close(); adultStudent = false;
+
+      state.role = "counselor"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/emergencyrecords` });
+      await page.mainText();
+      if (!(await waitFor(`!!document.querySelector("main #em-r")`))) failures.push("counselor: no emergency form");
+      await axeScan(page, "counselor: emergency access", a11y);
+      if (page.errors.length) failures.push(`counselor emergency: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); adultStudent = false; }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.
   {
