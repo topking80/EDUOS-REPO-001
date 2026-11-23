@@ -148,9 +148,10 @@ const ROLE_TABS = {
   superintendent: [["overview", "District", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
+  coach: [["teams", "My teams", "trophy"], ["alerts", "Alerts", "bell"]],
   it_admin: [["apps", "Apps", "apps"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
 };
-const APP_NAME = { pupil: "Student", teacher: "Teacher", parent: "Family", principal: "School leader", superintendent: "District leader", driver: "Driver", sro: "School Resource Officer", librarian: "Librarian", vice_principal: "Vice Principal", counselor: "Guidance Counselor", nurse: "School Nurse", maintenance: "Maintenance", lunch_staff: "Lunch Staff", it_admin: "District IT" };
+const APP_NAME = { coach: "Coach", pupil: "Student", teacher: "Teacher", parent: "Family", principal: "School leader", superintendent: "District leader", driver: "Driver", sro: "School Resource Officer", librarian: "Librarian", vice_principal: "Vice Principal", counselor: "Guidance Counselor", nurse: "School Nurse", maintenance: "Maintenance", lunch_staff: "Lunch Staff", it_admin: "District IT" };
 const state = { me: null, brand: null, tab: null, unread: 0, home: null, safety: [], safetySig: "" };
 const STAFF_ROLES = ["teacher", "principal", "vice_principal", "superintendent"];
 
@@ -294,7 +295,7 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
@@ -302,6 +303,7 @@ function parentTab(tab) {
   if (tab === "capsule") return "capsules";
   if (tab === "draft") return "network";
   if (tab === "plan" || tab === "present") return "classes";
+  if (tab === "teams") return tabsFor().some(t => t[0] === "teams") ? "teams" : "activities";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
   if (tab === "staffing") return "staffing";
@@ -667,6 +669,47 @@ async function athleticDirectorsCard(schoolId) {
     } }, "Name athletic director")));
 }
 
+// ---- COACH-01: coaches -----------------------------------------------------
+async function manageCoaches(a) {
+  const word = a.kind === "sport" ? "coach" : "advisor";
+  const staff = (await api.get(`/api/activities/${a.id}/staff`)).data;
+  await dialogForm(`${a.kind === "sport" ? "Coaches" : "Advisors"}: ${a.title}`, done => ({ fields: [
+    h("p", { class: "small muted" }, `A teacher here, or a teacher at another school in the district, can be this ${a.kind === "sport" ? "team's" : "club's"} ${word}. Someone from another school gets a ${word} profile here that reaches only this ${a.kind === "sport" ? "team" : "club"}.`),
+    staff.length ? h("ul", { class: "list" }, staff.map(p => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, p.name), h("br"), h("span", { class: "small muted" }, `${p.home_school || ""}${p.visiting ? " · visiting " + word : ""}`)),
+      h("button", { class: "btn small", type: "button", "aria-label": `Remove ${p.name}`, onclick: async () => { if (!(await ask({ title: `Remove ${p.name}?`, text: p.visiting ? `Their ${word} profile at this school ends if this was their last team here.` : "They stay a teacher here.", confirm: "Remove" }))) return;
+        try { await api.post(`/api/activities/${a.id}/staff/${p.user_id}/end`, {}); toast("Removed."); done(null); manageCoaches(a); } catch { toast("Couldn't remove them."); } } }, "Remove"))))
+      : empty(`No ${word} yet.`),
+    h("button", { class: "btn primary", type: "button", onclick: async () => {
+      const people = await pickColleagues({ title: `Choose a ${word}`, confirm: "Assign", multiple: false, exclude: staff.map(p => p.user_id) }); if (!people) return;
+      try { const r = (await api.post(`/api/activities/${a.id}/staff`, { userId: people[0].user_id, staffRole: word })).data;
+        toast(r.coachProfile ? `${people[0].name} can now ${word} here from their ${word} profile.` : `${people[0].name} is the ${word}.`); done(null); manageCoaches(a); }
+      catch (e) { toast(e.body?.error === "active_school_teacher_required" ? "Choose a teacher." : "Couldn't assign them."); } } }, `Add a ${word}`)], value: () => undefined }), null);
+}
+const ELIG_TEXT = { eligible: ["present", "Eligible"], not_eligible: ["absent", "Not eligible"], not_enough_records: ["expected", "Not enough records"] };
+const SLIP_TEXT = { granted: ["present", "Slip signed"], declined: ["absent", "Slip declined"], pending: ["expected", "Slip waiting"] };
+VIEWS.teams = async () => {
+  const d = (await api.get("/api/coach/teams")).data;
+  const elsewhere = d.elsewhere.map(e => h("button", { class: "btn block", type: "button", onclick: () => useMembership({ id: e.membership_id }, `Now coaching at ${e.school}`).catch(() => toast("Couldn't switch.")) }, icon("trophy"), `Your teams at ${e.school}`));
+  const isTab = tabsFor().some(t => t[0] === "teams");
+  return [isTab ? null : back("activities", "Clubs & Sports"), h("h2", {}, "My teams"),
+    d.teams.length ? null : h("section", { class: "card" }, empty(d.elsewhere.length ? "You don't coach a team at this school." : "You aren't a coach or advisor yet. A principal assigns coaches.")),
+    elsewhere.length ? h("div", { class: "stack" }, elsewhere) : null,
+    d.teams.map(t => h("section", { class: "card", "aria-label": t.title },
+      h("p", { class: "small muted" }, `${t.kind === "sport" ? "Team" : "Club"} · you're the ${t.role}`), h("h2", {}, t.title),
+      t.meetingDetails ? h("p", { class: "small" }, t.meetingDetails) : null,
+      h("h3", {}, "Coming up"), t.events.length ? h("ul", { class: "list" }, t.events.map(e => h("li", {}, h("b", {}, e.title), h("p", { class: "small muted" }, `${new Date(e.starts_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}${e.venue ? ` · ${e.venue}` : ""}`))))
+        : h("p", { class: "small muted" }, "Nothing scheduled."),
+      t.slip ? h("p", { class: "small" }, `Permission slip “${t.slip.title}”: ${t.slip.granted} signed, ${t.slip.pending} waiting${t.slip.declined ? `, ${t.slip.declined} declined` : ""}.`) : null,
+      h("h3", {}, `Roster (${t.roster.length})`), t.roster.length ? h("ul", { class: "list" }, t.roster.map(r => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, `${r.jersey != null ? `#${r.jersey} ` : ""}${r.name}`, h("span", { class: "small muted" }, ` · grade ${r.grade}`)),
+        r.eligibility ? chip(...ELIG_TEXT[r.eligibility]) : null, r.slip ? chip(...SLIP_TEXT[r.slip]) : null)))
+        : h("p", { class: "small muted" }, "No one on the roster yet."),
+      t.results.length ? [h("h3", {}, "Recent results"), h("ul", { class: "list" }, t.results.map(x => h("li", { class: "small" }, `${x.title}: vs ${x.opponent} ${x.home_score}–${x.away_score}${x.status === "draft" ? " (waiting for approval)" : ""}`)))] : null,
+      h("div", { class: "btns" },
+        t.kind === "sport" ? h("button", { class: "btn", type: "button", "aria-label": `Eligibility: ${t.title}`, onclick: e => e.target.closest("section").append(eligibilityPanel({ id: t.id, title: t.title, kind: t.kind })) }, "Eligibility") : null,
+        h("button", { class: "btn", type: "button", "aria-label": `Permission slips: ${t.title}`, onclick: e => e.target.closest("section").append(staffSlipsPanel({ id: t.id, title: t.title, kind: t.kind })) }, "Permission slips")),
+      t.kind === "sport" ? h("p", { class: "small muted" }, "Eligibility is worked out now from the district's rules and isn't stored. Only you and the athletic director see it.") : null))];
+};
 async function activitiesLiveView() {
   const role = state.me.role, family = ["parent", "pupil"].includes(role);
   const staff = ["teacher", "principal", "vice_principal", "superintendent", "it_admin"].includes(role);
@@ -688,11 +731,13 @@ async function activitiesLiveView() {
     h("p", { class: "small muted" }, `${a.memberCount ?? 0} members${a.status !== "published" ? ` · ${a.status}` : ""}`),
     role === "pupil" && a.status === "published" ? h("button", { class: "btn block", type: "button", onclick: async () => { try { await api.post(`/api/activities/${a.id}/join`); toast("You've joined. Staff confirm the roster."); } catch (e) { actErr(e, "Could not join."); } } }, "Join") : null,
     canSeeEligibility(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "eligibility") }, "Eligibility") : null,
-    staff && canRunSlips(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "slips") }, "Permission slips") : null);
+    staff && canRunSlips(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "slips") }, "Permission slips") : null,
+    ["principal", "superintendent"].includes(role) ? h("button", { class: "btn block", type: "button", "aria-label": `${a.kind === "sport" ? "Coaches" : "Advisors"}: ${a.title}`, onclick: () => manageCoaches(a) }, a.kind === "sport" ? "Coaches" : "Advisors") : null);
   const adCard = role === "principal" && state.me.schoolId ? await athleticDirectorsCard(state.me.schoolId) : null;
   return [
     h("div", { class: "row" }, h("div", { class: "grow" }, h("h2", {}, "Clubs & Sports"), h("p", { class: "muted small" }, "Clubs, teams and school events."))),
     my.athleticDirector ? h("p", { class: "notice" }, "You're this school's athletic director.") : null,
+    role === "teacher" && coachOf.size ? h("button", { class: "btn primary block", type: "button", onclick: () => go("teams") }, icon("trophy"), "My teams") : null,
     family ? familySlipsCard(actList(slips?.data), role === "parent") : null,
     activities.length ? h("div", { class: "grid" }, activities.map(card)) : h("section", { class: "card" }, h("p", { class: "muted" }, "No clubs or teams are published yet.")),
     detail,
