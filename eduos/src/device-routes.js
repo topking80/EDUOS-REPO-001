@@ -28,7 +28,7 @@ const orNull = v => typeof v === "string" && v.trim() ? v.trim() : null;
 
 const deviceOut = d => ({ id: d.id, schoolId: d.school_id, school: d.school_name, kind: d.kind, name: d.name, maker: d.maker, model: d.model, serial: d.serial,
   capabilities: d.capabilities, status: d.status, roomId: d.room_id, room: d.room_name, requestedBy: d.requested_by_name, requestedAt: d.requested_at,
-  decidedBy: d.decided_by_name, decidedAt: d.decided_at, note: d.decision_note });
+  decidedBy: d.decided_by_name, decidedAt: d.decided_at, note: d.decision_note, hasKey: Boolean(d.token_hash), lastSeenAt: d.last_seen_at ?? null });
 const DEVICE_SELECT = `SELECT d.*,s.name AS school_name,r.name AS room_name,rq.display_name AS requested_by_name,dc.display_name AS decided_by_name
   FROM classroom_devices d JOIN schools s ON s.id=d.school_id LEFT JOIN classroom_rooms r ON r.id=d.room_id
   JOIN users rq ON rq.id=d.requested_by LEFT JOIN users dc ON dc.id=d.decided_by`;

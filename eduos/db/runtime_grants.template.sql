@@ -605,3 +605,14 @@ GRANT UPDATE (name, building, capacity, archived_at) ON classroom_rooms TO eduos
 GRANT UPDATE (kind, name, maker, model, serial, capabilities, status, room_id, decided_by, decided_at, decision_note, updated_at, retired_at) ON classroom_devices TO eduos_app;
 REVOKE DELETE, TRUNCATE ON classroom_rooms, classroom_devices, classroom_device_events FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_device_scope(uuid), eduos_device_manager(uuid) TO eduos_app;
+
+-- DEV-02 (db/109): room timetable and pairing a teacher's own device. Codes
+-- are reachable only through the two SECURITY DEFINER functions.
+GRANT SELECT, INSERT ON classroom_room_teachers TO eduos_app;
+GRANT UPDATE (ended_at, ended_by) ON classroom_room_teachers TO eduos_app;
+GRANT SELECT ON classroom_pairings TO eduos_app;
+GRANT UPDATE (ended_at, ended_by, end_reason) ON classroom_pairings TO eduos_app;
+GRANT UPDATE (token_hash, token_issued_at, token_issued_by) ON classroom_devices TO eduos_app;
+REVOKE ALL ON classroom_pair_codes FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON classroom_room_teachers, classroom_pairings FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_is_school_teacher(uuid, uuid), eduos_school_teachers(uuid), eduos_classroom_agent_code(uuid, text, text, int), eduos_classroom_pair(uuid, text, text) TO eduos_app;

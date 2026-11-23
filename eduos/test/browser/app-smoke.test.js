@@ -212,6 +212,12 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       { id: "dv2", schoolId: "s1", school: "Maple", kind: "student_device", name: "Cart A", maker: null, model: null, serial: null, capabilities: ["lock", "unlock", "open_link", "focus"], status: "pending", roomId: null, room: null, requestedBy: "Principal S1", requestedAt: now },
       { id: "dv1", schoolId: "s1", school: "Maple", kind: "display", name: "Front board", maker: "Acme", model: "B75", serial: "SN-1", capabilities: ["show", "blank", "volume"], status: "approved", roomId: "rm1", room: "Room 101", requestedBy: "Principal S1", requestedAt: now, decidedBy: "District IT", decidedAt: now, note: "On the list" }] };
     case "/api/devices/dv1/events": return { data: [{ event: "requested", detail: "show,blank,volume", at: now, by: "Principal S1" }, { event: "approved", detail: null, at: now, by: "District IT" }, { event: "placed", detail: "Room 101", at: now, by: "Principal S1" }] };
+    // DEV-02: the room timetable and pairing.
+    case "/api/my/rooms": return { data: [{ id: "rm1", name: "Room 101", now: true, slots: [{ id: "tt1", roomId: "rm1", teacherId: "u1", teacher: "Smoke Test", weekdays: [1, 2, 3, 4, 5], starts: "08:00", ends: "09:00", label: "Math 3" }],
+      devices: [{ id: "dv1", kind: "display", name: "Front board", capabilities: ["show", "blank", "volume"] }], pairing: null }] };
+    case "/api/rooms/rm1/timetable": return { data: [{ id: "tt1", roomId: "rm1", teacherId: "u1", teacher: "Teacher S1", weekdays: [1, 2, 3, 4, 5], starts: "08:00", ends: "09:00", label: "Math 3" }] };
+    case "/api/rooms/rm1/teachers": return { data: [{ id: "u1", name: "Teacher S1" }, { id: "u2", name: "Teacher Two" }] };
+    case "/api/pairings": return { data: [{ id: "pp1", roomId: "rm1", room: "Room 101", teacherId: "u1", teacher: "Teacher S1", controller: "My phone", pairedAt: now, until: new Date(Date.now() + 36e5).toISOString(), via: "Front board" }] };
     // STATE-01: the state index and licenses.
     case "/api/states": return { data: { districtState: "TX", categories: {}, states: [["TX", "Texas"], ["OH", "Ohio"]].map(([code, name]) => ({ code, name, counts: { licensing: 0, athletics: 1, agency: 1, records: 0 }, complete: false })) } };
     case "/api/states/TX": return { data: { code: "TX", name: "Texas", sections: [
@@ -678,6 +684,40 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 100)); if ((await page.eval(`document.querySelector("main")?.textContent || ""`)).includes("28 seats")) break; }
       await axeScan(page, "principal: rooms", a11y);
       if (page.errors.length) failures.push(`devices: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); }
+  }
+  // DEV-02: a teacher timetabled now pairs from Classes; the school sets the timetable; leaders see who's paired. Dialogs pass axe.
+  {
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    const clickText = (t, scope = "main") => page.eval(`(() => { const b = [...document.querySelectorAll("${scope} button")].find(b => b.textContent === ${JSON.stringify(t)}); if (!b) return false; b.click(); return true; })()`);
+    try {
+      state.role = "teacher"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/classes` });
+      await page.mainText();
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Your classroom")`))) failures.push("teacher: no Your classroom card");
+      if (!(await clickText("Pair this device"))) failures.push("teacher: no Pair this device button");
+      if (!(await waitFor(`!!document.querySelector("dialog[open] #pr-code")`))) failures.push("teacher: no pairing dialog");
+      await axeScan(page, "teacher: pair dialog", a11y);
+      await page.eval(`document.querySelector("dialog[open] .btns .btn:not(.primary)").click()`);
+      if (page.errors.length) failures.push(`teacher pairing: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+
+      state.role = "principal"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/devices` });
+      await page.mainText();
+      await clickText("Rooms");
+      await waitFor(`[...document.querySelectorAll("main button")].some(b => b.textContent === "Timetable")`);
+      await clickText("Timetable");
+      if (!(await waitFor(`!!document.querySelector("dialog[open] #tt-t")`))) failures.push("principal: no timetable dialog");
+      const tt = await page.eval(`document.querySelector("dialog[open]")?.textContent || ""`);
+      if (!tt.includes("Teacher S1") || !tt.includes("Weekdays · 08:00–09:00")) failures.push(`timetable dialog: ${tt.slice(0, 160)}`);
+      await axeScan(page, "principal: timetable dialog", a11y);
+      await page.eval(`document.querySelector("dialog[open] .btns .btn:not(.primary)").click()`);
+      await clickText("Paired now");
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Room 101: Teacher S1")`))) failures.push("principal: paired now list");
+      await axeScan(page, "principal: paired now", a11y);
+      if (page.errors.length) failures.push(`principal timetable: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.
