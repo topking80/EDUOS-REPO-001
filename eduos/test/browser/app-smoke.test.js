@@ -221,6 +221,15 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/rooms/rm1/timetable": return { data: [{ id: "tt1", roomId: "rm1", teacherId: "u1", teacher: "Teacher S1", weekdays: [1, 2, 3, 4, 5], starts: "08:00", ends: "09:00", label: "Math 3" }] };
     case "/api/rooms/rm1/teachers": return { data: [{ id: "u1", name: "Teacher S1" }, { id: "u2", name: "Teacher Two" }] };
     case "/api/pairings": return { data: [{ id: "pp1", roomId: "rm1", room: "Room 101", teacherId: "u1", teacher: "Teacher S1", controller: "My phone", pairedAt: now, until: new Date(Date.now() + 36e5).toISOString(), via: "Front board" }] };
+    // TEACH-05: the portable teacher profile.
+    case "/api/portfolio/preview": return { data: { items: [{ id: "u1", kind: "unit", title: "Fractions", approval: { by: "Principal S1", at: "2026-10-01", district: "Riverside" }, rights: null, schoolKeepsCopy: true },
+      { id: "cp1", kind: "coaching_plan", title: "Tuesday practice", approval: null, rights: { type: "copyright" }, schoolKeepsCopy: false }], licenses: 1, excluded: [{ kind: "unit", title: "Class stories", reason: "may_mention_students" }] } };
+    case "/api/portfolio/claims": return { data: role === "teacher" ? [] : [{ id: "cl1", owner: "Teacher S1", itemKind: "unit", itemId: "u1", title: "Fractions", claimType: "copyright", registration: "TX0009999999",
+      evidenceUrl: "https://publicrecords.copyright.gov/x", statement: "Registered before joining.", status: "pending", createdAt: now }] };
+    case "/api/portfolio/packages": return { data: [{ id: "pk1", issuedAt: now, items: 2, district: "Hill County", sha256: "a".repeat(64), signed: true, withdrawn: false, fromHere: false }] };
+    case "/api/portfolio/imports": return { data: [{ id: "im1", owner: "Teacher S1", ownerId: "u1", fromDistrict: "Hill County", signed: true, status: "pending", createdAt: now, licenses: [{ stateCode: "TX" }],
+      items: [{ index: 0, kind: "unit", title: "Fractions", approval: { by: "Ms Lee", at: "2026-01-01", district: "Hill County" }, rights: null, decision: null }] }] };
+    case "/api/portfolio/library": return { data: [{ id: "lb1", kind: "lesson", title: "Halves", body: {}, origin: "Hill County", priorApproval: { by: "Ms Lee" }, rights: null, approvedBy: "Supt One", approvedAt: now }] };
     // ROOM-02: remote lessons (students get the link only from Join).
     case "/api/my/remote-lessons": return { data: [{ id: "rl1", courseId: "k1", course: "Math 3", date: now.slice(0, 10), starts: "08:00", ends: "09:00", provider: "Zoom", lessonId: "ls1", lesson: "Fraction strips",
       note: "Have your workbook ready", today: true, open: true, joined: false, ...(role === "teacher" ? { joinUrl: "https://zoom.us/j/123" } : {}) }] };
@@ -853,6 +862,33 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`!!document.querySelector("main #rl-u")`))) failures.push("teacher plan: no remote lesson form");
       await axeScan(page, "teacher: plan with remote lesson", a11y);
       if (page.errors.length) failures.push(`teacher remote: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); }
+  }
+  // TEACH-05: a teacher's work to take along (claims, packages, library); a principal's review of claims and imports. All pass axe.
+  {
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    try {
+      state.role = "teacher"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/mywork` });
+      await page.mainText();
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Left out until you edit them")`))) failures.push("teacher portfolio: excluded items");
+      const t = await page.eval(`document.querySelector("main").textContent`);
+      for (const w of ["School keeps a copy", "Your rights: school won't keep a copy", "Bring into this district", "Add my 1 license here", "Copy into a course"]) if (!t.includes(w)) failures.push(`teacher portfolio: ${w}`);
+      await axeScan(page, "teacher: my work", a11y);
+      await page.eval(`document.querySelector('main button[aria-label="Claim rights: Fractions"]').click()`);
+      if (!(await waitFor(`!!document.querySelector("dialog[open] #cr-s")`))) failures.push("teacher: no claim dialog");
+      await axeScan(page, "teacher: claim rights dialog", a11y);
+      if (page.errors.length) failures.push(`teacher portfolio: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+
+      state.role = "principal"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/portfolioreview` });
+      await page.mainText();
+      if (!(await waitFor(`!!document.querySelector('main button[aria-label="Approve claim: Fractions"]')`))) failures.push("principal: no claim to review");
+      if (!(await page.eval(`(document.querySelector("main").textContent).includes("Save decisions for Teacher S1")`))) failures.push("principal: no import to review");
+      await axeScan(page, "principal: teachers' work review", a11y);
+      if (page.errors.length) failures.push(`principal review: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.

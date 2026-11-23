@@ -640,3 +640,12 @@ GRANT SELECT ON remote_lesson_checkins TO eduos_app;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON remote_lesson_checkins FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON class_remote_lessons FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_teaches_course(uuid), eduos_enrolled_pupil_student(uuid), eduos_remote_lesson_join(uuid) TO eduos_app;
+
+-- TEACH-05 (db/113): the portable teacher profile. Withdrawn/archived, never deleted.
+GRANT SELECT, INSERT ON teacher_work_claims, portfolio_packages, portfolio_imports, teacher_library_items TO eduos_app;
+GRANT UPDATE (status, reviewed_by, reviewed_at, review_note) ON teacher_work_claims TO eduos_app;
+GRANT UPDATE (withdrawn_at) ON portfolio_packages TO eduos_app;
+GRANT UPDATE (status, reviewed_by, reviewed_at, review_note, items) ON portfolio_imports TO eduos_app;
+GRANT UPDATE (archived_at) ON teacher_library_items TO eduos_app;
+REVOKE DELETE, TRUNCATE ON teacher_work_claims, portfolio_packages, portfolio_imports, teacher_library_items FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_portfolio_reviewer(uuid, uuid) TO eduos_app;
