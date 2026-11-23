@@ -200,6 +200,12 @@ function mockApi(role, pathname, failWebhookLoads = false) {
         slip: { id: "sl1", title: "Away trip", granted: 1, declined: 0, pending: 1 },
         roster: [{ studentId: "c1", name: "Alice A", grade: "3", jersey: 9, eligibility: "eligible", slip: "granted" }, { studentId: "c2", name: "Bob B", grade: "3", jersey: null, eligibility: "not_enough_records", slip: "pending" }] }],
       elsewhere: role === "coach" ? [] : [{ membership_id: "00000000-0000-4000-8000-0000000a0009", school_id: "s9", school: "Hill Primary" }] } };
+    // COACH-02: a coach's plans and the coaching library.
+    case "/api/coaching/plans": return { data: [{ id: "cp1", kind: "practice", title: "Tuesday practice", sport: "Soccer", level: "JV", teamId: "a1", version: 2, minutes: 15, items: 2, adaptedFrom: null, updatedAt: now }] };
+    case "/api/coaching/plans/cp1": return { data: { id: "cp1", kind: "practice", title: "Tuesday practice", sport: "Soccer", level: "JV", teamId: "a1", version: 2, minutes: 15, items: 2, adaptedFrom: null, updatedAt: now,
+      body: { summary: "Possession day", items: [{ kind: "drill", title: "Rondo 5v2", minutes: 10, description: "Keep-away", equipment: "8 cones" }, { kind: "play", title: "Corner: near post", minutes: 5, description: "", equipment: "" }] } } };
+    case "/api/coaching/library": return { data: [{ id: "sm9", kind: "playbook", title: "Set pieces", sport: "Soccer", level: "Var", summary: "Corners and free kicks", version: 1, updated_at: now, author: "Teacher Two", school: "Oak Middle", mine: false, copies: 4,
+      body: { summary: null, items: [{ kind: "play", title: "Near-post corner", minutes: null, description: "Runner to the near post", equipment: "" }] } }] };
     case "/api/events": return { data: [{ id: "e1", activity_id: "a1", school_id: "s1", title: "Friday Night Football", starts_at: new Date(Date.now() + 864e5).toISOString(),
       ends_at: new Date(Date.now() + 9e7).toISOString(), venue: "Main field", status: "published", school_name: "Maple" }] };
     case "/api/commerce/status": return { data: { provider: "sandbox", enabled: true, live: false, sandbox: false, canPay: ["parent", "superintendent"].includes(role),
@@ -526,6 +532,20 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       for (const want of ["My teams", "Falcons Soccer", "you're the coach", "Home game", "Away trip", "1 signed, 1 waiting", "#9 Alice A", "Eligible", "Not enough records", "Slip signed", "Slip waiting", "Opener: vs Hawks 2–1", "Your teams at Hill Primary"])
         if (!t.includes(want)) failures.push(`my teams: missing "${want}"`);
       await axeScan(page, "teacher #/teams", a11y);
+      // COACH-02: plans on My teams, the plan editor, and the coaching library.
+      if (!(await page.eval(`document.getElementById("main").innerText`)).includes("Practice plan · Soccer · 2 items · 15 min")) failures.push("my teams: plan list missing");
+      await page.eval(`document.querySelector('[aria-label="Open plan: Tuesday practice"]').click()`);
+      await until(`!!document.getElementById("cp-i1-title")`);
+      const ed = await page.eval(`({ t: document.getElementById("cp-title").value, i0: document.getElementById("cp-i0-title").value, eq: document.getElementById("cp-i0-equipment").value, team: document.getElementById("cp-team").value })`);
+      if (JSON.stringify(ed) !== '{"t":"Tuesday practice","i0":"Rondo 5v2","eq":"8 cones","team":"a1"}') failures.push(`plan editor: ${JSON.stringify(ed)}`);
+      await axeScan(page, "teacher: plan editor", a11y);
+      await page.eval(`[...document.querySelectorAll("#main button")].find(b => b.textContent.includes("My teams")).click()`);
+      await until(`[...document.querySelectorAll("#main button")].some(b => b.textContent === "Coaching library")`);
+      await page.eval(`[...document.querySelectorAll("#main button")].find(b => b.textContent === "Coaching library").click()`);
+      await until(`document.getElementById("main").innerText.includes("Set pieces")`);
+      const lib = await page.eval(`document.getElementById("main").innerText`);
+      for (const want of ["Coaching library", "Set pieces", "Playbook · Soccer · Var · Teacher Two, Oak Middle · copied 4×", "Copy to my plans"]) if (!lib.includes(want)) failures.push(`coaching library: missing "${want}"`);
+      await axeScan(page, "teacher: coaching library", a11y);
     } finally { page.close(); }
     state.role = "principal";
     const p2 = await Page.open(chrome.port);

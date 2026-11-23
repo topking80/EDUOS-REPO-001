@@ -582,3 +582,9 @@ GRANT EXECUTE ON FUNCTION eduos_is_draft_editor(uuid) TO eduos_app;
 GRANT SELECT, INSERT ON class_day_plans TO eduos_app;
 GRANT UPDATE (title, blocks, status, version, updated_by, updated_at) ON class_day_plans TO eduos_app;
 REVOKE DELETE, TRUNCATE ON class_day_plans FROM eduos_app;
+
+-- COACH-02 (db/106): a coach's own practice plans and playbooks; archived,
+-- never deleted.
+GRANT SELECT, INSERT ON coaching_plans TO eduos_app;
+GRANT UPDATE (title, sport, level, body, team_id, version, archived_at, updated_at) ON coaching_plans TO eduos_app;
+REVOKE DELETE, TRUNCATE ON coaching_plans FROM eduos_app;

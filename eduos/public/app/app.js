@@ -295,7 +295,7 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
@@ -303,7 +303,7 @@ function parentTab(tab) {
   if (tab === "capsule") return "capsules";
   if (tab === "draft") return "network";
   if (tab === "plan" || tab === "present") return "classes";
-  if (tab === "teams") return tabsFor().some(t => t[0] === "teams") ? "teams" : "activities";
+  if (["teams", "coachplan", "coachlib"].includes(tab)) return tabsFor().some(t => t[0] === "teams") ? "teams" : "activities";
   const role = state.me?.role;
   if (tab === "node") return tabsFor().some(t => t[0] === "nodes") ? "nodes" : "overview";
   if (tab === "staffing") return "staffing";
@@ -669,6 +669,89 @@ async function athleticDirectorsCard(schoolId) {
     } }, "Name athletic director")));
 }
 
+// ---- COACH-02: practice plans and playbooks ------------------------------
+const COACH_KIND = { practice: "Practice plan", playbook: "Playbook" };
+const ITEM_KIND = { drill: "Drill", play: "Play", note: "Note" };
+/** Editable list of drills, plays and notes (used by the plan editor and co-written drafts). */
+function planItemsEditor(body, prefix, redraw, field) {
+  const items = body.items;
+  return h("div", { class: "stack" }, h("h3", {}, "Drills, plays and notes"), h("ol", { class: "plan-blocks" }, items.map((it, i) => {
+    const kind = h("select", { id: `${prefix}${i}-kind`, "aria-label": `Kind of item ${i + 1}` }, Object.entries(ITEM_KIND).map(([k, v]) => h("option", { value: k, selected: it.kind === k }, v)));
+    kind.addEventListener("change", () => { it.kind = kind.value; });
+    return h("li", { class: "card plan-block", "aria-label": `Item ${i + 1}` },
+      h("div", { class: "row" }, h("b", { class: "grow" }, `${i + 1}.`), kind,
+        h("button", { class: "btn small", type: "button", "aria-label": `Move item ${i + 1} up`, disabled: i === 0, onclick: () => { [items[i - 1], items[i]] = [items[i], items[i - 1]]; redraw(); } }, "↑"),
+        h("button", { class: "btn small", type: "button", "aria-label": `Move item ${i + 1} down`, disabled: i === items.length - 1, onclick: () => { [items[i + 1], items[i]] = [items[i], items[i + 1]]; redraw(); } }, "↓"),
+        items.length > 1 ? h("button", { class: "btn small danger", type: "button", "aria-label": `Remove item ${i + 1}`, onclick: () => { items.splice(i, 1); redraw(); } }, "Remove") : null),
+      ...field(it, "title", "Title", `${prefix}${i}-title`, false, 120), ...field(it, "minutes", "Minutes", `${prefix}${i}-minutes`, false, 3),
+      ...field(it, "description", "How it runs", `${prefix}${i}-description`, true, 4000), ...field(it, "equipment", "Equipment", `${prefix}${i}-equipment`, false, 300));
+  })), items.length < 40 ? h("button", { class: "btn", type: "button", onclick: () => { items.push({ kind: "drill", title: "", minutes: null, description: "", equipment: "" }); redraw(); } }, "Add an item") : null);
+}
+async function copyCoachingPlan(id) {
+  try { const r = (await api.post(`/api/coaching/library/${id}/copy`, {})).data; toast("Copied into your plans."); openView("coachplan", { coachPlanId: r.id, coachPlanEdit: null }); }
+  catch { toast("Couldn't copy it."); }
+}
+VIEWS.coachplan = async () => {
+  const id = state.coachPlanId;
+  const p = id ? (await api.get(`/api/coaching/plans/${id}`)).data : null;
+  const teams = (await safe(api.get("/api/coach/teams")))?.data?.teams || [];
+  const ed = state.coachPlanEdit?.key === (id || "new") ? state.coachPlanEdit : (state.coachPlanEdit = { key: id || "new", version: p?.version ?? null, kind: p?.kind || "practice", title: p?.title || "", sport: p?.sport || "", level: p?.level || "All",
+    teamId: p?.teamId || "", body: structuredClone(p?.body || { summary: "", items: [{ kind: "drill", title: "", minutes: null, description: "", equipment: "" }] }), notice: null });
+  const redraw = () => go("coachplan", { push: false });
+  const field = (obj, k, label, fid, multi, max) => { const el = h(multi ? "textarea" : "input", { id: fid, maxlength: max, ...(multi ? { rows: 3 } : {}), ...(k === "minutes" ? { type: "number", min: 0, max: 240, inputmode: "numeric" } : {}) });
+    el.value = obj[k] ?? ""; el.addEventListener("input", () => { obj[k] = el.value; }); return [h("label", { for: fid }, label), el]; };
+  const kindSel = h("select", { id: "cp-kind", disabled: Boolean(id) }, Object.entries(COACH_KIND).map(([k, v]) => h("option", { value: k, selected: ed.kind === k }, v)));
+  kindSel.addEventListener("change", () => { ed.kind = kindSel.value; });
+  const teamSel = h("select", { id: "cp-team" }, h("option", { value: "" }, "No team"), teams.filter(t => t.kind === "sport").map(t => h("option", { value: t.id, selected: ed.teamId === t.id }, t.title)));
+  teamSel.addEventListener("change", () => { ed.teamId = teamSel.value; });
+  const save = async () => {
+    const payload = { kind: ed.kind, title: ed.title, sport: ed.sport, level: ed.level || "All", teamId: ed.teamId || null,
+      body: { summary: ed.body.summary || null, items: ed.body.items.map(it => ({ ...it, minutes: it.minutes === "" || it.minutes == null ? null : Number(it.minutes) })) } };
+    try {
+      const r = id ? (await api.req("PUT", `/api/coaching/plans/${id}`, { ...payload, baseVersion: ed.version })).data : (await api.post("/api/coaching/plans", payload)).data;
+      state.coachPlanEdit = null; toast("Saved."); openView("coachplan", { coachPlanId: r.id }); return;
+    } catch (e) {
+      ed.notice = e.body?.error === "plan_incomplete" ? "Give the plan a title and a sport, and every item a title." : e.body?.error === "plan_changed" ? "This plan changed on another device. Reload it to continue." : e.body?.error === "not_your_team" ? "You can attach a plan only to a team you coach here." : "Couldn't save.";
+    }
+    redraw();
+  };
+  return [h("button", { class: "btn back", type: "button", onclick: () => { state.coachPlanEdit = null; go("teams"); } }, "‹ My teams"),
+    h("h2", {}, id ? ed.title || "Plan" : "New plan"),
+    ed.notice ? h("p", { class: "notice warn", role: "status" }, ed.notice) : null,
+    p?.adaptedFrom ? h("p", { class: "small muted" }, "Adapted from a plan a colleague shared.") : null,
+    h("form", { class: "card stack", "aria-label": "Edit the plan", onsubmit: e => { e.preventDefault(); save(); } },
+      h("div", { class: "row wrap" }, h("div", { class: "grow" }, h("label", { for: kindSel.id }, "Kind"), kindSel), h("div", { class: "grow" }, h("label", { for: teamSel.id }, "For team"), teamSel)),
+      ...field(ed, "title", "Title", "cp-title", false, 120),
+      h("div", { class: "row wrap" }, h("div", { class: "grow" }, ...field(ed, "sport", "Sport", "cp-sport", false, 40)), h("div", { class: "grow" }, ...field(ed, "level", "Level (e.g. JV, Var)", "cp-level", false, 4))),
+      ...field(ed.body, "summary", "What it's for", "cp-summary", true, 1000),
+      planItemsEditor(ed.body, "cp-i", redraw, field),
+      h("button", { class: "btn primary block", type: "submit" }, "Save")),
+    id ? h("section", { class: "card", "aria-label": "Share" }, h("h3", {}, "With colleagues"), h("div", { class: "btns" },
+      h("button", { class: "btn", type: "button", onclick: async () => {
+        const post = confirmNotStudents => api.post(`/api/coaching/plans/${id}/share`, { confirmNotStudents });
+        try { await post(false); toast("Shared with coaches across the district."); }
+        catch (e) {
+          if (e.body?.error !== "may_mention_students") return toast("Couldn't share it.");
+          if (await ask({ title: "Does this name a player?", text: `These words match students in the district: ${e.body.words.join(", ")}. Plans shouldn't name players. Edit it, or share if these aren't students.`, confirm: "They aren't students: share", cancel: "Edit first" }))
+            try { await post(true); toast("Shared with coaches across the district."); } catch { toast("Couldn't share it."); }
+        } } }, "Share with coaches"),
+      ["teacher", "principal"].includes(state.me.role) ? h("button", { class: "btn", type: "button", onclick: () => startDraft({ from: "plan", sourceId: id }) }, "Co-write with colleagues") : null,
+      h("button", { class: "btn", type: "button", onclick: async () => { if (!(await ask({ title: "Put this plan away?", text: "It leaves your list. Copies colleagues made stay theirs.", confirm: "Put away" }))) return;
+        try { await api.post(`/api/coaching/plans/${id}/archive`, {}); state.coachPlanEdit = null; go("teams"); } catch { toast("Couldn't change it."); } } }, "Put away"))) : null];
+};
+VIEWS.coachlib = async () => {
+  const list = (await api.get("/api/coaching/library")).data;
+  return [h("button", { class: "btn back", type: "button", onclick: () => go("teams") }, "‹ My teams"), h("h2", {}, "Coaching library"),
+    h("p", { class: "muted small" }, "Practice plans and playbooks coaches across the district shared. Copy one into your plans and make it yours."),
+    h("section", { class: "card", "aria-label": "Coaching library" }, list.length ? h("ul", { class: "list" }, list.map(m => h("li", {},
+      h("b", {}, m.title), h("p", { class: "small muted" }, `${COACH_KIND[m.kind]} · ${m.sport} · ${m.level} · ${m.mine ? "You" : m.author}, ${m.school}${m.copies ? ` · copied ${m.copies}×` : ""}`),
+      m.summary ? h("p", { class: "small" }, m.summary) : null,
+      h("details", {}, h("summary", {}, `${m.body.items.length} item${m.body.items.length === 1 ? "" : "s"}`, h("span", { class: "sr" }, ` in ${m.title}`)),
+        h("ol", {}, m.body.items.map(it => h("li", {}, h("b", {}, `${ITEM_KIND[it.kind]}: ${it.title}`), it.minutes ? ` · ${it.minutes} min` : "", it.description ? h("p", { class: "small" }, it.description) : null)))),
+      h("div", { class: "btns" }, h("button", { class: "btn small primary", type: "button", "aria-label": `Copy to my plans: ${m.title}`, onclick: () => copyCoachingPlan(m.id) }, "Copy to my plans"),
+        ["teacher", "principal"].includes(state.me.role) ? h("button", { class: "btn small", type: "button", "aria-label": `Co-write from: ${m.title}`, onclick: () => startDraft({ from: "material", sourceId: m.id }) }, "Co-write from") : null))))
+      : empty("Nothing shared yet. Share one of your plans to start the library."))];
+};
 // ---- COACH-01: coaches -----------------------------------------------------
 async function manageCoaches(a) {
   const word = a.kind === "sport" ? "coach" : "advisor";
@@ -691,7 +774,15 @@ VIEWS.teams = async () => {
   const d = (await api.get("/api/coach/teams")).data;
   const elsewhere = d.elsewhere.map(e => h("button", { class: "btn block", type: "button", onclick: () => useMembership({ id: e.membership_id }, `Now coaching at ${e.school}`).catch(() => toast("Couldn't switch.")) }, icon("trophy"), `Your teams at ${e.school}`));
   const isTab = tabsFor().some(t => t[0] === "teams");
-  return [isTab ? null : back("activities", "Clubs & Sports"), h("h2", {}, "My teams"),
+  const plans = (await safe(api.get("/api/coaching/plans")))?.data || [];
+  const planCard = h("section", { class: "card", "aria-label": "Practice plans and playbooks" }, h("h2", {}, "Practice plans & playbooks"),
+    plans.length ? h("ul", { class: "list" }, plans.map(p => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, p.title), h("br"),
+      h("span", { class: "small muted" }, `${COACH_KIND[p.kind]} · ${p.sport} · ${p.items} item${p.items === 1 ? "" : "s"}${p.minutes ? ` · ${p.minutes} min` : ""}`)),
+      h("button", { class: "btn small", type: "button", "aria-label": `Open plan: ${p.title}`, onclick: () => openView("coachplan", { coachPlanId: p.id }) }, "Open"))))
+      : h("p", { class: "small muted" }, "Plans you write are yours: drills, plays and notes. Share them with coaches across the district, or write one together."),
+    h("div", { class: "btns" }, h("button", { class: "btn primary", type: "button", onclick: () => openView("coachplan", { coachPlanId: null, coachPlanEdit: null }) }, "New plan"),
+      h("button", { class: "btn", type: "button", onclick: () => go("coachlib") }, "Coaching library")));
+  return [isTab ? null : back("activities", "Clubs & Sports"), h("h2", {}, "My teams"), planCard,
     d.teams.length ? null : h("section", { class: "card" }, empty(d.elsewhere.length ? "You don't coach a team at this school." : "You aren't a coach or advisor yet. A principal assigns coaches.")),
     elsewhere.length ? h("div", { class: "stack" }, elsewhere) : null,
     d.teams.map(t => h("section", { class: "card", "aria-label": t.title },
@@ -704,6 +795,8 @@ VIEWS.teams = async () => {
         h("span", { class: "grow" }, `${r.jersey != null ? `#${r.jersey} ` : ""}${r.name}`, h("span", { class: "small muted" }, ` · grade ${r.grade}`)),
         r.eligibility ? chip(...ELIG_TEXT[r.eligibility]) : null, r.slip ? chip(...SLIP_TEXT[r.slip]) : null)))
         : h("p", { class: "small muted" }, "No one on the roster yet."),
+      t.plans?.length ? [h("h3", {}, "Plans for this team"), h("ul", { class: "list" }, t.plans.map(p => h("li", { class: "row" }, h("span", { class: "grow" }, `${COACH_KIND[p.kind]}: ${p.title}`),
+        h("button", { class: "btn small", type: "button", "aria-label": `Open plan: ${p.title}`, onclick: () => openView("coachplan", { coachPlanId: p.id }) }, "Open"))))] : null,
       t.results.length ? [h("h3", {}, "Recent results"), h("ul", { class: "list" }, t.results.map(x => h("li", { class: "small" }, `${x.title}: vs ${x.opponent} ${x.home_score}–${x.away_score}${x.status === "draft" ? " (waiting for approval)" : ""}`)))] : null,
       h("div", { class: "btns" },
         t.kind === "sport" ? h("button", { class: "btn", type: "button", "aria-label": `Eligibility: ${t.title}`, onclick: e => e.target.closest("section").append(eligibilityPanel({ id: t.id, title: t.title, kind: t.kind })) }, "Eligibility") : null,
@@ -1667,10 +1760,11 @@ async function materialsSection() {
     h("p", { class: "small muted" }, "To share your own, open a lesson or a unit in Courses and choose Share with colleagues."),
     h("section", { class: "card", "aria-label": "Shared materials" }, list.length ? h("ul", { class: "list" }, list.map(m => h("li", {},
       h("div", { class: "row" }, h("div", { class: "grow" }, h("b", {}, m.title),
-        h("p", { class: "small muted" }, `${m.kind === "unit" ? `Unit · ${m.lessons} lessons` : "Lesson"} · ${m.subject} · Grade ${m.grade_level} · ${m.mine ? "You" : m.author}, ${m.school}${m.copies ? ` · copied ${m.copies}×` : ""}`),
+        h("p", { class: "small muted" }, `${COACH_KIND[m.kind] ? `${COACH_KIND[m.kind]} · ${m.subject} · ${m.grade_level}` : `${m.kind === "unit" ? `Unit · ${m.lessons} lessons` : "Lesson"} · ${m.subject} · Grade ${m.grade_level}`} · ${m.mine ? "You" : m.author}, ${m.school}${m.copies ? ` · copied ${m.copies}×` : ""}`),
         m.summary ? h("p", { class: "small" }, m.summary) : null)),
       h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", "aria-label": `Preview ${m.title}`, onclick: () => previewMaterial(m.id) }, "Preview"),
-        ["teacher", "principal"].includes(state.me.role) ? h("button", { class: "btn small primary", type: "button", "aria-label": `Copy to my course: ${m.title}`, onclick: () => copyMaterial(m) }, "Copy to my course") : null,
+        ["teacher", "principal"].includes(state.me.role) && COACH_KIND[m.kind] ? h("button", { class: "btn small primary", type: "button", "aria-label": `Copy to my plans: ${m.title}`, onclick: () => copyCoachingPlan(m.id) }, "Copy to my plans") : null,
+        ["teacher", "principal"].includes(state.me.role) && !COACH_KIND[m.kind] ? h("button", { class: "btn small primary", type: "button", "aria-label": `Copy to my course: ${m.title}`, onclick: () => copyMaterial(m) }, "Copy to my course") : null,
         ["teacher", "principal"].includes(state.me.role) ? h("button", { class: "btn small", type: "button", "aria-label": `Co-write from: ${m.title}`, onclick: () => startDraft({ from: "material", sourceId: m.id }) }, "Co-write from") : null,
         m.mine ? h("button", { class: "btn small", type: "button", "aria-label": `Stop sharing ${m.title}`, onclick: async () => { if (!(await ask({ title: "Stop sharing?", text: "Colleagues won't see it any more. Copies they already made stay theirs.", confirm: "Stop sharing" }))) return;
           try { await api.post(`/api/materials/${m.id}/withdraw`, {}); toast("No longer shared."); go("network", { push: false }); } catch { toast("Couldn't change it."); } } }, "Stop sharing") : null))))
@@ -1716,7 +1810,9 @@ VIEWS.draft = async () => {
     ...field(l, "content", "Lesson text", `${at}content`, true, 8000),
     l.standards?.length ? h("p", { class: "small muted" }, `Standards: ${l.standards.map(s => s.code).join(", ")}`) : null,
     i !== null && ed.body.lessons.length > 1 ? h("button", { class: "btn small danger", type: "button", "aria-label": `Remove lesson ${i + 1}`, onclick: () => { ed.body.lessons.splice(i, 1); ed.dirty = true; go("draft", { push: false }); } }, "Remove lesson") : null];
-  const editor = d.kind === "lesson" ? h("div", { class: "stack" }, ...lessonFields(ed.body, "d-"))
+  const editor = COACH_KIND[d.kind] ? h("div", { class: "stack" }, ...field(ed.body, "title", "Title", "d-title", false, 120), ...field(ed.body, "sport", "Sport", "d-sport", false, 40),
+      ...field(ed.body, "summary", "What it's for", "d-summary", true, 1000), planItemsEditor(ed.body, "d-i", () => { ed.dirty = true; go("draft", { push: false }); }, (obj, k, label, id, multi, max) => field(obj, k, label, id, multi, max)))
+    : d.kind === "lesson" ? h("div", { class: "stack" }, ...lessonFields(ed.body, "d-"))
     : h("div", { class: "stack" }, ...field(ed.body, "title", "Unit title", "d-title", false, 120), ...field(ed.body, "summary", "Unit summary", "d-summary", true, 1000),
         ed.body.lessons.map((l, i) => h("fieldset", { class: "card" }, h("legend", {}, `Lesson ${i + 1}`), ...lessonFields(l, `d-l${i}-`, i))),
         ed.body.lessons.length < 30 ? h("button", { class: "btn", type: "button", onclick: () => { ed.body.lessons.push(blankLesson()); ed.dirty = true; go("draft", { push: false }); } }, "Add a lesson") : null);
@@ -1729,7 +1825,7 @@ VIEWS.draft = async () => {
     } catch (e) {
       if (e.body?.error !== "edit_conflict") { toast("Couldn't save."); return; }
       // Theirs goes in the editor; mine stays visible beside each field that clashed.
-      const at = p => p.replace(/^lessons\[(\d+)\]\.(\w+)$/, "d-l$1-$2").replace(/^(\w+)$/, "d-$1");
+      const at = p => p.replace(/^lessons\[(\d+)\]\.(\w+)$/, "d-l$1-$2").replace(/^items\[(\d+)\]\.(\w+)$/, "d-i$1-$2").replace(/^(\w+)$/, "d-$1");
       const get = (b, p) => p.split(/[.[\]]+/).filter(Boolean).reduce((o, k) => o?.[k], b);
       ed.theirs = Object.fromEntries(e.body.conflicts.filter(p => p !== "lessons").map(p => [at(p), String(get(ed.body, p) ?? "")]));
       Object.assign(ed, { version: e.body.current.version, body: structuredClone(e.body.current.body), dirty: true,
@@ -1755,7 +1851,9 @@ VIEWS.draft = async () => {
     note,
     h("form", { class: "card", "aria-label": "Edit the draft", onsubmit: e => { e.preventDefault(); save(); } }, editor, h("button", { class: "btn primary block", type: "submit" }, "Save")),
     h("section", { class: "card", "aria-label": "When it's ready" }, h("h3", {}, "When it's ready"),
-      h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => copyMaterial({ id: d.id, kind: d.kind, title: d.title }, `/api/drafts/${d.id}/copy`) }, "Copy to my course"),
+      h("div", { class: "btns" }, COACH_KIND[d.kind]
+          ? h("button", { class: "btn", type: "button", onclick: async () => { try { const r = (await api.post(`/api/drafts/${d.id}/copy`, {})).data; toast("Copied into your plans."); openView("coachplan", { coachPlanId: r.id }); } catch (e) { toast(e.body?.error === "draft_incomplete" ? "Give it a title, a sport, and a title for every drill first." : "Couldn't copy it."); } } }, "Copy to my plans")
+          : h("button", { class: "btn", type: "button", onclick: () => copyMaterial({ id: d.id, kind: d.kind, title: d.title }, `/api/drafts/${d.id}/copy`) }, "Copy to my course"),
         h("button", { class: "btn", type: "button", onclick: async () => {
           const post = confirmNotStudents => api.post(`/api/drafts/${d.id}/publish`, { confirmNotStudents });
           try { await post(false); toast("In the library for every school."); }
