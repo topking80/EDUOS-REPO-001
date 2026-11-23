@@ -597,3 +597,11 @@ GRANT UPDATE (retired_at, retired_by) ON district_state_entries TO eduos_app;
 GRANT UPDATE (state_code, license_number, license_type, endorsements, issued_on, expires_on, status, verified_by, verified_at, verify_note, updated_at, retired_at) ON educator_licenses TO eduos_app;
 REVOKE DELETE, TRUNCATE ON district_state_settings, district_state_entries, educator_licenses FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_works_at_my_school(uuid) TO eduos_app;
+
+-- DEV-01 (db/108): classroom rooms and the device registry. Archived/retired, never deleted.
+GRANT SELECT, INSERT ON classroom_rooms, classroom_devices, classroom_device_events TO eduos_app;
+GRANT USAGE ON SEQUENCE classroom_device_events_id_seq TO eduos_app;
+GRANT UPDATE (name, building, capacity, archived_at) ON classroom_rooms TO eduos_app;
+GRANT UPDATE (kind, name, maker, model, serial, capabilities, status, room_id, decided_by, decided_at, decision_note, updated_at, retired_at) ON classroom_devices TO eduos_app;
+REVOKE DELETE, TRUNCATE ON classroom_rooms, classroom_devices, classroom_device_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_device_scope(uuid), eduos_device_manager(uuid) TO eduos_app;
