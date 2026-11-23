@@ -44,6 +44,7 @@ import { registerClassroomControlRoutes } from "./classroom-control-routes.js";
 import { registerRoomCheckinRoutes } from "./room-checkin-routes.js";
 import { registerRemoteLessonRoutes } from "./remote-lesson-routes.js";
 import { registerPortfolioRoutes } from "./portfolio-routes.js";
+import { registerStorageRoutes, STORAGE_FILE_PATHS } from "./storage-routes.js";
 import { registerSafetyRoutes } from "./safety-routes.js";
 import { registerPickupRoutes } from "./pickup-routes.js";
 import { registerEnrollmentRoutes } from "./enrollment-routes.js";
@@ -104,7 +105,8 @@ const bulkJson = express.json({ limit: config.sisImportMaxBytes, strict: true })
 // 32.7.0: node-to-hub EDEN requests are signed over the exact body bytes, so
 // that parser keeps the raw text (and allows the larger sealed DECN packages).
 const edenJson = express.json({ limit: "16mb", strict: true, verify: (req, _res, buf) => { req.rawBody = buf.toString("utf8"); } });
-app.use((req, res, next) => req.path.startsWith("/api/eden/v1/") ? edenJson(req, res, next) : BULK_PATHS.has(req.path) ? next() : smallJson(req, res, next));
+// TEACH-06: a package file (up to 12 MB) is parsed by its own route, after the session is checked.
+app.use((req, res, next) => req.path.startsWith("/api/eden/v1/") ? edenJson(req, res, next) : BULK_PATHS.has(req.path) || STORAGE_FILE_PATHS.has(req.path) ? next() : smallJson(req, res, next));
 app.use((req,res,next)=>{ req.requestId=crypto.randomUUID(); res.setHeader("X-Request-Id",req.requestId); next(); });
 
 // 32.1.0: configurable. 30 per 15 minutes per IP locked out a whole school
@@ -1987,6 +1989,7 @@ registerClassroomControlRoutes(app);
 registerRoomCheckinRoutes(app);
 registerRemoteLessonRoutes(app);
 registerPortfolioRoutes(app);
+registerStorageRoutes(app);
 registerSafetyRoutes(app);
 registerPickupRoutes(app);
 registerEnrollmentRoutes(app);

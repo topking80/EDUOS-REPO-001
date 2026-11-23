@@ -649,3 +649,11 @@ GRANT UPDATE (status, reviewed_by, reviewed_at, review_note, items) ON portfolio
 GRANT UPDATE (archived_at) ON teacher_library_items TO eduos_app;
 REVOKE DELETE, TRUNCATE ON teacher_work_claims, portfolio_packages, portfolio_imports, teacher_library_items FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_portfolio_reviewer(uuid, uuid) TO eduos_app;
+
+-- TEACH-06 (db/114): approved storage. Retired / kept, never deleted.
+GRANT SELECT, INSERT ON storage_devices, district_storage_settings, portfolio_cloud_copies, portfolio_offloads TO eduos_app;
+GRANT UPDATE (status, decided_by, decided_at, decision_note, public_key, key_fingerprint, retired_at) ON storage_devices TO eduos_app;
+GRANT UPDATE (cloud_enabled, retention_days, updated_by, updated_at) ON district_storage_settings TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON portfolio_cloud_copies, portfolio_offloads FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON storage_devices, district_storage_settings FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_storage_overseer(uuid) TO eduos_app;

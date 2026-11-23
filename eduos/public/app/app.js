@@ -3618,7 +3618,9 @@ VIEWS.devices = async () => {
   return [h("h2", {}, it ? "Classroom devices" : "Rooms & devices"),
     h("p", { class: "small muted" }, it ? "Schools ask for displays, student devices and room equipment. Approve what's on the district's list; the school then puts it in a room. Teachers can control only approved devices in rooms they teach in."
       : "Ask district IT to approve a classroom device, then put it in a room. Changing what a device can do needs approving again. Student devices can be locked or pointed at a link; no one can view their screens."),
-    h("div", { class: "btns", role: "group", "aria-label": "Show" }, it ? seg("pending", "Waiting for approval") : null, seg("all", "All devices"), seg("rooms", "Rooms"), seg("paired", "Paired now")),
+    h("div", { class: "btns", role: "group", "aria-label": "Show" }, it ? seg("pending", "Waiting for approval") : null, seg("all", "All devices"), seg("rooms", "Rooms"), seg("paired", "Paired now"),
+      it ? seg("storage", "Teachers' storage") : null),
+    filter === "storage" && it ? [await storageReviewCard(), await offloadLogCard()] :
     filter === "paired" ? await pairingsCard() :
     filter === "rooms"
       ? h("section", { class: "card", "aria-label": "Rooms" }, rooms.length ? h("ul", { class: "list" }, rooms.map(r => h("li", {},
@@ -3970,8 +3972,9 @@ async function remoteLessonsCard() {
 const WORK_KIND = { unit: "Unit", lesson: "Lesson", coaching_plan: "Coaching plan" };
 const CLAIM_STATUS = { pending: ["expected", "Waiting for review"], approved: ["present", "Approved"], rejected: ["absent", "Not approved"], withdrawn: ["absent", "Withdrawn"] };
 VIEWS.mywork = async () => {
-  const [pv, claims, pkgs, imports, library] = await Promise.all([api.get("/api/portfolio/preview").then(r => r.data), api.get("/api/portfolio/claims").then(r => r.data),
-    api.get("/api/portfolio/packages").then(r => r.data), api.get("/api/portfolio/imports").then(r => r.data), api.get("/api/portfolio/library").then(r => r.data)]);
+  const [pv, claims, pkgs, imports, library, devices, storage, cloud] = await Promise.all([api.get("/api/portfolio/preview").then(r => r.data), api.get("/api/portfolio/claims").then(r => r.data),
+    api.get("/api/portfolio/packages").then(r => r.data), api.get("/api/portfolio/imports").then(r => r.data), api.get("/api/portfolio/library").then(r => r.data),
+    api.get("/api/storage/devices").then(r => r.data), api.get("/api/storage/settings").then(r => r.data), api.get("/api/portfolio/cloud").then(r => r.data)]);
   const reload = () => go("mywork", { push: false });
   const openClaim = it => claims.find(c => c.itemId === it.id && ["pending", "approved"].includes(c.status));
   return [back("me", "Account"), h("h2", {}, "My work: take it with you"),
@@ -3997,9 +4000,12 @@ VIEWS.mywork = async () => {
         !p.withdrawn && !p.fromHere ? h("button", { class: "btn small primary", type: "button", "aria-label": `Bring into this district: package from ${p.district}`, onclick: async () => {
           try { await api.post("/api/portfolio/imports", { packageId: p.id }); toast("Sent for review here."); reload(); }
           catch (e) { toast({ already_exists: "You've already brought this package in.", package_failed_its_check: "This package failed its check and can't be used." }[e.body?.error] || "Couldn't bring it in."); } } }, "Bring into this district") : null,
+        !p.withdrawn && p.fromHere ? h("button", { class: "btn small", type: "button", "aria-label": `Save to approved storage: package from ${new Date(p.issuedAt).toLocaleDateString()}`,
+          onclick: () => offloadPackage(p, devices.filter(d => d.status === "approved"), storage, cloud) }, "Save to approved storage") : null,
         !p.withdrawn ? h("button", { class: "btn small", type: "button", "aria-label": `Withdraw package from ${p.district}, ${new Date(p.issuedAt).toLocaleDateString()}`, onclick: async () => {
           try { await api.post(`/api/portfolio/packages/${p.id}/withdraw`, {}); toast("Withdrawn."); reload(); } catch { toast("Couldn't withdraw it."); } } }, "Withdraw") : null)))
         : h("p", { class: "small muted" }, "No packages yet. A package you make here follows you to any district on EduOS.")),
+    storageCard(devices, storage, cloud),
     imports.length ? h("section", { class: "card", "aria-label": "Brought into this district" }, h("h3", {}, "Brought into this district"),
       h("ul", { class: "list" }, imports.map(i => h("li", {}, h("div", { class: "row wrap" }, h("b", { class: "grow" }, `From ${i.fromDistrict}`), chip(i.status === "pending" ? "expected" : "present", i.status === "pending" ? "Waiting for review" : "Reviewed")),
         i.status === "reviewed" ? h("p", { class: "small muted" }, `${i.items.filter(x => x.decision === "approved").length} of ${i.items.length} approved by ${i.reviewedBy}${i.note ? ` · ${i.note}` : ""}`) : null,
@@ -4067,7 +4073,9 @@ VIEWS.portfolioreview = async () => {
       h("p", { class: "small muted" }, "Nothing is removed automatically. When the teacher leaves, retire or replace these."),
       h("ul", { class: "list small" }, approved.map(c => h("li", {}, `${c.owner}: ${WORK_KIND[c.itemKind]} “${c.title}” · approved by ${c.reviewedBy}`)))) : null,
     h("section", { class: "card", "aria-label": "Work brought in from other districts" }, h("h3", {}, "Work brought in from other districts"),
-      imports.filter(i => i.status === "pending").length ? imports.filter(i => i.status === "pending").map(i => reviewImportCard(i)) : empty("Nothing waiting."))];
+      imports.filter(i => i.status === "pending").length ? imports.filter(i => i.status === "pending").map(i => reviewImportCard(i)) : empty("Nothing waiting.")),
+    state.me.role === "superintendent" ? await cloudSettingsCard() : null,
+    await offloadLogCard()];
 };
 function reviewImportCard(i) {
   const pick = {};
@@ -4080,6 +4088,101 @@ function reviewImportCard(i) {
       if (Object.keys(pick).length !== i.items.length) return toast("Decide every item.");
       try { await api.post(`/api/portfolio/imports/${i.id}/review`, { decisions: Object.entries(pick).map(([index, decision]) => ({ index: Number(index), decision })) });
         toast("Saved. Approved items are in the teacher's library."); go("portfolioreview", { push: false }); } catch { toast("Couldn't save it."); } } }, `Save decisions for ${i.owner}`));
+}
+// ---- TEACH-06: approved storage ----------------------------------------------
+const STORAGE_KIND = { usb_drive: "USB drive", external_drive: "External drive", laptop: "Laptop", other: "Other" };
+const STORAGE_STATUS = { pending: ["expected", "Waiting for district IT"], approved: ["present", "Approved"], rejected: ["absent", "Not approved"], retired: ["absent", "Retired"] };
+function storageCard(devices, storage, cloud) {
+  const reload = () => go("mywork", { push: false });
+  return h("section", { class: "card", "aria-label": "Approved storage" }, h("h3", {}, "Approved storage"),
+    h("p", { class: "small muted" }, `Take your work off EduOS only to approved storage: a device district IT approved, or the district cloud${storage.cloudEnabled ? ` (kept ${storage.retentionDays} days)` : " (off in this district)"}. A file saved for a device opens only with that device's unlock code.`),
+    devices.length ? h("ul", { class: "list" }, devices.map(d => h("li", { class: "row wrap" },
+      h("span", { class: "grow" }, h("b", {}, d.name), h("span", { class: "small muted" }, ` · ${STORAGE_KIND[d.kind]}${d.serial ? ` · ${d.serial}` : ""}`)), chip(...STORAGE_STATUS[d.status]),
+      d.status !== "retired" ? h("button", { class: "btn small", type: "button", "aria-label": `Retire: ${d.name}`, onclick: async () => {
+        if (!(await ask({ title: `Retire ${d.name}?`, text: "You won't be able to save to it. Files already on it still open with its code.", confirm: "Retire" }))) return;
+        try { await api.post(`/api/storage/devices/${d.id}/retire`, {}); toast("Retired."); reload(); } catch { toast("Couldn't retire it."); } } }, "Retire") : null)))
+      : null,
+    cloud.length ? h("p", { class: "small" }, `In the district cloud: ${cloud.map(c => `${new Date(c.storedAt).toLocaleDateString()} (${c.items} items, kept to ${String(c.keepUntil).slice(0, 10)})`).join(" · ")}`) : null,
+    h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: requestStorageDevice }, "Ask to approve a device"),
+      h("button", { class: "btn", type: "button", onclick: openPackageFile }, "Open a package file")));
+}
+async function requestStorageDevice() {
+  const v = await dialogForm("Ask to approve a storage device", () => {
+    const kind = h("select", { id: "sd-k" }, Object.entries(STORAGE_KIND).map(([k, t]) => h("option", { value: k }, t)));
+    return { fields: [h("p", { class: "small muted" }, "District IT checks the device. When it's approved you get an unlock code to keep with it."),
+      h("label", { for: "sd-n" }, "Name"), h("input", { id: "sd-n", required: true, maxlength: 80, placeholder: "e.g. Blue USB drive" }), h("label", { for: "sd-k" }, "Kind"), kind,
+      h("label", { for: "sd-s" }, "Serial number (optional)"), h("input", { id: "sd-s", maxlength: 80 })],
+      value: () => ({ name: document.getElementById("sd-n").value.trim(), kind: kind.value, serial: document.getElementById("sd-s").value.trim() || null }) };
+  }, "Send to district IT");
+  if (!v) return;
+  try { await api.post("/api/storage/devices", v); toast("Sent to district IT."); go("mywork", { push: false }); } catch { toast("Couldn't send it."); }
+}
+async function offloadPackage(p, approved, storage, cloud) {
+  const inCloud = cloud.some(c => c.packageId === p.id);
+  const options = [...approved.map(d => [d.id, `${d.name} (${STORAGE_KIND[d.kind]})`]), ...(storage.cloudEnabled && !inCloud ? [["cloud", "The district cloud"]] : [])];
+  if (!options.length) return toast(storage.cloudEnabled ? "Ask district IT to approve a device first." : "You have no approved storage yet. Ask district IT to approve a device.");
+  const pick = await dialogForm("Save to approved storage", () => {
+    const sel = h("select", { id: "of-t" }, options.map(([v, t]) => h("option", { value: v }, t)));
+    return { fields: [h("label", { for: "of-t" }, "Where"), sel, h("p", { class: "small muted" }, "For a device, a file downloads: save it to that device. It opens only with the device's unlock code.")], value: () => sel.value };
+  }, "Save");
+  if (!pick) return;
+  try {
+    const r = (await api.post(`/api/portfolio/packages/${p.id}/offload`, pick === "cloud" ? { target: "cloud" } : { target: "device", deviceId: pick })).data;
+    if (r.target === "cloud") { toast("Saved to the district cloud."); return go("mywork", { push: false }); }
+    const a = h("a", { href: URL.createObjectURL(new Blob([JSON.stringify(r.file)], { type: "application/json" })), download: r.filename });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    toast(`Downloaded for ${r.device}. Save it to that device.`);
+  } catch (e) { toast({ storage_not_approved: "That device isn't approved.", district_cloud_off: "The district cloud is off.", already_exists: "It's already in the district cloud." }[e.body?.error] || "Couldn't save it."); }
+}
+async function openPackageFile() {
+  const v = await dialogForm("Open a package file", () => {
+    const f = h("input", { id: "pf-f", type: "file", accept: ".json,application/json", required: true });
+    const code = h("input", { id: "pf-c", required: true, autocomplete: "off", class: "mono", placeholder: "xxxx-xxxx-…" });
+    return { fields: [h("p", { class: "small muted" }, "A package file from approved storage, from this EduOS or another. You'll need the unlock code of the device it was saved for."),
+      h("label", { for: "pf-f" }, "File"), f, h("label", { for: "pf-c" }, "Device unlock code"), code],
+      value: async () => { const file = f.files?.[0]; if (!file) { toast("Choose the file."); return undefined; }
+        if (file.size > 12 * 1024 * 1024) { toast("That file is too large."); return undefined; }
+        try { return { file: JSON.parse(await file.text()), code: code.value.trim() }; } catch { toast("That isn't a package file."); return undefined; } } };
+  }, "Open");
+  if (!v) return;
+  try { const r = (await api.post("/api/portfolio/files/open", v)).data;
+    toast(`Opened: ${r.items} item${r.items === 1 ? "" : "s"}${r.signed ? ", signature checked" : ", not signed"}. Bring it into this district below.`); go("mywork", { push: false }); }
+  catch (e) { toast({ wrong_code_or_damaged_file: "Wrong unlock code, or the file is damaged.", package_failed_its_check: "This package failed its check." }[e.body?.error] || (e.status === 429 ? "Too many tries. Wait a few minutes." : "Couldn't open it.")); }
+}
+async function storageReviewCard() {
+  const list = (await api.get("/api/storage/devices")).data;
+  const pending = list.filter(d => d.status === "pending");
+  const decide = async (d, decision) => {
+    const note = decision === "approved"
+      ? await ask({ title: `Approve ${d.owner}'s ${d.name}?`, text: "You'll see the device's unlock code once, to give the teacher with the device.", confirm: "Approve" })
+      : await ask({ title: `Don't approve ${d.owner}'s ${d.name}?`, label: "Why not", confirm: "Don't approve" });
+    if (!note) return;
+    try { const r = (await api.post(`/api/storage/devices/${d.id}/decision`, { decision, note: typeof note === "string" ? note : null })).data;
+      if (r.unlockCode) await dialogForm(`Unlock code: ${d.name}`, () => ({ fields: [h("p", { class: "small" }, r.note), h("p", { class: "code mono", style: "font-size:1.2rem" }, r.unlockCode),
+        h("button", { class: "btn small", type: "button", onclick: async () => { try { await navigator.clipboard.writeText(r.unlockCode); toast("Copied."); } catch {} } }, "Copy code")], value: () => undefined }), null);
+      go("devices", { push: false }); } catch { toast("Couldn't save it."); }
+  };
+  return h("section", { class: "card", "aria-label": "Teachers' storage devices" }, h("h3", {}, "Teachers' storage devices"),
+    h("p", { class: "small muted" }, "Teachers take their work off EduOS only to approved storage. Approving makes the device's unlock code, shown once."),
+    pending.length ? h("ul", { class: "list" }, pending.map(d => h("li", {}, h("b", {}, `${d.owner}: ${d.name}`), h("span", { class: "small muted" }, ` · ${STORAGE_KIND[d.kind]}${d.serial ? ` · ${d.serial}` : ""}`),
+      h("div", { class: "btns" }, h("button", { class: "btn small primary", type: "button", "aria-label": `Approve storage: ${d.name}`, onclick: () => decide(d, "approved") }, "Approve"),
+        h("button", { class: "btn small", type: "button", "aria-label": `Don't approve storage: ${d.name}`, onclick: () => decide(d, "rejected") }, "Don't approve"))))) : empty("No storage devices waiting."),
+    list.filter(d => d.status === "approved").length ? h("p", { class: "small" }, `Approved: ${list.filter(d => d.status === "approved").map(d => `${d.owner} (${d.name})`).join(", ")}`) : null);
+}
+async function offloadLogCard() {
+  const log = (await api.get("/api/storage/offloads")).data;
+  return h("section", { class: "card", "aria-label": "Work taken off EduOS" }, h("h3", {}, "Work taken off EduOS"),
+    log.length ? h("ul", { class: "list small" }, log.slice(0, 50).map(o => h("li", {}, `${o.owner}: ${o.items} items to ${o.target === "cloud" ? "the district cloud" : o.device} · ${new Date(o.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`)))
+      : empty("Nothing yet."));
+}
+async function cloudSettingsCard() {
+  const s = (await api.get("/api/storage/settings")).data;
+  const on = h("input", { id: "cs-on", type: "checkbox", checked: s.cloudEnabled }), days = h("input", { id: "cs-d", type: "number", min: 30, max: 3650, value: s.retentionDays });
+  return h("section", { class: "card", "aria-label": "District cloud" }, h("h3", {}, "District cloud"),
+    h("p", { class: "small muted" }, "When on, teachers can keep copies of their packages with the district (never student information)."),
+    h("label", { class: "check" }, on, " Teachers may save packages to the district cloud"), h("label", { for: "cs-d" }, "Keep copies for (days)"), days,
+    h("button", { class: "btn", type: "button", onclick: async () => {
+      try { await api.put("/api/storage/settings", { cloudEnabled: on.checked, retentionDays: Number(days.value) }); toast("Saved."); } catch { toast("Use 30 to 3650 days."); } } }, "Save"));
 }
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
