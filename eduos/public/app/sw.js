@@ -4,7 +4,7 @@
 // names, rosters, grades, pick-up passes and messages are not stored by the
 // service worker. The only other on-device data is the encrypted offline
 // write queue in app.js (see docs/UPGRADING-32.7.0.md, "What a phone keeps").
-const SHELL = "eduos-app-shell-37.7.2";
+const SHELL = "eduos-app-shell-37.7.3";
 const ASSETS = ["/app/", "/app/index.html", "/app/app.css", "/app/app.js", "/app/icon.svg", "/app/manifest.webmanifest"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {
