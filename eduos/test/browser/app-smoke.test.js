@@ -120,6 +120,11 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/safety/status": return { data: { incidents: [], canInitiate: false, canLead: false } };
     case "/api/home": if (role === "parent") return { data: { children: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", absences_30d: 0, due_7d: 0, overdue: 0, to_acknowledge: 0 },
       { id: "c2", display_name: "Ben A", grade_level: "7", school_id: "s2", school_name: "Oak Middle", absences_30d: 1, due_7d: 2, overdue: 0, to_acknowledge: 0 }] } };
+    // TEACH-01: the district teacher network.
+    case "/api/network/colleagues": return { data: { schools: [{ id: "s1", name: "Maple" }, { id: "s2", name: "Oak Middle" }],
+      colleagues: [{ user_id: "u7", name: "Teacher Two", roles: ["teacher"], schools: [{ id: "s2", name: "Oak Middle" }] }, { user_id: "u8", name: "Principal P", roles: ["principal"], schools: [{ id: "s1", name: "Maple" }] }] } };
+    case "/api/network/groups": return { data: [{ id: "g1", name: "Grade 4 math", description: "Fractions and decimals", members: 6, joined: true, started_at_school: "Oak Middle", started_by: "Teacher Two", last_message_at: now },
+      { id: "g2", name: "Science fair", description: null, members: 3, joined: false, started_at_school: "Maple", started_by: "Principal P", last_message_at: now }] };
     // UI-04: a family with children at two schools and an account at each.
     case "/api/family/children": return { data: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", relationship: "parent" },
       { id: "c2", display_name: "Ben A", grade_level: "7", school_id: "s2", school_name: "Oak Middle", relationship: "parent" }] };
@@ -400,6 +405,34 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       } finally { page.close(); }
     }
     appearance = "dark";
+  }
+  // TEACH-01: Colleagues: the directory, the colleague picker, and groups.
+  {
+    state.role = "teacher";
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/network` });
+      const text = await page.mainText();
+      for (const want of ["Colleagues", "Teacher Two", "Teacher · Oak Middle", "Message several colleagues", "no student records"])
+        if (!text.includes(want)) failures.push(`teacher #/network: missing "${want}"`);
+      await page.eval(`[...document.querySelectorAll("button")].find(b => b.textContent.includes("Message several colleagues")).click()`);
+      await new Promise(r => setTimeout(r, 300));
+      const picker = await page.eval(`document.querySelector("dialog[open]")?.innerText || ""`);
+      if (!/Search colleagues across the district/.test(picker) || !/Principal P/.test(picker)) failures.push(`colleague picker: ${picker.slice(0, 120)}`);
+      await axeScan(page, "teacher: colleague picker", a11y);
+      await page.eval(`document.querySelector("dialog[open] input[type=search]").value = "oak"; document.querySelector("dialog[open] input[type=search]").dispatchEvent(new Event("input"))`);
+      const filtered = await page.eval(`[...document.querySelectorAll("dialog[open] .pick b")].map(b => b.textContent)`);
+      if (JSON.stringify(filtered) !== '["Teacher Two"]') failures.push(`picker search by school: ${JSON.stringify(filtered)}`);
+      await page.eval(`[...document.querySelectorAll("dialog[open] button")].find(b => b.textContent === "Cancel").click()`);
+      await page.eval(`[...document.querySelectorAll(".seg button")].find(b => b.textContent === "Groups").click()`);
+      for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 100)); if ((await page.eval(`document.getElementById("main").innerText`)).includes("Grade 4 math")) break; }
+      const groups = await page.eval(`document.getElementById("main").innerText`);
+      for (const want of ["Grade 4 math", "6 members · started at Oak Middle", "Science fair", "Start a group"]) if (!groups.includes(want)) failures.push(`teacher groups: missing "${want}"`);
+      const buttons = await page.eval(`[...document.querySelectorAll("#main li button")].map(b => b.getAttribute("aria-label"))`);
+      if (JSON.stringify(buttons) !== '["Open Grade 4 math","Join Science fair"]') failures.push(`group buttons: ${JSON.stringify(buttons)}`);
+      await axeScan(page, "teacher #/network groups", a11y);
+      if (page.errors.length) failures.push(`teacher network: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); state.netView = undefined; }
   }
   // UI-05: any profile can be chosen from the header; the dialog passes axe.
   {

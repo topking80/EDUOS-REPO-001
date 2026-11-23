@@ -6,7 +6,8 @@
 //    guardian(s) and staff who work with the learner (roster teacher or the
 //    school's principal);
 //  - staff threads are between staff of one school (principal, teachers,
-//    drivers);
+//    drivers); network threads (TEACH-01, teacher-network-routes.js) connect
+//    teachers and principals across the district's schools;
 //  - pupils read announcements only. There are no pupil-to-adult private
 //    messages, and nobody can add a pupil to a thread;
 //  - principals moderate their school (hide reported messages, lock threads,
@@ -51,7 +52,7 @@ export async function contactsFor(client, a) {
 }
 
 async function notifyThread(client, a, thread, title) {
-  const others = await rows(client, `SELECT user_id FROM comms_participants WHERE thread_id=$1 AND user_id<>$2`, [thread.id, a.userId]);
+  const others = await rows(client, `SELECT user_id FROM comms_participants WHERE thread_id=$1 AND user_id<>$2 AND left_at IS NULL`, [thread.id, a.userId]);
   await enqueueNotifications(client, { districtId: a.districtId, schoolId: thread.school_id, recipients: others.map(o => o.user_id), kind: "message",
     title, body: null, refType: "comms_thread", refId: thread.id });
 }
@@ -153,11 +154,11 @@ export function registerCommsRoutes(app) {
     if (req.actor.role === "pupil") return res.json({ data: [], policy: "students_read_announcements_only" });
     try {
       const data = await withTenantTransaction(req.actor, client => rows(client, `SELECT t.id,t.kind,t.subject,t.status,t.last_message_at,t.student_id,st.display_name AS student_name,
-            (SELECT string_agg(u.display_name, ', ' ORDER BY u.display_name) FROM comms_participants p JOIN users u ON u.id=p.user_id WHERE p.thread_id=t.id AND p.user_id<>$1) AS with_names,
+            (SELECT string_agg(u.display_name, ', ' ORDER BY u.display_name) FROM comms_participants p JOIN users u ON u.id=p.user_id WHERE p.thread_id=t.id AND p.user_id<>$1 AND p.left_at IS NULL) AS with_names,
             (SELECT m.body FROM comms_messages m WHERE m.thread_id=t.id AND m.hidden_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_body,
             (SELECT count(*)::int FROM comms_messages m WHERE m.thread_id=t.id AND m.author_user_id<>$1
                AND NOT EXISTS(SELECT 1 FROM comms_message_reads r WHERE r.message_id=m.id AND r.user_id=$1)) AS unread
-          FROM comms_threads t JOIN comms_participants me ON me.thread_id=t.id AND me.user_id=$1
+          FROM comms_threads t JOIN comms_participants me ON me.thread_id=t.id AND me.user_id=$1 AND me.left_at IS NULL
           LEFT JOIN students st ON st.id=t.student_id ORDER BY t.last_message_at DESC LIMIT 100`, [req.actor.userId]));
       res.setHeader("Cache-Control", "no-store");
       res.json({ data });
@@ -207,10 +208,10 @@ export function registerCommsRoutes(app) {
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
     try {
       const data = await withTenantTransaction(req.actor, async client => {
-        const t = await one(client, `SELECT t.id,t.kind,t.subject,t.status,t.lock_reason,t.student_id,st.display_name AS student_name,t.school_id
-            FROM comms_threads t JOIN comms_participants me ON me.thread_id=t.id AND me.user_id=$2 LEFT JOIN students st ON st.id=t.student_id WHERE t.id=$1`, [req.params.id, req.actor.userId]);
+        const t = await one(client, `SELECT t.id,t.kind,t.subject,t.status,t.lock_reason,t.student_id,st.display_name AS student_name,t.school_id,t.discoverable,t.description
+            FROM comms_threads t JOIN comms_participants me ON me.thread_id=t.id AND me.user_id=$2 AND me.left_at IS NULL LEFT JOIN students st ON st.id=t.student_id WHERE t.id=$1`, [req.params.id, req.actor.userId]);
         if (!t) return null;
-        const participants = await rows(client, `SELECT p.user_id,u.display_name AS name,p.role FROM comms_participants p JOIN users u ON u.id=p.user_id WHERE p.thread_id=$1 ORDER BY p.added_at`, [t.id]);
+        const participants = await rows(client, `SELECT p.user_id,u.display_name AS name,p.role FROM comms_participants p JOIN users u ON u.id=p.user_id WHERE p.thread_id=$1 AND p.left_at IS NULL ORDER BY p.added_at`, [t.id]);
         const messages = await rows(client, `SELECT m.id,m.author_user_id,u.display_name AS author_name,
               CASE WHEN m.hidden_at IS NULL THEN m.body END AS body,(m.hidden_at IS NOT NULL) AS hidden,m.created_at,
               coalesce((SELECT json_agg(json_build_object('userId',r.user_id,'name',ru.display_name,'readAt',r.read_at) ORDER BY r.read_at)
@@ -233,7 +234,7 @@ export function registerCommsRoutes(app) {
     if (!validId(req.params.id) || !cleanText(body, 4000)) return res.status(400).json({ error: "invalid_message" });
     try {
       const out = await withTenantTransaction(req.actor, async client => {
-        const t = await one(client, `SELECT t.id,t.status,t.school_id,t.subject FROM comms_threads t JOIN comms_participants p ON p.thread_id=t.id AND p.user_id=$2 WHERE t.id=$1`, [req.params.id, req.actor.userId]);
+        const t = await one(client, `SELECT t.id,t.status,t.school_id,t.subject FROM comms_threads t JOIN comms_participants p ON p.thread_id=t.id AND p.user_id=$2 AND p.left_at IS NULL WHERE t.id=$1`, [req.params.id, req.actor.userId]);
         if (!t) throw new HttpError(404, "thread_not_found");
         if (t.status !== "open") throw new HttpError(409, "thread_locked");
         const m = await one(client, `INSERT INTO comms_messages(district_id,school_id,thread_id,author_user_id,body) VALUES($1,$2,$3,$4,$5) RETURNING id,created_at`,
