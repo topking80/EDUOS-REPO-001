@@ -81,4 +81,23 @@ describe("school operations authorization against real PostgreSQL", { skip }, ()
     const st = (await admin.query("SELECT status FROM school_service_work WHERE id=$1", [item.counseling])).rows[0].status;
     assert.equal(st, "open");
   });
+
+  // 37.7.3 broken connections: GET/POST /api/school-operations/:domain was
+  // registered first and answered "command-center", "schedules" and
+  // "notification-preferences" as if they were work-queue domains (403).
+  it("the command center, schedules and reminder settings are reachable, not swallowed by /:domain", async () => {
+    for (const who of ["p1", "vp1", "supt1", "nurse1", "maint1"]) {
+      const r = await as(who)("GET", "/api/school-operations/command-center");
+      assert.equal(r.status, 200, `${who} command center: ${JSON.stringify(r.body)}`);
+      assert.ok(Array.isArray(r.body.data.summary) && Array.isArray(r.body.data.work), who);
+    }
+    const sched = await as("p1")("GET", "/api/school-operations/schedules");
+    assert.equal(sched.status, 200, JSON.stringify(sched.body));
+    const made = await as("p1")("POST", "/api/school-operations/schedules", { domain: "facilities", kind: "inspection", summary: "Check fire doors", cadence: "weekly", nextRunAt: new Date(Date.now() + 86400000).toISOString() });
+    assert.equal(made.status, 201, JSON.stringify(made.body));
+    assert.equal((await as("t1")("GET", "/api/school-operations/schedules")).status, 403);
+    const prefs = await as("p1")("GET", "/api/school-operations/notification-preferences");
+    assert.equal(prefs.status, 200, JSON.stringify(prefs.body));
+    assert.equal(typeof prefs.body.data.in_app_enabled, "boolean");
+  });
 });
