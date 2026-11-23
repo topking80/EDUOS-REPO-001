@@ -139,17 +139,17 @@ const ROLE_TABS = {
   teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["messages", "Messages", "chat"]],
-  vice_principal: [["operations", "Operations", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["messages", "Messages", "chat"]],
+  vice_principal: [["operations", "Operations", "grid"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["attendance", "Attendance", "check"], ["safety", "Safety", "shield"], ["devices", "Rooms & devices", "server"], ["messages", "Messages", "chat"]],
   counselor: [["guidance", "Counseling", "heart"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
-  principal: [["overview", "School", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"], ["alerts", "Alerts", "bell"]],
+  principal: [["overview", "School", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"], ["devices", "Rooms & devices", "server"], ["alerts", "Alerts", "bell"]],
   superintendent: [["overview", "District", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
   coach: [["teams", "My teams", "trophy"], ["alerts", "Alerts", "bell"]],
-  it_admin: [["apps", "Apps", "apps"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
+  it_admin: [["apps", "Apps", "apps"], ["devices", "Classroom devices", "server"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
 };
 const APP_NAME = { coach: "Coach", pupil: "Student", teacher: "Teacher", parent: "Family", principal: "School leader", superintendent: "District leader", driver: "Driver", sro: "School Resource Officer", librarian: "Librarian", vice_principal: "Vice Principal", counselor: "Guidance Counselor", nurse: "School Nurse", maintenance: "Maintenance", lunch_staff: "Lunch Staff", it_admin: "District IT" };
 const state = { me: null, brand: null, tab: null, unread: 0, home: null, safety: [], safetySig: "" };
@@ -186,7 +186,7 @@ const PHONE_TABS = {
   superintendent: ["overview", "apps", "alerts", "integrations"]
 };
 // Short names where the full one doesn't fit a phone tab (the full name stays the accessible name).
-const PHONE_LABEL = { history: "History", capsules: "Capsules", activities: "Clubs", contributions: "Items", integrations: "Data", library: "Library" };
+const PHONE_LABEL = { devices: "Devices", history: "History", capsules: "Capsules", activities: "Clubs", contributions: "Items", integrations: "Data", library: "Library" };
 function phoneSplit() {
   const all = tabsFor();
   if (all.length <= 5) return { main: all, extra: [] };
@@ -3574,6 +3574,105 @@ VIEWS.me = async () => {
     h("p", { class: "notice" }, "EduOS Mobile keeps school data on the server. This phone stores only the app's design files and your school's colours and logo so it opens quickly, plus, while you're offline, up to 200 encrypted roll call, bus check-in or attendance marks for at most 24 hours. Signing out deletes them.")];
 };
 
+// ---- DEV-01: rooms and the classroom device registry ----------------------
+const DEVICE_KIND = { display: "Display", student_device: "Student devices", equipment: "Room equipment" };
+const DEVICE_CAPS = { display: ["show", "blank", "input", "volume", "power"], student_device: ["lock", "unlock", "open_link", "focus"], equipment: ["power", "volume", "input", "lights"] };
+const CAP_TEXT = { show: "Show a teacher's screen", blank: "Blank the screen", input: "Switch input", volume: "Volume", power: "Power on/off", lights: "Lights",
+  lock: "Lock", unlock: "Unlock", open_link: "Open a link for the class", focus: "Focus mode (one app or site)" };
+const DEV_STATUS = { pending: ["expected", "Waiting for district IT"], approved: ["present", "Approved"], rejected: ["absent", "Not approved"], retired: ["absent", "Retired"] };
+VIEWS.devices = async () => {
+  const it = state.me.role === "it_admin";
+  const filter = state.devFilter || (it ? "pending" : "all");
+  const [rooms, devices, schools] = await Promise.all([api.get("/api/rooms").then(r => r.data), api.get(`/api/devices${filter === "pending" ? "?status=pending" : ""}`).then(r => r.data),
+    it ? safe(api.get("/api/schools").then(r => r.data), []) : null]);
+  const seg = (key, label) => h("button", { class: `btn small${filter === key ? " primary" : ""}`, type: "button", "aria-pressed": String(filter === key), onclick: () => openView("devices", { devFilter: key }) }, label);
+  const deviceRow = d => h("li", {},
+    h("div", { class: "row wrap" }, h("b", { class: "grow" }, d.name), chip(...DEV_STATUS[d.status])),
+    h("p", { class: "small muted" }, [DEVICE_KIND[d.kind], [d.maker, d.model].filter(Boolean).join(" "), d.serial ? `SN ${d.serial}` : "", it ? d.school : "", d.room ? `in ${d.room}` : ""].filter(Boolean).join(" · ")),
+    h("p", { class: "small" }, `Can: ${d.capabilities.map(c => CAP_TEXT[c]).join(", ")}`),
+    d.note ? h("p", { class: "small muted" }, `District IT: ${d.note}`) : null,
+    h("div", { class: "btns" },
+      it && d.status === "pending" ? [h("button", { class: "btn small primary", type: "button", "aria-label": `Approve: ${d.name}`, onclick: () => decideDevice(d, "approved") }, "Approve"),
+        h("button", { class: "btn small", type: "button", "aria-label": `Don't approve: ${d.name}`, onclick: () => decideDevice(d, "rejected") }, "Don't approve")] : null,
+      d.status === "approved" ? h("button", { class: "btn small", type: "button", "aria-label": `${d.room ? "Move" : "Put in a room"}: ${d.name}`, onclick: () => placeDevice(d, rooms) }, d.room ? "Move" : "Put in a room") : null,
+      h("button", { class: "btn small", type: "button", "aria-label": `Edit: ${d.name}`, onclick: () => editDevice(d, schools) }, "Edit"),
+      h("button", { class: "btn small", type: "button", "aria-label": `History: ${d.name}`, onclick: () => deviceHistory(d) }, "History"),
+      h("button", { class: "btn small", type: "button", "aria-label": `Retire: ${d.name}`, onclick: async () => {
+        if (!(await ask({ title: `Retire ${d.name}?`, text: "It leaves its room and can't be controlled. Its history is kept.", confirm: "Retire" }))) return;
+        try { await api.post(`/api/devices/${d.id}/retire`, {}); toast("Retired."); go("devices", { push: false }); } catch { toast("Couldn't retire it."); } } }, "Retire")));
+  return [h("h2", {}, it ? "Classroom devices" : "Rooms & devices"),
+    h("p", { class: "small muted" }, it ? "Schools ask for displays, student devices and room equipment. Approve what's on the district's list; the school then puts it in a room. Teachers can control only approved devices in rooms they teach in."
+      : "Ask district IT to approve a classroom device, then put it in a room. Changing what a device can do needs approving again. Student devices can be locked or pointed at a link; no one can view their screens."),
+    h("div", { class: "btns", role: "group", "aria-label": "Show" }, it ? seg("pending", "Waiting for approval") : null, seg("all", "All devices"), seg("rooms", "Rooms")),
+    filter === "rooms"
+      ? h("section", { class: "card", "aria-label": "Rooms" }, rooms.length ? h("ul", { class: "list" }, rooms.map(r => h("li", {},
+          h("div", { class: "row wrap" }, h("b", { class: "grow" }, r.name), h("span", { class: "small muted" }, [it ? r.school : "", r.building, r.capacity ? `${r.capacity} seats` : ""].filter(Boolean).join(" · "))),
+          h("p", { class: "small" }, r.devices.length ? r.devices.map(d => d.name).join(", ") : "No devices yet."),
+          h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", "aria-label": `Edit room: ${r.name}`, onclick: () => editRoom(r, schools) }, "Edit"),
+            h("button", { class: "btn small", type: "button", "aria-label": `Archive room: ${r.name}`, onclick: async () => {
+              if (!(await ask({ title: `Archive ${r.name}?`, text: r.devices.length ? "Its devices leave the room and stay approved." : "It leaves the list.", confirm: "Archive" }))) return;
+              try { await api.post(`/api/rooms/${r.id}/archive`, {}); toast("Archived."); go("devices", { push: false }); } catch { toast("Couldn't archive it."); } } }, "Archive")))))
+          : empty("No rooms yet."), h("button", { class: "btn primary", type: "button", onclick: () => editRoom(null, schools) }, "Add a room"))
+      : h("section", { class: "card", "aria-label": "Devices" }, devices.length ? h("ul", { class: "list" }, devices.map(deviceRow)) : empty(filter === "pending" ? "Nothing waiting for approval." : "No devices yet."),
+          h("button", { class: "btn primary", type: "button", onclick: () => editDevice(null, schools) }, it ? "Register a device" : "Ask for a device"))];
+};
+const schoolField = (schools, value) => schools ? [h("label", { for: "dv-school" }, "School"),
+  h("select", { id: "dv-school", required: true }, h("option", { value: "", disabled: true, selected: !value }, "Choose…"), schools.map(x => h("option", { value: x.id, selected: x.id === value }, x.name)))] : null;
+async function editRoom(r, schools) {
+  const v = await dialogForm(r ? `Edit ${r.name}` : "Add a room", () => {
+    const inp = (id, label, val, attrs = {}) => [h("label", { for: id }, label), h("input", { id, value: val ?? "", ...attrs })];
+    return { fields: [!r ? schoolField(schools) : null, inp("rm-n", "Room name or number", r?.name, { required: true, maxlength: 80 }), inp("rm-b", "Building (optional)", r?.building, { maxlength: 80 }),
+      inp("rm-c", "Seats (optional)", r?.capacity, { type: "number", min: 1, max: 1000 })],
+      value: () => { const g = id => document.getElementById(id)?.value.trim(); return { schoolId: g("dv-school") || undefined, name: g("rm-n"), building: g("rm-b") || null, capacity: g("rm-c") || null }; } };
+  }, r ? "Save" : "Add");
+  if (!v) return;
+  try { await (r ? api.put(`/api/rooms/${r.id}`, v) : api.post("/api/rooms", v)); toast("Saved."); openView("devices", { devFilter: "rooms" }); }
+  catch (e) { toast(e.body?.error === "already_exists" ? "There's already a room with that name." : "Couldn't save the room."); }
+}
+async function editDevice(d, schools) {
+  const v = await dialogForm(d ? `Edit ${d.name}` : state.me.role === "it_admin" ? "Register a device" : "Ask for a device", () => {
+    const inp = (id, label, val, attrs = {}) => [h("label", { for: id }, label), h("input", { id, value: val ?? "", ...attrs })];
+    const caps = h("fieldset", { class: "caps" });
+    const kindSel = h("select", { id: "dv-k", disabled: !!d, onchange: () => drawCaps(kindSel.value) }, Object.entries(DEVICE_KIND).map(([k, t]) => h("option", { value: k, selected: (d?.kind || "display") === k }, t)));
+    const drawCaps = kind => caps.replaceChildren(h("legend", {}, "What teachers can do with it"),
+      ...DEVICE_CAPS[kind].map(c => h("label", { class: "check" }, h("input", { type: "checkbox", value: c, checked: d ? d.capabilities.includes(c) : true }), ` ${CAP_TEXT[c]}`)));
+    drawCaps(d?.kind || "display");
+    return { fields: [!d ? schoolField(schools) : null, h("label", { for: "dv-k" }, "Kind"), kindSel, inp("dv-n", "Name", d?.name, { required: true, maxlength: 80, placeholder: "e.g. Front board" }),
+      inp("dv-mk", "Maker (optional)", d?.maker, { maxlength: 80 }), inp("dv-md", "Model (optional)", d?.model, { maxlength: 80 }), inp("dv-sn", "Serial number (optional)", d?.serial, { maxlength: 80 }), caps,
+      d?.status === "approved" ? h("p", { class: "small muted" }, "Changing anything but the name sends it back to district IT and out of its room.") : null],
+      value: () => { const g = id => document.getElementById(id)?.value.trim();
+        const capabilities = [...caps.querySelectorAll("input:checked")].map(i => i.value);
+        if (!capabilities.length) { toast("Choose at least one thing teachers can do."); return undefined; }
+        return { schoolId: g("dv-school") || undefined, kind: kindSel.value, name: g("dv-n"), maker: g("dv-mk") || null, model: g("dv-md") || null, serial: g("dv-sn") || null, capabilities }; } };
+  }, d ? "Save" : state.me.role === "it_admin" ? "Register" : "Ask district IT");
+  if (!v) return;
+  try { const r = (await (d ? api.put(`/api/devices/${d.id}`, v) : api.post("/api/devices", v))).data;
+    toast(r.status === "pending" ? "Sent to district IT for approval." : "Saved."); go("devices", { push: false }); }
+  catch (e) { toast(e.body?.error === "already_exists" ? "That serial number is already registered." : "Couldn't save the device."); }
+}
+async function decideDevice(d, decision) {
+  const note = await dialogForm(decision === "approved" ? `Approve ${d.name}` : `Don't approve ${d.name}`, () => {
+    const box = h("textarea", { id: "dd-note", maxlength: 500, rows: 2, placeholder: decision === "approved" ? "Optional" : "Why, so the school knows" });
+    return { fields: [h("p", { class: "small" }, `${d.school} · ${DEVICE_KIND[d.kind]} · can: ${d.capabilities.map(c => CAP_TEXT[c]).join(", ")}`), h("label", { for: box.id }, "Note to the school"), box], value: () => box.value.trim() };
+  }, decision === "approved" ? "Approve" : "Don't approve");
+  if (note === null) return;
+  try { await api.post(`/api/devices/${d.id}/decision`, { decision, note: note || null }); toast("Saved."); go("devices", { push: false }); } catch { toast("Couldn't save it."); }
+}
+async function placeDevice(d, rooms) {
+  const mine = rooms.filter(r => r.schoolId === d.schoolId);
+  const roomId = await dialogForm(`Room for ${d.name}`, () => {
+    const sel = h("select", { id: "pd-room" }, h("option", { value: "" }, "Not in a room"), mine.map(r => h("option", { value: r.id, selected: r.id === d.roomId }, r.name)));
+    return { fields: [mine.length ? null : h("p", { class: "small muted" }, "Add a room first (Rooms)."), h("label", { for: sel.id }, "Room"), sel], value: () => sel.value };
+  }, "Save");
+  if (roomId === null) return;
+  try { await api.post(`/api/devices/${d.id}/place`, { roomId: roomId || null }); toast(roomId ? "Placed." : "Taken out of the room."); go("devices", { push: false }); } catch { toast("Couldn't move it."); }
+}
+async function deviceHistory(d) {
+  const ev = (await api.get(`/api/devices/${d.id}/events`)).data;
+  const WORD = { requested: "Asked for", registered: "Registered", approved: "Approved", rejected: "Not approved", changed: "Changed", placed: "Put in", removed: "Taken out of", retired: "Retired" };
+  await dialogForm(`History: ${d.name}`, () => ({ fields: [h("ol", { class: "list small" }, ev.map(e => h("li", {}, h("b", {}, `${WORD[e.event]}${e.event === "placed" || e.event === "removed" ? ` ${e.detail || "a room"}` : ""}`),
+    ` · ${e.by} · ${new Date(e.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`, e.detail && !["placed", "removed"].includes(e.event) ? h("p", { class: "muted" }, e.detail) : null)))], value: () => undefined }), null);
+}
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
 const LIC_STATUS = { self_reported: ["expected", "Not verified yet"], verified: ["present", "Verified by the district"], not_verified: ["absent", "Couldn't be verified"] };

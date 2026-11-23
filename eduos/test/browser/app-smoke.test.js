@@ -206,6 +206,12 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       body: { summary: "Possession day", items: [{ kind: "drill", title: "Rondo 5v2", minutes: 10, description: "Keep-away", equipment: "8 cones" }, { kind: "play", title: "Corner: near post", minutes: 5, description: "", equipment: "" }] } } };
     case "/api/coaching/library": return { data: [{ id: "sm9", kind: "playbook", title: "Set pieces", sport: "Soccer", level: "Var", summary: "Corners and free kicks", version: 1, updated_at: now, author: "Teacher Two", school: "Oak Middle", mine: false, copies: 4,
       body: { summary: null, items: [{ kind: "play", title: "Near-post corner", minutes: null, description: "Runner to the near post", equipment: "" }] } }] };
+    // DEV-01: rooms and the classroom device registry.
+    case "/api/rooms": return { data: [{ id: "rm1", schoolId: "s1", school: "Maple", name: "Room 101", building: "Main", capacity: 28, devices: [{ id: "dv1", kind: "display", name: "Front board" }] }] };
+    case "/api/devices": return { data: [
+      { id: "dv2", schoolId: "s1", school: "Maple", kind: "student_device", name: "Cart A", maker: null, model: null, serial: null, capabilities: ["lock", "unlock", "open_link", "focus"], status: "pending", roomId: null, room: null, requestedBy: "Principal S1", requestedAt: now },
+      { id: "dv1", schoolId: "s1", school: "Maple", kind: "display", name: "Front board", maker: "Acme", model: "B75", serial: "SN-1", capabilities: ["show", "blank", "volume"], status: "approved", roomId: "rm1", room: "Room 101", requestedBy: "Principal S1", requestedAt: now, decidedBy: "District IT", decidedAt: now, note: "On the list" }] };
+    case "/api/devices/dv1/events": return { data: [{ event: "requested", detail: "show,blank,volume", at: now, by: "Principal S1" }, { event: "approved", detail: null, at: now, by: "District IT" }, { event: "placed", detail: "Room 101", at: now, by: "Principal S1" }] };
     // STATE-01: the state index and licenses.
     case "/api/states": return { data: { districtState: "TX", categories: {}, states: [["TX", "Texas"], ["OH", "Ohio"]].map(([code, name]) => ({ code, name, counts: { licensing: 0, athletics: 1, agency: 1, records: 0 }, complete: false })) } };
     case "/api/states/TX": return { data: { code: "TX", name: "Texas", sections: [
@@ -647,6 +653,33 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (page.errors.length) failures.push(`co-write: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
+  // DEV-01: IT approves devices; a school sees rooms and asks for a device; the dialogs pass axe.
+  {
+    let page;
+    try {
+      for (const role of ["it_admin", "principal"]) {
+        state.role = role;
+        page?.close(); page = await Page.open(chrome.port);
+        await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/devices` });
+        const text = await page.mainText();
+        if (!text.includes("Front board") || !text.includes("Cart A")) failures.push(`${role} #/devices: ${text.slice(0, 160)}`);
+        if ((role === "it_admin") !== await page.eval(`[...document.querySelectorAll("main button")].some(b => b.textContent === "Approve")`)) failures.push(`${role} #/devices approve button: ${role === "it_admin" ? "missing" : "shown to a school"}`);
+        await axeScan(page, `${role}: #/devices`, a11y);
+      }
+      const asked = await page.eval(`(() => { const b = [...document.querySelectorAll("main button")].find(b => b.textContent === "Ask for a device"); if (!b) return [...document.querySelectorAll("main button")].map(b => b.textContent).join("|"); b.click(); return "ok"; })()`);
+      if (asked !== "ok") failures.push(`no "Ask for a device" button: ${asked}`);
+      await new Promise(r => setTimeout(r, 200));
+      const caps = await page.eval(`(() => { const d = document.querySelector("dialog[open]"); if (!d) return "no dialog"; d.querySelector("#dv-k").value = "student_device"; d.querySelector("#dv-k").dispatchEvent(new Event("change"));
+        return [...d.querySelectorAll("fieldset.caps input")].map(i => i.value).join(","); })()`);
+      if (caps !== "lock,unlock,open_link,focus") failures.push(`device dialog student capabilities: ${caps}`);
+      await axeScan(page, "principal: ask for a device dialog", a11y);
+      await page.eval(`document.querySelector("dialog[open] .btns .btn:not(.primary)").click()`);
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent === "Rooms").click()`);
+      for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 100)); if ((await page.eval(`document.querySelector("main")?.textContent || ""`)).includes("28 seats")) break; }
+      await axeScan(page, "principal: rooms", a11y);
+      if (page.errors.length) failures.push(`devices: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); }
+  }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.
   {
     state.role = "superintendent";
@@ -659,10 +692,13 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         await axeScan(page, `superintendent: #/${hash}`, a11y);
       }
       await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent.includes("Expiring")).click()`);
+      const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+      await waitFor(`[...document.querySelectorAll("main button[aria-pressed=true]")].some(b => b.textContent.includes("Expiring"))`);
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/states` });
       await page.mainText();
-      await page.eval(`document.querySelector("button.linkrow").click()`);
-      for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 100)); if ((await page.eval(`document.querySelector("main")?.textContent || ""`)).includes("Certificate lookup")) break; }
+      await waitFor(`!!document.querySelector("main button.linkrow")`);
+      await page.eval(`document.querySelector("main button.linkrow").click()`);
+      for (let i = 0; i < 100; i++) { await new Promise(r => setTimeout(r, 100)); if ((await page.eval(`document.querySelector("main")?.textContent || ""`)).includes("Certificate lookup")) break; }
       const info = await page.eval(`document.querySelector("main")?.textContent || ""`);
       if (!info.includes("Certificate lookup") || !info.includes("Added by Supt One")) failures.push(`state info: ${info.slice(0, 160)}`);
       await axeScan(page, "superintendent: state info", a11y);
