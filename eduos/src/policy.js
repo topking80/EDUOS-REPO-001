@@ -115,7 +115,12 @@ export const ROLE_PERMISSIONS = Object.freeze({
   counselor: { schools:["read"], wellbeing:["queue"] }, // 37.6.0: own school's check-ins and crisis alerts
   nurse: { schools:["read"], health_office:["read","create","update"] },
   maintenance: { schools:["read"], facilities:["read","create","update"] },
-  lunch_staff: { schools:["read"], meal_service:["read","create","update"] }
+  lunch_staff: { schools:["read"], meal_service:["read","create","update"] },
+  // COACH-01: a coach profile at a school where the person coaches or advises
+  // a team but doesn't teach. It reaches only the teams they're assigned to
+  // (activity_staff, db/060 + db/105); it is created and disabled by those
+  // assignments, never managed by hand.
+  coach: { schools:["read"], branding:["read"] }
 });
 
 // District-level roles hold memberships without a school (school_id NULL).

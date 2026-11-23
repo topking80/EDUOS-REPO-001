@@ -11,6 +11,7 @@ import 'screens/arrival_screen.dart';
 import 'screens/children_screen.dart';
 import 'screens/class_register_screen.dart';
 import 'screens/clubs_sports_screen.dart';
+import 'screens/coach_teams_screen.dart';
 import 'screens/courses_screen.dart';
 import 'screens/driver_route_screen.dart';
 import 'screens/family_library_screen.dart';
@@ -77,6 +78,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     if (!tab.native) return WebFallbackScreen(tab: tab);
     return switch (tab.id) {
       'children' => ChildrenScreen(onOpenArrival: () => _go('arrival')),
+      'teams' => const CoachTeamsScreen(),
       'route' => const DriverRouteScreen(),
       'classes' when role == 'teacher' => const ClassRegisterScreen(),
       'library' when role == 'parent' => const FamilyLibraryScreen(),

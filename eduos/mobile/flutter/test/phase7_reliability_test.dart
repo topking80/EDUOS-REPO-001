@@ -10,6 +10,7 @@ import 'package:eduos_mobile_branding/ui/screens/alerts_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/arrival_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/children_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/clubs_sports_screen.dart';
+import 'package:eduos_mobile_branding/ui/screens/coach_teams_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/class_register_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/courses_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/driver_route_screen.dart';
@@ -37,6 +38,7 @@ import 'operations_screens_test.dart' show FakeServer, launch, openTab, now;
 Type expectedScreen(String role, String tab) => switch (tab) {
       'children' => ChildrenScreen,
       'activities' => ClubsSportsScreen,
+      'teams' => CoachTeamsScreen,
       'route' => DriverRouteScreen,
       'classes' => ClassRegisterScreen,
       'library' when role == 'parent' || role == 'pupil' => FamilyLibraryScreen,

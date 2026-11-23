@@ -21,7 +21,7 @@ async function requirePupilLink(c,a,schoolId) {
 }
 async function canManage(c,a,id) {
  if(LEAD(a.role))return true;
- if(a.role==="teacher"&&await one(c,"SELECT id FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id=$4",[a.districtId,a.schoolId,id,a.userId]))return true;
+ if(["teacher","coach"].includes(a.role)&&await one(c,"SELECT id FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id=$4 AND ended_at IS NULL",[a.districtId,a.schoolId,id,a.userId]))return true;
  // 37.6.0: the school's athletic director manages its sports teams too (db/060).
  if(!["teacher","vice_principal"].includes(a.role))return false;
  return Boolean((await one(c,`SELECT a.kind='sport' AND eduos_is_athletic_director(a.school_id) AS ok FROM school_activities a WHERE a.id=$1 AND a.district_id=$2`,[id,a.districtId]))?.ok);
@@ -60,11 +60,47 @@ export function registerClubsSportsRoutes(app) {
   try{const data=await withTenantTransaction(a,async c=>{
    const activity=await scopedActivity(c,a,req.params.id,true);if(!activity)throw new HttpError(404,"activity_not_found");
    if(b.staffRole!==(activity.kind==="club"?"advisor":"coach"))throw new HttpError(400,"staff_role_mismatch");
-   if(!await one(c,`SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.district_id=$1 AND m.school_id=$2 AND m.user_id=$3 AND m.role='teacher' AND m.status='active' AND u.status='active'`,[a.districtId,activity.school_id,b.userId]))throw new HttpError(400,"active_school_teacher_required");
+   // A teacher here, or (COACH-01) a teacher or principal at another school in the district, who then gets a coach profile here.
+   const here=await one(c,`SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.district_id=$1 AND m.school_id=$2 AND m.user_id=$3 AND m.role='teacher' AND m.status='active' AND u.status='active'`,[a.districtId,activity.school_id,b.userId]);
+   let coachProfile=false;
+   if(!here){
+    const elsewhere=await one(c,`SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.district_id=$1 AND m.school_id<>$2 AND m.user_id=$3 AND m.role IN ('teacher','principal') AND m.status='active' AND u.status='active' LIMIT 1`,[a.districtId,activity.school_id,b.userId]);
+    if(!elsewhere)throw new HttpError(400,"active_school_teacher_required");
+    const m=await one(c,`INSERT INTO memberships(user_id,district_id,school_id,role,is_default) VALUES($1,$2,$3,'coach',false)
+      ON CONFLICT DO NOTHING RETURNING id`,[b.userId,a.districtId,activity.school_id]);
+    if(!m)await c.query(`UPDATE memberships SET status='active' WHERE user_id=$1 AND district_id=$2 AND school_id=$3 AND role='coach'`,[b.userId,a.districtId,activity.school_id]);
+    coachProfile=true;
+   }
    const r=await one(c,`INSERT INTO activity_staff(district_id,school_id,activity_id,user_id,staff_role,assigned_by) VALUES($1,$2,$3,$4,$5,$6)
-    ON CONFLICT(district_id,activity_id,user_id) DO UPDATE SET staff_role=EXCLUDED.staff_role,assigned_by=EXCLUDED.assigned_by,assigned_at=now() RETURNING id,activity_id,user_id,staff_role`,[a.districtId,activity.school_id,activity.id,b.userId,b.staffRole,a.userId]);
-   await audit(c,req,"assign","activity_staff",r.id,`activity=${activity.id};role=${b.staffRole}`);return r;
+    ON CONFLICT(district_id,activity_id,user_id) DO UPDATE SET staff_role=EXCLUDED.staff_role,assigned_by=EXCLUDED.assigned_by,assigned_at=now(),ended_at=NULL,ended_by=NULL RETURNING id,activity_id,user_id,staff_role`,[a.districtId,activity.school_id,activity.id,b.userId,b.staffRole,a.userId]);
+   await audit(c,req,"assign","activity_staff",r.id,`activity=${activity.id};role=${b.staffRole}${coachProfile?";coach_profile":""}`);return {...r,coachProfile};
   });res.status(201).json({data});}catch(e){sendError(res,next,e)}
+ });
+ // COACH-01: who coaches or advises a team (and their home school), for school leads.
+ app.get("/api/activities/:id/staff",requireSession,wrap(async(c,req)=>{
+  const a=req.actor;if(!LEAD(a.role))throw new HttpError(403,"school_lead_required");if(!validId(req.params.id))throw new HttpError(400,"invalid_activity_id");
+  const activity=await scopedActivity(c,a,req.params.id);if(!activity)throw new HttpError(404,"activity_not_found");
+  return rows(c,`SELECT s.user_id,u.display_name AS name,s.staff_role,s.assigned_at,
+    (SELECT sc.name FROM memberships m JOIN schools sc ON sc.id=m.school_id WHERE m.user_id=s.user_id AND m.district_id=s.district_id AND m.status='active'
+      AND m.role IN ('teacher','principal') ORDER BY (m.school_id=s.school_id) DESC,m.is_default DESC LIMIT 1) AS home_school,
+    EXISTS(SELECT 1 FROM memberships m WHERE m.user_id=s.user_id AND m.district_id=s.district_id AND m.school_id=s.school_id AND m.role='coach' AND m.status='active') AS visiting
+   FROM activity_staff s JOIN users u ON u.id=s.user_id WHERE s.district_id=$1 AND s.activity_id=$2 AND s.ended_at IS NULL ORDER BY u.display_name`,[a.districtId,activity.id]);
+ }));
+ // COACH-01: end an assignment; a coach profile with no remaining team at that school is disabled.
+ app.post("/api/activities/:id/staff/:userId/end",requireSession,requireCsrf,async(req,res,next)=>{
+  const a=req.actor;if(!LEAD(a.role))return res.status(403).json({error:"school_lead_required"});
+  if(!validId(req.params.id)||!validId(req.params.userId))return res.status(400).json({error:"invalid_activity_staff"});
+  try{const data=await withTenantTransaction(a,async c=>{
+   const activity=await scopedActivity(c,a,req.params.id,true);if(!activity)throw new HttpError(404,"activity_not_found");
+   const r=await one(c,`UPDATE activity_staff SET ended_at=now(),ended_by=$4 WHERE district_id=$1 AND activity_id=$2 AND user_id=$3 AND ended_at IS NULL RETURNING id`,[a.districtId,activity.id,req.params.userId,a.userId]);
+   if(!r)throw new HttpError(404,"assignment_not_found");
+   let profileDisabled=false;
+   if(!await one(c,`SELECT 1 FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND user_id=$3 AND ended_at IS NULL`,[a.districtId,activity.school_id,req.params.userId])){
+    const m=await c.query(`UPDATE memberships SET status='disabled' WHERE user_id=$1 AND district_id=$2 AND school_id=$3 AND role='coach' AND status='active'`,[req.params.userId,a.districtId,activity.school_id]);
+    profileDisabled=m.rowCount>0;
+   }
+   await audit(c,req,"end","activity_staff",r.id,`activity=${activity.id}${profileDisabled?";coach_profile_disabled":""}`);return {ended:true,profileDisabled};
+  });res.json({data});}catch(e){sendError(res,next,e)}
  });
  app.patch("/api/activities/:id",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,b=req.body||{};if(!validId(req.params.id)||Object.keys(b).some(k=>!["title","description","meetingDetails","status"].includes(k)))return res.status(400).json({error:"invalid_activity_update"});
@@ -246,12 +282,12 @@ export function registerClubsSportsRoutes(app) {
  }));
  app.post("/api/events/:id/check-in",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,code=req.body?.ticketCode;
-  if(!LEAD(a.role)&&a.role!=="teacher")return res.status(403).json({error:"event_checkin_staff_required"});
+  if(!LEAD(a.role)&&!["teacher","coach"].includes(a.role))return res.status(403).json({error:"event_checkin_staff_required"});
   if(!validId(req.params.id)||typeof code!=="string"||code.length<20||code.length>128)return res.status(400).json({error:"invalid_ticket_checkin"});
   try{const data=await withTenantTransaction(a,async c=>{
    const event=await one(c,"SELECT id,school_id,activity_id FROM school_events WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3)",[req.params.id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);
    if(!event)throw new HttpError(404,"event_not_found");
-   if(a.role==="teacher"&&(!event.activity_id||!await one(c,"SELECT id FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id=$4",[a.districtId,event.school_id,event.activity_id,a.userId])))throw new HttpError(403,"event_assignment_required");
+   if(["teacher","coach"].includes(a.role)&&(!event.activity_id||!await one(c,"SELECT id FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id=$4 AND ended_at IS NULL",[a.districtId,event.school_id,event.activity_id,a.userId])))throw new HttpError(403,"event_assignment_required");
    const hash=createHash("sha256").update(code).digest("hex");
    const ticket=await one(c,"SELECT id,status,order_id FROM event_tickets WHERE district_id=$1 AND event_id=$2 AND ticket_code_hash=$3 FOR UPDATE",[a.districtId,event.id,hash]);
    if(!ticket)throw new HttpError(404,"ticket_not_found");

@@ -102,7 +102,7 @@ export function registerSportsEligibilityRoutes(app) {
   app.get("/api/sports/my-roles", requireSession, wrap(async (c, req) => {
     const a = req.actor;
     const ad = AD_ROLES.includes(a.role) && a.schoolId ? (await one(c, "SELECT eduos_is_athletic_director($1) AS ok", [a.schoolId])).ok : false;
-    const coach = a.role === "teacher" ? await rows(c, "SELECT activity_id FROM activity_staff WHERE district_id=$1 AND user_id=$2 AND staff_role='coach'", [a.districtId, a.userId]) : [];
+    const coach = ["teacher", "coach"].includes(a.role) ? await rows(c, "SELECT activity_id FROM activity_staff WHERE district_id=$1 AND user_id=$2 AND staff_role='coach' AND ended_at IS NULL", [a.districtId, a.userId]) : [];
     return { athleticDirector: ad, coachOf: coach.map(r => r.activity_id) };
   }));
 

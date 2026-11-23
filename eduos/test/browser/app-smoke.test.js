@@ -191,6 +191,15 @@ function mockApi(role, pathname, failWebhookLoads = false) {
         rosters: { sectionsFetched: 4, sectionsNotMapped: 0, enrollmentsFetched: 20, teachersUnmatched: 1, rosterLinks: 15, toAdd: 12, toRemove: 1, keptManual: 2 } },
       unmatchedTeachers: [{ externalId: "tch-2", reason: "no_matching_eduos_teacher", name: "New Hire", email: "new.hire@d1.test" }] } };
     // 37.7.0 commerce (sandbox) screens.
+    // COACH-01: a team the teacher coaches; the coach workspace; its staff list.
+    case "/api/activities": return { data: [{ id: "a1", school_id: "s1", kind: "sport", title: "Falcons Soccer", description: "", grade_min: null, grade_max: null, meeting_details: "Mon/Wed 3:30", status: "published", member_count: 2, school_name: "Maple" }] };
+    case "/api/sports/my-roles": return { data: { athleticDirector: false, coachOf: role === "teacher" || role === "coach" ? ["a1"] : [] } };
+    case "/api/activities/a1/staff": return { data: [{ user_id: "u7", name: "Teacher Two", staff_role: "coach", home_school: "Oak Middle", visiting: true }] };
+    case "/api/coach/teams": return { data: { teams: [{ id: "a1", kind: "sport", title: "Falcons Soccer", role: "coach", meetingDetails: "Mon/Wed 3:30", status: "published",
+        events: [{ id: "e1", title: "Home game", starts_at: new Date(Date.now() + 864e5).toISOString(), venue: "Field" }], results: [{ title: "Opener", starts_at: now, opponent: "Hawks", home_score: 2, away_score: 1, status: "published" }],
+        slip: { id: "sl1", title: "Away trip", granted: 1, declined: 0, pending: 1 },
+        roster: [{ studentId: "c1", name: "Alice A", grade: "3", jersey: 9, eligibility: "eligible", slip: "granted" }, { studentId: "c2", name: "Bob B", grade: "3", jersey: null, eligibility: "not_enough_records", slip: "pending" }] }],
+      elsewhere: role === "coach" ? [] : [{ membership_id: "00000000-0000-4000-8000-0000000a0009", school_id: "s9", school: "Hill Primary" }] } };
     case "/api/events": return { data: [{ id: "e1", activity_id: "a1", school_id: "s1", title: "Friday Night Football", starts_at: new Date(Date.now() + 864e5).toISOString(),
       ends_at: new Date(Date.now() + 9e7).toISOString(), venue: "Main field", status: "published", school_name: "Maple" }] };
     case "/api/commerce/status": return { data: { provider: "sandbox", enabled: true, live: false, sandbox: false, canPay: ["parent", "superintendent"].includes(role),
@@ -501,6 +510,36 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (JSON.stringify(copies) !== '[{"path":"/api/materials/m2/copy","body":{"courseId":"k1","unitId":null}}]') failures.push(`copy request: ${JSON.stringify(copies)}`);
       if (page.errors.length) failures.push(`materials: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); withCourse = false; }
+  }
+  // COACH-01: a teacher's "My teams" (and other schools to switch to); a principal manages coaches.
+  {
+    state.role = "teacher";
+    const page = await Page.open(chrome.port);
+    const until = async (js, n = 40) => { for (let i = 0; i < n; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/activities` });
+      await page.mainText();
+      await until(`[...document.querySelectorAll("#main button")].some(b => b.textContent.includes("My teams"))`);
+      await page.eval(`[...document.querySelectorAll("#main button")].find(b => b.textContent.includes("My teams")).click()`);
+      await until(`document.getElementById("main").innerText.includes("Roster (2)")`);
+      const t = await page.eval(`document.getElementById("main").innerText`);
+      for (const want of ["My teams", "Falcons Soccer", "you're the coach", "Home game", "Away trip", "1 signed, 1 waiting", "#9 Alice A", "Eligible", "Not enough records", "Slip signed", "Slip waiting", "Opener: vs Hawks 2–1", "Your teams at Hill Primary"])
+        if (!t.includes(want)) failures.push(`my teams: missing "${want}"`);
+      await axeScan(page, "teacher #/teams", a11y);
+    } finally { page.close(); }
+    state.role = "principal";
+    const p2 = await Page.open(chrome.port);
+    try {
+      await p2.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/activities` });
+      await p2.mainText();
+      for (let i = 0; i < 40 && !(await p2.eval(`!!document.querySelector('[aria-label="Coaches: Falcons Soccer"]')`)); i++) await new Promise(r => setTimeout(r, 100));
+      await p2.eval(`document.querySelector('[aria-label="Coaches: Falcons Soccer"]').click()`);
+      for (let i = 0; i < 40 && !(await p2.eval(`(document.querySelector("dialog[open]")?.innerText || "").includes("Teacher Two")`)); i++) await new Promise(r => setTimeout(r, 100));
+      const dlg = await p2.eval(`document.querySelector("dialog[open]")?.innerText || ""`);
+      for (const want of ["Coaches: Falcons Soccer", "Teacher Two", "Oak Middle · visiting coach", "Add a coach", "another school in the district"]) if (!dlg.includes(want)) failures.push(`coaches dialog: missing "${want}"`);
+      await axeScan(p2, "principal: coaches dialog", a11y);
+      if (p2.errors.length) failures.push(`coaches: ${p2.errors[0].split("\n")[0]}`);
+    } finally { p2.close(); }
   }
   // TEACH-04: today's classes, the plan builder, and present mode (notes never shown).
   {

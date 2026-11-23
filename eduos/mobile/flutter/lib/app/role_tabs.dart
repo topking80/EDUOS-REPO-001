@@ -78,6 +78,8 @@ const roleTabs = <String, List<RoleTab>>{
   ],
   'driver': [RoleTab('route', 'Route', Icons.directions_bus, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
   'sro': [RoleTab('safety', 'Safety', Icons.shield_outlined, native: true), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
+  // COACH-01: a coach profile at a school where the person coaches but doesn't teach.
+  'coach': [RoleTab('teams', 'My teams', Icons.emoji_events_outlined, native: true), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
   'it_admin': [RoleTab('nodes', 'Nodes', Icons.dns_outlined, native: true), RoleTab('library', 'Library', Icons.menu_book, native: true)],
 };
 
@@ -96,6 +98,7 @@ const roleNames = {
   'driver': 'Bus driver',
   'sro': 'School resource officer',
   'it_admin': 'IT',
+  'coach': 'Coach',
 };
 
 List<RoleTab> tabsFor(String role) => roleTabs[role] ?? const [];
