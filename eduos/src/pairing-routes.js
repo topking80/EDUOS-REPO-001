@@ -22,7 +22,7 @@ import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./ro
 
 const MANAGERS = ["it_admin", "principal", "vice_principal"];
 const LEADERS = ["it_admin", "superintendent", "principal", "vice_principal"];
-const KEY_RE = /^cdk1\.([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/;
+export const KEY_RE = /^cdk1\.([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const CODE_TTL = 300;
 const sha256 = s => crypto.createHash("sha256").update(s).digest("hex");

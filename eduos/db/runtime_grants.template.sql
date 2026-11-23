@@ -616,3 +616,9 @@ GRANT UPDATE (token_hash, token_issued_at, token_issued_by) ON classroom_devices
 REVOKE ALL ON classroom_pair_codes FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON classroom_room_teachers, classroom_pairings FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_is_school_teacher(uuid, uuid), eduos_school_teachers(uuid), eduos_classroom_agent_code(uuid, text, text, int), eduos_classroom_pair(uuid, text, text) TO eduos_app;
+
+-- DEV-03 (db/110): classroom commands. Written only by the three SECURITY
+-- DEFINER functions; read by the sender and the school's leaders.
+GRANT SELECT ON classroom_commands TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON classroom_commands FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_classroom_command(uuid, text, jsonb), eduos_classroom_agent_take(uuid, text), eduos_classroom_agent_result(uuid, text, uuid, boolean, text) TO eduos_app;
