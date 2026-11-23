@@ -419,3 +419,4 @@ p.small.warn { color: var(--warn-text, var(--text)); font-weight: 600; }
 fieldset.caps { border: 1px solid var(--line, #3a4560); border-radius: 10px; padding: 8px 12px; margin: 8px 0; }
 fieldset.caps legend { padding: 0 4px; font-weight: 600; }
 fieldset.caps label.check { display: flex; align-items: center; gap: 6px; min-height: 36px; }
+#pr-code { font-size: 1.5rem; letter-spacing: .3em; max-width: 12ch; }

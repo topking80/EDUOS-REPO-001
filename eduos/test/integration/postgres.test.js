@@ -80,8 +80,10 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
     const r = await sql(`SELECT t.tablename FROM pg_tables t WHERE t.schemaname='public'
       AND NOT has_table_privilege($1, format('%I.%I', t.schemaname, t.tablename), 'SELECT')`, [db.names.app]);
     // 32.6.0: edal_heads (the ledger's chain head) is deliberately reachable only through definer functions;
-    // so is webhook_delivery_slots (2026-11-17 audit, the deployment-wide delivery ceiling; migration 067).
-    assert.deepEqual(r.rows.map(x => x.tablename).filter(t => t !== "edal_heads" && t !== "webhook_delivery_slots" && t !== "lti_launch_replays"), []);
+    // so is webhook_delivery_slots (2026-11-17 audit, the deployment-wide delivery ceiling; migration 067),
+    // and classroom_pair_codes (DEV-02, migration 109: pairing codes are made and used only by definer functions).
+    const definerOnly = ["edal_heads", "webhook_delivery_slots", "lti_launch_replays", "classroom_pair_codes"];
+    assert.deepEqual(r.rows.map(x => x.tablename).filter(t => !definerOnly.includes(t)), []);
     for (const fn of ["eduos_webhook_slot_acquire(integer,integer)", "eduos_webhook_slot_release(uuid)", "eduos_webhook_slots_free(integer)"])
       assert.ok((await sql("SELECT has_function_privilege($1,$2,'EXECUTE') AS ok", [db.names.app, fn])).rows[0].ok, fn);
     for (const [table, priv] of [["students", "INSERT"], ["students", "UPDATE"], ["student_user_links", "INSERT"], ["student_user_links", "UPDATE"],

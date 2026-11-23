@@ -848,7 +848,7 @@ VIEWS.activities = activitiesLiveView;
 
 // ---------------- teacher ----------------
 VIEWS.classes = async () => {
-  const [home, copilot, bus, news, tutoring] = await Promise.all([safe(api.get("/api/home")), safe(api.get("/api/christie/copilot")), safe(api.get("/api/transport/today")), safe(api.get("/api/comms/announcements")), safe(api.get("/api/christie/review"))]);
+  const [home, copilot, bus, news, tutoring, classroom] = await Promise.all([safe(api.get("/api/home")), safe(api.get("/api/christie/copilot")), safe(api.get("/api/transport/today")), safe(api.get("/api/comms/announcements")), safe(api.get("/api/christie/review")), myClassroomCard()]);
   const d = home?.data || {};
   const riders = bus?.data?.riders || [];
   const flagged = (tutoring?.data || []).filter(x => x.needs_adult && !x.reviewed_at);
@@ -879,6 +879,7 @@ VIEWS.classes = async () => {
       h("p", { class: "muted" }, copilot?.data?.suggestions?.[0] || "")),
     h("div", { class: "stats" }, stat(d.students, "learners"), stat(d.to_grade, "to grade", true), stat(d.open_assignments, "open assignments"), stat(d.absences_7d, "absences (7 days)", true)),
     actionCenter,
+    classroom,
     await todayCard(),
     h("section", { class: "card", "aria-label": "Bus riders" }, h("h2", {}, "Bus riders on my roster"),
       riders.length ? h("ul", { class: "list" }, riders.map(k => h("li", { class: "row" }, h("span", { class: "grow" }, `${k.display_name} · ${k.bus_label} ${k.direction.toUpperCase()}`), chip(k.status)))) : empty("None of your learners ride today.")),
@@ -3590,11 +3591,16 @@ VIEWS.devices = async () => {
     h("div", { class: "row wrap" }, h("b", { class: "grow" }, d.name), chip(...DEV_STATUS[d.status])),
     h("p", { class: "small muted" }, [DEVICE_KIND[d.kind], [d.maker, d.model].filter(Boolean).join(" "), d.serial ? `SN ${d.serial}` : "", it ? d.school : "", d.room ? `in ${d.room}` : ""].filter(Boolean).join(" · ")),
     h("p", { class: "small" }, `Can: ${d.capabilities.map(c => CAP_TEXT[c]).join(", ")}`),
+    it && d.status === "approved" ? h("p", { class: "small muted" }, d.hasKey ? (d.lastSeenAt ? `Key set · last checked in ${new Date(d.lastSeenAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Key set · not connected yet") : "No device key yet") : null,
     d.note ? h("p", { class: "small muted" }, `District IT: ${d.note}`) : null,
     h("div", { class: "btns" },
       it && d.status === "pending" ? [h("button", { class: "btn small primary", type: "button", "aria-label": `Approve: ${d.name}`, onclick: () => decideDevice(d, "approved") }, "Approve"),
         h("button", { class: "btn small", type: "button", "aria-label": `Don't approve: ${d.name}`, onclick: () => decideDevice(d, "rejected") }, "Don't approve")] : null,
       d.status === "approved" ? h("button", { class: "btn small", type: "button", "aria-label": `${d.room ? "Move" : "Put in a room"}: ${d.name}`, onclick: () => placeDevice(d, rooms) }, d.room ? "Move" : "Put in a room") : null,
+      it && d.status === "approved" ? h("button", { class: "btn small", type: "button", "aria-label": `${d.hasKey ? "New device key" : "Device key"}: ${d.name}`, onclick: () => issueDeviceKey(d) }, d.hasKey ? "New device key" : "Device key") : null,
+      it && d.hasKey ? h("button", { class: "btn small", type: "button", "aria-label": `Revoke key: ${d.name}`, onclick: async () => {
+        if (!(await ask({ title: `Revoke ${d.name}'s key?`, text: "The device stops showing pairing codes until it gets a new key.", confirm: "Revoke" }))) return;
+        try { await api.post(`/api/devices/${d.id}/key/revoke`, {}); toast("Revoked."); go("devices", { push: false }); } catch { toast("Couldn't revoke it."); } } }, "Revoke key") : null,
       h("button", { class: "btn small", type: "button", "aria-label": `Edit: ${d.name}`, onclick: () => editDevice(d, schools) }, "Edit"),
       h("button", { class: "btn small", type: "button", "aria-label": `History: ${d.name}`, onclick: () => deviceHistory(d) }, "History"),
       h("button", { class: "btn small", type: "button", "aria-label": `Retire: ${d.name}`, onclick: async () => {
@@ -3603,12 +3609,14 @@ VIEWS.devices = async () => {
   return [h("h2", {}, it ? "Classroom devices" : "Rooms & devices"),
     h("p", { class: "small muted" }, it ? "Schools ask for displays, student devices and room equipment. Approve what's on the district's list; the school then puts it in a room. Teachers can control only approved devices in rooms they teach in."
       : "Ask district IT to approve a classroom device, then put it in a room. Changing what a device can do needs approving again. Student devices can be locked or pointed at a link; no one can view their screens."),
-    h("div", { class: "btns", role: "group", "aria-label": "Show" }, it ? seg("pending", "Waiting for approval") : null, seg("all", "All devices"), seg("rooms", "Rooms")),
+    h("div", { class: "btns", role: "group", "aria-label": "Show" }, it ? seg("pending", "Waiting for approval") : null, seg("all", "All devices"), seg("rooms", "Rooms"), seg("paired", "Paired now")),
+    filter === "paired" ? await pairingsCard() :
     filter === "rooms"
       ? h("section", { class: "card", "aria-label": "Rooms" }, rooms.length ? h("ul", { class: "list" }, rooms.map(r => h("li", {},
           h("div", { class: "row wrap" }, h("b", { class: "grow" }, r.name), h("span", { class: "small muted" }, [it ? r.school : "", r.building, r.capacity ? `${r.capacity} seats` : ""].filter(Boolean).join(" · "))),
           h("p", { class: "small" }, r.devices.length ? r.devices.map(d => d.name).join(", ") : "No devices yet."),
-          h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", "aria-label": `Edit room: ${r.name}`, onclick: () => editRoom(r, schools) }, "Edit"),
+          h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", "aria-label": `Timetable: ${r.name}`, onclick: () => roomTimetable(r) }, "Timetable"),
+            h("button", { class: "btn small", type: "button", "aria-label": `Edit room: ${r.name}`, onclick: () => editRoom(r, schools) }, "Edit"),
             h("button", { class: "btn small", type: "button", "aria-label": `Archive room: ${r.name}`, onclick: async () => {
               if (!(await ask({ title: `Archive ${r.name}?`, text: r.devices.length ? "Its devices leave the room and stay approved." : "It leaves the list.", confirm: "Archive" }))) return;
               try { await api.post(`/api/rooms/${r.id}/archive`, {}); toast("Archived."); go("devices", { push: false }); } catch { toast("Couldn't archive it."); } } }, "Archive")))))
@@ -3672,6 +3680,83 @@ async function deviceHistory(d) {
   const WORD = { requested: "Asked for", registered: "Registered", approved: "Approved", rejected: "Not approved", changed: "Changed", placed: "Put in", removed: "Taken out of", retired: "Retired" };
   await dialogForm(`History: ${d.name}`, () => ({ fields: [h("ol", { class: "list small" }, ev.map(e => h("li", {}, h("b", {}, `${WORD[e.event]}${e.event === "placed" || e.event === "removed" ? ` ${e.detail || "a room"}` : ""}`),
     ` · ${e.by} · ${new Date(e.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`, e.detail && !["placed", "removed"].includes(e.event) ? h("p", { class: "muted" }, e.detail) : null)))], value: () => undefined }), null);
+}
+// ---- DEV-02: room timetable and pairing a teacher's own device -------------
+const WEEKDAYS = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [7, "Sun"]];
+const dayText = ds => ds.length === 5 && [1, 2, 3, 4, 5].every(d => ds.includes(d)) ? "Weekdays" : ds.length === 7 ? "Every day" : ds.map(d => WEEKDAYS[d - 1][1]).join(", ");
+const timeText = t => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+async function roomTimetable(r) {
+  const [slots, teachers] = await Promise.all([api.get(`/api/rooms/${r.id}/timetable`).then(x => x.data), api.get(`/api/rooms/${r.id}/teachers`).then(x => x.data)]);
+  const v = await dialogForm(`Timetable: ${r.name}`, done => {
+    const sel = h("select", { id: "tt-t", required: true }, h("option", { value: "", disabled: true, selected: true }, "Choose a teacher…"), teachers.map(t => h("option", { value: t.id }, t.name)));
+    const days = h("fieldset", { class: "caps" }, h("legend", {}, "Days"), WEEKDAYS.map(([n, t]) => h("label", { class: "check" }, h("input", { type: "checkbox", value: n, checked: n <= 5 }), ` ${t}`)));
+    const inp = (id, label, attrs) => [h("label", { for: id }, label), h("input", { id, ...attrs })];
+    return { fields: [
+      h("p", { class: "small muted" }, "A teacher can pair their own phone or laptop with this room's devices only while they're timetabled here (from ten minutes before)."),
+      slots.length ? h("ul", { class: "list" }, slots.map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, x.teacher), h("br"),
+        h("span", { class: "small muted" }, `${dayText(x.weekdays)} · ${x.starts}–${x.ends}${x.label ? ` · ${x.label}` : ""}`)),
+        h("button", { class: "btn small", type: "button", "aria-label": `Remove: ${x.teacher} ${x.starts}`, onclick: async () => {
+          try { await api.post(`/api/room-timetable/${x.id}/end`, {}); toast("Removed."); done(null); roomTimetable(r); } catch { toast("Couldn't remove it."); } } }, "Remove"))))
+        : h("p", { class: "small" }, "No one is timetabled here yet."),
+      h("h3", {}, "Add a time"), teachers.length ? null : h("p", { class: "small muted" }, "No teachers at this school yet."),
+      h("label", { for: "tt-t" }, "Teacher"), sel, days, inp("tt-s", "Starts", { type: "time", required: true, value: "08:00" }), inp("tt-e", "Ends", { type: "time", required: true, value: "09:00" }),
+      inp("tt-l", "Class or period (optional)", { maxlength: 80, placeholder: "e.g. Period 1 · Math 3" })],
+      value: () => { const weekdays = [...days.querySelectorAll("input:checked")].map(i => Number(i.value));
+        const g = id => document.getElementById(id).value.trim();
+        if (!weekdays.length) { toast("Choose at least one day."); return undefined; }
+        if (g("tt-e") <= g("tt-s")) { toast("The end has to be after the start."); return undefined; }
+        return { teacherId: sel.value, weekdays, starts: g("tt-s"), ends: g("tt-e"), label: g("tt-l") || null }; } };
+  }, "Add");
+  if (!v) return;
+  try { await api.post(`/api/rooms/${r.id}/timetable`, v); toast("Added."); roomTimetable(r); } catch { toast("Couldn't add it."); }
+}
+async function pairingsCard() {
+  const list = (await api.get("/api/pairings")).data;
+  return h("section", { class: "card", "aria-label": "Paired now" }, list.length ? h("ul", { class: "list" }, list.map(p => h("li", { class: "row wrap" },
+    h("span", { class: "grow" }, h("b", {}, `${p.room}: ${p.teacher}`), h("br"), h("span", { class: "small muted" }, `${p.controller} · paired at ${timeText(p.pairedAt)} · until ${timeText(p.until)}`)),
+    h("button", { class: "btn small", type: "button", "aria-label": `End pairing: ${p.room}, ${p.teacher}`, onclick: async () => {
+      try { await api.post(`/api/pairings/${p.id}/end`, {}); toast("Ended."); go("devices", { push: false }); } catch { toast("Couldn't end it."); } } }, "End pairing"))))
+    : empty("No one is paired with a room right now."));
+}
+async function issueDeviceKey(d) {
+  if (d.hasKey && !(await ask({ title: `New key for ${d.name}?`, text: "The old key stops working. You'll need to enter the new one on the device.", confirm: "New key" }))) return;
+  let k; try { k = (await api.post(`/api/devices/${d.id}/key`, {})).data; } catch { return toast("Couldn't make a key. Is the device approved?"); }
+  await dialogForm(`Device key: ${d.name}`, () => {
+    const box = h("input", { id: "dk-key", value: k.key, readonly: true, class: "mono" });
+    return { fields: [h("p", { class: "small" }, "Enter this key in the EduOS agent on the device. It's shown only now; if it's lost, make a new one."),
+      h("label", { for: box.id }, "Key"), box,
+      h("button", { class: "btn small", type: "button", onclick: async () => { try { await navigator.clipboard.writeText(k.key); toast("Copied."); } catch { box.select(); } } }, "Copy key")], value: () => undefined };
+  }, null);
+  go("devices", { push: false });
+}
+const thisDeviceName = () => /iPhone|Android.*Mobile/.test(navigator.userAgent) ? "My phone" : /iPad|Android/.test(navigator.userAgent) ? "My tablet" : "My computer";
+async function myClassroomCard() {
+  const rooms = (await safe(api.get("/api/my/rooms")))?.data || [];
+  if (!rooms.length) return null;
+  return h("section", { class: "card", "aria-label": "Your classroom" }, h("h2", {}, "Your classroom"),
+    h("ul", { class: "list" }, rooms.map(r => h("li", {},
+      h("div", { class: "row wrap" }, h("b", { class: "grow" }, r.name), r.pairing ? chip("present", `Paired until ${timeText(r.pairing.until)}`) : r.now ? chip("expected", "Timetabled now") : null),
+      h("p", { class: "small muted" }, r.slots.map(x => `${dayText(x.weekdays)} ${x.starts}–${x.ends}${x.label ? ` (${x.label})` : ""}`).join(" · ")),
+      r.devices.length ? h("p", { class: "small" }, `Devices: ${r.devices.map(d => d.name).join(", ")}`) : h("p", { class: "small muted" }, "No approved devices in this room yet."),
+      h("div", { class: "btns" },
+        r.pairing ? [h("span", { class: "small muted" }, `${r.pairing.controller} is paired.`),
+          h("button", { class: "btn small", type: "button", "aria-label": `End pairing: ${r.name}`, onclick: async () => {
+            try { await api.post(`/api/pairings/${r.pairing.id}/end`, {}); toast("Unpaired."); go(state.tab, { push: false }); } catch { toast("Couldn't unpair."); } } }, "End pairing")]
+        : r.now && r.devices.length ? h("button", { class: "btn small primary", type: "button", "aria-label": `Pair this device: ${r.name}`, onclick: () => pairRoom(r) }, "Pair this device")
+        : null)))));
+}
+async function pairRoom(r) {
+  const v = await dialogForm(`Pair with ${r.name}`, () => {
+    const code = h("input", { id: "pr-code", inputmode: "numeric", autocomplete: "one-time-code", pattern: "\\d{6}", maxlength: 6, required: true, class: "mono" });
+    const name = h("input", { id: "pr-name", maxlength: 60, required: true, value: thisDeviceName() });
+    return { fields: [h("p", { class: "small" }, "Type the 6-digit code shown on the room's display. You'll stay paired until your timetabled time here ends."),
+      h("label", { for: code.id }, "Code on the display"), code, h("label", { for: name.id }, "Name for this device"), name],
+      value: () => ({ code: code.value.trim(), controllerName: name.value.trim() }) };
+  }, "Pair");
+  if (!v) return;
+  try { const p = (await api.post(`/api/rooms/${r.id}/pair`, v)).data; toast(`Paired with ${p.room} until ${timeText(p.until)}.`); go(state.tab, { push: false }); }
+  catch (e) { toast({ wrong_code: "That code didn't match. Check the display and try again.", not_timetabled_now: "You can pair only while you're timetabled in this room." }[e.body?.error]
+    || (e.status === 429 ? "Too many tries. Wait a few minutes." : "Couldn't pair.")); }
 }
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];
