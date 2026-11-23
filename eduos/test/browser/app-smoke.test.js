@@ -225,6 +225,14 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/activities/a1/links": return { data: [{ service: "maxpreps", name: "MaxPreps", url: "https://www.maxpreps.com/x/falcons-soccer/" }] };
     case "/api/activities/a1/exports": return { data: { team: "Falcons Soccer", services: { maxpreps: { included: 1, withheld: 1 }, hudl: { included: 0, withheld: 2 } }, log: [] } };
     case "/api/family/sports-sharing": return { data: [{ studentId: "c1", name: "Ava Lee", teams: ["Falcons Soccer"], maxpreps: { since: now, by: "Smoke Test" }, hudl: null }] };
+    // SPORTS-02: connectors.
+    case "/api/activities/a1/film": return { data: [{ title: "Home opener: full game", url: "https://www.hudl.com/video/3/123", event: "Home opener" }] };
+    case "/api/activities/a1/connectors": return { data: { connectors: [{ service: "hudl", name: "Hudl", status: "approved", externalTeamId: "team-123", sendRoster: true, sendSchedule: true, pullResults: true, pullFilm: true }],
+      runs: [{ service: "hudl", action: "send_roster", ok: true, count: 1, withheld: 1, message: null, at: now, by: "Smoke Test" }],
+      waiting: [{ id: "in1", service: "hudl", event: "Home opener", date: "2026-09-05", opponent: "Central", homeScore: 3, awayScore: 1, teamStats: { shots: 12 } }],
+      film: [{ id: "fl1", title: "Home opener: full game", url: "https://www.hudl.com/video/3/123", hidden: false }] } };
+    case "/api/sports/connectors": return { data: [{ id: "cn1", schoolId: "s1", school: "Maple", service: "hudl", name: "Hudl", baseUrl: "https://api.hudl.com/partner", keyHint: "…6789",
+      sendRoster: true, sendSchedule: true, pullResults: true, pullFilm: true, status: role === "it_admin" ? "pending" : "approved", requestedBy: "Principal S1", requestedAt: now }] };
     // TEACH-06: approved storage.
     case "/api/storage/devices": return { data: [{ id: "sd1", owner: "Teacher S1", ownerId: "u1", name: "Blue drive", kind: "usb_drive", serial: "SN-42", status: role === "teacher" ? "approved" : "pending", requestedAt: now }] };
     case "/api/storage/settings": return { data: { cloudEnabled: true, retentionDays: 365 } };
@@ -933,6 +941,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`!!document.querySelector('dialog[open] button[aria-label="MaxPreps roster file"]')`))) failures.push("coach: no MaxPreps roster file");
       const d = await page.eval(`document.querySelector("dialog[open]").textContent`);
       if (!d.includes("roster: 1 opted in, 1 not") || !d.includes("Falcons Soccer on MaxPreps")) failures.push(`coach dialog: ${d.slice(0, 200)}`);
+      for (const w of ["Game film", "Connected accounts", "Results to approve", "Home opener (2026-09-05): 3–1 vs Central"]) if (!d.includes(w)) failures.push(`coach connector: ${w}`);
+      if (!(await page.eval(`!!document.querySelector('dialog[open] button[aria-label="Sync now with Hudl"]')`))) failures.push("coach: no Sync now");
       await axeScan(page, "teacher: MaxPreps & Hudl", a11y);
       if (page.errors.length) failures.push(`coach sports: ${page.errors[0].split("\n")[0]}`);
       page.close();
@@ -943,8 +953,25 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Sharing with MaxPreps and Hudl")`))) failures.push("parent: no sharing card");
       const boxes = await page.eval(`[...document.querySelectorAll('section[aria-label="Sharing with MaxPreps and Hudl"] input[type=checkbox]')].map(b => b.checked).join()`);
       if (boxes !== "true,false") failures.push(`parent sharing: ${boxes}`);
+      if (await page.eval(`!!document.querySelector('section[aria-label="MaxPreps and Hudl connectors"]')`)) failures.push("parent sees connectors");
       await axeScan(page, "parent: sharing with MaxPreps and Hudl", a11y);
       if (page.errors.length) failures.push(`parent sports: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+      state.role = "it_admin"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/devices` });
+      await page.mainText();
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent === "Sports connectors").click()`);
+      if (!(await waitFor(`!!document.querySelector('main button[aria-label="Approve Hudl for Maple"]')`))) failures.push("IT: no connector approval");
+      await axeScan(page, "it_admin: sports connectors", a11y);
+      page.close();
+      state.role = "principal"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/activities` });
+      await page.mainText();
+      if (!(await waitFor(`!!document.querySelector('section[aria-label="MaxPreps and Hudl connectors"]')`))) failures.push("principal: no connectors card");
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent === "Connect an account").click()`);
+      if (!(await waitFor(`!!document.querySelector("dialog[open] #cn-k")`))) failures.push("principal: no connect dialog");
+      await axeScan(page, "principal: connect an account", a11y);
+      if (page.errors.length) failures.push(`principal connectors: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.

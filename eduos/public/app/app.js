@@ -841,6 +841,7 @@ async function activitiesLiveView() {
     role === "teacher" && coachOf.size ? h("button", { class: "btn primary block", type: "button", onclick: () => go("teams") }, icon("trophy"), "My teams") : null,
     family ? familySlipsCard(actList(slips?.data), role === "parent") : null,
     role === "parent" ? await familySharingCard() : null,
+    ["principal", "vice_principal"].includes(role) || my.athleticDirector ? await connectorsCard() : null,
     activities.length ? h("div", { class: "grid" }, activities.map(card)) : h("section", { class: "card" }, h("p", { class: "muted" }, "No clubs or teams are published yet.")),
     detail,
     h("section", { class: "card" }, h("h3", {}, "Upcoming events"),
@@ -3623,8 +3624,9 @@ VIEWS.devices = async () => {
     h("p", { class: "small muted" }, it ? "Schools ask for displays, student devices and room equipment. Approve what's on the district's list; the school then puts it in a room. Teachers can control only approved devices in rooms they teach in."
       : "Ask district IT to approve a classroom device, then put it in a room. Changing what a device can do needs approving again. Student devices can be locked or pointed at a link; no one can view their screens."),
     h("div", { class: "btns", role: "group", "aria-label": "Show" }, it ? seg("pending", "Waiting for approval") : null, seg("all", "All devices"), seg("rooms", "Rooms"), seg("paired", "Paired now"),
-      it ? seg("storage", "Teachers' storage") : null),
+      it ? seg("storage", "Teachers' storage") : null, it ? seg("sports", "Sports connectors") : null),
     filter === "storage" && it ? [await storageReviewCard(), await offloadLogCard()] :
+    filter === "sports" && it ? await connectorsCard() :
     filter === "paired" ? await pairingsCard() :
     filter === "rooms"
       ? h("section", { class: "card", "aria-label": "Rooms" }, rooms.length ? h("ul", { class: "list" }, rooms.map(r => h("li", {},
@@ -4191,8 +4193,9 @@ async function cloudSettingsCard() {
 // ---- SPORTS-01: MaxPreps and Hudl, by link and by file, with family opt-in ----
 const SPORT_SERVICES = [["maxpreps", "MaxPreps"], ["hudl", "Hudl"]];
 async function sportsShareDialog(a, manages) {
-  const links = (await api.get(`/api/activities/${a.id}/links`)).data;
+  const [links, film] = await Promise.all([api.get(`/api/activities/${a.id}/links`).then(r => r.data), safe(api.get(`/api/activities/${a.id}/film`).then(r => r.data), [])]);
   const sum = manages ? (await safe(api.get(`/api/activities/${a.id}/exports`)))?.data : null;
+  const cx = manages ? (await safe(api.get(`/api/activities/${a.id}/connectors`)))?.data : null;
   const download = async (service, kind) => {
     try {
       const r = await fetch(`/api/activities/${a.id}/exports/${service}/${kind}.csv`, { credentials: "same-origin" });
@@ -4206,6 +4209,8 @@ async function sportsShareDialog(a, manages) {
   await dialogForm(`MaxPreps & Hudl: ${a.title}`, done => ({ fields: [
     h("h3", {}, "Team pages"),
     links.length ? h("ul", { class: "list" }, links.map(l => h("li", {}, h("a", { href: l.url, target: "_blank", rel: "noopener noreferrer" }, `${a.title} on ${l.name}`)))) : h("p", { class: "small muted" }, "No team pages linked yet."),
+    film.length ? [h("h3", {}, "Game film"), h("ul", { class: "list" }, film.map(f => h("li", {}, h("a", { href: f.url, target: "_blank", rel: "noopener noreferrer" }, f.title), f.event ? h("span", { class: "small muted" }, ` · ${f.event}`) : null)))] : null,
+    cx?.connectors?.length ? connectorPanel(a, cx, () => { done(null); sportsShareDialog(a, manages); }) : null,
     manages ? [
       ...SPORT_SERVICES.map(([sv, name]) => { const cur = links.find(l => l.service === sv);
         return h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault(); const url = e.target.elements[0].value.trim();
@@ -4231,6 +4236,81 @@ async function familySharingCard() {
         h("input", { type: "checkbox", checked: Boolean(k[sv]), onchange: async e => {
           try { await api.put(`/api/family/sports-sharing/${k.studentId}`, { [sv]: e.target.checked }); toast(e.target.checked ? `${first(k.name)} can be on ${name} rosters.` : `${first(k.name)} won't be on ${name} rosters.`); }
           catch { e.target.checked = !e.target.checked; toast("Couldn't save it."); } } }), ` Share with ${name}`)))))));
+}
+// ---- SPORTS-02: MaxPreps / Hudl connectors with the school's own account ----
+const CONN_STATUS = { pending: ["expected", "Waiting for district IT"], approved: ["present", "On"], rejected: ["absent", "Not approved"], paused: ["expected", "Paused"] };
+const CONN_ACTIONS = [["sendRoster", "Send the roster (opted-in athletes only)"], ["sendSchedule", "Send the schedule and scores"], ["pullResults", "Bring results and team stats in (you approve)"], ["pullFilm", "Bring game film links in (Hudl)"]];
+const RUN_TEXT = { send_roster: "Roster sent", send_schedule: "Schedule sent", pull_results: "Results brought in", pull_film: "Film links brought in" };
+async function connectorsCard() {
+  const list = (await safe(api.get("/api/sports/connectors")))?.data || [];
+  const it = state.me.role === "it_admin";
+  const act = async (k, verb, msg) => { try { await api.post(`/api/sports/connectors/${k.id}/${verb}`, {}); toast(msg); go(state.tab, { push: false }); } catch { toast("Couldn't do that."); } };
+  return h("section", { class: "card", "aria-label": "MaxPreps and Hudl connectors" }, h("h3", {}, "MaxPreps and Hudl connectors"),
+    h("p", { class: "small muted" }, it ? "Schools connect their own MaxPreps or Hudl account with the key the vendor gave them. Nothing moves until you approve. Keys are encrypted and never shown."
+      : "Connect your school's MaxPreps or Hudl account with the key the vendor gave it. District IT approves before anything moves. Only opted-in athletes are sent; results come back for coaches to approve."),
+    list.length ? h("ul", { class: "list" }, list.map(k => h("li", {}, h("div", { class: "row wrap" }, h("b", { class: "grow" }, `${k.name}${it ? ` · ${k.school}` : ""}`), chip(...CONN_STATUS[k.status])),
+      h("p", { class: "small muted" }, `${CONN_ACTIONS.filter(([f]) => k[f]).map(([, t]) => t.replace(/ \(.*\)$/, "")).join(" · ")} · key ${k.keyHint} · asked by ${k.requestedBy}`),
+      k.note ? h("p", { class: "small muted" }, `District IT: ${k.note}`) : null,
+      h("div", { class: "btns" },
+        it && k.status === "pending" ? [h("button", { class: "btn small primary", type: "button", "aria-label": `Approve ${k.name}${it ? ` for ${k.school}` : ""}`, onclick: async () => {
+            const note = await ask({ title: `Approve the ${k.name} connector for ${k.school}?`, text: `It may: ${CONN_ACTIONS.filter(([f]) => k[f]).map(([, t]) => t).join("; ")}. Calls go only to ${k.baseUrl}.`, confirm: "Approve" });
+            if (!note) return; try { await api.post(`/api/sports/connectors/${k.id}/decision`, { decision: "approved" }); toast("Approved."); go(state.tab, { push: false }); } catch { toast("Couldn't approve it."); } } }, "Approve"),
+          h("button", { class: "btn small", type: "button", "aria-label": `Don't approve ${k.name} for ${k.school}`, onclick: async () => {
+            const note = await ask({ title: `Don't approve ${k.name} for ${k.school}?`, label: "Why not", confirm: "Don't approve" });
+            if (!note) return; try { await api.post(`/api/sports/connectors/${k.id}/decision`, { decision: "rejected", note }); toast("Saved."); go(state.tab, { push: false }); } catch { toast("Couldn't save it."); } } }, "Don't approve")] : null,
+        k.status === "approved" ? h("button", { class: "btn small", type: "button", "aria-label": `Pause ${k.name}`, onclick: () => act(k, "pause", "Paused.") }, "Pause") : null,
+        k.status === "paused" ? h("button", { class: "btn small", type: "button", "aria-label": `Resume ${k.name}`, onclick: () => act(k, "resume", "Resumed.") }, "Resume") : null,
+        !it ? h("button", { class: "btn small", type: "button", "aria-label": `Change ${k.name} key or settings`, onclick: () => editConnector(k) }, "Change") : null,
+        h("button", { class: "btn small", type: "button", "aria-label": `Disconnect ${k.name}`, onclick: async () => {
+          if (await ask({ title: `Disconnect ${k.name}?`, text: "The key is no longer used. Teams keep their files and links.", confirm: "Disconnect", danger: true })) act(k, "revoke", "Disconnected."); } }, "Disconnect")))))
+      : h("p", { class: "small muted" }, "No accounts connected."),
+    !it ? h("button", { class: "btn", type: "button", onclick: () => editConnector(null) }, "Connect an account") : null);
+}
+async function editConnector(k) {
+  const v = await dialogForm(k ? `Change ${k.name}` : "Connect a MaxPreps or Hudl account", () => {
+    const svc = h("select", { id: "cn-s", disabled: !!k }, SPORT_SERVICES.map(([sv, name]) => h("option", { value: sv, selected: (k?.service || "maxpreps") === sv }, name)));
+    const boxes = CONN_ACTIONS.map(([f, t]) => h("label", { class: "check" }, h("input", { type: "checkbox", value: f, checked: k ? k[f] : f !== "pullFilm" }), ` ${t}`));
+    return { fields: [h("label", { for: "cn-s" }, "Site"), svc,
+      h("label", { for: "cn-u" }, "Connection address (from the vendor)"), h("input", { id: "cn-u", type: "url", required: true, maxlength: 300, value: k?.baseUrl || "", placeholder: "https://…maxpreps.com/… or https://…hudl.com/…" }),
+      h("label", { for: "cn-k" }, k ? "New key (leave blank to keep the current one)" : "Access key or partner token"), h("input", { id: "cn-k", type: "password", autocomplete: "off", maxlength: 4000, required: !k }),
+      h("fieldset", { class: "caps" }, h("legend", {}, "What it does"), boxes),
+      h("p", { class: "small muted" }, "District IT approves before anything moves. Changing the key or what it does needs approving again.")],
+      value: () => { const g = id => document.getElementById(id).value.trim();
+        const flags = Object.fromEntries(CONN_ACTIONS.map(([f]) => [f, boxes.find(b => b.querySelector("input").value === f).querySelector("input").checked]));
+        return { service: svc.value, baseUrl: g("cn-u"), ...(g("cn-k") ? { key: g("cn-k") } : {}), ...flags }; } };
+  }, k ? "Save" : "Send to district IT");
+  if (!v) return;
+  try { await (k ? api.put(`/api/sports/connectors/${k.id}`, v) : api.post("/api/sports/connectors", v)); toast("Sent to district IT for approval."); go(state.tab, { push: false }); }
+  catch (e) { toast({ invalid_connector: "Check the address (on the vendor's site), the key, and choose what it does. Film is Hudl only.", already_exists: "That site is already connected.",
+    connectors_need_integrations_key: "Connectors aren't set up on this EduOS yet. Ask district IT.", sports_leads_only: "Only the principal, vice principal or athletic director connects accounts." }[e.body?.error] || "Couldn't save it."); }
+}
+function connectorPanel(a, cx, reopen) {
+  return [h("h3", {}, "Connected accounts"),
+    ...cx.connectors.map(k => h("div", { class: "stack" },
+      h("div", { class: "row wrap" }, h("b", { class: "grow" }, k.name), chip(...CONN_STATUS[k.status])),
+      h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault();
+          try { await api.put(`/api/activities/${a.id}/connectors/${k.service}/team`, { externalTeamId: e.target.elements[0].value.trim() }); toast("Saved."); reopen(); } catch { toast("Use the team ID from the site (letters, numbers, - _ . :)."); } } },
+        h("div", { class: "grow" }, h("label", { for: `cx-${k.service}` }, `Team ID on ${k.name}`), h("input", { id: `cx-${k.service}`, maxlength: 80, value: k.externalTeamId || "" })),
+        h("button", { class: "btn small", type: "submit", "aria-label": `Save ${k.name} team ID` }, "Save")),
+      k.status === "approved" && k.externalTeamId ? h("button", { class: "btn small primary", type: "button", "aria-label": `Sync now with ${k.name}`, onclick: async () => {
+        try { const r = (await api.post(`/api/activities/${a.id}/connectors/${k.service}/sync`, {})).data;
+          toast(r.results.map(x => x.ok ? `${RUN_TEXT[x.action]}: ${x.count}${x.withheld ? ` (${x.withheld} not opted in)` : ""}`
+            : x.offered === false ? `${RUN_TEXT[x.action].split(" ")[0]}: not offered by this account` : `${RUN_TEXT[x.action]}: failed`).join(" · ")); reopen(); }
+        catch (e) { toast(e.status === 429 ? "Wait a minute before syncing again." : "Couldn't sync."); } } }, "Sync now") : null)),
+    cx.waiting.length ? [h("h4", {}, "Results to approve"), h("ul", { class: "list" }, cx.waiting.map(w => h("li", {},
+      h("b", {}, `${w.event} (${w.date}): ${w.homeScore}–${w.awayScore} vs ${w.opponent}`), h("span", { class: "small muted" }, ` · from ${SPORT_SERVICES.find(([s]) => s === w.service)?.[1]}`),
+      Object.keys(w.teamStats).length ? h("p", { class: "small" }, Object.entries(w.teamStats).map(([k2, v2]) => `${k2} ${v2}`).join(", ")) : null,
+      h("div", { class: "btns" }, h("button", { class: "btn small primary", type: "button", "aria-label": `Approve result: ${w.event}`, onclick: async () => {
+          try { await api.post(`/api/sports/inbound/${w.id}/decision`, { decision: "approved" }); toast("Saved as a draft result. Publish it as usual."); reopen(); }
+          catch (e) { toast(e.body?.error === "result_already_recorded" ? "A result is already recorded for that game." : "Couldn't save it."); } } }, "Approve"),
+        h("button", { class: "btn small", type: "button", "aria-label": `Reject result: ${w.event}`, onclick: async () => {
+          try { await api.post(`/api/sports/inbound/${w.id}/decision`, { decision: "rejected" }); toast("Rejected."); reopen(); } catch { toast("Couldn't save it."); } } }, "Reject")))))] : null,
+    cx.film.filter(f => !f.hidden).length ? [h("h4", {}, "Film links shown on the team page"), h("ul", { class: "list" }, cx.film.filter(f => !f.hidden).map(f => h("li", { class: "row wrap" },
+      h("span", { class: "grow" }, f.title), h("button", { class: "btn small", type: "button", "aria-label": `Hide film: ${f.title}`, onclick: async () => {
+        try { await api.post(`/api/sports/film/${f.id}/hide`, {}); toast("Hidden."); reopen(); } catch { toast("Couldn't hide it."); } } }, "Hide"))))] : null,
+    cx.runs.length ? (() => { const recent = cx.runs.slice(0, 4), failed = recent.find(r => !r.ok && r.message !== "not offered by this account"), missing = recent.filter(r => r.message === "not offered by this account");
+      return h("p", { class: "small muted" }, `Last sync: ${cx.runs[0].by}, ${new Date(cx.runs[0].at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`,
+        missing.length ? ` · not offered by this account: ${missing.map(r => RUN_TEXT[r.action].split(" ")[0].toLowerCase()).join(", ")}` : "", failed ? ` · something failed: ${failed.message}` : ""); })() : null];
 }
 // ---- STATE-01: the state index and educators' licenses ----------------------
 const LICENSED = ["teacher", "principal", "vice_principal", "superintendent", "coach", "librarian", "counselor"];

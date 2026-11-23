@@ -665,3 +665,13 @@ GRANT UPDATE (revoked_by, revoked_at) ON athlete_sharing_consents TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON sports_exports FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON activity_external_links, athlete_sharing_consents FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_manages_team(uuid), eduos_is_family_of(uuid) TO eduos_app;
+
+-- SPORTS-02 (db/116): MaxPreps / Hudl connectors. Revoked / hidden, never deleted.
+GRANT SELECT, INSERT ON sports_connectors, sports_connector_teams, sports_connector_runs, sports_inbound_results, sports_film_links TO eduos_app;
+GRANT UPDATE (base_url, secret_enc, key_hint, send_roster, send_schedule, pull_results, pull_film, status, decided_by, decided_at, decision_note, last_run_at) ON sports_connectors TO eduos_app;
+GRANT UPDATE (external_team_id, set_by, set_at) ON sports_connector_teams TO eduos_app;
+GRANT UPDATE (status, reviewed_by, reviewed_at) ON sports_inbound_results TO eduos_app;
+GRANT UPDATE (hidden_by, hidden_at) ON sports_film_links TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON sports_connector_runs FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON sports_connectors, sports_connector_teams, sports_inbound_results, sports_film_links FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_sports_lead(uuid) TO eduos_app;
