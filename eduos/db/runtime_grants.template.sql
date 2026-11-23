@@ -657,3 +657,11 @@ GRANT UPDATE (cloud_enabled, retention_days, updated_by, updated_at) ON district
 REVOKE UPDATE, DELETE, TRUNCATE ON portfolio_cloud_copies, portfolio_offloads FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON storage_devices, district_storage_settings FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_storage_overseer(uuid) TO eduos_app;
+
+-- SPORTS-01 (db/115): MaxPreps / Hudl links, family opt-in and export log. Removed/revoked, never deleted.
+GRANT SELECT, INSERT ON activity_external_links, athlete_sharing_consents, sports_exports TO eduos_app;
+GRANT UPDATE (removed_at) ON activity_external_links TO eduos_app;
+GRANT UPDATE (revoked_by, revoked_at) ON athlete_sharing_consents TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON sports_exports FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON activity_external_links, athlete_sharing_consents FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_manages_team(uuid), eduos_is_family_of(uuid) TO eduos_app;
