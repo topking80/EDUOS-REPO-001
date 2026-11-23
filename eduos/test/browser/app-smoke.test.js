@@ -92,9 +92,19 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
-let mockSchool = "s1", switches = [], copies = [], draftSaves = [];
+let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [];
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
+  // TEACH-04: today's classes and one plan (any date).
+  if (pathname === "/api/class-plans") return { data: [{ course_id: "k1", title: "Math 3", subject: "Math", grade_level: "3", plan_id: "pl1", status: "ready", version: 2, blocks: 4, minutes: 35 },
+    { course_id: "k2", title: "Reading 3", subject: "Reading", grade_level: "3", plan_id: null, status: null, version: null, blocks: 0, minutes: 0 }] };
+  if (/^\/api\/class-plans\/k1\/\d{4}-\d{2}-\d{2}$/.test(pathname)) return { data: { course: { id: "k1", title: "Math 3", subject: "Math", grade_level: "3" }, date: pathname.slice(-10),
+    plan: { id: "pl1", title: "Fractions", status: "ready", version: 2, minutes: 35, updatedBy: "Smoke Test", updatedAt: now, blocks: [
+      { kind: "warmup", prompt: "Which is bigger, 1/2 or 3/8?", minutes: 5, note: "SECRET-NOTE" },
+      { kind: "lesson", lessonId: "ls1", minutes: 20, note: null, lesson: { id: "ls1", title: "Fraction strips", objective: "Show halves", content: "Fold strips.\nCompare.", status: "published", approved: true } },
+      { kind: "timer", label: "Pair work", minutes: 2, note: null },
+      { kind: "link", label: "Fraction game", url: "https://example.org/fractions", minutes: 8, note: null }] },
+    choices: { lessons: [{ id: "ls1", title: "Fraction strips", unit_seq: 1, seq: 1 }], assignments: [] } } };
   if (withCourse) switch (pathname) {
     case "/api/learning/courses": return { data: { courses: [{ id: "k1", title: "Math 3", subject: "Math", gradeLevel: "3", term: "Fall", teacher: "Teacher S1", teacher_name: "Teacher S1", status: "active", grade: null, mastery: { average: 0, mastered: 0, total: 0 } }] } };
     case "/api/learning/courses/k1": return { data: { id: "k1", title: "Math 3", subject: "Math", gradeLevel: "3", term: "Fall", teacher: "Teacher S1", canManage: role === "teacher",
@@ -263,6 +273,11 @@ function startServer() {
         state.endpointOps.revoked++;
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         return res.end(JSON.stringify({ data: { processor: endpoint[1], revoked: 1, active: false } }));
+      }
+      if (/^\/api\/class-plans\/k1\//.test(pathname) && req.method === "PUT") {
+        let raw = ""; req.on("data", c => { raw += c; });
+        return req.on("end", () => { planSaves.push(JSON.parse(raw || "{}"));
+          res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ data: { id: "pl1", version: 3, status: "ready", minutes: 40 } })); });
       }
       // TEACH-03: the first save of the draft conflicts with a colleague's; the next one merges.
       if (pathname === "/api/drafts/d1" && req.method === "PUT") {
@@ -486,6 +501,53 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (JSON.stringify(copies) !== '[{"path":"/api/materials/m2/copy","body":{"courseId":"k1","unitId":null}}]') failures.push(`copy request: ${JSON.stringify(copies)}`);
       if (page.errors.length) failures.push(`materials: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); withCourse = false; }
+  }
+  // TEACH-04: today's classes, the plan builder, and present mode (notes never shown).
+  {
+    state.role = "teacher"; planSaves = [];
+    const page = await Page.open(chrome.port);
+    const until = async (js, n = 40) => { for (let i = 0; i < n; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    const main = () => page.eval(`document.getElementById("main").innerText`);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/classes` });
+      await page.mainText();
+      await until(`document.getElementById("main").innerText.includes("Today's classes")`);
+      const home = await main();
+      for (const want of ["Today's classes", "Ready · 4 steps · 35 min", "Not planned yet"]) if (!home.includes(want)) failures.push(`today card: missing "${want}"`);
+      await page.eval(`document.querySelector('[aria-label="Present: Math 3"]').click()`);
+      await until(`document.body.classList.contains("presenting") && document.getElementById("main").innerText.includes("Warm-up")`);
+      if (!(await main()).includes("Which is bigger, 1/2 or 3/8?")) failures.push("present: warm-up not shown");
+      if ((await page.eval(`document.body.innerText`)).includes("SECRET-NOTE")) failures.push("present mode showed a private note");
+      if (await page.eval(`getComputedStyle(document.getElementById("tabs")).display !== "none"`)) failures.push("present mode: tab bar still visible");
+      await axeScan(page, "teacher: present warm-up", a11y);
+      await page.eval(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }))`);
+      await until(`document.getElementById("main").innerText.includes("Fraction strips")`);
+      await page.eval(`document.querySelector('[aria-label="Next step"]').click()`);
+      await until(`!!document.querySelector(".present .clock")`);
+      if ((await page.eval(`document.querySelector(".present .clock").textContent`)) !== "2:00") failures.push("timer doesn't start at 2:00");
+      await page.eval(`[...document.querySelectorAll(".present button")].find(b => b.textContent === "Start").click()`);
+      await new Promise(r => setTimeout(r, 2300));
+      const t = await page.eval(`document.querySelector(".present .clock").textContent`);
+      if (!/^1:5[6-8]$/.test(t)) failures.push(`timer didn't count down: ${t}`);
+      await axeScan(page, "teacher: present timer", a11y);
+      await page.eval(`document.querySelector('[aria-label="Next step"]').click()`);
+      await until(`!!document.querySelector('.present a[href="https://example.org/fractions"]')`);
+      if ((await page.eval(`document.querySelector('.present a').getAttribute("rel")`)) !== "noopener noreferrer") failures.push("present link without noopener");
+      await page.eval(`[...document.querySelectorAll(".present button")].find(b => b.textContent === "Exit").click()`);
+      await until(`!document.body.classList.contains("presenting") && !!document.getElementById("plan-date")`);
+      const plan = await main();
+      for (const want of ["Plan: Math 3", "1. Warm-up question", "2. Lesson", "3. Timer", "4. Link", "35 min planned"]) if (!plan.includes(want)) failures.push(`plan builder: missing "${want}"`);
+      await axeScan(page, "teacher: plan builder", a11y);
+      await page.eval(`document.getElementById("pb-add").value = "text"; [...document.querySelectorAll("button")].find(b => b.textContent === "Add step").click()`);
+      await until(`!!document.getElementById("pb-4-b")`);
+      await page.eval(`const b = document.getElementById("pb-4-b"); b.value = "Tidy up."; b.dispatchEvent(new Event("input")); const m = document.getElementById("pb-4-m"); m.value = "5"; m.dispatchEvent(new Event("input"));
+        [...document.querySelectorAll("button")].find(x => x.textContent === "Save as ready").click()`);
+      await until(`document.getElementById("main").innerText.includes("ready to present")`);
+      const sent = planSaves[0];
+      if (!sent || sent.baseVersion !== 2 || sent.status !== "ready" || sent.blocks.length !== 5 || sent.blocks[4].body !== "Tidy up." || sent.blocks[4].minutes !== 5 || sent.blocks[1].lesson)
+        failures.push(`plan save: ${JSON.stringify(sent)?.slice(0, 300)}`);
+      if (page.errors.length) failures.push(`plan/present: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   // TEACH-03: Co-write: open a draft, a save that clashes keeps my text visible, the next save merges.
   {
