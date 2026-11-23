@@ -221,12 +221,18 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/rooms/rm1/timetable": return { data: [{ id: "tt1", roomId: "rm1", teacherId: "u1", teacher: "Teacher S1", weekdays: [1, 2, 3, 4, 5], starts: "08:00", ends: "09:00", label: "Math 3" }] };
     case "/api/rooms/rm1/teachers": return { data: [{ id: "u1", name: "Teacher S1" }, { id: "u2", name: "Teacher Two" }] };
     case "/api/pairings": return { data: [{ id: "pp1", roomId: "rm1", room: "Room 101", teacherId: "u1", teacher: "Teacher S1", controller: "My phone", pairedAt: now, until: new Date(Date.now() + 36e5).toISOString(), via: "Front board" }] };
+    // TEACH-06: approved storage.
+    case "/api/storage/devices": return { data: [{ id: "sd1", owner: "Teacher S1", ownerId: "u1", name: "Blue drive", kind: "usb_drive", serial: "SN-42", status: role === "teacher" ? "approved" : "pending", requestedAt: now }] };
+    case "/api/storage/settings": return { data: { cloudEnabled: true, retentionDays: 365 } };
+    case "/api/portfolio/cloud": return { data: [] };
+    case "/api/storage/offloads": return { data: [{ owner: "Teacher S1", target: "device", device: "Blue drive", items: 2, at: now, sha256: "a".repeat(64) }] };
     // TEACH-05: the portable teacher profile.
     case "/api/portfolio/preview": return { data: { items: [{ id: "u1", kind: "unit", title: "Fractions", approval: { by: "Principal S1", at: "2026-10-01", district: "Riverside" }, rights: null, schoolKeepsCopy: true },
       { id: "cp1", kind: "coaching_plan", title: "Tuesday practice", approval: null, rights: { type: "copyright" }, schoolKeepsCopy: false }], licenses: 1, excluded: [{ kind: "unit", title: "Class stories", reason: "may_mention_students" }] } };
     case "/api/portfolio/claims": return { data: role === "teacher" ? [] : [{ id: "cl1", owner: "Teacher S1", itemKind: "unit", itemId: "u1", title: "Fractions", claimType: "copyright", registration: "TX0009999999",
       evidenceUrl: "https://publicrecords.copyright.gov/x", statement: "Registered before joining.", status: "pending", createdAt: now }] };
-    case "/api/portfolio/packages": return { data: [{ id: "pk1", issuedAt: now, items: 2, district: "Hill County", sha256: "a".repeat(64), signed: true, withdrawn: false, fromHere: false }] };
+    case "/api/portfolio/packages": return { data: [{ id: "pk1", issuedAt: now, items: 2, district: "Hill County", sha256: "a".repeat(64), signed: true, withdrawn: false, fromHere: false },
+      { id: "pk2", issuedAt: now, items: 1, district: "Riverside", sha256: "b".repeat(64), signed: true, withdrawn: false, fromHere: true }] };
     case "/api/portfolio/imports": return { data: [{ id: "im1", owner: "Teacher S1", ownerId: "u1", fromDistrict: "Hill County", signed: true, status: "pending", createdAt: now, licenses: [{ stateCode: "TX" }],
       items: [{ index: 0, kind: "unit", title: "Fractions", approval: { by: "Ms Lee", at: "2026-01-01", district: "Hill County" }, rights: null, decision: null }] }] };
     case "/api/portfolio/library": return { data: [{ id: "lb1", kind: "lesson", title: "Halves", body: {}, origin: "Hill County", priorApproval: { by: "Ms Lee" }, rights: null, approvedBy: "Supt One", approvedAt: now }] };
@@ -879,6 +885,17 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.eval(`document.querySelector('main button[aria-label="Claim rights: Fractions"]').click()`);
       if (!(await waitFor(`!!document.querySelector("dialog[open] #cr-s")`))) failures.push("teacher: no claim dialog");
       await axeScan(page, "teacher: claim rights dialog", a11y);
+      await page.eval(`document.querySelector("dialog[open] .btns .btn:not(.primary)").click()`);
+      for (const w of ["Approved storage", "Open a package file", "Save to approved storage"]) if (!(await page.eval(`document.querySelector("main").textContent.includes(${JSON.stringify(w)})`))) failures.push(`teacher storage: ${w}`);
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent === "Save to approved storage").click()`);
+      if (!(await waitFor(`!!document.querySelector("dialog[open] #of-t")`))) failures.push("teacher: no save-to-storage dialog");
+      const opts = await page.eval(`[...document.querySelectorAll("dialog[open] #of-t option")].map(o => o.textContent).join("|")`);
+      if (opts !== "Blue drive (USB drive)|The district cloud") failures.push(`storage options: ${opts}`);
+      await axeScan(page, "teacher: save to approved storage", a11y);
+      await page.eval(`document.querySelector("dialog[open] .btns .btn:not(.primary)").click()`);
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent === "Open a package file").click()`);
+      if (!(await waitFor(`!!document.querySelector("dialog[open] #pf-c")`))) failures.push("teacher: no open-file dialog");
+      await axeScan(page, "teacher: open a package file", a11y);
       if (page.errors.length) failures.push(`teacher portfolio: ${page.errors[0].split("\n")[0]}`);
       page.close();
 
@@ -888,6 +905,14 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`!!document.querySelector('main button[aria-label="Approve claim: Fractions"]')`))) failures.push("principal: no claim to review");
       if (!(await page.eval(`(document.querySelector("main").textContent).includes("Save decisions for Teacher S1")`))) failures.push("principal: no import to review");
       await axeScan(page, "principal: teachers' work review", a11y);
+      if (!(await page.eval(`document.querySelector("main").textContent.includes("Teacher S1: 2 items to Blue drive")`))) failures.push("principal: offload log");
+      page.close();
+      state.role = "it_admin"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/devices` });
+      await page.mainText();
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent === "Teachers' storage").click()`);
+      if (!(await waitFor(`!!document.querySelector('main button[aria-label="Approve storage: Blue drive"]')`))) failures.push("IT: no storage approval");
+      await axeScan(page, "it_admin: teachers' storage", a11y);
       if (page.errors.length) failures.push(`principal review: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
   }

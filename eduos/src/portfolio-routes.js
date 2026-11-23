@@ -145,8 +145,8 @@ export function registerPortfolioRoutes(app) {
   }, 201));
 
   app.get("/api/portfolio/packages", requireSession, only(TEACHERS), run(async (c, req) =>
-    (await rows(c, `SELECT p.id,p.issued_at,p.item_count,p.manifest->'issuedBy'->>'district' AS district,p.manifest_sha256,p.signature IS NOT NULL AS signed,p.withdrawn_at,
-        p.issued_by_district_id=$2 AS from_here FROM portfolio_packages p WHERE p.owner_user_id=$1 ORDER BY p.issued_at DESC`, [req.actor.userId, req.actor.districtId]))
+    (await rows(c, `SELECT p.id,p.issued_at,p.item_count,coalesce(p.external_issuer,p.manifest->'issuedBy'->>'district') AS district,p.manifest_sha256,p.signature IS NOT NULL AS signed,p.withdrawn_at,
+        coalesce(p.issued_by_district_id=$2,false) AS from_here FROM portfolio_packages p WHERE p.owner_user_id=$1 ORDER BY p.issued_at DESC`, [req.actor.userId, req.actor.districtId]))
       .map(p => ({ id: p.id, issuedAt: p.issued_at, items: p.item_count, district: p.district, sha256: p.manifest_sha256, signed: p.signed, withdrawn: Boolean(p.withdrawn_at), fromHere: p.from_here }))));
 
   app.post("/api/portfolio/packages/:id/withdraw", limiter, requireSession, requireCsrf, only(TEACHERS), run(async (c, req) => {
@@ -169,7 +169,7 @@ export function registerPortfolioRoutes(app) {
     const items = p.manifest.items.map((it, index) => ({ index, kind: it.kind, title: it.title, body: it.body, approval: it.approval, rights: it.rights }));
     const i = await one(c, `INSERT INTO portfolio_imports(district_id,school_id,owner_user_id,package_id,package_sha256,from_district,signed,items,licenses)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, [req.actor.districtId, req.actor.schoolId, req.actor.userId, p.id, p.manifest_sha256,
-      p.manifest.issuedBy.district, v.signed, JSON.stringify(items), JSON.stringify(p.manifest.licenses || [])]);
+      p.external_issuer || p.manifest.issuedBy.district, v.signed, JSON.stringify(items), JSON.stringify(p.manifest.licenses || [])]);
     await audit(c, req, "create", "portfolio_import", i.id, `items=${items.length}`);
     return { id: i.id, items: items.length, signed: v.signed };
   }, 201));
