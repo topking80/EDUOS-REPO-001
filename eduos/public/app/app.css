@@ -380,3 +380,7 @@ html[data-appearance="light"] .top .mascot.initials { background: rgba(255,255,2
 .list.pick { max-height: 46vh; overflow-y: auto; margin: 8px 0; }
 .list.pick label.row { align-items: flex-start; min-height: 44px; cursor: pointer; }
 .list.pick input { width: 22px; height: 22px; margin-top: 2px; flex: none; }
+
+/* TEACH-02: shared materials preview */
+.dialog .preview { max-height: 55vh; overflow-y: auto; border-top: 1px solid var(--line); padding-top: 8px; }
+.dialog .preview h3 { margin: 14px 0 4px; }
