@@ -225,6 +225,18 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/activities/a1/links": return { data: [{ service: "maxpreps", name: "MaxPreps", url: "https://www.maxpreps.com/x/falcons-soccer/" }] };
     case "/api/activities/a1/exports": return { data: { team: "Falcons Soccer", services: { maxpreps: { included: 1, withheld: 1 }, hudl: { included: 0, withheld: 2 } }, log: [] } };
     case "/api/family/sports-sharing": return { data: [{ studentId: "c1", name: "Ava Lee", teams: ["Falcons Soccer"], maxpreps: { since: now, by: "Smoke Test" }, hudl: null }] };
+    // RANK-01: the U.S. News indicators.
+    case "/api/rankings/indicators": return { data: { note: "EduOS tracks your own figures; it doesn't compute or predict a rank.",
+      indicators: [["college_readiness", "College readiness", 30], ["curriculum_breadth", "College curriculum breadth", 10], ["assessment_proficiency", "State assessment proficiency", 20],
+        ["assessment_performance", "State assessment performance", 20], ["underserved_performance", "Underserved student performance", 10], ["graduation_rate", "Graduation rate", 10]]
+        .map(([key, name, weight]) => ({ key, name, weight, about: `${name}.`, fields: key === "graduation_rate" ? [{ key: "rate", label: "Four-year graduation rate, %" }] : [{ key: "x", label: "Figure" }] })),
+      published: { key: "published_rank", name: "Published U.S. News result", about: "For the record.", fields: [{ key: "nationalRank", label: "National rank" }] } } };
+    case "/api/rankings/schools": return { data: { year: "2024-25", years: ["2024-25"], schools: [{ id: "s1", name: "Maple", entered: 2, verified: 1, weightCovered: 40,
+      missing: ["curriculum_breadth", "assessment_proficiency", "assessment_performance", "underserved_performance"] }] } };
+    case "/api/rankings/schools/s1": return { data: { id: "s1", name: "Maple", years: ["2024-25", "2023-24"], changesKept: 1, indicators: ["college_readiness", "curriculum_breadth",
+      "assessment_proficiency", "assessment_performance", "underserved_performance", "graduation_rate", "published_rank"].map(key => ({ key, name: key, weight: key === "published_rank" ? null : 10,
+        byYear: key === "graduation_rate" ? [{ id: "re1", year: "2024-25", indicator: key, values: { rate: 91.4 }, shown: { "Graduation rate": 91.4 }, sourceUrl: "https://example.gov/rc", sourceNote: "State report card",
+          enteredBy: "Principal S1", enteredAt: now, verifiedBy: null }, { id: "re0", year: "2023-24", indicator: key, values: { rate: 89 }, shown: { "Graduation rate": 89 }, sourceNote: "State report card", enteredBy: "Principal S1" }] : [null, null] })) } };
     // SPORTS-02: connectors.
     case "/api/activities/a1/film": return { data: [{ title: "Home opener: full game", url: "https://www.hudl.com/video/3/123", event: "Home opener" }] };
     case "/api/activities/a1/connectors": return { data: { connectors: [{ service: "hudl", name: "Hudl", status: "approved", externalTeamId: "team-123", sendRoster: true, sendSchedule: true, pullResults: true, pullFilm: true }],
@@ -972,6 +984,33 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`!!document.querySelector("dialog[open] #cn-k")`))) failures.push("principal: no connect dialog");
       await axeScan(page, "principal: connect an account", a11y);
       if (page.errors.length) failures.push(`principal connectors: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); }
+  }
+  // RANK-01: the superintendent sees every school's coverage, opens one, and can verify; the principal enters figures. Pass axe.
+  {
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    try {
+      state.role = "superintendent"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/rankings` });
+      await page.mainText();
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("2 of 6 · 40% of the weight")`))) failures.push("superintendent: rankings coverage");
+      await axeScan(page, "superintendent: U.S. News indicators", a11y);
+      await page.eval(`document.querySelector('main button[aria-label="Open: Maple"]').click()`);
+      if (!(await waitFor(`!!document.querySelector('main button[aria-label="Verify: graduation_rate"]')`))) failures.push("superintendent: no Verify");
+      const t = await page.eval(`document.querySelector("main").textContent`);
+      for (const w of ["91.4%", "2023-24: Graduation rate 89%", "Not verified yet", "1 earlier figure is kept as history"]) if (!t.includes(w)) failures.push(`school rankings: ${w}`);
+      await axeScan(page, "superintendent: one school's indicators", a11y);
+      if (page.errors.length) failures.push(`rankings: ${page.errors[0].split("\n")[0]}`);
+      page.close();
+      state.role = "principal"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/rankings` });
+      await page.mainText();
+      await waitFor(`!!document.querySelector('main button[aria-label="Enter figures: graduation_rate"]')`);
+      await page.eval(`document.querySelector('main button[aria-label="Enter figures: graduation_rate"]').click()`);
+      if (!(await waitFor(`!!document.querySelector("dialog[open] #rk-rate")`))) failures.push("principal: no enter-figures dialog");
+      await axeScan(page, "principal: enter figures", a11y);
+      if (page.errors.length) failures.push(`principal rankings: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.

@@ -675,3 +675,8 @@ GRANT UPDATE (hidden_by, hidden_at) ON sports_film_links TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON sports_connector_runs FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON sports_connectors, sports_connector_teams, sports_inbound_results, sports_film_links FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_sports_lead(uuid) TO eduos_app;
+
+-- RANK-01 (db/117): a school's U.S. News indicator figures. Superseded, never deleted.
+GRANT SELECT, INSERT ON school_ranking_entries TO eduos_app;
+GRANT UPDATE (verified_by, verified_at, superseded_at) ON school_ranking_entries TO eduos_app;
+REVOKE DELETE, TRUNCATE ON school_ranking_entries FROM eduos_app;
