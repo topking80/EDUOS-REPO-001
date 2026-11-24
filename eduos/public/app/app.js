@@ -1131,6 +1131,8 @@ async function familyContributionsCard(k) {
       item.body ? h("p", {}, item.body) : null,
       h("p", { class: "small muted" }, `Memory date: ${fmtDay(item.occurred_at)} · Submitted ${fmtTime(item.created_at)}`),
       item.review_note ? h("p", { class: "small muted" }, `School note: ${item.review_note}`) : null,
+      photoStrip(item.photos),
+      item.status === "submitted" ? photoAdder(item.id, `/api/family/children/${k.id}/history-contributions/${item.id}/photos`, refresh) : null,
       item.status === "submitted" ? h("button", { class: "btn danger small", type: "button", onclick: async () => {
         if (!await ask({ title: "Withdraw this family memory?", text: "This removes the pending submission from the school review queue.", confirm: "Withdraw", danger: true })) return;
         try {
@@ -1487,6 +1489,7 @@ VIEWS.history = async () => {
       h("div", { class: "row" }, h("strong", {}, item.title), chip("submitted")),
       h("p", { class: "small muted" }, `${item.student_name} · from ${item.guardian_name} · ${fmtDay(item.occurred_at)} · submitted ${fmtTime(item.created_at)}`),
       item.body ? h("p", {}, item.body) : h("p", { class: "small muted" }, "No additional memory text."),
+      photoStrip(item.photos),
       h("label", {}, h("span", {}, "Review note (optional)"), note),
       h("div", { class: "btns" },
         h("button", { class: "btn primary", type: "button", onclick: () => decide("approve") }, "Approve"),
@@ -4546,7 +4549,7 @@ function photoStrip(photos) {
     h("img", { src: `/api/history/photos/${p.id}`, alt: p.alt, loading: "lazy", decoding: "async", width: p.width || undefined, height: p.height || undefined, style: "max-width:100%;height:auto;border-radius:8px" }),
     p.caption ? h("figcaption", { class: "small muted" }, p.caption) : null)));
 }
-function photoAdder(entryId) {
+function photoAdder(entryId, path = `/api/history/entries/${entryId}/photos`, after = () => go(state.tab, { push: false })) {
   const key = `ph-${entryId.slice(0, 8)}`;
   const file = h("input", { id: `${key}-f`, type: "file", accept: "image/jpeg,image/png,image/webp" });
   const alt = h("input", { id: `${key}-a`, maxlength: 300, placeholder: "What's in the photo (for people who can't see it)" });
@@ -4561,7 +4564,7 @@ function photoAdder(entryId) {
       e.target.disabled = true;
       try {
         if (!api.csrf) await api.get("/api/csrf").then(r => { api.csrf = r.csrfToken; }).catch(() => {});
-        const r = await fetch(`/api/history/entries/${entryId}/photos?alt=${encodeURIComponent(alt.value.trim())}&caption=${encodeURIComponent(cap.value.trim())}`, {
+        const r = await fetch(`${path}?alt=${encodeURIComponent(alt.value.trim())}&caption=${encodeURIComponent(cap.value.trim())}`, {
           method: "POST", credentials: "same-origin", body: f, headers: { "content-type": f.type, "x-csrf-token": api.csrf || "", "idempotency-key": crypto.randomUUID().replace(/-/g, "") } });
         const out = await r.json().catch(() => ({}));
         if (!r.ok) {
@@ -4570,7 +4573,7 @@ function photoAdder(entryId) {
             not_a_valid_image: "That file isn't a photo EduOS can read.", media_storage_not_configured: "Photo storage isn't set up yet.", unsupported_media_type: "Use a JPEG, PNG or WebP photo." };
           return toast(why[out.error] || "Couldn't add the photo.");
         }
-        toast("Photo added."); go(state.tab, { push: false });
+        toast("Photo added."); await after();
       } catch { toast("Couldn't add the photo."); } finally { e.target.disabled = false; }
     } }, "Upload"));
 }
