@@ -33,8 +33,27 @@ Voluntary one-time gifts from families and staff toward keeping student historie
 
 `district_donation_settings`, `history_donations`, `history_donation_acknowledgements`, `history_donation_counters`. RLS scopes everything to the district; donors read their own gifts, the superintendent reads all. Status changes and acknowledgements go only through `eduos_history_donation_record()` (SECURITY DEFINER).
 
+## Accounting, refunds and reconciliation (TC-10, migration 136)
+
+- **Ledger.** Every completed gift posts two append-only lines: the gift (+) and the processor's fee (−). A refund posts a refund line (−, the full gift). The processor keeps its fee on a refund, as card processors do, so a refunded gift nets to minus the fee. Only definer functions write the ledger; gifts completed before 136 are backfilled.
+- **Who sees the books.** The superintendent, and staff the superintendent names as **finance reviewers** (`PUT /api/donations/finance/reviewers/:userId {on}`). There's no finance role, so this is the designation. A reviewer acts only while signed in under a staff role. Appointments are kept, never deleted.
+- **Refunds.** `POST /api/donations/:id/refund {reason}` (finance) refunds a completed gift through the sandbox. Nobody refunds their own gift. The donor gets a plain refund notice (`GIFT-…-R`, `GET /api/donations/:id/refund-notice`) with no tax wording.
+- **Reconciliation.** `GET /api/donations/reconciliation?from&to` (UTC dates) compares the gift records with the ledger line by line and lists any differences. `POST /api/donations/reconciliations` signs a period off and keeps the result, matched or not. Whoever recorded a refund in the period can't sign it off (`403 separation_of_duties`).
+- The **Gift accounts** card on the history page shows this month, sign-off, recent gifts with Refund, and (for the superintendent) the reviewer list.
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/donations/finance/access` | anyone (is this user finance?) |
+| GET/PUT | `/api/donations/finance/reviewers[/:userId]` | superintendent |
+| GET | `/api/donations/ledger?from&to` | finance |
+| POST | `/api/donations/:id/refund` | finance, not the donor |
+| GET | `/api/donations/:id/refund-notice` | the donor or finance |
+| GET | `/api/donations/reconciliation?from&to` | finance |
+| GET/POST | `/api/donations/reconciliations` | finance; sign-off not by a refunder in the period |
+
+With the sandbox there is no processor statement to compare against, so reconciliation checks EduOS's own gift records against its ledger. A real processor would add its settlement report as a third column.
+
 ## Not built yet (decisions)
 
-- Hosted checkout with a real processor (needs a two-phase flow, webhooks and reconciliation).
+- Hosted checkout with a real processor (needs a two-phase flow, webhooks, settlement import).
 - Recurring gifts.
-- Refunds and reconciliation come with TC-10 (donation accounting).
