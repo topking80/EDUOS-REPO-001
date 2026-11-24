@@ -42,7 +42,7 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
 
   Future<_TeacherDay> _loadDay() async {
     final r = await Future.wait([
-      _optional('/api/rooms'),
+      _optional('/api/rooms?schoolId=${AppScope.read(context).me?.schoolId}'),
       _optional('/api/arrival/today'),
       _optional('/api/pickup/queue'),
       _optional('/api/staff-workspace'),
@@ -214,8 +214,8 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
             leading: Icon(str(room['kind']) == 'media_center' ? Icons.local_library_outlined : Icons.meeting_room_outlined),
             title: Text(str(room['name'])),
             subtitle: Text('${str(room['building'])} · ${objs(room['devices']).length} connected devices'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _openRoll(room),
+            trailing: str(room['kind']) == 'media_center' ? const StatusChip('present', text: 'Library') : const Icon(Icons.chevron_right),
+            onTap: str(room['kind']) == 'media_center' ? null : () => _openRoll(room),
           ),
         if (d.checkins.isNotEmpty) Text('Your room check-ins today: ${d.checkins.map((x) => str(x['room'])).where((x) => x.isNotEmpty).join(', ')}'),
       ]),
