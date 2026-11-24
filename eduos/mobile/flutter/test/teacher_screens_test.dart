@@ -347,6 +347,45 @@ void main() {
   });
 
 
+  testWidgets('courses: accommodation changes show dirty state, save once, and remain retryable after failure', (tester) async {
+    var failSave = true;
+    final fake = FakeServer({
+      'GET /api/learning/courses/\$course': (_) => {'data': {
+        'id': course, 'title': 'Grade 4 Math', 'subject': 'Math', 'gradeLevel': '4', 'term': 'Fall', 'teacher': 'Ms. Rivera',
+        'canManage': true, 'grade': {}, 'mastery': {}, 'standards': [], 'units': [], 'assignments': [],
+      }},
+      'GET /api/learning/accommodations': (_) => {'data': [
+        {'student_id': ada, 'display_name': 'Ada Lovelace', 'extra_time_pct': 0, 'read_aloud': false},
+      ]},
+      'PUT /api/learning/accommodations/\$ada': (_) => failSave
+          ? http.Response('{"error":"temporary_failure"}', 503)
+          : {'data': {'ok': true}},
+    });
+    await launch(tester, fake);
+    await openTab(tester, 'Courses');
+    await tester.tap(find.text('Open course'));
+    await tester.pumpAndSettle();
+    expect(find.text('Saved'), findsOneWidget);
+    await tester.tap(find.text('Standard time'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('+25% time'));
+    await tester.pumpAndSettle();
+    expect(find.text('Unsaved changes'), findsOneWidget);
+    await tester.tap(find.text('Read-aloud'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save', skipOffstage: false));
+    await tester.pumpAndSettle();
+    expect(fake.sent('PUT', '/api/learning/accommodations/\$ada'), hasLength(1));
+    expect(find.text('Unsaved changes'), findsOneWidget);
+    expect(find.textContaining('try again'), findsOneWidget);
+    failSave = false;
+    await tester.tap(find.text('Save', skipOffstage: false));
+    await tester.pumpAndSettle();
+    expect(fake.sent('PUT', '/api/learning/accommodations/\$ada'), hasLength(2));
+    expect(jsonDecode(fake.sent('PUT', '/api/learning/accommodations/\$ada').last.body), {'extraTimePct': 25, 'readAloud': true});
+    expect(find.text('Saved'), findsOneWidget);
+  });
+
   testWidgets('school day: teacher sees classroom, riders, pickup and duty connections', (tester) async {
     final fake = FakeServer({
       'GET /api/rooms': (_) => {'data': [
