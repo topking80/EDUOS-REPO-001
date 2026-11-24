@@ -655,8 +655,13 @@ export function registerLearningRoutes(app) {
         FROM course_final_grades f JOIN courses c ON c.id=f.course_id WHERE f.student_id=$1 ORDER BY f.posted_at DESC`, [learner.id]);
     const creds = await rows(client, `SELECT id,kind,title,description,issued_at,revoked_at,edal_entry_id FROM credentials WHERE student_id=$1 ORDER BY issued_at DESC`, [learner.id]);
     const acc = await one(client, `SELECT extra_time_pct,read_aloud FROM student_accommodations WHERE student_id=$1`, [learner.id]);
+    // TC-12: the district preservation fund's totals as a grade-card footnote
+    // (district decision 2026-11-24). Aggregate only, never donor names, only
+    // once enough people have given; the district can turn it off (db/137).
+    const fn = (await one(client, "SELECT eduos_preservation_fund_grade_card_footnote() AS r")).r;
+    const fundFootnote = fn?.shown ? { fundName: fn.fundName, givenCents: Number(fn.givenCents), spentCents: Number(fn.spentCents) } : null;
     await audit(client, req, "read", "learning_progress", learner.id);
-    return { learner: { id: learner.id, name: learner.display_name, grade: learner.grade_level }, courses,
+    return { learner: { id: learner.id, name: learner.display_name, grade: learner.grade_level }, courses, fundFootnote,
       finalGrades: finals.filter(f => !finals.some(n => n.supersedes === f.id)), corrections: finals.filter(f => f.supersedes).length,
       credentials: creds, accommodations: acc ? { extraTimePct: acc.extra_time_pct, readAloud: acc.read_aloud } : null };
   }));

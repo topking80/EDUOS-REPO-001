@@ -406,20 +406,29 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     // TC-12: the preservation fund.
     case "/api/preservation-fund": return { data: { fundName: "Student history preservation fund", purpose: "Keeping student histories safe for every student.",
       eligibleCategories: [{ key: "storage", label: "Storage" }, { key: "backup", label: "Backups" }], allocationRules: "Unrestricted gifts pay district-wide costs.",
-      governanceText: "The finance committee reviews requests.", refundPolicy: "Ask the district office within 30 days.", approvalsRequired: 2, collecting: true, paused: null,
+      governanceText: "The finance committee reviews requests.", refundPolicy: "Ask the district office within 30 days.", approvalRule: "Every payment needs three approvals, all required: the principal of the school it's for and two district administrators. None of them can be the person who asked for it, and each confirms they have no conflict of interest.", approvalsRequired: 3, collecting: true, paused: null,
       limits: "The fund pays only for district-wide preservation. It can't buy any student more storage or any kind of preferential access.",
       summary: { shown: true, givenCents: 8500, feesCents: 400, spentCents: 3000, spentByCategory: { storage: 3000 } }, sandboxOnly: true } };
     case "/api/preservation-fund/settings": return { data: { enabled: true, collectionPaused: false, disbursementPaused: false, pauseReason: null, fundName: "Student history preservation fund",
       purpose: "Keeping student histories safe for every student.", eligibleCategories: ["storage", "backup"], allocationRules: null, governanceText: null, refundPolicy: null,
-      approvalsRequired: 2, publicReport: false, reportMinDonors: 5, categories: { storage: "Storage", backup: "Backups", archival_media: "Archival media" },
+      approvalRule: "Every payment needs three approvals, all required: the principal of the school it's for and two district administrators. None of them can be the person who asked for it, and each confirms they have no conflict of interest.", approvalsRequired: 3, publicReport: false, gradeCardFootnote: true, reportMinDonors: 5, categories: { storage: "Storage", backup: "Backups", archival_media: "Archival media" },
       governance: { records: [{ id: "gr1", kind: "legal", reference: "Counsel memo 12", approvedOn: "2026-11-01", recordedBy: "Supt One" }, { id: "gr2", kind: "finance", reference: "Finance committee minutes", approvedOn: "2026-11-02", recordedBy: "Supt One" }], missing: ["governance"] } } };
-    case "/api/preservation-fund/report": return { data: { settings: { enabled: true, approvalsRequired: 2, disbursementPaused: false, eligibleCategories: ["storage", "backup"] }, me: "u1",
+    case "/api/preservation-fund/report": return { data: { settings: { enabled: true, approvalRule: "Every payment needs three approvals, all required: the principal of the school it's for and two district administrators. None of them can be the person who asked for it, and each confirms they have no conflict of interest.", approvalsRequired: 3, disbursementPaused: false, eligibleCategories: ["storage", "backup"] }, me: "u1",
+      schools: [{ id: "s1", name: "Lincoln Elementary" }],
       categories: { storage: "Storage", backup: "Backups" }, sandboxOnly: true,
       balances: [{ source: { unrestricted: true, name: "Unrestricted" }, giftsNetCents: 7100, paidCents: 3000, availableCents: 4100 }],
       disbursements: [{ id: "fd1", status: "pending", category: "storage", categoryLabel: "Storage", description: "Archive storage for the year", payee: "Example Storage Co", amountCents: 3000,
+        school: { schoolId: "s1", name: "Lincoln Elementary" }, panel: { principal: 0, principalNeeded: 1, districtAdmins: 0, districtAdminsNeeded: 2 },
         requestedBy: "Pat Finance", requestedById: "u7", votes: [] },
         { id: "fd2", status: "approved", category: "backup", categoryLabel: "Backups", description: "Offsite backup copies", payee: "Backup Co", amountCents: 1000,
-        requestedBy: "Pat Finance", requestedById: "u7", votes: [{ voter: "Supt Two", voterId: "u2", decision: "approve" }, { voter: "Sam Office", voterId: "u8", decision: "approve" }] }] } };
+        school: { schoolId: "s1", name: "Lincoln Elementary" }, panel: { principal: 1, principalNeeded: 1, districtAdmins: 2, districtAdminsNeeded: 2 },
+        requestedBy: "Pat Finance", requestedById: "u7", votes: [{ voter: "Lee Principal", voterId: "u3", seat: "school_principal", seatLabel: "Principal", decision: "approve" },
+          { voter: "Supt Two", voterId: "u2", seat: "district_admin", seatLabel: "District administrator", decision: "approve" },
+          { voter: "Ira Admin", voterId: "u9", seat: "district_admin", seatLabel: "District administrator", decision: "approve" }] }] } };
+    case "/api/preservation-fund/approvals": return { data: { rule: "Every payment needs three approvals, all required: the principal of the school it's for and two district administrators. None of them can be the person who asked for it, and each confirms they have no conflict of interest.", me: "u1", sandboxOnly: true,
+      waiting: [{ id: "fd1", status: "pending", category: "storage", categoryLabel: "Storage", description: "Archive storage for the year", payee: "Example Storage Co", amountCents: 3000,
+        school: { schoolId: "s1", name: "Lincoln Elementary" }, panel: { principal: 0, principalNeeded: 1, districtAdmins: 0, districtAdminsNeeded: 2 },
+        requestedBy: "Pat Finance", requestedById: "u7", votes: [], mySeat: "district_admin" }] } };
     // TC-08: preservation and legal holds.
     case "/api/history/preservation": return { data: { policy: { verifyEveryDays: 90, archiveAfterDays: null, capacityAlertPercent: 80, recordsScheduleRef: "" },
       canEdit: role === "superintendent", storageReady: true, archiveStorageClass: null, maxBytesPerStudent: 262144000, lastCheckedAt: now, donationsAffectLimits: false,
@@ -590,11 +599,12 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         for (const want of storageExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
         // TC-09: the gift card for parents; the settings for the superintendent.
         const giftExpect = { "parent/portfolio": ["Support preservation", "never change storage limits", "Give (test)", "GIFT-2026-000001",
-            "About the Student history preservation fund", "can't buy any student more storage", "$85.00 given", "Every payment needs 2 approvals."],
+            "About the Student history preservation fund", "can't buy any student more storage", "$85.00 given", "the principal of the school it's for and two district administrators"],
           "superintendent/history": ["Preservation gifts", "3 gifts · $75.00 given", "Accept gifts", "no claim that a gift is tax-deductible",
             "Gift accounts", "The gift records and the ledger match.", "Sign off this month", "2026-10-01 to 2026-10-31 · matched · Supt One", "GIFT-2026-000002", "Pat Finance", "Name reviewer",
             "Preservation fund", "Still needed before gifts open: governance approval.", "Record approval", "Fund payments", "$41.00 available",
-            "Waiting for approvals", "Supt Two approved, Sam Office approved", "Record payment", "Save fund settings"] }[`${role}/${tab}`];
+            "Waiting for approvals", "Supt Two (District administrator) approved", "Lee Principal (Principal) approved", "principal 0/1 · district administrators 0/2",
+            "Fund payments to approve", "you approve as a district administrator", "Add the totals as a footnote on student grade cards", "Record payment", "Save fund settings"] }[`${role}/${tab}`];
         for (const want of giftExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
         if (["principal", "teacher"].includes(role) && tab === "history" && text.includes("Gift accounts")) failures.push(`${role} #/history: gift accounts shown without being named`);
         if (role === "pupil" && tab === "portfolio" && text.includes("Support preservation")) failures.push("pupil #/portfolio: students must not be asked to give");
