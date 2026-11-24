@@ -1,6 +1,8 @@
 # EduOS mobile app (Flutter)
 
-The native EduOS app for Android (iOS later). **Phase 1** ships sign-in, role
+The native EduOS app for Android phones and tablets, iPhone and iPad, and
+Windows desktops (Android/Google TV, Fire TV and Roku are planned in
+`docs/CLIENT-PLATFORMS.md`). **Phase 1** ships sign-in, role
 navigation, the offline write queue and the full **parent app**: children,
 library books, arrival (bus check-ins), pick-up (passes, approved adults,
 early dismissal), messages and alerts, plus the SafetyOS takeover during a
@@ -64,6 +66,32 @@ writes are re-sent with their original `Idempotency-Key` and
 Pick-up actions are always online, because identity is checked live. School
 records are never cached on the phone.
 
+**37.8 Time Capsules** brings the student history and Time Capsules to the
+app, on phones, tablets and desktops:
+- families: Time Capsules (invitations, making, filling, sealing and
+  cancelling a capsule, capsules opened for them), each child's history
+  timeline, family memories, teachers' items to keep or decline, history
+  transfers to a new district, and storage (on servers with TC-11)
+- learners: "My history" (by school year, filters, search, photos) and
+  Time Capsules, plus sharing once they hold their own rights
+- teachers: "History items" (submit for a student on the roster, follow the
+  review, fix and resubmit)
+- principals, vice principals and superintendents: milestone releases and
+  the review queue
+
+From 840 dp wide (tablet landscape, desktop) the bottom bar becomes a side
+rail with every tab, and capsules and history items open beside the list.
+Photos come from `GET /api/history/photos/:id`. The app reads the short-lived
+link without following the redirect, then loads the image without any EduOS
+credentials, so the session token never reaches the storage host.
+
+**Platforms:** `android/`, `ios/` (bundle id `org.eduos.app`, with the
+sign-in URL scheme) and `windows/`. CI builds Android. iOS needs a Mac
+with Xcode (`flutter build ios`), and Windows needs a Windows machine
+(`flutter build windows`). Windows sign-in arrives with device sign-in
+("sign in with your phone"), because the system-browser redirect flow
+can't return to a desktop app without an embedded web view.
+
 ## Run and test
 
 ```bash
@@ -72,6 +100,8 @@ flutter pub get --enforce-lockfile
 flutter analyze --fatal-infos
 flutter test
 flutter run            # Android device or emulator; enter your district's EduOS address
+flutter run -d windows # on Windows
+flutter run -d ios     # on a Mac with Xcode
 ```
 
 `lib/branding/branding_demo.dart` is the mascot and brand designer preview
@@ -86,6 +116,9 @@ flutter run            # Android device or emulator; enter your district's EduOS
   session storage, offline queue, models
 - `lib/app/`: app controller (session, branding, safety polling), role tabs
 - `lib/ui/`: sign-in, shell, parent screens
+- `lib/ui/screens/time_capsule/`: Time Capsules, history timeline, family
+  memories, teachers' items, review, sharing, storage
+- `lib/core/history_models.dart`: history and Time Capsule models and labels
 - `test/`: core unit tests and app widget tests against a fake EduOS server
 
 # School branding + mascot
