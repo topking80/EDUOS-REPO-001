@@ -18,6 +18,7 @@ import { FUND_SETTINGS } from "./fund-helpers.js";
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 const fee = c => Math.round(c * 0.029) + 30;
 const ITA = "a0000000-0000-4000-8000-0000000000f1";
+const SEC = "a0000000-0000-4000-8000-0000000000e1"; // a school secretary: finance reviewers are designated secretaries (db/140)
 
 describe("TC-12 preservation fund against real PostgreSQL", { skip }, () => {
   let db, idp, server, admin, s = {}, req1;
@@ -47,8 +48,10 @@ describe("TC-12 preservation fund against real PostgreSQL", { skip }, () => {
     // A district IT administrator: the third possible district-administrator seat.
     await admin.query("INSERT INTO users(id,oidc_issuer,oidc_subject,display_name,email) VALUES ($1,$2,'ita1','IT Admin','ita1@d1.test')", [ITA, idp.issuer]);
     await admin.query("INSERT INTO memberships(user_id,district_id,school_id,role,is_default) VALUES ($1,$2,NULL,'it_admin',true)", [ITA, ID.d1]);
+    await admin.query("INSERT INTO users(id,oidc_issuer,oidc_subject,display_name,email) VALUES ($1,$2,'sec1','Secretary One','sec1@d1.test')", [SEC, idp.issuer]);
+    await admin.query("INSERT INTO memberships(user_id,district_id,school_id,role,is_default) VALUES ($1,$2,$3,'school_secretary',true)", [SEC, ID.d1, ID.s1]);
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
-    for (const name of ["t1", "p1", "p2", "vp1", "ita1", "supt1", "supt1b", "supt2", "pa", "pb", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
+    for (const name of ["t1", "sec1", "p1", "p2", "vp1", "ita1", "supt1", "supt1b", "supt2", "pa", "pb", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     ok(await as("supt1")("PUT", "/api/donations/settings", { enabled: true, minCents: 500, maxCents: 100000, suggestedCents: [1000] }));
     ok(await as("supt1")("PUT", "/api/commerce/payment-methods", { enabledMethods: ["sandbox"], defaultMethod: "sandbox" }));
   });
@@ -88,19 +91,19 @@ describe("TC-12 preservation fund against real PostgreSQL", { skip }, () => {
 
   it("requests are checked against the source's balance and the eligible categories", async () => {
     await give("pa", 2500); await give("t1", 5000); await give("pb", 1000, ID.s1);
-    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${USERS.t1[0]}`, { on: true }));
+    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${SEC}`, { on: true }));
     const r = await report();
     assert.equal(unrestricted(r).availableCents, 7500 - fee(2500) - fee(5000));
     assert.equal(r.balances.find(b => b.source.schoolId === ID.s1).availableCents, 1000 - fee(1000));
     for (const who of ["pa", "p1", "pu"]) err(await ask(who, {}), 403);
-    err(await ask("t1", { category: "other_preservation" }), 400, "category_not_eligible");
-    err(await ask("t1", { category: "student_quota" }), 400);
-    err(await ask("t1", { schoolId: undefined }), 400, "school_required");
-    err(await ask("t1", { schoolId: ID.sd2 }), 400, "school_required");
-    err(await ask("t1", { schoolId: ID.s2, sourceSchoolId: ID.s1, amountCents: 500 }), 400, "source_must_match_school");
-    err(await ask("t1", { amountCents: 100000 }), 409, "insufficient_funds");
-    err(await ask("t1", { amountCents: 2000, sourceSchoolId: ID.s1 }), 409, "insufficient_funds");
-    req1 = ok(await ask("t1", {}));
+    err(await ask("sec1", { category: "other_preservation" }), 400, "category_not_eligible");
+    err(await ask("sec1", { category: "student_quota" }), 400);
+    err(await ask("sec1", { schoolId: undefined }), 400, "school_required");
+    err(await ask("sec1", { schoolId: ID.sd2 }), 400, "school_required");
+    err(await ask("sec1", { schoolId: ID.s2, sourceSchoolId: ID.s1, amountCents: 500 }), 400, "source_must_match_school");
+    err(await ask("sec1", { amountCents: 100000 }), 409, "insufficient_funds");
+    err(await ask("sec1", { amountCents: 2000, sourceSchoolId: ID.s1 }), 409, "insufficient_funds");
+    req1 = ok(await ask("sec1", {}));
     assert.equal(req1.status, "pending");
     assert.equal(req1.test, true);
     assert.equal(req1.school.schoolId, ID.s1);
@@ -108,7 +111,7 @@ describe("TC-12 preservation fund against real PostgreSQL", { skip }, () => {
   });
 
   it("the school's principal and two district administrators approve, all three required, each attesting no conflict", async () => {
-    for (const who of ["pa", "t1"]) err(await vote(who, req1.id), 403);
+    for (const who of ["pa", "sec1", "t1"]) err(await vote(who, req1.id), 403);
     err(await vote("p2", req1.id), 403, "not_on_approval_panel");
     err(await vote("vp1", req1.id), 403, "not_on_approval_panel");
     err(await vote("supt1", req1.id, "approve", { noConflict: false }), 403, "conflict_declared");
@@ -116,7 +119,7 @@ describe("TC-12 preservation fund against real PostgreSQL", { skip }, () => {
     const waiting = ok(await as("p1")("GET", "/api/preservation-fund/approvals")).waiting;
     assert.deepEqual(waiting.map(x => [x.id, x.mySeat]), [[req1.id, "school_principal"]]);
     assert.equal(ok(await as("p2")("GET", "/api/preservation-fund/approvals")).waiting.length, 0);
-    err(await as("t1")("GET", "/api/preservation-fund/approvals"), 403);
+    err(await as("sec1")("GET", "/api/preservation-fund/approvals"), 403);
     assert.equal(ok(await vote("supt1", req1.id)).status, "pending", "one district administrator");
     err(await vote("supt1", req1.id), 409, "already_decided");
     assert.equal(ok(await vote("supt1b", req1.id)).status, "pending", "two district administrators but no principal");
@@ -130,7 +133,7 @@ describe("TC-12 preservation fund against real PostgreSQL", { skip }, () => {
   });
 
   it("someone other than the requester records the payment, which posts to the fund ledger", async () => {
-    err(await as("t1")("POST", `/api/preservation-fund/disbursements/${req1.id}/pay`, { paymentRef: "AP-5521" }), 403, "requester_cannot_pay");
+    err(await as("sec1")("POST", `/api/preservation-fund/disbursements/${req1.id}/pay`, { paymentRef: "AP-5521" }), 403, "requester_cannot_pay");
     err(await as("supt1")("POST", `/api/preservation-fund/disbursements/${req1.id}/pay`, {}), 400);
     const p = ok(await as("supt1")("POST", `/api/preservation-fund/disbursements/${req1.id}/pay`, { paymentRef: "AP-5521" }));
     assert.equal(p.status, "paid");
@@ -148,10 +151,10 @@ describe("TC-12 preservation fund against real PostgreSQL", { skip }, () => {
     err(await vote("p1", a.id, "reject"), 400, "reason_required");
     assert.equal(ok(await vote("p1", a.id, "reject", { note: "Not an eligible cost" })).status, "rejected");
     err(await vote("supt1b", a.id), 409, "not_pending");
-    const b = ok(await ask("t1", { amountCents: 500, invoiceRef: "INV-3" }));
+    const b = ok(await ask("sec1", { amountCents: 500, invoiceRef: "INV-3" }));
     err(await as("supt1")("POST", `/api/preservation-fund/disbursements/${b.id}/close`, { reason: "Not mine to withdraw" }), 409, "cannot_close");
-    assert.equal(ok(await as("t1")("POST", `/api/preservation-fund/disbursements/${b.id}/close`, { reason: "Entered twice" })).status, "withdrawn");
-    const c = ok(await ask("t1", { amountCents: 500, invoiceRef: "INV-4" }));
+    assert.equal(ok(await as("sec1")("POST", `/api/preservation-fund/disbursements/${b.id}/close`, { reason: "Entered twice" })).status, "withdrawn");
+    const c = ok(await ask("sec1", { amountCents: 500, invoiceRef: "INV-4" }));
     ok(await vote("supt1", c.id)); ok(await vote("ita1", c.id));
     assert.equal(ok(await vote("p1", c.id)).status, "approved", "an IT administrator fills a district seat too");
     assert.equal(ok(await as("supt1")("POST", `/api/preservation-fund/disbursements/${c.id}/close`, { reason: "Vendor withdrew the quote" })).status, "cancelled");

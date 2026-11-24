@@ -13,6 +13,8 @@ import { openFund } from "./fund-helpers.js";
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 const fee = c => Math.round(c * 0.029) + 30;
 const today = () => new Date().toISOString().slice(0, 10);
+// TC-13 (db/140): finance reviewers are school secretaries the superintendent designates.
+const SEC = { sec1: "a0000000-0000-4000-8000-0000000000e1", sec2: "a0000000-0000-4000-8000-0000000000e2" };
 
 describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
   let db, idp, server, admin, s = {}, gifts = {};
@@ -31,14 +33,18 @@ describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
+    for (const [sub, name, school] of [["sec1", "Secretary One", ID.s1], ["sec2", "Secretary Two", ID.s2]]) {
+      await admin.query("INSERT INTO users(id,oidc_issuer,oidc_subject,display_name,email) VALUES ($1,$2,$3,$4,$5)", [SEC[sub], idp.issuer, sub, name, `${sub}@d1.test`]);
+      await admin.query("INSERT INTO memberships(user_id,district_id,school_id,role,is_default) VALUES ($1,$2,$3,'school_secretary',true)", [SEC[sub], ID.d1, school]);
+    }
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
-    for (const name of ["t1", "p1", "supt1", "supt1b", "supt2", "pa", "pb", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
+    for (const name of ["t1", "p1", "sec1", "sec2", "supt1", "supt1b", "supt2", "pa", "pb", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     ok(await as("supt1")("PUT", "/api/donations/settings", { enabled: true, minCents: 500, maxCents: 100000, suggestedCents: [1000] }));
     await openFund(as("supt1"));
     ok(await as("supt1")("PUT", "/api/commerce/payment-methods", { enabledMethods: ["sandbox"], defaultMethod: "sandbox" }));
     gifts.pa = await give("pa", 2500);
     gifts.pb = await give("pb", 1000);
-    gifts.t1 = await give("t1", 5000);
+    gifts.sec2 = await give("sec2", 5000);
     gifts.declined = await give("pa", 700, "sandbox_decline");
   });
   after(async () => { await server?.stop(); await admin?.end(); await idp?.close(); await db?.drop(); });
@@ -52,35 +58,42 @@ describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
     assert.ok(!l.lines.some(x => x.donationId === gifts.declined.id));
     assert.ok(l.lines.every(x => x.test && /^pay_sandbox_/.test(x.providerRef) && /^GIFT-/.test(x.number)));
     assert.equal(ok(await as("supt2")("GET", "/api/donations/ledger")).lines.length, 0, "another district sees none");
-    for (const who of ["p1", "t1", "pa", "pu"]) assert.equal((await as(who)("GET", "/api/donations/ledger")).status, 403, who);
+    for (const who of ["p1", "t1", "sec1", "sec2", "pa", "pu"]) assert.equal((await as(who)("GET", "/api/donations/ledger")).status, 403, who);
   });
 
-  it("the superintendent names staff as finance reviewers; families can't be named", async () => {
-    assert.equal((await as("p1")("PUT", `/api/donations/finance/reviewers/${USERS.t1[0]}`, { on: true })).status, 403);
-    assert.equal((await as("supt1")("PUT", `/api/donations/finance/reviewers/${USERS.pa[0]}`, { on: true })).status, 400, "a parent can't review");
-    assert.equal((await as("supt2")("PUT", `/api/donations/finance/reviewers/${USERS.p1[0]}`, { on: true })).status, 400, "not staff in d2");
-    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${USERS.p1[0]}`, { on: true }));
-    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${USERS.p1[0]}`, { on: true })); // naming twice is fine
-    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${USERS.t1[0]}`, { on: true }));
+  it("the superintendent designates school secretaries as finance reviewers; nobody else can be named", async () => {
+    assert.equal((await as("p1")("PUT", `/api/donations/finance/reviewers/${SEC.sec1}`, { on: true })).status, 403);
+    assert.equal((await as("sec1")("PUT", `/api/donations/finance/reviewers/${SEC.sec1}`, { on: true })).status, 403, "a secretary can't designate themself");
+    for (const who of ["pa", "t1", "p1"]) {
+      const r = await as("supt1")("PUT", `/api/donations/finance/reviewers/${USERS[who][0]}`, { on: true });
+      assert.equal(r.status, 400, who); assert.equal(r.body.error, "reviewer_must_be_school_secretary", who);
+    }
+    assert.equal((await as("supt2")("PUT", `/api/donations/finance/reviewers/${SEC.sec1}`, { on: true })).status, 400, "not a secretary in d2");
+    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${SEC.sec1}`, { on: true }));
+    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${SEC.sec1}`, { on: true })); // naming twice is fine
+    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${SEC.sec2}`, { on: true }));
     const r = ok(await as("supt1")("GET", "/api/donations/finance/reviewers"));
-    assert.deepEqual(r.reviewers.map(x => x.name).sort(), ["Principal S1", "Teacher S1"].sort());
-    assert.ok(!r.staff.some(x => x.id === USERS.pa[0]));
-    assert.equal(ok(await as("p1")("GET", "/api/donations/finance/access")).finance, true);
+    assert.deepEqual(r.reviewers.map(x => x.name).sort(), ["Secretary One", "Secretary Two"]);
+    assert.deepEqual(r.staff.map(x => x.name).sort(), ["Secretary One", "Secretary Two"], "only school secretaries are offered");
+    assert.equal(r.eligible, "School secretaries");
+    assert.equal(ok(await as("sec1")("GET", "/api/donations/finance/access")).finance, true);
+    assert.equal(ok(await as("p1")("GET", "/api/donations/finance/access")).finance, false);
     assert.equal(ok(await as("pa")("GET", "/api/donations/finance/access")).finance, false);
-    assert.equal(ok(await as("p1")("GET", "/api/donations/ledger")).lines.length, 6);
-    assert.equal(ok(await as("p1")("GET", "/api/donations")).gifts.length, 4);
+    assert.equal(ok(await as("sec1")("GET", "/api/donations/ledger")).lines.length, 6);
+    assert.equal(ok(await as("sec1")("GET", "/api/donations")).gifts.length, 4);
+    assert.equal(ok(await as("supt1")("GET", "/api/donations/finance/access")).finance, true, "the district account always has access");
   });
 
   it("a reviewer refunds a gift through the sandbox; the donor gets a plain refund notice", async () => {
-    assert.equal((await as("t1")("POST", `/api/donations/${gifts.t1.id}/refund`, { reason: "Asked for it back" })).status, 403, "nobody refunds their own gift");
+    assert.equal((await as("sec2")("POST", `/api/donations/${gifts.sec2.id}/refund`, { reason: "Asked for it back" })).status, 403, "nobody refunds their own gift");
     assert.equal((await as("pa")("POST", `/api/donations/${gifts.pb.id}/refund`, { reason: "Asked for it back" })).status, 403);
-    assert.equal((await as("p1")("POST", `/api/donations/${gifts.pa.id}/refund`, {})).status, 400, "a reason is required");
-    assert.equal((await as("p1")("POST", `/api/donations/${gifts.declined.id}/refund`, { reason: "Asked for it back" })).status, 409);
-    const r = ok(await as("p1")("POST", `/api/donations/${gifts.pa.id}/refund`, { reason: "Donor asked for it back" }));
+    assert.equal((await as("sec1")("POST", `/api/donations/${gifts.pa.id}/refund`, {})).status, 400, "a reason is required");
+    assert.equal((await as("sec1")("POST", `/api/donations/${gifts.declined.id}/refund`, { reason: "Asked for it back" })).status, 409);
+    const r = ok(await as("sec1")("POST", `/api/donations/${gifts.pa.id}/refund`, { reason: "Donor asked for it back" }));
     assert.match(r.number, /^GIFT-\d{4}-\d{6}-R$/);
     assert.equal(r.amountCents, 2500);
     assert.equal(r.feeKeptCents, fee(2500));
-    assert.equal((await as("p1")("POST", `/api/donations/${gifts.pa.id}/refund`, { reason: "Donor asked for it back" })).status, 409, "once only");
+    assert.equal((await as("sec1")("POST", `/api/donations/${gifts.pa.id}/refund`, { reason: "Donor asked for it back" })).status, 409, "once only");
     const mine = ok(await as("pa")("GET", "/api/donations/mine")).find(g => g.id === gifts.pa.id);
     assert.equal(mine.status, "refunded");
     assert.equal(mine.refundNotice.number, r.number);
@@ -95,14 +108,14 @@ describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
   });
 
   it("reconciliation matches, and the refunder can't sign the period off", async () => {
-    const rep = ok(await as("p1")("GET", `/api/donations/reconciliation?from=${today()}&to=${today()}`));
+    const rep = ok(await as("sec1")("GET", `/api/donations/reconciliation?from=${today()}&to=${today()}`));
     assert.equal(rep.matched, true);
     assert.equal(rep.gifts, 3);
     assert.equal(rep.refunds, 1);
     assert.equal(rep.netCents, rep.ledgerNetCents);
     assert.equal(rep.netCents, 8500 - 2500 - fee(2500) - fee(1000) - fee(5000));
     assert.equal(rep.canSignOff, false);
-    const blocked = await as("p1")("POST", "/api/donations/reconciliations", { from: today(), to: today() });
+    const blocked = await as("sec1")("POST", "/api/donations/reconciliations", { from: today(), to: today() });
     assert.equal(blocked.status, 403);
     assert.equal(blocked.body.error, "separation_of_duties");
     assert.equal((await as("pa")("POST", "/api/donations/reconciliations", { from: today(), to: today() })).status, 403);
@@ -111,7 +124,7 @@ describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
     const signed = ok(await as("supt1")("POST", "/api/donations/reconciliations", { from: today(), to: today(), note: "Sandbox month-end check" }));
     assert.equal(signed.matched, true);
     assert.equal(signed.reconciledBy, "Supt One");
-    assert.equal(ok(await as("t1")("GET", "/api/donations/reconciliations")).length, 1);
+    assert.equal(ok(await as("sec2")("GET", "/api/donations/reconciliations")).length, 1);
   });
 
   it("a gift record with no ledger lines shows up as a discrepancy", async () => {
@@ -126,9 +139,9 @@ describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
   });
 
   it("removing a reviewer ends their access; the runtime role can't write the books", async () => {
-    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${USERS.t1[0]}`, { on: false }));
-    assert.equal((await as("t1")("GET", "/api/donations/ledger")).status, 403);
-    assert.equal((await as("supt1")("PUT", `/api/donations/finance/reviewers/${USERS.t1[0]}`, { on: false })).status, 404);
+    ok(await as("supt1")("PUT", `/api/donations/finance/reviewers/${SEC.sec2}`, { on: false }));
+    assert.equal((await as("sec2")("GET", "/api/donations/ledger")).status, 403);
+    assert.equal((await as("supt1")("PUT", `/api/donations/finance/reviewers/${SEC.sec2}`, { on: false })).status, 404);
     assert.equal(ok(await as("supt1")("GET", "/api/donations/finance/reviewers")).history.length, 2);
     const runtime = new pg.Client(db.appUrl); await runtime.connect();
     try {
@@ -138,8 +151,14 @@ describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
       await assert.rejects(runtime.query("DELETE FROM history_donation_reconciliations"), /permission denied/);
       await assert.rejects(runtime.query("INSERT INTO history_donation_finance_reviewers(district_id,user_id,named_by) VALUES($1,$2,$2)", [ID.d1, USERS.pa[0]]), /permission denied/);
       await assert.rejects(runtime.query("SELECT eduos_history_donation_post_gift($1)", [gifts.pb.id]), /permission denied/);
-      await runtime.query("SELECT set_config('app.role','principal',false), set_config('app.user_id',$1,false), set_config('app.school_id',$2,false)", [USERS.p1[0], ID.s1]);
+      await runtime.query("SELECT set_config('app.role','school_secretary',false), set_config('app.user_id',$1,false), set_config('app.school_id',$2,false)", [SEC.sec1, ID.s1]);
       assert.equal((await runtime.query("SELECT count(*)::int AS n FROM history_donation_finance_reviewers")).rows[0].n, 1, "a reviewer sees their own appointment");
+      assert.equal((await runtime.query("SELECT eduos_history_donation_finance() AS ok")).rows[0].ok, true);
+      // Designated, but acting at a school where they aren't the secretary: no access.
+      await runtime.query("SELECT set_config('app.school_id',$1,false)", [ID.s2]);
+      assert.equal((await runtime.query("SELECT eduos_history_donation_finance() AS ok")).rows[0].ok, false);
+      await runtime.query("SELECT set_config('app.role','teacher',false), set_config('app.school_id',$1,false)", [ID.s1]);
+      assert.equal((await runtime.query("SELECT eduos_history_donation_finance() AS ok")).rows[0].ok, false, "only while acting as school secretary");
       await runtime.query("SELECT set_config('app.role','parent',false), set_config('app.user_id',$1,false)", [USERS.pa[0]]);
       assert.equal((await runtime.query("SELECT count(*)::int AS n FROM history_donation_ledger")).rows[0].n, 0, "a donor doesn't see the books");
       assert.equal((await runtime.query("SELECT count(*)::int AS n FROM history_donation_finance_reviewers")).rows[0].n, 0);
