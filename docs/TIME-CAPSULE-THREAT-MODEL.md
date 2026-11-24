@@ -52,7 +52,11 @@ takes over their rights (`eduos_history_own_after_transition`).
 | Public or guessable links | there are no public links to history items or capsules; every route needs a session | route contract tests |
 | Signed URL leakage | no signed URLs are issued for history media (media storage is TC-02–TC-04 follow-up work; it must use short-lived, session-checked access) | — (residual, below) |
 | Cache poisoning / shared caches | history routes send `Cache-Control: no-store` | route code |
-| Bulk export abuse | no bulk export route exists; exports are TC-07 work and must be per-student, audited and rate limited | — (residual, below) |
+| Bulk export abuse | export is one student per request, only by the student, guardians, a guardian the student shares with, school leaders or the superintendent (not teachers, not emergency access); 5 per person per student per hour and 20 per person per day (db/125, checked in the database) plus a route limit | `history-export` |
+| Export leaking more than the viewer sees | the export runs the same visibility rules as the portfolio, published items only; the copy equals the view | `history-export` |
+| Export links or stored copies | the file is made on request and sent as a download (`Content-Disposition: attachment`, `Cache-Control: no-store`); nothing is stored and there is no link | `history-export` |
+| Script in a downloaded page | every field is HTML-escaped and the page carries `Content-Security-Policy: default-src 'none'` | `history-export` (unit and integration) |
+| Silent export | every download is written to `history_access_log` (`export_history`) and the audit log; it shows under "Who looked" | `history-export` |
 
 ## Residual risks and operational controls
 
@@ -66,9 +70,12 @@ takes over their rights (`eduos_history_own_after_transition`).
 * **Media files.** Attachments are text-only today. When production media
   storage lands, downloads must be session-checked and short-lived, and must
   apply the same relationship and grant checks.
-* **Exports.** Family and student exports (TC-07) must log to
-  `history_access_log`, be per-student, rate limited, and never produce a
-  public link.
+* **Exports.** Built (db/125): per student, by the people listed above,
+  logged and limited, no links. A downloaded file is outside EduOS's control
+  once saved; the page says so, and records offices should treat a copy like
+  a printout. Media files aren't included until media storage lands.
+* **Capsules.** Sealed Time Capsule contents are not part of an export; they
+  stay sealed until released (TC-07).
 * **Telemetry and analytics.** No history content is sent to analytics. Any
   future telemetry needs a privacy review first.
 * **Encryption.** Data is encrypted in transit and at rest by the database
