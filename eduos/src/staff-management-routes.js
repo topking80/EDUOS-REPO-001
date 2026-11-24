@@ -2,7 +2,7 @@
 import { requireSession, requireCsrf } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { HttpError } from "./role-app-util.js";
-const STAFF=["superintendent","it_admin","principal","vice_principal","counselor","nurse","maintenance","lunch_staff","librarian","teacher","driver"];
+const STAFF=["superintendent","it_admin","principal","vice_principal","counselor","nurse","maintenance","lunch_staff","librarian","teacher","driver","school_secretary"];
 const LEADS=["superintendent","it_admin","principal","vice_principal"];
 const DEPTS=["instruction","transport","facilities","health_office","counseling","meal_service","library","administration","other"];
 const clean=(v,n)=>typeof v==="string"?v.trim().slice(0,n):"";
