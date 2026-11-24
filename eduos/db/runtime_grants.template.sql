@@ -72,6 +72,7 @@ GRANT SELECT, INSERT, DELETE ON teacher_student_rosters TO eduos_app;
 GRANT SELECT, INSERT, DELETE ON oidc_pending_logins TO eduos_app;
 -- 037 native app sign-in handoffs (single-use, 60 s; deleted on redemption).
 GRANT SELECT, INSERT, DELETE ON native_login_handoffs TO eduos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON device_sign_in_requests TO eduos_app;
 REVOKE ALL ON FUNCTION eduos_retention_purge(int,int,int,int), eduos_purge_sessions(int) FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_purge_student(uuid) TO eduos_app;
 
