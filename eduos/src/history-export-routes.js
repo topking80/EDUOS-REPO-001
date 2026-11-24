@@ -37,6 +37,8 @@ export function registerHistoryExportRoutes(app) {
             FROM student_history_entries e LEFT JOIN users u ON u.id=e.author_user_id
            WHERE e.student_id=$1 AND e.status='published' ORDER BY e.occurred_at, e.id LIMIT ${MAX_ITEMS + 1}`, [student.id]);
         if (items.length > MAX_ITEMS) throw new HttpError(413, "history_too_large_to_download");
+        const photos = items.length ? await rows(client, `SELECT entry_id,caption,alt_text FROM eduos_history_entry_photos($1::uuid[])`, [items.map(i => i.id)]) : [];
+        for (const i of items) i.photos = photos.filter(p => p.entry_id === i.id).map(p => ({ caption: p.caption, description: p.alt_text }));
         const me = await one(client, `SELECT display_name FROM users WHERE id=$1`, [req.actor.userId]);
         await client.query(`INSERT INTO history_access_log(district_id,student_id,user_id,access,action,item_count) VALUES($1,$2,$3,$4,'export_history',$5)`,
           [req.actor.districtId, student.id, req.actor.userId, access, items.length]);
@@ -46,9 +48,9 @@ export function registerHistoryExportRoutes(app) {
       const doc = {
         format: EXPORT_FORMAT, exportedAt: new Date().toISOString(),
         exportedBy: { name: out.by, as: out.access }, student: { name: out.student.display_name },
-        note: "A copy of the published items this person could see on the day it was made. Media files are not included.",
+        note: "A copy of the published items this person could see on the day it was made. Photos are listed by their descriptions; the image files are not included.",
         items: out.items.map(r => ({ type: r.entry_type, kind: r.classification, title: r.title, body: r.body, occurredAt: r.occurred_at,
-          schoolYear: r.school_year, source: r.source_type, author: r.author_name }))
+          schoolYear: r.school_year, source: r.source_type, author: r.author_name, ...(r.photos.length ? { photos: r.photos } : {}) }))
       };
       doc.sha256 = crypto.createHash("sha256").update(JSON.stringify(doc.items)).digest("hex");
       const base = `history-${out.student.display_name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "student"}-${doc.exportedAt.slice(0, 10)}`;

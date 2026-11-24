@@ -1218,7 +1218,8 @@ VIEWS.contributions = async () => {
     return h("article", { class: "card" },
       h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, ITEM_STATUS[item.status] || item.status)),
       h("p", { class: "small muted" }, `${item.studentName} · ${fmtDay(item.occurredAt)}`),
-      item.body ? h("p", {}, item.body) : null, decisionList(item.decisions), editor);
+      item.body ? h("p", {}, item.body) : null, photoStrip(item.photos),
+      ["draft", "submitted"].includes(item.status) ? photoAdder(item.id) : null, decisionList(item.decisions), editor);
   });
   return [h("h2", {}, "Student history items"),
     h("section", { class: "card" }, h("details", { open: !(mine.data || []).length }, h("summary", {}, "Add an item"),
@@ -1323,7 +1324,7 @@ VIEWS.portfolio = async () => {
   const card = item => h("li", { class: "card" },
     h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, PORTFOLIO_TYPE[item.entryType] || item.entryType)),
     h("p", { class: "small muted" }, `${fmtDay(item.occurredAt)} · ${PORTFOLIO_KIND[item.kind] || item.kind}${item.authorName ? ` · ${item.authorName}` : ""}`),
-    item.body ? h("p", {}, item.body) : null);
+    item.body ? h("p", {}, item.body) : null, photoStrip(item.photos));
   const add = items => {
     for (const item of items) {
       let ul = sections.get(item.schoolYear);
@@ -1492,7 +1493,7 @@ VIEWS.history = async () => {
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
   const teacher = await teacherReviewSection();
-  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), state.me.role === "superintendent" ? await emergencyReviewCard() : null] : null;
+  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard()] : null] : null;
   return [privacy, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
     h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),
@@ -4535,6 +4536,60 @@ async function enterRanking(d, ind, def, latest) {
   try { await api.put(`/api/rankings/schools/${d.id}/${v.year}/${ind.key}`, v.body); toast("Saved. It needs verifying."); go("rankings", { push: false }); }
   catch (e) { toast({ check_the_figures: "Check the figures: counts can't be larger than the total, and percentages are 0 to 100.", invalid_entry: "Use a school year like 2025-26.",
     invalid_source: "The source link must start with https://." }[e.body?.error] || "Couldn't save it."); }
+}
+// ---- MEDIA-01: photos on history items --------------------------------------
+// Photos load through EduOS (/api/history/photos/:id), which checks the viewer
+// and redirects to a 60-second private link; lazy, with the uploader's description.
+function photoStrip(photos) {
+  if (!photos?.length) return null;
+  return h("div", { class: "photo-strip" }, photos.map(p => h("figure", {},
+    h("img", { src: `/api/history/photos/${p.id}`, alt: p.alt, loading: "lazy", decoding: "async", width: p.width || undefined, height: p.height || undefined, style: "max-width:100%;height:auto;border-radius:8px" }),
+    p.caption ? h("figcaption", { class: "small muted" }, p.caption) : null)));
+}
+function photoAdder(entryId) {
+  const key = `ph-${entryId.slice(0, 8)}`;
+  const file = h("input", { id: `${key}-f`, type: "file", accept: "image/jpeg,image/png,image/webp" });
+  const alt = h("input", { id: `${key}-a`, maxlength: 300, placeholder: "What's in the photo (for people who can't see it)" });
+  const cap = h("input", { id: `${key}-c`, maxlength: 500 });
+  return h("details", { class: "card" }, h("summary", {}, "Add a photo"),
+    h("p", { class: "small muted" }, "JPEG, PNG or WebP. EduOS checks it for malware and removes the location and camera details before anyone can see it. Don't include other students."),
+    h("label", { for: `${key}-f` }, "Photo"), file, h("label", { for: `${key}-a` }, "Description (required)"), alt, h("label", { for: `${key}-c` }, "Caption (optional)"), cap,
+    h("button", { class: "btn small", type: "button", onclick: async e => {
+      const f = file.files?.[0];
+      if (!f) return toast("Choose a photo.");
+      if (alt.value.trim().length < 3) return toast("Describe the photo.");
+      e.target.disabled = true;
+      try {
+        if (!api.csrf) await api.get("/api/csrf").then(r => { api.csrf = r.csrfToken; }).catch(() => {});
+        const r = await fetch(`/api/history/entries/${entryId}/photos?alt=${encodeURIComponent(alt.value.trim())}&caption=${encodeURIComponent(cap.value.trim())}`, {
+          method: "POST", credentials: "same-origin", body: f, headers: { "content-type": f.type, "x-csrf-token": api.csrf || "", "idempotency-key": crypto.randomUUID().replace(/-/g, "") } });
+        const out = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const why = { photos_not_enabled: "Photos aren't turned on for this district.", photo_too_large: "That photo is too large.", too_many_photos: "This item has as many photos as it can.",
+            student_storage_full: "This student's history is full.", photo_failed_security_scan: "This file didn't pass the security check.", image_type_mismatch: "That file isn't the kind of image it says it is.",
+            not_a_valid_image: "That file isn't a photo EduOS can read.", media_storage_not_configured: "Photo storage isn't set up yet.", unsupported_media_type: "Use a JPEG, PNG or WebP photo." };
+          return toast(why[out.error] || "Couldn't add the photo.");
+        }
+        toast("Photo added."); go(state.tab, { push: false });
+      } catch { toast("Couldn't add the photo."); } finally { e.target.disabled = false; }
+    } }, "Upload"));
+}
+async function mediaPolicyCard() {
+  const d = (await safe(api.get("/api/history/media-policy")))?.data;
+  if (!d?.canEdit) return null;
+  const mb = v => Math.round(v / 1048576);
+  const on = h("input", { id: "mp-on", type: "checkbox", checked: d.imagesEnabled, disabled: !d.storageReady || undefined });
+  const size = h("input", { id: "mp-size", type: "number", min: 1, max: 20, value: mb(d.maxImageBytes), style: "width:6em" });
+  const per = h("input", { id: "mp-per", type: "number", min: 1, max: 20, value: d.maxPerEntry, style: "width:6em" });
+  const total = h("input", { id: "mp-total", type: "number", min: 1, max: 5120, value: mb(d.maxBytesPerStudent), style: "width:7em" });
+  return h("section", { class: "card", "aria-label": "Photos in student history" }, h("h3", {}, "Photos in student history"),
+    !d.storageReady ? h("p", { class: "small muted" }, "District IT needs to connect private photo storage (S3-compatible) and the ClamAV malware scanner before photos can be turned on.") : null,
+    h("label", { class: "check" }, on, " Allow photos on history items"),
+    h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "mp-size" }, "Largest photo (MB)"), size), h("div", {}, h("label", { for: "mp-per" }, "Photos per item"), per),
+      h("div", {}, h("label", { for: "mp-total" }, "Per student in total (MB)"), total)),
+    h("button", { class: "btn small", type: "button", onclick: async () => {
+      try { await api.put("/api/history/media-policy", { imagesEnabled: on.checked, maxImageBytes: Number(size.value) * 1048576, maxPerEntry: Number(per.value), maxBytesPerStudent: Number(total.value) * 1048576 }); toast("Saved."); }
+      catch { toast("Couldn't save it. Check the numbers."); } } }, "Save"));
 }
 // ---- TC-05: download a copy of a student's history -------------------------
 function historyDownloadCard(studentId, role) {

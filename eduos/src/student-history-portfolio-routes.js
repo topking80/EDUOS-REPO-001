@@ -85,11 +85,14 @@ export function registerStudentHistoryPortfolioRoutes(app) {
           [req.actor.districtId, student.id, req.actor.userId, access, Math.min(rows.length, PAGE)]);
         const more = rows.length > PAGE;
         const page = more ? rows.slice(0, PAGE) : rows;
+        // MEDIA-01: the items' ready photos (only for items this person can see).
+        const photos = page.length ? (await client.query(`SELECT * FROM eduos_history_entry_photos($1::uuid[])`, [page.map(r => r.id)])).rows : [];
         const distinct = key => [...new Set(facets.map(f => f[key]))].sort();
         return {
           student: { id: student.id, name: student.display_name },
           items: page.map(r => ({ id: r.id, entryType: r.entry_type, kind: r.classification, title: r.title, body: r.body,
-            occurredAt: r.occurred_at, schoolYear: r.school_year, source: r.source_type, authorName: r.author_name })),
+            occurredAt: r.occurred_at, schoolYear: r.school_year, source: r.source_type, authorName: r.author_name,
+            photos: photos.filter(p => p.entry_id === r.id).map(p => ({ id: p.asset_id, caption: p.caption, alt: p.alt_text, width: p.width, height: p.height })) })),
           nextCursor: more ? encodeCursor(page.at(-1)) : null,
           facets: { years: distinct("school_year").reverse(), types: distinct("entry_type"), kinds: distinct("classification"),
             total: facets.reduce((n, f) => n + f.n, 0) }

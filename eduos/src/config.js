@@ -127,6 +127,11 @@ export const config = {
   integrationsKey: process.env.INTEGRATIONS_KEY || "",
   // Global operational kill switch for scheduled roster jobs; manual sync remains available.
   sisSyncDispatchEnabled: process.env.SIS_SYNC_DISPATCH_ENABLED !== "false",
+  // MEDIA-01: private S3-compatible storage and ClamAV for history photos.
+  // Photos stay off until both are set (and the superintendent turns them on).
+  mediaS3: { endpoint: process.env.MEDIA_S3_ENDPOINT || "", region: process.env.MEDIA_S3_REGION || "", bucket: process.env.MEDIA_S3_BUCKET || "",
+    accessKeyId: process.env.MEDIA_S3_ACCESS_KEY_ID || "", secretAccessKey: process.env.MEDIA_S3_SECRET_ACCESS_KEY || "", pathStyle: process.env.MEDIA_S3_PATH_STYLE === "true" },
+  clamav: { host: process.env.CLAMAV_HOST || "", port: Number(process.env.CLAMAV_PORT || 3310) },
   // SAFE-04: National Weather Service alerts. NWS requires a User-Agent with a
   // contact (e.g. "EduOS (it@district.org)"); unset, the sweep doesn't run.
   weatherAlertsUserAgent: (process.env.WEATHER_ALERTS_USER_AGENT || "").trim(),
