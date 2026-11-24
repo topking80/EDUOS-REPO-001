@@ -10,6 +10,7 @@ import { config } from "./config.js";
 import { parse as parseCookies } from "./cookies.js";
 import { pool, withTenantTransaction, assertSafeRuntimeRole, assertSchemaReady } from "./db.js";
 import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership, sessionIsLive } from "./auth.js";
+import { startDeviceSignIn, redeemDeviceSignIn, checkDeviceSignIn, approveDeviceSignIn, denyDeviceSignIn } from "./device-sign-in.js";
 import { requirePermission, requireSchoolScope, canPerform, isGrantable, isDistrictRole } from "./policy.js";
 import { writeAudit } from "./audit.js";
 import { cspDirectives } from "./csp.js";
@@ -185,6 +186,17 @@ app.get("/metrics",metricsHandler({token:config.metricsToken,version:APP_VERSION
 app.get("/auth/login",loginLimiter,beginLogin);
 app.get("/auth/callback",loginLimiter,completeLogin);
 app.post("/auth/native/token",loginLimiter,exchangeNativeLogin);
+// Device sign-in (RFC 8628) for TVs, Roku and the Windows app (src/device-sign-in.js).
+// Starting a sign-in counts as a sign-in attempt; polling every 5 s for up to
+// 10 minutes gets its own per-address budget; approving a code is limited per
+// person so a signed-in account can't be used to guess codes.
+const deviceTokenLimiter=rateLimit({windowMs:60_000,limit:60,standardHeaders:true,legacyHeaders:false,keyGenerator:req=>`device:${ipKeyGenerator(req.ip)}`});
+const deviceApproveLimiter=rateLimit({windowMs:15*60_000,limit:30,standardHeaders:true,legacyHeaders:false,keyGenerator:req=>`approver:${req.actor.userId}`});
+app.post("/auth/device/code",loginLimiter,startDeviceSignIn);
+app.post("/auth/device/token",deviceTokenLimiter,redeemDeviceSignIn);
+app.post("/api/device-sign-in/check",requireSession,requireCsrf,deviceApproveLimiter,checkDeviceSignIn);
+app.post("/api/device-sign-in/approve",requireSession,requireCsrf,deviceApproveLimiter,approveDeviceSignIn);
+app.post("/api/device-sign-in/deny",requireSession,requireCsrf,deviceApproveLimiter,denyDeviceSignIn);
 app.post("/auth/logout",requireSession,requireCsrf,logout);
 app.get("/api/csrf",requireSession,issueCsrfToken);
 
