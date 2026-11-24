@@ -234,10 +234,14 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
         for (final h in car) _arrivalTile(h),
       ]),
       SectionCard(title: 'Car rider dismissal', children: [
-        Text('${waiting.length} student release(s) waiting at the school pick-up point.'),\n        for (final rider in waiting.take(12))\n          ListTile(dense: true, contentPadding: EdgeInsets.zero, title: Text(str(rider['name'])), subtitle: Text('${str(rider['grade'])} · awaiting authorized release'), trailing: const StatusChip('expected', text: 'Waiting')),
+        Text('${waiting.length} student release(s) waiting at the school pick-up point.'),
+        for (final rider in waiting.take(12))
+          ListTile(dense: true, contentPadding: EdgeInsets.zero, title: Text(str(rider['name'])), subtitle: Text('${str(rider['grade'])} · awaiting authorized release'), trailing: const StatusChip('expected', text: 'Waiting')),
         const Notice('This is the school pick-up duty queue. Pass verification, photo-ID checks, custody safeguards and release authorization remain in the dedicated pick-up workflow.'),
       ]),
-      SectionCard(title: 'Library and lunchroom duties', children: [\n        for (final shift in d.shifts.where((x) => ['library', 'meal_service', 'transport'].contains(str(x['department']))))\n          ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.schedule_outlined), title: Text(str(shift['assignment'])), subtitle: Text('${str(shift['department']).replaceAll('_', ' ')} · ${str(shift['shift_date'])} · ${str(shift['starts_at'])}–${str(shift['ends_at'])}')),
+      SectionCard(title: 'Library and lunchroom duties', children: [
+        for (final shift in d.shifts.where((x) => ['library', 'meal_service', 'transport'].contains(str(x['department']))))
+          ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.schedule_outlined), title: Text(str(shift['assignment'])), subtitle: Text('${str(shift['department']).replaceAll('_', ' ')} · ${str(shift['shift_date'])} · ${str(shift['starts_at'])}–${str(shift['ends_at'])}')),
         if (checklists.isEmpty && tasks.isEmpty) const EmptyState('No shared duty checklists or tasks are assigned right now.'),
         for (final item in checklists.where((x) => ['library', 'meal_service', 'transport', 'general'].contains(str(x['domain']))))
           CheckboxListTile(
