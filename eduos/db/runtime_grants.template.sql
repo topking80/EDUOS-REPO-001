@@ -725,3 +725,6 @@ GRANT SELECT ON school_weather_alerts TO eduos_app;
 GRANT UPDATE (decision, decided_by, decided_at, decision_note, incident_id) ON school_weather_alerts TO eduos_app;
 REVOKE DELETE, TRUNCATE ON district_weather_settings, school_weather_alerts FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_weather_lead(uuid), eduos_weather_targets(), eduos_weather_record(uuid, uuid, jsonb), eduos_weather_recipients(uuid, uuid) TO eduos_app;
+
+-- TC-05 export (db/125): download limits.
+GRANT EXECUTE ON FUNCTION eduos_history_export_allowed(uuid) TO eduos_app;

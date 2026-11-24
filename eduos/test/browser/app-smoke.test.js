@@ -531,8 +531,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           "vice_principal/history": ["Teacher contributions", "Science fair", "Ask for changes"],
           "superintendent/history": ["Teacher contributions", "Science fair"],
           "parent/children": ["From teachers (1 to decide)", "Volcano project", "Keep in history", "Decline", "History & portfolio"],
-          "parent/portfolio": ["Alice A's history", "School year 2026-27", "Volcano project", "Search"],
-          "pupil/portfolio": ["My history", "School year 2026-27", "School year 2025-26", "Volcano project", "From a teacher", "Family day", "All school years", "Show more"] }[`${role}/${tab}`];
+          "parent/portfolio": ["Alice A's history", "School year 2026-27", "Volcano project", "Search", "Download a copy"],
+          "pupil/portfolio": ["Download a copy", "My history", "School year 2026-27", "School year 2025-26", "Volcano project", "From a teacher", "Family day", "All school years", "Show more"] }[`${role}/${tab}`];
         for (const want of expect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
       } finally {
         page.close();

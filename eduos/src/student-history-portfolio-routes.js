@@ -25,6 +25,32 @@ function decodeCursor(value) {
 }
 const likePattern = q => `%${q.replace(/[\\%_]/g, c => `\\${c}`)}%`;
 
+/**
+ * How the session may see a student's history, or 404. A pupil may leave out
+ * the student (their own). Shared by the portfolio and the export.
+ */
+export async function historyAccess(client, actor, studentIdIn) {
+  let studentId = studentIdIn;
+  if (!studentId && actor.role === "pupil") {
+    studentId = (await one(client, `SELECT student_id FROM student_user_links
+        WHERE user_id=$1 AND district_id=$2 AND relationship='pupil' AND status='active' LIMIT 1`, [actor.userId, actor.districtId]))?.student_id;
+  }
+  if (!studentId) throw new HttpError(400, "student_required");
+  const student = await one(client, "SELECT id, school_id, display_name FROM students WHERE id=$1 AND district_id=$2", [studentId, actor.districtId]);
+  const related = student && (await one(client, "SELECT eduos_history_relation($1,$2,$3) AS r", [actor.districtId, student.school_id, student.id])).r;
+  // TC-05: read-only access by a sharing grant, an emergency window, or a
+  // guardian's own items after the student took over their rights.
+  const access = related || (student && (await one(client, `SELECT CASE
+      WHEN eduos_history_emergency($1,$2,$3) THEN 'emergency'
+      WHEN EXISTS (SELECT 1 FROM history_sharing_grants g WHERE g.student_id=$3 AND g.grantee_user_id=$4 AND g.revoked_at IS NULL AND g.expires_at>now())
+        AND NOT eduos_custody_blocked($3,$4) AND eduos_student_holds_rights($3) THEN 'grant'
+      WHEN eduos_student_holds_rights($3) AND eduos_is_linked_guardian($3) THEN 'guardian' END AS a`,
+    [actor.districtId, student.school_id, student.id, actor.userId])).a);
+  if (!access) throw new HttpError(404, "student_not_found");
+  return { student, access };
+}
+export { YEAR as SCHOOL_YEAR_SQL };
+
 export function registerStudentHistoryPortfolioRoutes(app) {
   app.get("/api/history/portfolio", requireSession, async (req, res, next) => {
     try {
@@ -36,24 +62,7 @@ export function registerStudentHistoryPortfolioRoutes(app) {
         throw new HttpError(400, "invalid_portfolio_query");
       const cursor = decodeCursor(q.cursor);
       const data = await withTenantTransaction(req.actor, async client => {
-        // A pupil sees their own history; everyone else names the student.
-        let studentId = q.studentId;
-        if (!studentId && req.actor.role === "pupil") {
-          studentId = (await one(client, `SELECT student_id FROM student_user_links
-              WHERE user_id=$1 AND district_id=$2 AND relationship='pupil' AND status='active' LIMIT 1`, [req.actor.userId, req.actor.districtId]))?.student_id;
-        }
-        if (!studentId) throw new HttpError(400, "student_required");
-        const student = await one(client, "SELECT id, school_id, display_name FROM students WHERE id=$1 AND district_id=$2", [studentId, req.actor.districtId]);
-        const related = student && (await one(client, "SELECT eduos_history_relation($1,$2,$3) AS r", [req.actor.districtId, student.school_id, student.id])).r;
-        // TC-05: read-only access by a sharing grant, an emergency window, or a
-        // guardian's own items after the student took over their rights.
-        const access = related || (student && (await one(client, `SELECT CASE
-            WHEN eduos_history_emergency($1,$2,$3) THEN 'emergency'
-            WHEN EXISTS (SELECT 1 FROM history_sharing_grants g WHERE g.student_id=$3 AND g.grantee_user_id=$4 AND g.revoked_at IS NULL AND g.expires_at>now())
-              AND NOT eduos_custody_blocked($3,$4) AND eduos_student_holds_rights($3) THEN 'grant'
-            WHEN eduos_student_holds_rights($3) AND eduos_is_linked_guardian($3) THEN 'guardian' END AS a`,
-          [req.actor.districtId, student.school_id, student.id, req.actor.userId])).a);
-        if (!access) throw new HttpError(404, "student_not_found");
+        const { student, access } = await historyAccess(client, req.actor, q.studentId);
 
         const params = [student.id, q.type ?? null, q.kind ?? null, q.year ?? null, q.q?.trim() ? likePattern(q.q.trim()) : null];
         const filters = `e.student_id=$1 AND e.status='published'

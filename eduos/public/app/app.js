@@ -1352,6 +1352,7 @@ VIEWS.portfolio = async () => {
     f.total ? controls : null,
     first.items.length ? list : empty(filtered ? "Nothing matches these filters." : "Nothing in the history yet."),
     cursor ? more : null,
+    historyDownloadCard(first.student.id, role),
     await studentSharingCard(first.student.id)];
 };
 // ---------------- Time Capsules ----------------
@@ -4535,6 +4536,24 @@ async function enterRanking(d, ind, def, latest) {
   catch (e) { toast({ check_the_figures: "Check the figures: counts can't be larger than the total, and percentages are 0 to 100.", invalid_entry: "Use a school year like 2025-26.",
     invalid_source: "The source link must start with https://." }[e.body?.error] || "Couldn't save it."); }
 }
+// ---- TC-05: download a copy of a student's history -------------------------
+function historyDownloadCard(studentId, role) {
+  if (!["pupil", "parent", "principal", "superintendent"].includes(role)) return null;
+  const get = async format => {
+    try {
+      const r = await fetch(`/api/history/export?studentId=${encodeURIComponent(studentId)}&format=${format}`, { credentials: "same-origin" });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); return toast(r.status === 429 ? "That's the download limit for now. Try again later." : e.error === "export_not_allowed" ? "You can view this history but not download it." : "Couldn't make the copy."); }
+      const name = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "")?.[1] || `history.${format}`;
+      const url = URL.createObjectURL(await r.blob());
+      const a = h("a", { href: url, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      toast("Downloaded. It's logged under Who looked.");
+    } catch { toast("Couldn't make the copy."); }
+  };
+  return h("details", { class: "card" }, h("summary", {}, "Download a copy"),
+    h("p", { class: "small muted" }, "A copy of the items you can see here, made now and saved to this device. There's no link to share, and the download shows under Who looked. Media files aren't included."),
+    h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: () => get("html") }, "Web page (to read or print)"),
+      h("button", { class: "btn small", type: "button", onclick: () => get("json") }, "Data file (JSON)")));
+}
 // ---- TC-05: history privacy controls --------------------------------------
 const CLASS_TEXT = { family_memory: "Family memories", student_portfolio: "My portfolio", teacher_artifact: "Teachers' items", official_record: "Official records" };
 const ACCESS_TEXT = { guardian: "guardian", student: "student", teacher: "teacher", school_lead: "school leader", district: "district office", grant: "shared by the student", emergency: "emergency access" };
@@ -4593,7 +4612,7 @@ VIEWS.historyprivacy = async () => {
 };
 function accessLogCard(log) {
   return h("section", { class: "card", "aria-label": "Who looked" }, h("h3", {}, "Who looked"),
-    log.length ? h("ul", { class: "list small" }, log.slice(0, 40).map(l => h("li", {}, `${l.who} (${ACCESS_TEXT[l.access] || l.access}) · ${new Date(l.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`)))
+    log.length ? h("ul", { class: "list small" }, log.slice(0, 40).map(l => h("li", {}, `${l.who} (${ACCESS_TEXT[l.access] || l.access})${l.action === "export_history" ? " downloaded a copy" : ""} · ${new Date(l.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`)))
       : empty("No one has opened this history yet."));
 }
 async function emergencyReviewCard() {
