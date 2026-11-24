@@ -144,14 +144,14 @@ class _AccommodationRowState extends State<_AccommodationRow> {
     if (_saving || !_dirty) return;
     setState(() => _saving = true);
     try {
-      await AppScope.read(context).api.put('/api/learning/accommodations/\${widget.a['student_id']}', {'extraTimePct': _pct, 'readAloud': _readAloud});
+      await AppScope.read(context).api.put("/api/learning/accommodations/${widget.a['student_id']}", {'extraTimePct': _pct, 'readAloud': _readAloud});
       if (!mounted) return;
       setState(() {
         _savedPct = _pct;
         _savedReadAloud = _readAloud;
         _saving = false;
       });
-      toast(context, 'Saved for \${firstName(name)}');
+      toast(context, 'Saved for ${firstName(name)}');
     } on ApiException {
       if (!mounted) return;
       setState(() => _saving = false);
@@ -169,7 +169,7 @@ class _AccommodationRowState extends State<_AccommodationRow> {
         Expanded(
           child: DropdownButtonFormField<int>(
             value: _pct,
-            decoration: InputDecoration(labelText: 'Extra time for \${firstName(name)}'),
+            decoration: InputDecoration(labelText: 'Extra time for ${firstName(name)}'),
             items: [for (final v in const [0, 25, 50, 100]) DropdownMenuItem(value: v, child: Text(v == 0 ? 'Standard time' : '+$v% time'))],
             onChanged: _saving ? null : (v) => setState(() => _pct = v ?? 0),
           ),
