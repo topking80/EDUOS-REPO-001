@@ -1,20 +1,14 @@
 name: CodeQL security analysis
 
+# Runs on every pull request to main and every push to main, whatever changed.
+# The Bot1 ruleset requires CodeQL results before a pull request can merge, so
+# a paths filter (it used to be JS files only) left Flutter- or docs-only pull
+# requests waiting for results that never came.
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "eduos/**/*.js"
-      - "eduos/**/*.mjs"
-      - "eduos/**/*.cjs"
-      - ".github/workflows/codeql.yml"
   push:
     branches: [main]
-    paths:
-      - "eduos/**/*.js"
-      - "eduos/**/*.mjs"
-      - "eduos/**/*.cjs"
-      - ".github/workflows/codeql.yml"
   schedule:
     - cron: "23 5 * * 1"
 
