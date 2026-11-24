@@ -368,6 +368,14 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       recipients: [{ userId: "u9", name: "Pupil A", type: "student", consent: "pending" }], events: [] } };
     case "/api/history/capsules/cap1/candidates": return { data: [{ id: "e2", title: "First day of school", entryType: "event", kind: "family_memory", occurredAt: now }] };
     case "/api/history/capsule-recipient-options": return { data: [{ userId: "u9", name: "Pupil A", type: "student" }, { userId: "u1", name: "Smoke Test", type: "guardian" }] };
+    // TC-08: preservation and legal holds.
+    case "/api/history/preservation": return { data: { policy: { verifyEveryDays: 90, archiveAfterDays: null, capacityAlertPercent: 80, recordsScheduleRef: "" },
+      canEdit: role === "superintendent", storageReady: true, archiveStorageClass: null, maxBytesPerStudent: 262144000, lastCheckedAt: now, donationsAffectLimits: false,
+      schools: [{ schoolId: "s1", school: "Maple", studentsWithMedia: 12, usedBytes: 52428800, archiveBytes: 0, nearLimit: 1, atLimit: 0, activeHolds: 1, integrity: { unverified: 0, ok: 40, mismatch: 1, missing: 0 } }],
+      problems: [{ kind: "mismatch", school: "Maple", at: now, text: "A photo at Maple failed its integrity check" }] } };
+    case "/api/history/legal-holds": return { data: [{ id: "lh1", student: { id: "c9", name: "Alice A" }, school: "Maple", reason: "Records request in litigation", matterRef: "Case 26-CV-0142", placedBy: "Principal S1", placedAt: now }] };
+    case "/api/students/c9/legal-holds": return { data: { student: { id: "c9", name: "Alice A" }, onHold: true, canRelease: role === "superintendent",
+      holds: [{ id: "lh1", reason: "Records request in litigation", matterRef: "Case 26-CV-0142", placedBy: "Principal S1", placedAt: now, releasedAt: null }] } };
     default:
       if (pathname.startsWith("/api/node/")) return null; // no local node: 404
       if (/^\/api\/family\/children\/[^/]+\/history-items\/pending$/.test(pathname))
@@ -524,6 +532,10 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           "principal/capsules": ["Milestones to confirm", "Alice A: Graduation", "1 recipient accepted", "Confirm milestone"],
           "parent/capsule": ["Choose a capsule from Time Capsules."] }[`${role}/${tab}`];
         for (const want of capsuleExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
+        // TC-08: preservation for the records office; settings and holds for the superintendent.
+        const preserveExpect = { "principal/history": ["Preservation", "Maple", "failed its integrity check"],
+          "superintendent/history": ["Preservation", "Preservation settings", "Legal holds (1)", "Case 26-CV-0142"] }[`${role}/${tab}`];
+        for (const want of preserveExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
         if (["superintendent", "it_admin"].includes(role) && tab === "payments") {
           if (!text.includes("Payment webhook operations") || !text.includes("Late payment captures needing a refund") || !text.includes("Webhook events requiring investigation"))
             failures.push(`${role} #/payments: webhook operations panel is incomplete`);
@@ -1077,6 +1089,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Alice A: records & privacy")`))) failures.push("principal: no privacy page");
       const t = await page.eval(`document.querySelector("main").textContent`);
       for (const w of ["Restricted", "Order 2026-114", "Who looked", "Teacher S1 (teacher)"]) if (!t.includes(w)) failures.push(`privacy page: ${w}`);
+      for (const w of ["Legal hold", "Case 26-CV-0142", "nothing can be deleted"]) if (!t.includes(w)) failures.push(`privacy page (TC-08): ${w}`);
       await axeScan(page, "principal: records & privacy", a11y);
       if (page.errors.length) failures.push(`privacy page: ${page.errors[0].split("\n")[0]}`);
       page.close();
