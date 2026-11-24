@@ -50,7 +50,7 @@ switching behavior on the actual target hardware before deployment.
 
 ## 2. CI and branch protection
 
-The active default-branch ruleset currently requires these eight CI status
+The active default-branch ruleset currently requires these nine CI status
 checks:
 
 - `unit`
@@ -61,22 +61,24 @@ checks:
 - `dependency-security`
 - `source-and-container-security`
 - `prometheus-rules`
+- `roku-channel`
 
 The ruleset also enables CodeQL code-scanning enforcement, blocks branch
-deletion and force-pushes, and requires pull requests. The current workflow
-contains a ninth CI job, `roku-channel`, which runs BrightScript lint and
-builds the Roku ZIP. **That job is not currently a required status check.**
-The repository's ruleset must be updated by an administrator to add the exact
-status context `roku-channel`; a green optional job does not block a merge if
-it later fails.
+deletion and force-pushes, and requires pull requests. The current workflow's `roku-channel` job runs BrightScript lint and builds
+the Roku ZIP; it is included in the required checks above. A new `ios-simulator`
+job is being added to run a native unsigned Simulator build on macOS. Once that
+job is merged and produces its exact status context, an administrator must add
+`ios-simulator` to the Bot1 required checks before it becomes merge-blocking.
 
 The Windows MSIX workflow at
 `.github/workflows/windows-msix.yml` is manual-only
 (`workflow_dispatch`). It is not a required PR check and does not publish
-packages. The iOS project has no macOS/Xcode build workflow. Linux Flutter
-analysis and widget tests are useful shared-code checks, but do not validate
-native iOS signing, Windows compilation, TV remote behavior, Fire OS behavior,
-or Roku runtime compatibility.
+packages. The `ios-simulator` job builds the iOS Simulator app on macOS without signing;
+it does not validate distribution signing, provisioning, App Store packaging,
+or physical-device behavior. Linux Flutter analysis and widget tests remain
+shared-code checks, not substitutes for native iOS release validation,
+Windows compilation, TV remote behavior, Fire OS behavior, or Roku runtime
+compatibility.
 
 ## 3. Release and certification gates
 
@@ -103,7 +105,8 @@ or Roku runtime compatibility.
 
 ### iOS / App Store
 
-- Run `flutter build ios` on a supported macOS/Xcode runner.
+- Require and pass the `ios-simulator` macOS CI job, then run
+  `flutter build ios` on a supported macOS/Xcode runner for a device build.
 - Configure Apple Developer team, bundle signing, provisioning profiles and
   App Store Connect app record.
 - Validate URL-scheme callback, system-browser authentication, secure token
@@ -183,10 +186,11 @@ The following external inputs are still needed for the relevant store releases:
 
 The repository contains client implementations for Android, iOS, Windows,
 Android/Google TV, Amazon Fire devices and Roku. The degree of automated and
-physical validation differs by platform. Required CI currently validates
-Flutter shared code and Android debug packaging; Roku packaging is automated
-but optional; native iOS and Windows builds and all physical TV/Roku
-certification remain release gates.
+physical validation differs by platform. Required CI validates Flutter shared code, Android debug packaging and Roku
+channel packaging. The `ios-simulator` job adds unsigned native Apple-platform
+build validation once its check is required. Distribution signing, physical
+iPhone/iPad tests, Windows release builds and TV/Roku certification remain
+release gates.
 
 Do not describe a platform as store-ready or production-certified until its
 native build, signing, device tests, privacy review and store submission
