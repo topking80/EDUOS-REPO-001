@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The screen lock: the PIN set on this TV, before anything is shown. -->
+<component name="LockView" extends="Stage">
+  <script type="text/brightscript" uri="pkg:/components/shared/util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/shared/api.brs" />
+  <script type="text/brightscript" uri="pkg:/components/LockView.brs" />
+  <children>
+    <Label translation="[160,140]" width="1600" font="font:LargeBoldSystemFont" color="0xFFFFFFFF" text="EduOS is locked" />
+    <Label id="message" translation="[160,240]" width="1500" wrap="true" font="font:MediumSystemFont" color="0xDDE3EEFF" text="" />
+    <PinEntry id="pin" translation="[160,380]" />
+    <Label translation="[160,780]" width="1500" wrap="true" font="font:SmallSystemFont" color="0xB8C1D1FF"
+      text="Forgot the PIN? Press Back, then choose Sign this TV out. Signing in again with a new code clears the PIN." />
+    <ButtonGroup id="buttons" translation="[160,860]" minWidth="600" />
+    <Timer id="wait" duration="1" repeat="true" />
+  </children>
+</component>
