@@ -255,6 +255,19 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/students/c9/history-privacy": return { data: { student: { id: "c9", name: "Alice A" }, guardians: [{ id: "u1", name: "Parent A", restricted: false }, { id: "u2", name: "Parent Two", restricted: true }],
       restrictions: [{ id: "r1", person: "Parent Two", kind: "court_order", basis: "Order 2026-114", documentRef: null, setBy: "Principal S1", setAt: now, endsOn: null, liftedAt: null }],
       transition: null, grants: [], emergency: [{ id: "e1", person: "Counselor S1", role: "counselor", reason: "Student in crisis; safety plan needed", openedAt: now, expiresAt: now, closed: true, reviewed: false }] } };
+    case "/api/students/c9/history-transfers": return { data: { signingReady: true, keyFingerprint: "TEST-FP", transfers: [
+      { id: "tr1", receivingDistrict: "Lakeside Unified", basis: "enrollment_request", note: "Request dated Nov 20", includeFamily: true, familyDecision: "approved", status: "ready",
+        requestedBy: "Principal S1", createdAt: now, readyAt: now, items: 4, downloads: 1 }] } };
+    // TC-06b: a transfer file received from another district, waiting to be checked.
+    case "/api/history-imports": return { data: [{ id: "hi1", status: "received", from: { district: "Lakeside Unified", school: "Elm School" }, student: { name: "Alice A" },
+      localStudent: null, items: 3, receivedAt: now }] };
+    case "/api/history-imports/hi1": return { data: { id: "hi1", status: "received", from: { district: "Lakeside Unified", school: "Elm School", districtId: "x" }, addressedTo: "Maple District",
+      basis: "enrollment_request", basisNote: "Request dated Nov 20", includesFamily: false, student: { name: "Alice A", number: "L-1", grade: "10" }, localStudent: null,
+      fingerprint: "TEST-SENDER-FP", packagedAt: now, items: [{ pos: 1, title: "Report card", kind: "official_record", type: "event", body: "", occurredAt: now, decision: "pending" }], receivedBy: "Supt One", receivedAt: now, confirmedBy: null,
+      candidates: [{ id: "c9", name: "Alice A", number: "S1-A", grade: "10", school: "Maple", sameName: true, sameNumber: false }], knownFingerprints: [],
+      accepted: 0, rejected: 0 } };
+    case "/api/family/history-transfers": return { data: [{ id: "tr2", studentId: "c1", studentName: "Alice A", school: "Maple", receivingDistrict: "Lakeside Unified",
+      basis: "enrollment_request", note: "Request dated Nov 20", createdAt: now }] };
     case "/api/students/c9/history-access-log": return { data: [{ who: "Teacher S1", access: "teacher", action: "view_history", items: 3, at: now }] };
     case "/api/history/emergency-access": return { data: [{ id: "e1", person: "Counselor S1", role: "counselor", student: "Alice A", school: "Maple", reason: "Student in crisis; safety plan needed", openedAt: now, expiresAt: now }] };
     // RANK-01: the U.S. News indicators.
@@ -362,7 +375,9 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       milestone: "graduation", sealedAt: now, accepted: 1 }] : [] };
     case "/api/history/capsules/cap1": return { data: { id: "cap1", studentId: "c1", studentName: "Alice A", title: "For Alice at 18", message: "Open when you're grown.",
       status: "draft", releaseKind: "scheduled", releaseAt: "2034-06-01T13:00:00Z", mine: true,
-      items: [{ position: 0, entryId: "e1", withheld: false, entryType: "reflection", kind: "family_memory", title: "The day you were born", body: "So happy.", occurredAt: now }],
+      items: [{ position: 0, entryId: "e1", withheld: false, entryType: "reflection", kind: "family_memory", title: "The day you were born", body: "So happy.", occurredAt: now,
+        photos: [{ id: "a3", alt: "Newborn Alice", caption: "" }] }],
+      photos: [{ id: "a4", alt: "Our family on the porch", caption: "Spring 2026" }],
       recipients: [{ userId: "u9", name: "Pupil A", type: "student", consent: "pending" }], events: [] } };
     case "/api/history/capsules/cap1/candidates": return { data: [{ id: "e2", title: "First day of school", entryType: "event", kind: "family_memory", occurredAt: now }] };
     case "/api/history/capsule-recipient-options": return { data: [{ userId: "u9", name: "Pupil A", type: "student" }, { userId: "u1", name: "Smoke Test", type: "guardian" }] };
@@ -533,7 +548,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           "vice_principal/history": ["Teacher contributions", "Science fair", "Ask for changes"],
           "superintendent/history": ["Teacher contributions", "Science fair"],
           "parent/children": ["From teachers (1 to decide)", "Volcano project", "Keep in history", "Decline", "History & portfolio"],
-          "parent/portfolio": ["Alice A's history", "School year 2026-27", "Volcano project", "Search", "Download a copy", "Science fair"],
+          "parent/portfolio": ["Alice A's history", "School year 2026-27", "Volcano project", "Search", "Download a copy", "Science fair", "A records transfer needs your decision"],
           "pupil/portfolio": ["Download a copy", "My history", "School year 2026-27", "School year 2025-26", "Volcano project", "From a teacher", "Family day", "All school years", "Show more"] }[`${role}/${tab}`];
         for (const want of expect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
       } finally {
@@ -1063,6 +1078,13 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Emergency access to review")`))) failures.push("superintendent: no emergency reviews");
       if (!(await page.eval(`!!document.querySelector('section[aria-label="Records and privacy"]')`))) failures.push("superintendent: no records & privacy");
       await axeScan(page, "superintendent: history with privacy controls", a11y);
+      if (!(await waitFor(`!!document.querySelector('main button[aria-label="Open transfer: Alice A"]')`))) failures.push("superintendent: no incoming transfers");
+      await page.eval(`document.querySelector('main button[aria-label="Open transfer: Alice A"]').click()`);
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("1. Check who sent it")`))) failures.push("superintendent: no transfer check page");
+      const ti = await page.eval(`document.querySelector("main").textContent`);
+      for (const w of ["Alice A: history from Lakeside Unified", "TEST-SENDER-FP", "Possible matches", "Choose the student", "Reject the whole file"]) if (!ti.includes(w)) failures.push(`incoming transfer: ${w}`);
+      await axeScan(page, "superintendent: incoming history transfer", a11y);
+      if (page.errors.length) failures.push(`incoming transfer: ${page.errors[0].split("\n")[0]}`);
       page.close();
 
       state.role = "principal"; page = await Page.open(chrome.port);
@@ -1074,7 +1096,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.eval(`document.querySelector('main button[aria-label="Privacy: Alice A"]').click()`);
       if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Alice A: records & privacy")`))) failures.push("principal: no privacy page");
       const t = await page.eval(`document.querySelector("main").textContent`);
-      for (const w of ["Restricted", "Order 2026-114", "Who looked", "Teacher S1 (teacher)"]) if (!t.includes(w)) failures.push(`privacy page: ${w}`);
+      for (const w of ["Restricted", "Order 2026-114", "Who looked", "Teacher S1 (teacher)", "Transfer to another district", "Download transfer file", "TEST-FP"]) if (!t.includes(w)) failures.push(`privacy page: ${w}`);
       await axeScan(page, "principal: records & privacy", a11y);
       if (page.errors.length) failures.push(`privacy page: ${page.errors[0].split("\n")[0]}`);
       page.close();

@@ -5,6 +5,7 @@
 //   POST /api/history/entries/:id/photos?caption=&alt=   body: the image (image/jpeg|png|webp)
 //                                                    header Idempotency-Key makes retries safe
 //   POST /api/family/children/:studentId/history-contributions/:contributionId/photos  (MEDIA-02, the guardian)
+//   POST /api/history/capsules/:id/photos            (MEDIA-03, the capsule's owner, while a draft)
 //   GET  /api/history/photos/:assetId                -> 302 to a 60-second private link
 //
 // The server checks every photo before it is stored: the district's limits,
@@ -25,12 +26,13 @@ import { processHistoryImage, HISTORY_IMAGE_TYPES } from "./history-image.js";
 const DEFAULTS = { imagesEnabled: false, maxImageBytes: 10485760, maxPerEntry: 6, maxBytesPerStudent: 262144000 };
 const policyOut = p => p ? { imagesEnabled: p.images_enabled, maxImageBytes: p.max_image_bytes, maxPerEntry: p.max_per_entry, maxBytesPerStudent: Number(p.max_bytes_per_student) } : DEFAULTS;
 const IDEMPOTENCY_RE = /^[A-Za-z0-9_-]{8,64}$/;
-const BEGIN_ERRORS = { entry_not_found: 404, entry_not_editable: 409, contribution_not_found: 404, contribution_not_editable: 409,
+const BEGIN_ERRORS = { entry_not_found: 404, entry_not_editable: 409, contribution_not_found: 404, contribution_not_editable: 409, capsule_not_found: 404, capsule_not_a_draft: 409,
   photos_not_enabled: 409, photo_too_large: 413, too_many_photos: 409, student_storage_full: 409 };
 // Where a photo is being added: a history item, or a guardian's pending contribution.
 const TARGETS = {
   entry: { begin: "eduos_history_media_begin", set: "eduos_history_media_set" },
-  contribution: { begin: "eduos_history_contribution_photo_begin", set: "eduos_history_contribution_photo_set" }
+  contribution: { begin: "eduos_history_contribution_photo_begin", set: "eduos_history_contribution_photo_set" },
+  capsule: { begin: "eduos_capsule_photo_begin", set: "eduos_capsule_photo_set" }
 };
 
 let shared = null;
@@ -130,6 +132,8 @@ export function registerHistoryMediaRoutes(app, providers = historyMedia()) {
   app.post("/api/history/entries/:id/photos", limiter, requireSession, requireCsrf, raw, acceptPhoto("entry", "id"));
   // MEDIA-02: a guardian's photos on their own family memory, while the school reviews it.
   app.post("/api/family/children/:studentId/history-contributions/:contributionId/photos", limiter, requireSession, requireCsrf, raw, acceptPhoto("contribution", "contributionId"));
+  // MEDIA-03: the owner's own photos in a draft Time Capsule.
+  app.post("/api/history/capsules/:id/photos", limiter, requireSession, requireCsrf, raw, acceptPhoto("capsule", "id"));
 
   app.get("/api/history/photos/:assetId", requireSession, async (req, res, next) => {
     if (!validId(req.params.assetId)) return res.status(400).json({ error: "invalid_asset_id" });
@@ -137,7 +141,8 @@ export function registerHistoryMediaRoutes(app, providers = historyMedia()) {
     try {
       const m = await withTenantTransaction(req.actor, async c =>
         (await one(c, `SELECT * FROM eduos_history_media_get($1,'read')`, [req.params.assetId]))
-        || one(c, `SELECT * FROM eduos_history_contribution_photo_get($1)`, [req.params.assetId]));
+        || (await one(c, `SELECT * FROM eduos_history_contribution_photo_get($1)`, [req.params.assetId]))
+        || one(c, `SELECT * FROM eduos_capsule_photo_get($1)`, [req.params.assetId]));
       if (!m || m.scan_status !== "clean" || m.processing_status !== "processed") return res.status(404).json({ error: "photo_not_found" });
       const link = storage.readUrl(m.storage_key, 60);
       res.setHeader("Cache-Control", "no-store");

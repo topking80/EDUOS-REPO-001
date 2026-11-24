@@ -52,6 +52,8 @@ import { registerRankingRoutes } from "./ranking-routes.js";
 import { registerHistoryPrivacyRoutes } from "./history-privacy-routes.js";
 import { registerHistoryExportRoutes } from "./history-export-routes.js";
 import { registerHistoryMediaRoutes } from "./history-media-routes.js";
+import { registerHistoryTransferRoutes } from "./history-transfer-routes.js";
+import { registerHistoryImportRoutes, HISTORY_IMPORT_PATHS } from "./history-import-routes.js";
 import { registerSafetyRoutes } from "./safety-routes.js";
 import { registerSafetyRoomRoutes } from "./safety-room-routes.js";
 import { registerWeatherRoutes } from "./weather-routes.js";
@@ -116,7 +118,7 @@ const bulkJson = express.json({ limit: config.sisImportMaxBytes, strict: true })
 // that parser keeps the raw text (and allows the larger sealed DECN packages).
 const edenJson = express.json({ limit: "16mb", strict: true, verify: (req, _res, buf) => { req.rawBody = buf.toString("utf8"); } });
 // TEACH-06: a package file (up to 12 MB) is parsed by its own route, after the session is checked.
-app.use((req, res, next) => req.path.startsWith("/api/eden/v1/") ? edenJson(req, res, next) : BULK_PATHS.has(req.path) || STORAGE_FILE_PATHS.has(req.path) ? next() : smallJson(req, res, next));
+app.use((req, res, next) => req.path.startsWith("/api/eden/v1/") ? edenJson(req, res, next) : BULK_PATHS.has(req.path) || STORAGE_FILE_PATHS.has(req.path) || HISTORY_IMPORT_PATHS.has(req.path) ? next() : smallJson(req, res, next));
 app.use((req,res,next)=>{ req.requestId=crypto.randomUUID(); res.setHeader("X-Request-Id",req.requestId); next(); });
 
 // A ceiling on every API and sign-in request, before any route: per signed-in
@@ -2022,6 +2024,8 @@ registerRankingRoutes(app);
 registerHistoryPrivacyRoutes(app);
 registerHistoryExportRoutes(app);
 registerHistoryMediaRoutes(app);
+registerHistoryTransferRoutes(app);
+registerHistoryImportRoutes(app);
 registerSafetyRoutes(app);
 registerSafetyRoomRoutes(app);
 registerWeatherRoutes(app);

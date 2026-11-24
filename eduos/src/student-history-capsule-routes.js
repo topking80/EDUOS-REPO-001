@@ -3,6 +3,7 @@
 // seals it, and it opens on a date or when the school confirms a milestone,
 // for recipients who accepted. Who may do what is enforced by the database
 // (db/088, db/091); these routes validate input and map outcomes.
+import { historyMedia } from "./history-media-routes.js";
 import { randomUUID } from "node:crypto";
 import { requireSession, requireCsrf } from "./auth.js";
 import { pool, withTenantTransaction } from "./db.js";
@@ -42,6 +43,16 @@ async function guarded(client, code, fn) {
 const capsuleView = c => ({ id: c.id, studentId: c.student_id, studentName: c.student_name, title: c.title, message: c.message, status: c.status,
   releaseKind: c.release_kind, releaseAt: c.release_at, milestone: c.milestone_key, timezone: c.timezone, mine: c.mine,
   sealedAt: c.sealed_at, releasedAt: c.released_at, cancelledAt: c.cancelled_at, createdAt: c.created_at });
+
+function deleteReleased(keys) {
+  const { storage } = historyMedia();
+  if (!storage || !keys.length) return;
+  // After the cancel has committed.
+  setTimeout(() => Promise.allSettled(keys.map(k => storage.remove(k))).then(rs => {
+    const failed = rs.filter(r => r.status === "rejected").length;
+    if (failed) console.error("Capsule photo cleanup failed", { failed });
+  }), 2000).unref?.();
+}
 
 export function registerStudentHistoryCapsuleRoutes(app) {
   // Mine, and those released to me.
@@ -83,7 +94,12 @@ export function registerStudentHistoryCapsuleRoutes(app) {
     const items = (await client.query("SELECT * FROM eduos_capsule_contents($1)", [c.id])).rows.map(i => ({
       position: i.item_position, entryId: i.entry_id, withheld: i.withheld, entryType: i.entry_type, kind: i.classification,
       title: i.title, body: i.body, occurredAt: i.occurred_at, addedAt: i.added_at }));
-    const out = { ...capsuleView(c), items };
+    // MEDIA-03: the owner's own photos, and the photos on the items inside
+    // (the function returns nothing to anyone who can't open the capsule yet).
+    const photos = (await client.query("SELECT * FROM eduos_capsule_photos($1)", [c.id])).rows
+      .map(p => ({ id: p.asset_id, entryId: p.entry_id, caption: p.caption, alt: p.alt_text, width: p.width, height: p.height }));
+    for (const i of items) i.photos = photos.filter(p => p.entryId === i.entryId);
+    const out = { ...capsuleView(c), items, photos: photos.filter(p => !p.entryId) };
     if (c.mine) {
       out.recipients = (await client.query(`SELECT r.recipient_user_id, u.display_name, r.recipient_type, r.consent_status
           FROM student_time_capsule_recipients r JOIN users u ON u.id=r.recipient_user_id WHERE r.capsule_id=$1 ORDER BY u.display_name`, [c.id])).rows
@@ -165,6 +181,8 @@ export function registerStudentHistoryCapsuleRoutes(app) {
       if (!validId(req.params.id)) throw new HttpError(400, "invalid_capsule_id");
       const status = (await one(client, `SELECT ${fn}($1) AS s`, [req.params.id])).s;
       await audit(client, req, action, "time_capsule", req.params.id, status);
+      // MEDIA-03: a cancelled capsule's own photos leave the bucket.
+      if (action === "cancel") deleteReleased((await client.query("SELECT storage_key FROM eduos_capsule_photos_release($1)", [req.params.id])).rows.map(r => r.storage_key));
       return { id: req.params.id, status };
     }));
   }

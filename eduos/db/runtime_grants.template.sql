@@ -742,3 +742,22 @@ GRANT EXECUTE ON FUNCTION eduos_history_student_media_bytes(uuid, uuid), eduos_h
   eduos_history_contribution_photo_begin(uuid, uuid, text, text, bigint, text, text, text),
   eduos_history_contribution_photo_set(uuid, text, bigint, text, text, int, int), eduos_history_contribution_photo_get(uuid),
   eduos_history_contribution_photos(uuid[]), eduos_history_contribution_photos_publish(uuid), eduos_history_contribution_photos_release(uuid) TO eduos_app;
+
+-- MEDIA-03 (db/128): Time Capsule photos; reached only through these functions.
+GRANT EXECUTE ON FUNCTION eduos_capsule_photo_begin(uuid, uuid, text, text, bigint, text, text, text),
+  eduos_capsule_photo_set(uuid, text, bigint, text, text, int, int), eduos_capsule_photos(uuid), eduos_capsule_photo_get(uuid),
+  eduos_capsule_photos_release(uuid) TO eduos_app;
+
+-- TC-06a (db/129): history transfers. The records office reads them; every
+-- change goes through these functions.
+GRANT SELECT ON history_transfers TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_records_office_for(uuid), eduos_history_transfer_start(uuid, text, text, text, boolean), eduos_history_transfer_family_decider(uuid),
+  eduos_history_transfer_family_pending(), eduos_history_transfer_family_decide(uuid, boolean), eduos_history_transfer_cancel(uuid, text),
+  eduos_history_transfer_contents(uuid), eduos_history_transfer_downloaded(uuid, text) TO eduos_app;
+
+-- TC-06b (db/130): receiving history transfers. The records office reads
+-- them; every change goes through these functions.
+GRANT SELECT ON history_imports, history_import_items TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_history_import_office(uuid), eduos_history_import_receive(text, text, jsonb, jsonb, jsonb), eduos_history_import_candidates(uuid),
+  eduos_history_import_confirm(uuid, text, uuid), eduos_history_import_decide(uuid, integer, boolean, text), eduos_history_import_close(uuid, text),
+  eduos_history_entry_origins(uuid[]) TO eduos_app;

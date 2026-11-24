@@ -7,3 +7,7 @@
 7465bebf6cd200b730c7ec1ea48fd4fc97d3886a:eduos/test/integration/wallet.test.js:generic-api-key:12
 # MEDIA-01: made-up credentials for the integration test's mock S3 bucket (since replaced by values generated at run time).
 f93d5c3775e72c513c6d7910bbf28407b4f315df:eduos/test/integration/history-media.test.js:generic-api-key:18
+# MEDIA-03: an idempotency key in the capsule-photos test ("capsule-key-01"), not a secret.
+5b4d8727e1c2d998529d00879711f29c6a96d6f6:eduos/test/integration/capsule-photos.test.js:generic-api-key:97
+# TC-06a: a made-up signing fingerprint in the smoke mock (since replaced with "TEST-FP"), not a secret.
+4394f52f2ca4c6f5ea2ec835c20f0fbc110db5e4:eduos/test/browser/app-smoke.test.js:generic-api-key:258
