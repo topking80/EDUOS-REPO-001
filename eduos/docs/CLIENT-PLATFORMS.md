@@ -66,34 +66,23 @@ Requested by Mathew (Nov 23, 2026): "Mobile screens should be extensive and incl
 
 ## 3. Amazon Fire tablets (Fire OS = Android) and Android TV / Google TV / Fire TV (branch `clients/02-tv`)
 
-- **Build flavors** (`android/app/build.gradle` `productFlavors`, dimension `store`):
-  - `play`: Google Play, Android phones, tablets and Android/Google TV.
-  - `amazon`: Amazon Appstore, Fire tablets and Fire TV. No Google Play Services: the app uses none today, and it must stay that way in the `amazon` flavor. When push lands (FCM branch), the `amazon` flavor uses **Amazon Device Messaging (ADM)** or falls back to the existing in-app notifications poll (`GET /api/notifications` on resume and on a timer). Custom Tabs may be missing on Fire OS, so sign-in falls back to the device-code flow below.
-  - CI builds `flutter build apk --debug --flavor play` (the required check keeps its name and outcome) plus a non-blocking amazon build step.
-- **TV manifest:**
-  - `<uses-feature android:name="android.software.leanback" android:required="false"/>` and `android.hardware.touchscreen required="false"`, so one APK serves phones and TVs
-  - an activity intent-filter with `LEANBACK_LAUNCHER`
-  - `android:banner="@drawable/tv_banner"` (320×180 placeholder drawn as a vector; Mathew supplies the final art)
-  - Fire TV: `amazon.hardware.fire_tv` handled via the same leanback filter
-- **10-foot UI:**
-  - TV detection: `UiModeManager` (`UI_MODE_TYPE_TELEVISION`), or the leanback feature, through a method channel. A `--dart-define=EDUOS_FORM_FACTOR=tv` override covers emulators.
-  - 1.5× type scale, 48 dp+ focus targets, a visible focus ring, overscan-safe 5% margins
-  - `FocusTraversalGroup` + `Shortcuts`/`Actions` for D-pad (arrows, select/enter, back), and a horizontal rows layout (Netflix-style rails: capsules, opened for you, recent history, photos)
-  - read-mostly: no free-text entry on TV
-- **Sign-in on TV (no browser on most TVs):** a new **device sign-in** (RFC 8628 device authorization):
-  - `POST /auth/device/code` (no session, IP-rate-limited) gives `{deviceCode, userCode "ABCD-EFGH", verificationUri, expiresIn 600, interval 5}`
-  - the person approves in the EduOS app or website they're already signed in to: `POST /api/device-sign-in/approve {userCode}` (session + CSRF, not from another device session)
-  - the TV polls `POST /auth/device/token`
-  - device sessions are flagged `client_kind` (android_tv, fire_tv, roku, windows) and are **read-only for TV/Roku** (a session guard refuses writes except sign-out), with a shorter TTL
-  - codes are stored hashed, single-use, and every step is audited
-  - a new migration, numbered high (150) to avoid TC's 135+ range, to renumber at merge time if needed
-  - the classroom pairing from #124 stays for room displays, because it authenticates a room device key, not a person
-- **Shared-screen privacy (TV, Roku, family Windows PC):**
-  - nothing about a student shows before sign-in
-  - after sign-in, a **profile picker with a 4–6-digit PIN** (kept only on the device, hashed with a per-device salt in secure storage)
-  - **auto-lock** after 10 minutes idle (configurable 5–30), back to the picker, and on app background
-  - "Sign out of this TV" is always reachable
-  - photos are only fetched while unlocked, and signed URLs are never cached past their 60 seconds
+Built in `clients/02-tv` (what shipped, where it differs from the first plan):
+
+- **One APK, two stores (no Gradle flavors).** Gradle `productFlavors` would rename the APK and break the required `flutter-mobile` job's `flutter build apk --debug` + artifact upload, so the app ships one universal APK:
+  - Google Play (phones, tablets, Android TV / Google TV): the default build.
+  - Amazon Appstore (Fire tablets, Fire TV): the same APK, or `--dart-define=EDUOS_STORE=amazon`. It uses no Google Play services (none are used today). When push lands, the Amazon build uses Amazon Device Messaging (ADM) or the existing in-app notifications poll.
+  - Sign-in: phones and Fire tablets use the system browser (RFC 8252) as before; TVs use device sign-in below.
+- **TV manifest** (`android/app/src/main/AndroidManifest.xml`): `android.software.leanback` and `android.hardware.touchscreen` both `required="false"` (one APK serves phones and TVs), a `LEANBACK_LAUNCHER` intent filter, and `android:banner="@drawable/tv_banner"` (a 320×180 placeholder vector until Mathew supplies the banner art).
+- **TV detection:** `MainActivity.getDartEntrypointArgs()` passes `tv` (UiModeManager television mode or leanback), `fire_tv` (`amazon.hardware.fire_tv`) and `model=…` to `main(args)`; `DeviceProfile.fromLaunch` (`lib/core/device_profile.dart`) reads them before the first frame. `--dart-define=EDUOS_FORM_FACTOR=tv|firetv|desktop` overrides it for emulators.
+- **10-foot UI:** 1.25× text scale, comfortable density, a strong focus colour, the always-extended side rail, and remote keys (OK/select, game-pad A, play/pause) mapped to "activate". TVs drop work and sensitive tabs (`tvHiddenTabs`: pick-up, routes, registers/attendance, grading, Christie, counseling, health office, facilities, meals, nodes). On a TV the Time Capsule hub is view-only (no new capsule, accept/decline or release).
+- **Device sign-in (RFC 8628)**, server `src/device-sign-in.js` + migration `db/150_device_sign_in.sql` (numbered 150 to stay clear of TC 132/134 and donations 135+; renumber at merge time if needed), off unless `DEVICE_SIGN_IN_ENABLED=true`:
+  - `POST /auth/device/code {clientKind, deviceLabel?}` → `{deviceCode, userCode "BCDF-GHJK", verificationUri (/device/), verificationUriComplete, qr, expiresIn 600, interval 5}`. `qr` is the QR module rows, so TVs and Roku draw a scannable code with no QR library.
+  - The person approves on a phone (Account › **Sign in a TV or computer**) or on the web page `/device/` (signs in first if needed, then returns there): `POST /api/device-sign-in/check|approve|deny {userCode}` (session + CSRF, 30 per 15 min per person).
+  - The screen polls `POST /auth/device/token {deviceCode}` (RFC 8628 errors `authorization_pending`, `slow_down`, `access_denied`, `expired_token`); the approved request is consumed once and the approving membership is re-checked.
+  - Codes are stored only as SHA-256 hashes, last 10 minutes, are single-use, and approve / deny / session creation are written to `audit_events`.
+  - Sessions get `sessions.client_kind` (android_tv, fire_tv, roku, windows). **TV and Roku sessions are read-only**: a session guard refuses every write except sign-out and switching role (which keeps the kind). Windows sessions are full sessions (a personal computer). A device session can never approve another device.
+  - The classroom pairing from #124 stays for room displays, because it authenticates a room device key, not a person.
+- **Shared-screen privacy (TV, family Windows PC, shared tablets):** an optional 4–6-digit **screen-lock PIN** (Account › Screen lock), kept only on the device as a salted, 20,000-round HMAC-SHA256 in secure storage. It locks after 5/10/15/30 minutes idle (default 10), when the app goes to the background and when it reopens; 5 wrong PINs lock it out for 30 s, doubling to 15 minutes. "Forgot PIN? Sign out" and "Sign out of this TV" are always there, and signing out removes the PIN. One account is signed in per screen; switching between that person's roles uses the existing profile switcher.
 
 ## 4. Windows desktop (branches 01 and 04)
 
@@ -124,7 +113,7 @@ Requested by Mathew (Nov 23, 2026): "Mobile screens should be extensive and incl
 ## 7. Order and branches
 
 1. `clients/01-flutter-time-capsule`: Time Capsule screens, responsive shell, ios + windows platforms, tests.
-2. `clients/02-tv`: device sign-in (server + Flutter), TV/leanback layout + focus, manifest, `play`/`amazon` flavors, PIN/auto-lock.
+2. `clients/02-tv`: device sign-in (server + Flutter + `/device/` web page), TV/leanback layout + focus, manifest + banner, one APK for Play and Amazon, PIN/auto-lock.
 3. `clients/03-roku`: Roku channel + lint/package script + non-required CI job (depends on 02's device sign-in).
 4. `clients/04-windows-msix`: MSIX config + optional Windows workflow.
 
