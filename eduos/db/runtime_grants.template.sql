@@ -771,3 +771,6 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON history_legal_holds, history_preserva
 GRANT EXECUTE ON FUNCTION eduos_history_on_hold(uuid, uuid), eduos_history_hold_place(uuid, text, text), eduos_history_hold_release(uuid, text),
   eduos_history_media_checksum(uuid, text), eduos_history_preservation_due(integer), eduos_history_preservation_record(uuid, text, text, text),
   eduos_history_capacity_report(), eduos_history_last_check() TO eduos_app;
+
+-- TC-11 (db/132): the family storage dashboard's totals.
+GRANT EXECUTE ON FUNCTION eduos_history_family_storage(uuid) TO eduos_app;
