@@ -6,15 +6,16 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';\nimport 'class_planner_screen.dart';
 
-class _ClassToday {
+class _ClassTodayHandoff {\n  const _ClassTodayHandoff(this.value);\n  final Json? value;\n  String get id => str(value?['id']);\n  String get status => str(value?['status']);\n}\n\nclass _ClassToday {
   const _ClassToday({required this.schoolName, required this.students, required this.toGrade, required this.openAssignments,
-      required this.absences7d, required this.roster, required this.marks});
+      required this.absences7d, required this.roster, required this.marks, required this.handoffs});
   final String schoolName;
   final int students, toGrade, openAssignments, absences7d;
   final List<RosterLearner> roster;
 
   /// Latest mark recorded today per learner (studentId -> status).
   final Map<String, String> marks;
+  final Map<String, Json> handoffs;
 }
 
 const attendanceStatuses = ['present', 'absent', 'tardy'];
@@ -52,7 +53,7 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
 
   Future<_ClassToday> _load() async {
     final api = AppScope.read(context).api;
-    final results = await Future.wait([api.get('/api/home'), api.get('/api/rosters'), api.get('/api/attendance')]);
+    final results = await Future.wait([api.get('/api/home'), api.get('/api/rosters'), api.get('/api/attendance'), api.get('/api/arrival/today')]);
     final home = obj(results[0]['data']);
     final roster = objs(results[1]['data']).map(RosterLearner.fromJson).toList();
     // GET /api/attendance is newest first, so the first mark seen per learner today wins.
@@ -75,7 +76,19 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
     final app = AppScope.read(context);
     setState(() => _sending.add(learner.studentId));
     try {
-      final sent = await app.api.post('/api/attendance', {'studentId': learner.studentId, 'eventDate': _day, 'status': status});
+      final handoff = _ClassTodayHandoff(t.handoffs[learner.studentId]);
+      final firstMark = t.marks[learner.studentId] == null && handoff.value != null;
+      if (firstMark && handoff.status != 'received') {
+        if (mounted) toast(context, 'Confirm the physical arrival handoff before recording attendance.');
+        return;
+      }
+      if (firstMark && status == 'absent') {
+        if (mounted) toast(context, 'A student who has arrived must be marked present or tardy.');
+        return;
+      }
+      final sent = firstMark
+          ? await app.api.post('/api/arrival/handoffs/${handoff.id}/first-attendance', {'status': status})
+          : await app.api.post('/api/attendance', {'studentId': learner.studentId, 'eventDate': _day, 'status': status});
       if (!mounted) return;
       if (sent.queued) {
         setState(() => _pending[learner.studentId] = status);
