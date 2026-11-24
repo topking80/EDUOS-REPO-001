@@ -2005,18 +2005,15 @@ VIEWS.safety = async () => {
       out.push(await roomStatusCard(i));
       out.push(await rollCallCard(i));
       if (i.status === "reunification") out.push(h("button", { class: "btn school block", type: "button", onclick: () => go("pickup") }, icon("car"), "Pick-up line: release to approved adults"));
-    } else if (role === "principal" || role === "superintendent") {
+    } else if (role === "principal" || role === "vice_principal" || role === "superintendent") {
       out.push(await roomBoardCard(i));
       out.push(await boardCards(i));
       out.push(await sroCoordinationCard(i));
-      if (role === "principal") out.push(await roomStatusCard(i, true));
+      if (role !== "superintendent") out.push(await roomStatusCard(i, true));
     } else if (role === "sro") {
       out.push(await roomBoardCard(i));
       out.push(await roomStatusCard(i));
       out.push(await sroIncidentCard(i));
-    } else if (role === "vice_principal") {
-      out.push(await roomBoardCard(i));
-      out.push(await roomStatusCard(i));
     } else if (ROOM_REPORTERS.includes(role)) {
       out.push(await roomStatusCard(i));
     } else if (role === "pupil") {
@@ -2198,7 +2195,7 @@ async function boardCards(i) {
       i.status === "active" ? h("button", { class: "btn school", type: "button", onclick: async () => {
         const point = await ask({ title: "Start reunification", text: "Families are told where to go and to bring photo ID and their pick-up pass. Students are released only through pick-up verification.", label: "Reunification point", confirm: "Start reunification" });
         if (point) { await api.post(`/api/safety/incidents/${i.id}/reunification`, { point }); await checkSafety(); }
-      } }, "Start reunification") : h("button", { class: "btn school", type: "button", onclick: () => go("pickup") }, icon("car"), "Release at pick-up"),
+      } }, "Start reunification") : state.me.role === "vice_principal" ? null : h("button", { class: "btn school", type: "button", onclick: () => go("pickup") }, icon("car"), "Release at pick-up"),
       h("button", { class: "btn primary", type: "button", onclick: async () => {
         if (!(await ask({ title: `All clear: end the ${i.isDrill ? "drill" : KIND_TEXT[i.kind].toLowerCase()}?`, text: "Everyone at the school, its drivers and families are told that normal operations resume.", confirm: "Yes, all clear", danger: true }))) return;
         try { await api.post(`/api/safety/incidents/${i.id}/all-clear`, { kind: i.kind }); toast("All clear sent"); await checkSafety(); } catch { toast("Couldn't send the all clear."); }

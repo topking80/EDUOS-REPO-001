@@ -107,7 +107,7 @@ export function registerSafetyRoutes(app) {
              WHERE l.user_id=$1 AND l.status='active' AND l.relationship IN ('parent','guardian') ORDER BY s.display_name`, [a.userId, incidents.map(i => i.id)]);
           for (const i of incidents) i.children = kids.filter(k => k.school_id === i.schoolId).map(k => ({ id: k.id, name: k.display_name, released: k.released }));
         }
-        return { incidents, canInitiate: canInitiate(a), canLead: ["principal", "superintendent"].includes(a.role) };
+        return { incidents, canInitiate: canInitiate(a), canLead: ["principal", "vice_principal", "superintendent"].includes(a.role) };
       });
       res.setHeader("Cache-Control", "no-store");
       res.json({ data });
@@ -152,7 +152,7 @@ export function registerSafetyRoutes(app) {
       const out = await withTenantTransaction(a, async client => {
         const i = await loadIncident(client, req.params.id);
         if (!i) throw new HttpError(404, "incident_not_found");
-        if (i.initiated_by !== a.userId && !["principal", "superintendent"].includes(a.role)) throw new HttpError(403, "not_your_incident");
+        if (i.initiated_by !== a.userId && !["principal", "vice_principal", "superintendent"].includes(a.role)) throw new HttpError(403, "not_your_incident");
         if (i.status !== "pending") throw new HttpError(409, "incident_not_pending", { status: i.status });
         if (new Date(i.confirm_by) <= new Date()) {
           await client.query(`UPDATE safety_incidents SET status='cancelled',closed_at=now(),closed_by=$2 WHERE id=$1`, [i.id, a.userId]);
@@ -320,7 +320,7 @@ export function registerSafetyRoutes(app) {
       const data = await withTenantTransaction(req.actor, async client => {
         const i = await loadIncident(client, req.params.id);
         if (!i || i.school_id !== req.actor.schoolId) throw new HttpError(404, "incident_not_found");
-        if (!(["principal", "superintendent", "it_admin", "sro"].includes(req.actor.role))) throw new HttpError(403, "role_not_allowed");
+        if (!(["principal", "vice_principal", "superintendent", "it_admin", "sro"].includes(req.actor.role))) throw new HttpError(403, "role_not_allowed");
         const events = await rows(client, `SELECT detail,at,actor_role FROM safety_events WHERE incident_id=$1 AND event='responders' ORDER BY at,id`, [i.id]);
         const timeline = events.map(e => { try { const v=JSON.parse(e.detail || "{}"); return ["sro_assignment","sro_assignment_response"].includes(v.type) ? { ...v, at:e.at, actorRole:e.actor_role } : null; } catch { return null; } }).filter(Boolean);
         const visible = req.actor.role === "sro" ? timeline.filter(e => e.sroUserId === req.actor.userId) : timeline;
@@ -520,5 +520,5 @@ export function registerSafetyRoutes(app) {
 
 function canInitiate(a) {
   if (a.role === "teacher") return config.safetyTeachersMayInitiate;
-  return a.role === "principal" || a.role === "superintendent";
+  return ["principal", "vice_principal", "superintendent"].includes(a.role);
 }
