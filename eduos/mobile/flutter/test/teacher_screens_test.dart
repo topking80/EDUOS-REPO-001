@@ -388,6 +388,47 @@ void main() {
   });
 
 
+  testWidgets('school day: colleague message dialog survives dismissal and starts a conversation', (tester) async {
+    final fake = FakeServer({
+      'GET /api/network/colleagues': (_) => {'data': {'colleagues': [
+        {'user_id': 'colleague-1', 'name': 'Jordan Lee', 'roles': 'Teacher', 'schools': []},
+      ], 'schools': []}},
+      'GET /api/network/groups': (_) => {'data': []},
+      'POST /api/network/threads': (_) => {'data': {'id': 'thread-1'}},
+      'GET /api/comms/threads/thread-1': (_) => {'data': {
+        'id': 'thread-1',
+        'subject': 'Planning together',
+        'kind': 'network',
+        'participants': [
+          {'user_id': 'u-t', 'name': 'Ms. Rivera'},
+          {'user_id': 'colleague-1', 'name': 'Jordan Lee'},
+        ],
+        'messages': [],
+        'status': 'open',
+      }},
+    });
+    await launch(tester, fake);
+    await openTab(tester, 'School day');
+    await tester.tap(find.text('Colleagues'));
+    await tester.pumpAndSettle();
+    expect(find.text('Jordan Lee'), findsOneWidget);
+    await tester.tap(find.byTooltip('Message colleague'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Subject'), 'Planning together');
+    await tester.enterText(find.widgetWithText(TextField, 'Message'), 'Can we coordinate next week?');
+    await tester.tap(find.text('Send'));
+    await tester.pumpAndSettle();
+
+    final request = fake.sent('POST', '/api/network/threads').single;
+    expect(jsonDecode(request.body), {
+      'subject': 'Planning together',
+      'body': 'Can we coordinate next week?',
+      'participantIds': ['colleague-1'],
+    });
+    expect(find.text('Conversation'), findsOneWidget);
+    expect(find.text('Planning together'), findsOneWidget);
+  });
+
   testWidgets('classes: first attendance after arrival uses the verified handoff endpoint', (tester) async {
     final fake = FakeServer({
       'GET /api/home': (_) => {'data': {'school_name': 'Maple Elementary', 'students': 1, 'to_grade': 0, 'open_assignments': 0, 'absences_7d': 0}},
