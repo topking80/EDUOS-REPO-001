@@ -224,7 +224,11 @@ class _PlanEditorState extends State<_PlanEditor> {
         ])),
       );
       if (selected == null || !mounted) return;
-      if (kind == 'lesson') block['lessonId'] = selected['id']; else block['assignmentId'] = selected['id'];
+      if (kind == 'lesson') {
+        block['lessonId'] = selected['id'];
+      } else {
+        block['assignmentId'] = selected['id'];
+      }
     } else {
       final values = await _textFields(kind);
       if (values == null || !mounted) return;
