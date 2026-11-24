@@ -2,16 +2,23 @@ import 'dart:convert';
 
 import 'key_value_store.dart';
 
-/// A signed-in EduOS session, as returned by POST /auth/native/token.
+/// A signed-in EduOS session, as returned by POST /auth/native/token (phones)
+/// or POST /auth/device/token (TVs and Windows, device sign-in).
 /// The token is a normal server session (same expiry, idle timeout and
 /// revocation as a browser sign-in); it is only ever kept in secure storage.
 class Session {
-  const Session({required this.serverUrl, required this.token, required this.csrfToken, required this.expiresAt});
+  const Session({required this.serverUrl, required this.token, required this.csrfToken, required this.expiresAt, this.clientKind, this.readOnly = false});
 
   final Uri serverUrl;
   final String token;
   final String csrfToken;
   final DateTime expiresAt;
+
+  /// Set for device sign-in sessions: android_tv, fire_tv, roku or windows.
+  final String? clientKind;
+
+  /// TV sessions can't change anything (the server refuses writes).
+  final bool readOnly;
 
   bool get isExpired => !DateTime.now().isBefore(expiresAt);
 
@@ -20,6 +27,8 @@ class Session {
         token: token ?? this.token,
         csrfToken: csrfToken ?? this.csrfToken,
         expiresAt: expiresAt ?? this.expiresAt,
+        clientKind: clientKind,
+        readOnly: readOnly,
       );
 
   Map<String, Object> toJson() => {
@@ -27,6 +36,8 @@ class Session {
         'token': token,
         'csrfToken': csrfToken,
         'expiresAt': expiresAt.toUtc().toIso8601String(),
+        if (clientKind != null) 'clientKind': clientKind!,
+        if (readOnly) 'readOnly': true,
       };
 
   static Session? fromJson(Object? json) {
@@ -35,7 +46,13 @@ class Session {
     final expires = DateTime.tryParse('${json['expiresAt']}');
     final token = json['token'], csrf = json['csrfToken'];
     if (server == null || expires == null || token is! String || csrf is! String) return null;
-    return Session(serverUrl: server, token: token, csrfToken: csrf, expiresAt: expires);
+    return Session(
+        serverUrl: server,
+        token: token,
+        csrfToken: csrf,
+        expiresAt: expires,
+        clientKind: json['clientKind'] is String ? json['clientKind'] as String : null,
+        readOnly: json['readOnly'] == true);
   }
 }
 
