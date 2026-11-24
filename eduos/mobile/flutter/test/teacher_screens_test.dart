@@ -350,14 +350,14 @@ void main() {
   testWidgets('courses: accommodation changes show dirty state, save once, and remain retryable after failure', (tester) async {
     var failSave = true;
     final fake = FakeServer({
-      'GET /api/learning/courses/\$course': (_) => {'data': {
+      'GET /api/learning/courses/$course': (_) => {'data': {
         'id': course, 'title': 'Grade 4 Math', 'subject': 'Math', 'gradeLevel': '4', 'term': 'Fall', 'teacher': 'Ms. Rivera',
         'canManage': true, 'grade': {}, 'mastery': {}, 'standards': [], 'units': [], 'assignments': [],
       }},
       'GET /api/learning/accommodations': (_) => {'data': [
         {'student_id': ada, 'display_name': 'Ada Lovelace', 'extra_time_pct': 0, 'read_aloud': false},
       ]},
-      'PUT /api/learning/accommodations/\$ada': (_) => failSave
+      'PUT /api/learning/accommodations/$ada': (_) => failSave
           ? http.Response('{"error":"temporary_failure"}', 503)
           : {'data': {'ok': true}},
     });
@@ -375,14 +375,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save', skipOffstage: false));
     await tester.pumpAndSettle();
-    expect(fake.sent('PUT', '/api/learning/accommodations/\$ada'), hasLength(1));
+    expect(fake.sent('PUT', '/api/learning/accommodations/$ada'), hasLength(1));
     expect(find.text('Unsaved changes'), findsOneWidget);
     expect(find.textContaining('try again'), findsOneWidget);
     failSave = false;
     await tester.tap(find.text('Save', skipOffstage: false));
     await tester.pumpAndSettle();
-    expect(fake.sent('PUT', '/api/learning/accommodations/\$ada'), hasLength(2));
-    expect(jsonDecode(fake.sent('PUT', '/api/learning/accommodations/\$ada').last.body), {'extraTimePct': 25, 'readAloud': true});
+    expect(fake.sent('PUT', '/api/learning/accommodations/$ada'), hasLength(2));
+    expect(jsonDecode(fake.sent('PUT', '/api/learning/accommodations/$ada').last.body), {'extraTimePct': 25, 'readAloud': true});
     expect(find.text('Saved'), findsOneWidget);
   });
 
