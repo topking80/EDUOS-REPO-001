@@ -25,12 +25,13 @@ sources, quizzes with a timer and answers saved as you go, results and
 classwork feedback), Christie practice chats, My path, My library and News.
 Quiz answers are never queued offline; the app says when one isn't saved.
 
-**Phase 5** adds teachers: Courses (course view with lesson approval status
-and accommodations, roster, gradebook with final grades), Grading (quiz
-open answers, rubric grading, hand-ins) and the Christie copilot (class
-mastery, reading and reviewing tutoring conversations). Staffing (time
-away, substitute coverage, shifts; leaders approve) is native for every
-staff role.
+**Phase 5** adds teachers: Classes (offline-safe attendance and a native daily
+lesson planner for warm-ups, lesson blocks, assignments, timers, instructions
+and links), Courses (course view with lesson approval status and
+accommodations, roster, gradebook with final grades), Grading (quiz open
+answers, rubric grading, hand-ins) and the Christie copilot (class mastery,
+reading and reviewing tutoring conversations). Staffing (time away,
+substitute coverage, shifts; leaders approve) is native for every staff role.
 
 **Phase 6** makes every tab native: the school operations work queues
 (vice principal operations, counseling, health office, facilities, meal
