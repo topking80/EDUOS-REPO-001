@@ -337,4 +337,43 @@ void main() {
     ]);
   });
 
+
+  testWidgets('school day: teacher sees classroom, riders, pickup and duty connections', (tester) async {
+    final fake = FakeServer({
+      'GET /api/rooms': (_) => {'data': [
+        {'id': 'room-1', 'name': 'Room 101', 'kind': 'classroom', 'building': 'Main', 'devices': [{'id': 'display-1'}]},
+        {'id': 'media-1', 'name': 'Library', 'kind': 'media_center', 'building': 'Main', 'devices': []},
+      ]},
+      'GET /api/arrival/today': (_) => {'data': [
+        {'id': 'handoff-1', 'display_name': 'Ada Lovelace', 'grade_level': '4', 'method': 'bus', 'status': 'pending', 'initiated_at': now},
+        {'id': 'handoff-2', 'display_name': 'Ben Ortiz', 'grade_level': '4', 'method': 'car_rider', 'status': 'received', 'initiated_at': now},
+      ]},
+      'GET /api/pickup/queue': (_) => {'data': {'waiting': [{'name': 'Ada Lovelace', 'grade': '4'}], 'released': [], 'blocked': 0, 'denied': 0}},
+      'GET /api/staff-workspace': (_) => {'data': {
+        'tasks': [],
+        'checklists': [{'id': 'list-1', 'title': 'Lunchroom duty', 'domain': 'meal_service', 'item_id': 'item-1', 'label': 'Set up tables', 'completed_at': null}],
+        'handoffs': [],
+        'announcements': [],
+      }},
+      'GET /api/my/checkins': (_) => {'data': []},
+      'GET /api/transport/today': (_) => {'data': {'role': 'teacher', 'riders': [
+        {'id': ada, 'display_name': 'Ada Lovelace', 'bus_label': 'Bus 12', 'route_name': 'North', 'stop_name': 'Oak Street', 'status': 'expected'},
+      ]}},
+      'GET /api/staff-management': (_) => {'data': {
+        'shifts': [{'id': 'shift-1', 'department': 'meal_service', 'assignment': 'Lunchroom duty', 'shift_date': '2026-11-24', 'starts_at': now, 'ends_at': now}],
+        'absences': [], 'coverage': [], 'staffing': [],
+      }},
+    });
+    await launch(tester, fake);
+    await openTab(tester, 'School day');
+    expect(find.text('Classroom connections'), findsOneWidget);
+    expect(find.text('Room 101'), findsOneWidget);
+    expect(find.text('Bus riders and handoffs'), findsOneWidget);
+    expect(find.text('Ada Lovelace'), findsWidgets);
+    expect(find.text('Car rider arrivals'), findsOneWidget);
+    expect(find.text('Car rider dismissal'), findsOneWidget);
+    expect(find.text('Library and lunchroom duties'), findsOneWidget);
+    expect(find.text('Lunchroom duty'), findsWidgets);
+  });
+
 }
