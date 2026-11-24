@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Sign in a TV or computer · EduOS</title>
+<link rel="stylesheet" href="device.css">
+</head>
+<body>
+<main id="main">
+  <header class="top">
+    <h1>Sign in a TV or computer</h1>
+    <p class="sub">Enter the code shown on your TV, Roku or Windows PC. It signs that screen in to your EduOS account.</p>
+  </header>
+  <section id="signin" class="card" hidden>
+    <h2>Sign in first</h2>
+    <p>You need to be signed in to EduOS on this phone or computer to approve the code.</p>
+    <a id="signinLink" class="button" href="#">Sign in to EduOS</a>
+  </section>
+  <section id="entry" class="card" aria-labelledby="codeh" hidden>
+    <h2 id="codeh">Code on the screen</h2>
+    <label for="code">8-letter code</label>
+    <input id="code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="9" placeholder="BCDF-GHJK" inputmode="text">
+    <button id="next" type="button">Continue</button>
+  </section>
+  <section id="confirm" class="card" aria-labelledby="confirmh" hidden>
+    <h2 id="confirmh">Sign in this screen?</h2>
+    <p id="what"></p>
+    <p id="readonly" class="note" hidden>This screen can view your EduOS pages but can't change anything. You can sign it out from the screen at any time.</p>
+    <p class="note">Only approve a code you can see on a screen in front of you.</p>
+    <div class="row">
+      <button id="approve" type="button">Approve</button>
+      <button id="deny" type="button" class="secondary">This isn't me</button>
+    </div>
+  </section>
+  <section id="result" class="card" aria-live="polite" tabindex="-1" hidden></section>
+</main>
+<script src="device.js" type="module"></script>
+</body>
+</html>

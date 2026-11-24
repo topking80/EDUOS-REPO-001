@@ -82,7 +82,7 @@ function idpUnavailable(req, res, error) {
     ` (reference ${String(req.requestId || "").replace(/[^A-Za-z0-9-]/g, "")}).</p><p><a href="/">Back to EduOS</a></p></body>`);
 }
 
-export const RETURN_PATHS = new Set(["/", "/app/"]);
+export const RETURN_PATHS = new Set(["/", "/app/", "/device/"]); // /device/: approve a TV/Roku/Windows sign-in (db/150)
 export const NATIVE_HANDOFF_TTL_MS = 60_000;
 const PKCE_S256 = /^[A-Za-z0-9_-]{43}$/;
 const pkceS256 = verifier => crypto.createHash("sha256").update(verifier).digest("base64url");
@@ -144,13 +144,14 @@ export async function beginLogin(req, res, next) {
 }
 
 /** Create a session row and return the raw (cookie) token. */
-export async function createSession(db, { userId, districtId, schoolId, role, verifiedEmail = null }) {
+export async function createSession(db, { userId, districtId, schoolId, role, verifiedEmail = null, clientKind = null }) {
   const rawSession = randomSecret(32);
   const expiresAt = new Date(Date.now() + config.sessionTtlHours * 3600_000);
+  // clientKind is set only for device sign-in sessions (db/150, src/device-sign-in.js).
   await db.query(
-    `INSERT INTO sessions (token_hash,csrf_token_hash,user_id,district_id,school_id,role,expires_at,verified_email)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [sha256(rawSession), sha256(csrfTokenFor(rawSession)), userId, districtId, schoolId, role, expiresAt, verifiedEmail]
+    `INSERT INTO sessions (token_hash,csrf_token_hash,user_id,district_id,school_id,role,expires_at,verified_email,client_kind)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [sha256(rawSession), sha256(csrfTokenFor(rawSession)), userId, districtId, schoolId, role, expiresAt, verifiedEmail, clientKind]
   );
   // Multi-session policy: keep at most SESSION_MAX_PER_USER active sessions
   // (e.g. laptop + phone); the oldest beyond the cap are revoked.
@@ -319,7 +320,7 @@ export async function requireSession(req, res, next) {
     if (cached) { req.actor = { ...cached }; const refused = guardRefusal(req); if (refused) return res.status(403).json({ error: refused }); return next(); }
     const result = await pool.query(
       `SELECT s.id AS session_id, s.user_id, s.district_id, s.school_id, s.role,
-              s.csrf_token_hash, s.verified_email, s.last_seen_at, u.display_name, u.status
+              s.csrf_token_hash, s.verified_email, s.client_kind, s.last_seen_at, u.display_name, u.status
          FROM sessions s
          JOIN users u ON u.id=s.user_id
          JOIN memberships m ON m.user_id=s.user_id AND m.district_id=s.district_id
@@ -341,7 +342,8 @@ export async function requireSession(req, res, next) {
       userId: row.user_id, districtId: row.district_id,
       schoolId: row.school_id, ...authorityRole(row.role),
       displayName: row.display_name, sessionId: row.session_id,
-      csrfTokenHash: row.csrf_token_hash, verifiedEmail: row.verified_email || null
+      csrfTokenHash: row.csrf_token_hash, verifiedEmail: row.verified_email || null,
+      clientKind: row.client_kind || null
     };
     cacheSetSession(hash, req.actor);
     const refused = guardRefusal(req);
@@ -464,12 +466,13 @@ export async function switchMembership(req, res, next) {
     );
     if (!found.rowCount) return res.status(404).json({ error: "membership_not_found" });
     const m = found.rows[0];
-    const current = await pool.query("SELECT verified_email FROM sessions WHERE id=$1", [req.actor.sessionId]);
+    const current = await pool.query("SELECT verified_email, client_kind FROM sessions WHERE id=$1", [req.actor.sessionId]);
     await pool.query("UPDATE sessions SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL", [req.actor.sessionId]);
     evictSession(req._sessionTokenHash);
     const { rawSession, expiresAt } = await createSession(pool, {
       userId: req.actor.userId, districtId: m.district_id, schoolId: m.school_id, role: m.role,
-      verifiedEmail: current.rows[0]?.verified_email || null
+      verifiedEmail: current.rows[0]?.verified_email || null,
+      clientKind: current.rows[0]?.client_kind || null // a TV stays a (read-only) TV session
     });
     if (!req._sessionViaBearer) setSessionCookie(res, rawSession, expiresAt);
     res.setHeader("Cache-Control", "no-store");

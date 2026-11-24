@@ -111,4 +111,14 @@ const roleNames = {
   'coach': 'Coach',
 };
 
-List<RoleTab> tabsFor(String role) => roleTabs[role] ?? const [];
+/// Tabs a TV doesn't show: they are for doing work (registers, routes,
+/// grading, pick-up releases, Christie chats) or hold records that shouldn't
+/// be up on a shared living-room screen (counseling, health office). A TV
+/// session is read-only on the server anyway.
+const tvHiddenTabs = {'route', 'pickup', 'grading', 'copilot', 'christie', 'attendance', 'guidance', 'healthoffice', 'facilities', 'meals', 'nodes'};
+
+/// The role's tabs; on a TV, without [tvHiddenTabs].
+List<RoleTab> tabsFor(String role, {bool tv = false}) {
+  final all = roleTabs[role] ?? const <RoleTab>[];
+  return tv ? [for (final t in all) if (!tvHiddenTabs.contains(t.id)) t] : all;
+}

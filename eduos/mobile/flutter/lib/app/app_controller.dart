@@ -6,9 +6,12 @@ import 'package:http/http.dart' as http;
 
 import '../core/api_client.dart';
 import '../core/auth_service.dart';
+import '../core/device_profile.dart';
+import '../core/device_sign_in.dart';
 import '../core/key_value_store.dart';
 import '../core/models.dart';
 import '../core/offline_queue.dart';
+import '../core/privacy_lock.dart';
 import '../core/session.dart';
 
 enum AppStage { starting, needsServer, signedOut, offline, signedIn }
@@ -17,12 +20,21 @@ enum AppStage { starting, needsServer, signedOut, offline, signedIn }
 /// safety incidents, unread alerts and the offline queue. Screens read it and
 /// call [api]; nothing here caches school records.
 class AppController extends ChangeNotifier {
-  AppController({KeyValueStore? store, AuthService? auth, http.Client Function()? httpClientFactory, this.safetyPollInterval = const Duration(seconds: 30)})
+  AppController(
+      {KeyValueStore? store,
+      AuthService? auth,
+      http.Client Function()? httpClientFactory,
+      this.safetyPollInterval = const Duration(seconds: 30),
+      DeviceProfile? device,
+      DeviceSignInService? deviceSignIn})
       : _store = store ?? SecureKeyValueStore(),
         _auth = auth ?? AuthService(),
-        _httpFactory = httpClientFactory ?? http.Client.new {
+        _httpFactory = httpClientFactory ?? http.Client.new,
+        _device = device,
+        _deviceSignIn = deviceSignIn {
     _sessions = SessionStore(_store);
     queue = OfflineQueue(_store);
+    privacy = PrivacyLock(_store);
   }
 
   final KeyValueStore _store;
@@ -32,6 +44,27 @@ class AppController extends ChangeNotifier {
   final Duration? safetyPollInterval;
   late final SessionStore _sessions;
   late final OfflineQueue queue;
+
+  /// The optional screen-lock PIN (shared TVs, family PCs, shared tablets).
+  late final PrivacyLock privacy;
+
+  final DeviceProfile? _device;
+  DeviceSignInService? _deviceSignIn;
+
+  /// What this screen is (phone/tablet, Windows, TV); see DeviceProfile.fromLaunch.
+  DeviceProfile get device => _device ?? DeviceProfile.handheld;
+  bool get isTv => device.isTv;
+
+  /// TV sessions are view-only: the server refuses changes, so the app hides them.
+  bool get readOnly => _session?.readOnly ?? false;
+
+  /// This session came from device sign-in (a TV or Windows), so it can't approve other screens.
+  bool get isDeviceSession => _session?.clientKind != null;
+
+  /// The screen lock is showing (PIN set and idle too long, or the app went to the background).
+  bool locked = false;
+  Timer? _idle;
+  DateTime _lastActivityReset = DateTime.fromMillisecondsSinceEpoch(0);
 
   AppStage stage = AppStage.starting;
   Uri? server;
@@ -71,6 +104,7 @@ class AppController extends ChangeNotifier {
   List<Incident> get liveIncidents => incidents.where((i) => i.live).toList();
 
   Future<void> start() async {
+    await privacy.load();
     server = await _sessions.loadServer();
     if (server == null) return _setStage(AppStage.needsServer);
     final saved = await _sessions.load();
@@ -78,8 +112,11 @@ class AppController extends ChangeNotifier {
     _useSession(saved);
     try {
       await _loadProfile();
+      // Reopening the app on a shared screen asks for the PIN first.
+      locked = privacy.hasPin;
       _setStage(AppStage.signedIn);
       _startPolling();
+      _restartIdle();
     } on ApiException catch (e) {
       // Offline at launch: keep the saved session and let the user retry.
       if (e.isOffline) return _setStage(AppStage.offline);
@@ -135,6 +172,100 @@ class AppController extends ChangeNotifier {
     }
     await queue.clear();
     await _dropSession();
+  }
+
+  // ---- Device sign-in (TVs and Windows; RFC 8628) ----
+
+  DeviceSignInService get _devices => _deviceSignIn ??= DeviceSignInService(httpClient: _httpFactory());
+
+  /// Asks the server for a code to show on this screen.
+  Future<DeviceCode> startDeviceSignIn() async {
+    final target = server;
+    final kind = device.clientKind;
+    if (target == null || kind == null) throw const DeviceSignInException('This screen signs in with your school account instead.');
+    notice = null;
+    return _devices.start(target, clientKind: kind, label: device.label);
+  }
+
+  /// One poll; on approval the screen is signed in.
+  Future<DevicePoll> pollDeviceSignIn(DeviceCode code) async {
+    final target = server;
+    if (target == null) return const DevicePoll(DevicePollState.failed);
+    final result = await _devices.poll(target, code);
+    final session = result.session;
+    if (result.state == DevicePollState.signedIn && session != null) {
+      await _sessions.save(session);
+      _useSession(session);
+      await _loadProfile();
+      _setStage(AppStage.signedIn);
+      _startPolling();
+      _restartIdle();
+    }
+    return result;
+  }
+
+  /// Approving side (this phone or tablet is signed in): what is asking for [userCode].
+  Future<DeviceRequest> checkDevice(String userCode) async =>
+      DeviceRequest.fromJson(obj((await api.post('/api/device-sign-in/check', {'userCode': userCode})).data));
+
+  Future<void> approveDevice(String userCode) => api.post('/api/device-sign-in/approve', {'userCode': userCode});
+
+  Future<void> denyDevice(String userCode) => api.post('/api/device-sign-in/deny', {'userCode': userCode});
+
+  // ---- Screen lock ----
+
+  /// Any tap, click or key press: pushes the auto-lock back.
+  void noteActivity() {
+    if (!privacy.hasPin || locked || stage != AppStage.signedIn) return;
+    final now = DateTime.now();
+    if (now.difference(_lastActivityReset) < const Duration(seconds: 1)) return;
+    _lastActivityReset = now;
+    _restartIdle();
+  }
+
+  void _restartIdle() {
+    _idle?.cancel();
+    _idle = null;
+    if (!privacy.hasPin || locked || stage != AppStage.signedIn) return;
+    _idle = Timer(privacy.autoLockAfter, lock);
+  }
+
+  /// Locks now (idle timeout, app sent to the background, or "Lock now").
+  void lock() {
+    _idle?.cancel();
+    if (!privacy.hasPin || stage != AppStage.signedIn || locked) return;
+    locked = true;
+    notifyListeners();
+  }
+
+  /// The app went to the background (or the TV's home button was pressed).
+  void onBackgrounded() => lock();
+
+  bool unlock(String pin) {
+    if (!privacy.verify(pin)) return false;
+    locked = false;
+    _restartIdle();
+    notifyListeners();
+    return true;
+  }
+
+  Future<void> setPin(String pin) async {
+    await privacy.setPin(pin);
+    _restartIdle();
+    notifyListeners();
+  }
+
+  Future<void> removePin() async {
+    await privacy.clear();
+    locked = false;
+    _restartIdle();
+    notifyListeners();
+  }
+
+  Future<void> setAutoLockMinutes(int minutes) async {
+    await privacy.setAutoLockMinutes(minutes);
+    _restartIdle();
+    notifyListeners();
   }
 
   Future<List<Membership>> memberships() async =>
@@ -260,6 +391,10 @@ class AppController extends ChangeNotifier {
 
   Future<void> _dropSession({String? notice}) async {
     _poll?.cancel();
+    _idle?.cancel();
+    // The PIN belongs to whoever was signed in; the next person sets their own.
+    locked = false;
+    if (privacy.hasPin) await privacy.clear();
     _api?.close();
     _api = null;
     _session = null;
@@ -299,6 +434,7 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     _poll?.cancel();
+    _idle?.cancel();
     _api?.close();
     super.dispose();
   }

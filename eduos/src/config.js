@@ -168,6 +168,9 @@ export const config = {
   // EduOS app may return to after district sign-in, e.g.
   // "org.eduos.app:/oauth2redirect". Empty (default) disables native sign-in.
   nativeAppRedirectUris: parseNativeRedirectUris(process.env.NATIVE_APP_REDIRECT_URIS || ""),
+  // Device sign-in (RFC 8628) for TVs, Roku and the Windows app; see
+  // src/device-sign-in.js. Off unless DEVICE_SIGN_IN_ENABLED=true.
+  deviceSignInEnabled: process.env.DEVICE_SIGN_IN_ENABLED === "true",
   // 32.1.0: GET /metrics is served only when this is set (Bearer token).
   metricsToken: process.env.METRICS_TOKEN || "",
   // Sign-in requests (/auth/login + /auth/callback) per client IP per 15 minutes.
