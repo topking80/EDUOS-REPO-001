@@ -69,6 +69,8 @@ on that bucket (no listing, no other buckets). Then set on the API:
 | `MEDIA_S3_BUCKET` | `district-eduos-media` |
 | `MEDIA_S3_PATH_STYLE` | `true` for MinIO and R2; leave unset for AWS |
 | `MEDIA_S3_ACCESS_KEY_ID`, `MEDIA_S3_SECRET_ACCESS_KEY` | the credentials above (keep them in the secrets store, never in the repository) |
+| `HISTORY_ARCHIVE_STORAGE_CLASS` | optional (TC-08): `STANDARD_IA`, `GLACIER_IR` or `ONEZONE_IA`; old history photos move there in place. See `HISTORY-PRESERVATION.md` |
+| `HISTORY_PRESERVE_INTERVAL_SECONDS` | optional (TC-08): run the integrity check inside the API every N seconds (default 0: use `npm run history:preserve` from cron) |
 
 ### ClamAV
 

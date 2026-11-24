@@ -761,3 +761,13 @@ GRANT SELECT ON history_imports, history_import_items TO eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_history_import_office(uuid), eduos_history_import_receive(text, text, jsonb, jsonb, jsonb), eduos_history_import_candidates(uuid),
   eduos_history_import_confirm(uuid, text, uuid), eduos_history_import_decide(uuid, integer, boolean, text), eduos_history_import_close(uuid, text),
   eduos_history_entry_origins(uuid[]) TO eduos_app;
+-- TC-08 (db/131): preservation. Policies are edited by the superintendent;
+-- holds, events and media checks change only through these functions.
+GRANT SELECT, INSERT ON district_history_preservation_policies TO eduos_app;
+GRANT UPDATE (verify_every_days, archive_after_days, capacity_alert_percent, records_schedule_ref, set_by, set_at) ON district_history_preservation_policies TO eduos_app;
+REVOKE DELETE, TRUNCATE ON district_history_preservation_policies FROM eduos_app;
+GRANT SELECT ON history_legal_holds, history_preservation_events TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON history_legal_holds, history_preservation_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_history_on_hold(uuid, uuid), eduos_history_hold_place(uuid, text, text), eduos_history_hold_release(uuid, text),
+  eduos_history_media_checksum(uuid, text), eduos_history_preservation_due(integer), eduos_history_preservation_record(uuid, text, text, text),
+  eduos_history_capacity_report(), eduos_history_last_check() TO eduos_app;
