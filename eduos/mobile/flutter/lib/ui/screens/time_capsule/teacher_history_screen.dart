@@ -88,7 +88,7 @@ class TeacherHistoryItemsScreen extends StatelessWidget {
             if (context.mounted) toast(context, 'Resubmitted to the school.');
             await reload();
           } on ApiException {
-            if (context.mounted) toast(context, 'Couldn\\'t resubmit it.');
+            if (context.mounted) toast(context, 'Couldn\'t resubmit it.');
           }
         }
 
