@@ -1,0 +1,17 @@
+{
+  "name": "eduos-roku",
+  "version": "37.8.0",
+  "private": true,
+  "description": "EduOS Roku channel (SceneGraph): read-only family view signed in with a code.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "lint": "bslint --project bsconfig.json",
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "@rokucommunity/bslint": "0.8.47",
+    "brighterscript": "0.73.8"
+  }
+}

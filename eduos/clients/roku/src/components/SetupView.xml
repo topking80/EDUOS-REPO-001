@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- First run: which district's EduOS this TV talks to. -->
+<component name="SetupView" extends="Stage">
+  <script type="text/brightscript" uri="pkg:/components/shared/util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/shared/api.brs" />
+  <script type="text/brightscript" uri="pkg:/components/SetupView.brs" />
+  <children>
+    <Label id="title" translation="[160,140]" width="1600" font="font:LargeBoldSystemFont" color="0xFFFFFFFF"
+      text="Welcome to EduOS" />
+    <Label id="body" translation="[160,230]" width="1300" wrap="true" font="font:MediumSystemFont" color="0xDDE3EEFF"
+      text="See your family's Time Capsules and school history on this TV. First, enter your school district's EduOS address. It's the address you use for EduOS on the web, such as eduos.yourdistrict.org." />
+    <Label id="current" translation="[160,470]" width="1600" font="font:MediumBoldSystemFont" color="0xFCA311FF" text="" />
+    <ButtonGroup id="buttons" translation="[160,560]" minWidth="760" />
+    <Label id="message" translation="[160,820]" width="1500" wrap="true" font="font:MediumSystemFont" color="0xFFD6A5FF" text="" />
+  </children>
+</component>

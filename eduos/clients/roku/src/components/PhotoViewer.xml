@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Full-screen photos: Left/Right to move, Back to close. Each photo's link is
+     fetched with the session (/api/history/photos/:id?format=json) and lasts a
+     minute; the Poster loads the picture from it. -->
+<component name="PhotoViewer" extends="Group">
+  <interface>
+    <field id="photos" type="array" />
+    <field id="start" type="integer" value="0" />
+    <field id="open" type="boolean" alwaysNotify="true" onChange="onOpen" />
+    <field id="closed" type="boolean" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/components/shared/util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/shared/api.brs" />
+  <script type="text/brightscript" uri="pkg:/components/PhotoViewer.brs" />
+  <children>
+    <Rectangle width="1920" height="1080" color="0x000000FF" />
+    <Poster id="poster" translation="[60,40]" width="1800" height="900" loadDisplayMode="scaleToFit" />
+    <Label id="status" translation="[60,460]" width="1800" horizAlign="center" font="font:MediumSystemFont" color="0xDDE3EEFF" text="" />
+    <Label id="caption" translation="[60,960]" width="1500" font="font:MediumSystemFont" color="0xFFFFFFFF" text="" />
+    <Label id="count" translation="[1560,960]" width="300" horizAlign="right" font="font:SmallSystemFont" color="0xB8C1D1FF" text="" />
+  </children>
+</component>

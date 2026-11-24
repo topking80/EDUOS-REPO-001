@@ -7,6 +7,7 @@
 //   POST /api/family/children/:studentId/history-contributions/:contributionId/photos  (MEDIA-02, the guardian)
 //   POST /api/history/capsules/:id/photos            (MEDIA-03, the capsule's owner, while a draft)
 //   GET  /api/history/photos/:assetId                -> 302 to a 60-second private link
+//        (?format=json -> {data: {url, expiresIn: 60}} instead)
 //
 // The server checks every photo before it is stored: the district's limits,
 // ClamAV, a real decode as the declared type, re-encoding (no EXIF/GPS),
@@ -137,8 +138,12 @@ export function registerHistoryMediaRoutes(app, providers = historyMedia()) {
   // MEDIA-03: the owner's own photos in a draft Time Capsule.
   app.post("/api/history/capsules/:id/photos", limiter, requireSession, requireCsrf, raw, acceptPhoto("capsule", "id"));
 
+  // ?format=json answers {data: {url, expiresIn}} instead of redirecting, for
+  // clients that can't send the session with an image request (the Roku
+  // channel fetches the link with its session, then shows the picture from it).
   app.get("/api/history/photos/:assetId", requireSession, async (req, res, next) => {
     if (!validId(req.params.assetId)) return res.status(400).json({ error: "invalid_asset_id" });
+    if (req.query.format !== undefined && req.query.format !== "json") return res.status(400).json({ error: "invalid_photo_format" });
     if (!ready) return res.status(503).json({ error: "media_storage_not_configured" });
     try {
       const m = await withTenantTransaction(req.actor, async c =>
@@ -149,6 +154,7 @@ export function registerHistoryMediaRoutes(app, providers = historyMedia()) {
       const link = storage.readUrl(m.storage_key, 60);
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Referrer-Policy", "no-referrer");
+      if (req.query.format === "json") return res.json({ data: { url: link.url, expiresIn: 60 } });
       res.redirect(302, link.url);
     } catch (e) { sendError(res, next, e); }
   });

@@ -245,3 +245,30 @@ jobs:
           path: eduos/mobile/flutter/build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+  # 37.8: the Roku channel (eduos/clients/roku). Not a required check: it lints
+  # the BrightScript (bslint) and packages the sideloadable zip, which is kept
+  # as an artifact. Uses the channel's own lockfile; nothing here signs or
+  # publishes anything (that's done in the Roku Developer Dashboard).
+  roku-channel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: eduos/clients/roku
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22, cache: npm, cache-dependency-path: eduos/clients/roku/package-lock.json }
+      - run: npm ci --ignore-scripts
+      - name: Lint the channel (brighterscript + bslint)
+        run: npm run lint
+      - name: Package the channel
+        run: npm run build
+      - name: Upload the sideloadable channel
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eduos-roku-channel
+          path: eduos/clients/roku/out/eduos-roku.zip
+          if-no-files-found: error
+          retention-days: 14

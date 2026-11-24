@@ -97,18 +97,19 @@ Built in `clients/02-tv` (what shipped, where it differs from the first plan):
 
 ## 6. Roku (branch `clients/03-roku`)
 
-- Flutter can't target Roku, so it's a separate BrightScript/SceneGraph channel in `eduos/clients/roku/`:
-  - `manifest`, `source/main.brs`, `components/*.xml|brs`
-  - `ServerScene` (district server URL, entered once with the on-screen keyboard)
-  - `PairScene`: device sign-in from section 3, showing the user code and the verification URL (plus a QR), and polling `/auth/device/token` on a Task node
-  - `ProfileLockScene` (PIN + auto-lock)
-  - `HomeScene`: rows of capsules, opened for you, history by year
-  - `CapsuleScene` (message, items, photos), `TimelineScene`, `PhotoScene` (full-screen photo with left/right)
-- Read-only: Roku sessions are read-only server-side.
-- Photos: the Task node does an authorized request to `/api/history/photos/:id` without following redirects (`roUrlTransfer` `EnableFreshConnection`, `SetRedirect`…), then the Poster loads the signed URL.
-- Token storage: `roRegistrySection`, cleared on sign-out.
-- **Tooling:** `package.json` in `eduos/clients/roku` with `brighterscript` (`bsc`) + `@rokucommunity/bslint`, and its `lint` and `build` package scripts (`build` makes `out/eduos-roku.zip`, git-ignored). A **non-required** CI job `roku-channel` (ubuntu) runs lint + package. The 8 required checks are unchanged.
-- Publishing needs a Roku developer account, a channel listing and artwork (focus/side posters, splash).
+What shipped (details in `eduos/clients/roku/README.md`):
+
+- Flutter can't target Roku, so it's a separate BrightScript/SceneGraph channel in `eduos/clients/roku/` (`src/manifest`, `src/source/main.brs`, `src/components/*`). Stages, one on screen at a time (`MainScene`):
+  - `SetupView`: the district address (https only), typed with the on-screen keyboard and checked against `/health` before it's saved.
+  - `PairView`: device sign-in from section 3 with `clientKind: "roku"` and the Roku's name as the label. Shows the code, the `/device/` address and a QR code drawn from the server's `qr` rows (`QrCode`, one rectangle per dark run). Polls `/auth/device/token` at the server's interval, adds 5 s on `slow_down`, gets a new code on `expired_token`, and explains `access_denied` and `device_sign_in_disabled`.
+  - `LockView`: the optional screen-lock PIN (4 or 6 numbers, picked with Up/Down since the remote has no number keys; `PinEntry`). Salted HMAC-SHA256, 2000 rounds, in the registry. Five free tries, then 30 s doubling to 15 min, the same as the phone app. "Sign this TV out" works without the PIN.
+  - `HomeView`: a menu that depends on the role (Time Capsules; History per child for a parent, or "My history" for a student; Screen lock; Sign out of this TV). Capsules list and detail (message, items, withheld items, sealed until it opens); history newest first, paged with "Show more"; screen-lock settings (set/change/off, 5/10/15/30 quiet minutes, lock now).
+  - `PhotoViewer`: full-screen photos with captions, Left/Right, Back. A `Poster` can't send the session header, so the channel asks `GET /api/history/photos/:assetId?format=json` (new in this branch: the same checks, answering `{data: {url, expiresIn: 60}}` instead of a 302) and the Poster loads that link.
+- Read-only: Roku sessions are read-only on the server (section 3); the channel only reads, plus sign-out.
+- Token storage: `roRegistrySection("eduos")`, cleared (with the PIN) on sign-out or when the server says the session ended (401).
+- **Tooling:** `package.json` in `eduos/clients/roku` with `brighterscript` 0.73.8 and `@rokucommunity/bslint` 0.8.47 (exact versions, own lockfile, 0 known vulnerabilities), and its `lint` and `build` package scripts (`build` makes `out/eduos-roku.zip`, git-ignored, with placeholder art until real art is in `art/`). A **non-required** CI job `roku-channel` (ubuntu) runs lint and build and keeps the zip as an artifact. The 8 required checks are unchanged.
+- Not tested on a Roku device from here (there's none in CI): it's checked by brighterscript/bslint, and the text helpers were run in a BrightScript interpreter. The first sideload on a real Roku is the remaining check.
+- Publishing needs a Roku developer account, a channel listing and artwork (channel posters, splash).
 
 ## 7. Order and branches
 

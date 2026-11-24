@@ -121,6 +121,15 @@ describe("MEDIA-03 Time Capsule photos against real PostgreSQL", { skip }, () =>
     assert.deepEqual(opened.items[0].photos.map(p => p.alt), ["Alice on her bike"]);
     for (const id of [photoId, memoryPhoto]) assert.equal((await photo("pu", id)).status, 302);
     for (const who of ["pb", "supt2"]) assert.equal((await photo(who, photoId)).status, 404, who);
+    // The same link as JSON (for the Roku channel), under the same rules.
+    const asJson = async (who, query) => fetch(`${server.base}/api/history/photos/${photoId}${query}`, { headers: { cookie: s[who].cookie }, redirect: "manual" });
+    const linked = await asJson("pu", "?format=json");
+    assert.equal(linked.status, 200);
+    const { data } = await linked.json();
+    assert.equal(data.expiresIn, 60);
+    assert.equal(new URL(data.url).origin, new URL((await photo("pu", photoId)).headers.get("location")).origin);
+    assert.equal((await asJson("pb", "?format=json")).status, 404, "still not for a non-recipient");
+    assert.equal((await asJson("pu", "?format=xml")).status, 400);
   });
 
   it("cancelling a capsule deletes the owner's photos (not the history's)", async () => {

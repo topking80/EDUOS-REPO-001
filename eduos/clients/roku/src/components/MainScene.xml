@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Shows one stage at a time: district address, then the sign-in code, then
+     the screen lock (when a PIN is set), then home. -->
+<component name="MainScene" extends="Scene">
+  <script type="text/brightscript" uri="pkg:/components/shared/util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/MainScene.brs" />
+  <children>
+    <Rectangle id="backdrop" width="1920" height="1080" color="0x14213DFF" />
+    <SetupView id="setup" visible="false" />
+    <PairView id="pair" visible="false" />
+    <LockView id="lock" visible="false" />
+    <HomeView id="home" visible="false" />
+    <Timer id="idleTimer" duration="30" repeat="true" />
+  </children>
+</component>
