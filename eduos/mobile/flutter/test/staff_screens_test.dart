@@ -161,6 +161,7 @@ void main() {
           'GET /api/home': (_) => {'data': {'school_name': 'Maple Elementary', 'students': 2, 'to_grade': 3, 'open_assignments': 1, 'absences_7d': 0}},
           'GET /api/rosters': (_) => {'data': [{'student_id': ada, 'student_name': 'Ada Lovelace'}, {'student_id': ben, 'student_name': 'Ben Okafor'}]},
           'GET /api/attendance': (_) => {'data': marks},
+          'GET /api/arrival/today': (_) => {'data': []},
           'POST /api/attendance': (r) {
             final b = jsonDecode(r.body) as Map<String, dynamic>;
             marks.insert(0, {'student_id': b['studentId'], 'event_date': b['eventDate'], 'status': b['status']});
