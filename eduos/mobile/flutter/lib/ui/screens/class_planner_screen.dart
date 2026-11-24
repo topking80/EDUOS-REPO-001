@@ -6,56 +6,6 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
 
-class _PlanTextDialog extends StatefulWidget {
-  const _PlanTextDialog({required this.kind});
-  final String kind;
-
-  @override
-  State<_PlanTextDialog> createState() => _PlanTextDialogState();
-}
-
-class _PlanTextDialogState extends State<_PlanTextDialog> {
-  final _first = TextEditingController();
-  final _second = TextEditingController();
-
-  @override
-  void dispose() {
-    _first.dispose();
-    _second.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final a = _first.text.trim();
-    final b = _second.text.trim();
-    final kind = widget.kind;
-    Map<String, Object?>? result;
-    if (kind == 'warmup' && a.isNotEmpty) result = {'prompt': a};
-    if (kind == 'timer' && a.isNotEmpty && (int.tryParse(b) ?? 0) > 0) result = {'label': a, 'minutes': int.parse(b)};
-    if (kind == 'text' && b.isNotEmpty) result = {'title': a, 'body': b};
-    if (kind == 'link' && a.isNotEmpty && b.startsWith('https://')) result = {'label': a, 'url': b};
-    if (result != null) Navigator.pop(context, result);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final kind = widget.kind;
-    return AlertDialog(
-      title: Text(switch (kind) {'warmup' => 'Warm-up', 'timer' => 'Timed activity', 'link' => 'Web link', _ => 'Class instructions'}),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        TextField(controller: _first, decoration: InputDecoration(labelText: switch (kind) {'warmup' => 'Question', 'timer' => 'Activity label', 'link' => 'Link label', _ => 'Title'})),
-        if (kind == 'text' || kind == 'link')
-          TextField(controller: _second, decoration: InputDecoration(labelText: kind == 'link' ? 'HTTPS URL' : 'Instructions'), minLines: 2, maxLines: 5),
-        if (kind == 'timer') TextField(controller: _second, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Minutes')),
-      ]),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(onPressed: _submit, child: const Text('Add')),
-      ],
-    );
-  }
-}
-
 /// Native daily lesson planner backed by TEACH-04 class-plan APIs.
 class ClassPlannerScreen extends StatefulWidget {
   const ClassPlannerScreen({super.key, this.today});
