@@ -15,12 +15,20 @@
 --   * disbursement can be paused separately.
 --
 -- A disbursement is requested by finance (TC-10: the superintendent or a named
--- reviewer), against one source (unrestricted, or one school's restricted
--- gifts), for no more than that source has. It needs approvals_required
--- approvals (default 2) from finance people other than the requester, each
--- attesting no conflict of interest; one rejection rejects it. Payment is
--- recorded (sandbox: no money moves) by someone other than the requester and
--- posts an append-only fund ledger line.
+-- reviewer) for one school, against one source (unrestricted, or that school's
+-- restricted gifts), for no more than that source has. It needs exactly three
+-- approvals, all required (district decision, 2026-11-24): the principal of
+-- that school plus two district administrators (superintendent or IT
+-- administrator), none of them the requester, each attesting no conflict of
+-- interest. A vice principal's session doesn't fill the principal's seat. One
+-- rejection from the panel rejects it. Payment is recorded (sandbox: no money
+-- moves) by someone other than the requester and posts an append-only fund
+-- ledger line.
+--
+-- Fund totals are published as a footnote on student grade cards (the
+-- "Final grades" card of Grades & progress): aggregate only, no donor names,
+-- only once report_min_donors people have given, and the district can turn
+-- the footnote off (grade_card_footnote) or stop publishing (public_report).
 --
 -- Numbered 137: 132 TC-08, 133 weather fix, 134 TC-11, 135 TC-09, 136 TC-10.
 
@@ -39,8 +47,8 @@ CREATE TABLE preservation_fund_settings (
   allocation_rules text CHECK (allocation_rules IS NULL OR length(btrim(allocation_rules)) BETWEEN 10 AND 2000),
   governance_text text CHECK (governance_text IS NULL OR length(btrim(governance_text)) BETWEEN 10 AND 2000),
   refund_policy text CHECK (refund_policy IS NULL OR length(btrim(refund_policy)) BETWEEN 10 AND 1000),
-  approvals_required integer NOT NULL DEFAULT 2 CHECK (approvals_required BETWEEN 2 AND 5),
   public_report boolean NOT NULL DEFAULT false,
+  grade_card_footnote boolean NOT NULL DEFAULT true,
   report_min_donors integer NOT NULL DEFAULT 5 CHECK (report_min_donors BETWEEN 3 AND 100),
   updated_by uuid NOT NULL REFERENCES users(id),
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -62,6 +70,7 @@ CREATE INDEX preservation_fund_governance_records_district ON preservation_fund_
 CREATE TABLE preservation_fund_disbursements (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   district_id uuid NOT NULL REFERENCES districts(id),
+  school_id uuid NOT NULL,
   source_school_id uuid,
   category text NOT NULL CHECK (category IN ('storage','archival_media','format_migration','backup','archive_accessibility','other_preservation')),
   description text NOT NULL CHECK (length(btrim(description)) BETWEEN 10 AND 1000),
@@ -79,7 +88,9 @@ CREATE TABLE preservation_fund_disbursements (
   payment_ref text CHECK (payment_ref IS NULL OR length(btrim(payment_ref)) BETWEEN 2 AND 120),
   test_mode boolean NOT NULL DEFAULT true CHECK (test_mode),
   UNIQUE (district_id, id),
+  FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
   FOREIGN KEY (district_id, source_school_id) REFERENCES schools(district_id, id),
+  CHECK (source_school_id IS NULL OR source_school_id = school_id),
   CHECK ((status = 'paid') = (paid_at IS NOT NULL)),
   CHECK (paid_by IS NULL OR paid_by <> requested_by)
 );
@@ -90,6 +101,7 @@ CREATE TABLE preservation_fund_votes (
   district_id uuid NOT NULL REFERENCES districts(id),
   disbursement_id uuid NOT NULL,
   voter uuid NOT NULL REFERENCES users(id),
+  seat text NOT NULL CHECK (seat IN ('school_principal','district_admin')),
   decision text NOT NULL CHECK (decision IN ('approve','reject')),
   no_conflict boolean NOT NULL CHECK (no_conflict),
   note text CHECK (note IS NULL OR length(note) <= 500),
@@ -122,7 +134,7 @@ CREATE TRIGGER preservation_fund_ledger_append_only BEFORE UPDATE OR DELETE ON p
 CREATE FUNCTION eduos_preservation_fund_disbursement_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'disbursement records are kept' USING ERRCODE = '42501'; END IF;
-  IF NEW.district_id <> OLD.district_id OR NEW.source_school_id IS DISTINCT FROM OLD.source_school_id OR NEW.category <> OLD.category
+  IF NEW.district_id <> OLD.district_id OR NEW.school_id <> OLD.school_id OR NEW.source_school_id IS DISTINCT FROM OLD.source_school_id OR NEW.category <> OLD.category
      OR NEW.description <> OLD.description OR NEW.payee <> OLD.payee OR NEW.invoice_ref <> OLD.invoice_ref OR NEW.amount_cents <> OLD.amount_cents
      OR NEW.requested_by <> OLD.requested_by OR NEW.requested_at <> OLD.requested_at THEN
     RAISE EXCEPTION 'disbursement terms are fixed' USING ERRCODE = '23514';
@@ -156,15 +168,20 @@ CREATE POLICY scope_update ON preservation_fund_settings AS RESTRICTIVE FOR UPDA
   WITH CHECK (eduos_is_table_owner() OR (eduos_ctx_role() = 'superintendent' AND updated_by = eduos_ctx_user()));
 CREATE POLICY scope_insert ON preservation_fund_governance_records AS RESTRICTIVE FOR INSERT
   WITH CHECK (eduos_is_table_owner() OR (eduos_ctx_role() = 'superintendent' AND recorded_by = eduos_ctx_user()));
--- Disbursements, votes and the fund ledger: finance only; written by functions.
+-- Disbursements and votes: finance, the district administrators and the
+-- principal of the school a payment is for (the approval panel). The fund
+-- ledger: finance only. All written by functions.
 CREATE POLICY scope_read ON preservation_fund_disbursements AS RESTRICTIVE FOR SELECT
-  USING (eduos_is_table_owner() OR eduos_history_donation_finance());
+  USING (eduos_is_table_owner() OR eduos_history_donation_finance() OR coalesce(eduos_ctx_role(), '') IN ('superintendent','it_admin')
+         OR (coalesce(eduos_ctx_role(), '') = 'principal' AND school_id = eduos_ctx_school()));
 CREATE POLICY scope_insert ON preservation_fund_disbursements AS RESTRICTIVE FOR INSERT WITH CHECK (eduos_is_table_owner());
 CREATE POLICY scope_update ON preservation_fund_disbursements AS RESTRICTIVE FOR UPDATE
   USING (eduos_is_table_owner()) WITH CHECK (eduos_is_table_owner());
 CREATE POLICY scope_delete ON preservation_fund_disbursements AS RESTRICTIVE FOR DELETE USING (eduos_is_table_owner());
 CREATE POLICY scope_read ON preservation_fund_votes AS RESTRICTIVE FOR SELECT
-  USING (eduos_is_table_owner() OR eduos_history_donation_finance());
+  USING (eduos_is_table_owner() OR eduos_history_donation_finance() OR coalesce(eduos_ctx_role(), '') IN ('superintendent','it_admin')
+         OR (coalesce(eduos_ctx_role(), '') = 'principal'
+             AND EXISTS (SELECT 1 FROM preservation_fund_disbursements x WHERE x.id = disbursement_id AND x.school_id = eduos_ctx_school())));
 CREATE POLICY scope_write ON preservation_fund_votes AS RESTRICTIVE FOR INSERT WITH CHECK (eduos_is_table_owner());
 CREATE POLICY scope_read ON preservation_fund_ledger AS RESTRICTIVE FOR SELECT
   USING (eduos_is_table_owner() OR eduos_history_donation_finance());
@@ -197,46 +214,76 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
                     WHERE d.district_id = p_district AND d.status = 'approved' AND d.source_school_id IS NOT DISTINCT FROM p_school), 0)
 $$;
 
-CREATE FUNCTION eduos_preservation_fund_request(p_school uuid, p_category text, p_description text, p_payee text, p_invoice text, p_amount integer)
+-- p_for: the school the payment is for (its principal approves); p_school: the
+-- source (NULL = unrestricted, otherwise the same school's restricted gifts).
+CREATE FUNCTION eduos_preservation_fund_request(p_for uuid, p_school uuid, p_category text, p_description text, p_payee text, p_invoice text, p_amount integer)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE d uuid := eduos_ctx_district(); s preservation_fund_settings; rid uuid;
 BEGIN
   IF d IS NULL OR NOT eduos_history_donation_finance() THEN RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501'; END IF;
+  IF p_for IS NULL OR NOT EXISTS (SELECT 1 FROM schools sc WHERE sc.id = p_for AND sc.district_id = d) THEN RAISE EXCEPTION 'school_required' USING ERRCODE = '22023'; END IF;
+  IF p_school IS NOT NULL AND p_school <> p_for THEN RAISE EXCEPTION 'source_must_match_school' USING ERRCODE = '22023'; END IF;
   SELECT * INTO s FROM preservation_fund_settings WHERE district_id = d FOR SHARE;
   IF NOT FOUND OR NOT s.enabled THEN RAISE EXCEPTION 'fund_not_enabled' USING ERRCODE = '55000'; END IF;
   IF s.disbursement_paused THEN RAISE EXCEPTION 'disbursement_paused' USING ERRCODE = '55000'; END IF;
   IF NOT (p_category = ANY (s.eligible_categories)) THEN RAISE EXCEPTION 'category_not_eligible' USING ERRCODE = '22023'; END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('preservation_fund:' || d::text, 0));
   IF p_amount IS NULL OR p_amount > eduos_preservation_fund_available(d, p_school) THEN RAISE EXCEPTION 'insufficient_funds' USING ERRCODE = '55000'; END IF;
-  INSERT INTO preservation_fund_disbursements(district_id, source_school_id, category, description, payee, invoice_ref, amount_cents, requested_by)
-    VALUES (d, p_school, p_category, btrim(p_description), btrim(p_payee), btrim(p_invoice), p_amount, eduos_ctx_user()) RETURNING id INTO rid;
+  INSERT INTO preservation_fund_disbursements(district_id, school_id, source_school_id, category, description, payee, invoice_ref, amount_cents, requested_by)
+    VALUES (d, p_for, p_school, p_category, btrim(p_description), btrim(p_payee), btrim(p_invoice), p_amount, eduos_ctx_user()) RETURNING id INTO rid;
   RETURN rid;
 END $$;
 
+-- Which approval seat the caller holds for a payment to p_school: the
+-- school's principal (a principal session at that school, backed by an active
+-- principal membership; not a vice principal acting for them), or a district
+-- administrator (superintendent or IT administrator). NULL = no seat.
+CREATE FUNCTION eduos_preservation_fund_seat(p_school uuid) RETURNS text
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT CASE
+    WHEN coalesce(eduos_ctx_role(), '') = 'principal' AND NOT coalesce(eduos_ctx_is_vice_principal(), false) AND eduos_ctx_school() = p_school
+         AND EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = eduos_ctx_user() AND m.district_id = eduos_ctx_district()
+                       AND m.school_id = p_school AND m.role = 'principal' AND m.status = 'active') THEN 'school_principal'
+    WHEN coalesce(eduos_ctx_role(), '') IN ('superintendent','it_admin')
+         AND EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = eduos_ctx_user() AND m.district_id = eduos_ctx_district()
+                       AND m.school_id IS NULL AND m.role = eduos_ctx_role() AND m.status = 'active') THEN 'district_admin'
+  END
+$$;
+
+-- Three approvals, all required: one school_principal seat and two
+-- district_admin seats. Any rejection from the panel rejects the request.
 CREATE FUNCTION eduos_preservation_fund_vote(p_id uuid, p_decision text, p_no_conflict boolean, p_note text) RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE d uuid := eduos_ctx_district(); s preservation_fund_settings; x preservation_fund_disbursements; n int;
+DECLARE d uuid := eduos_ctx_district(); s preservation_fund_settings; x preservation_fund_disbursements; seat text; np int; na int;
 BEGIN
-  IF d IS NULL OR NOT eduos_history_donation_finance() THEN RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501'; END IF;
-  IF p_no_conflict IS NOT TRUE THEN RAISE EXCEPTION 'conflict_declared' USING ERRCODE = '42501'; END IF;
-  SELECT * INTO s FROM preservation_fund_settings WHERE district_id = d;
-  IF s.disbursement_paused THEN RAISE EXCEPTION 'disbursement_paused' USING ERRCODE = '55000'; END IF;
+  IF d IS NULL OR eduos_ctx_user() IS NULL THEN RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501'; END IF;
+  IF p_decision NOT IN ('approve','reject') THEN RAISE EXCEPTION 'invalid_vote' USING ERRCODE = '22023'; END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('preservation_fund:' || d::text, 0));
   SELECT * INTO x FROM preservation_fund_disbursements WHERE id = p_id AND district_id = d FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'not_found' USING ERRCODE = 'P0002'; END IF;
+  seat := eduos_preservation_fund_seat(x.school_id);
+  IF seat IS NULL THEN RAISE EXCEPTION 'not_on_approval_panel' USING ERRCODE = '42501'; END IF;
+  IF p_no_conflict IS NOT TRUE THEN RAISE EXCEPTION 'conflict_declared' USING ERRCODE = '42501'; END IF;
+  SELECT * INTO s FROM preservation_fund_settings WHERE district_id = d;
+  IF s.disbursement_paused THEN RAISE EXCEPTION 'disbursement_paused' USING ERRCODE = '55000'; END IF;
   IF x.requested_by = eduos_ctx_user() THEN RAISE EXCEPTION 'requester_cannot_approve' USING ERRCODE = '42501'; END IF;
   IF x.status <> 'pending' THEN RAISE EXCEPTION 'not_pending' USING ERRCODE = '55000'; END IF;
   IF EXISTS (SELECT 1 FROM preservation_fund_votes WHERE disbursement_id = x.id AND voter = eduos_ctx_user()) THEN
     RAISE EXCEPTION 'already_decided' USING ERRCODE = '55000';
   END IF;
-  INSERT INTO preservation_fund_votes(district_id, disbursement_id, voter, decision, no_conflict, note)
-    VALUES (d, x.id, eduos_ctx_user(), p_decision, true, nullif(btrim(coalesce(p_note, '')), ''));
+  SELECT count(*) FILTER (WHERE v.seat = 'school_principal'), count(*) FILTER (WHERE v.seat = 'district_admin') INTO np, na
+    FROM preservation_fund_votes v WHERE v.disbursement_id = x.id AND v.decision = 'approve';
+  IF p_decision = 'approve' AND ((seat = 'school_principal' AND np >= 1) OR (seat = 'district_admin' AND na >= 2)) THEN
+    RAISE EXCEPTION 'seat_filled' USING ERRCODE = '55000';
+  END IF;
+  INSERT INTO preservation_fund_votes(district_id, disbursement_id, voter, seat, decision, no_conflict, note)
+    VALUES (d, x.id, eduos_ctx_user(), seat, p_decision, true, nullif(btrim(coalesce(p_note, '')), ''));
   IF p_decision = 'reject' THEN
     UPDATE preservation_fund_disbursements SET status = 'rejected', decided_at = now() WHERE id = x.id;
     RETURN 'rejected';
   END IF;
-  SELECT count(*) INTO n FROM preservation_fund_votes WHERE disbursement_id = x.id AND decision = 'approve';
-  IF n >= s.approvals_required THEN
+  IF seat = 'school_principal' THEN np := np + 1; ELSE na := na + 1; END IF;
+  IF np >= 1 AND na >= 2 THEN
     IF x.amount_cents > eduos_preservation_fund_available(d, x.source_school_id) THEN RAISE EXCEPTION 'insufficient_funds' USING ERRCODE = '55000'; END IF;
     UPDATE preservation_fund_disbursements SET status = 'approved', decided_at = now() WHERE id = x.id;
     RETURN 'approved';
@@ -297,7 +344,22 @@ BEGIN
   RETURN r;
 END $$;
 
+-- The grade-card footnote: the same aggregate as the summary, only when the
+-- district publishes totals and hasn't turned the footnote off.
+CREATE FUNCTION eduos_preservation_fund_grade_card_footnote() RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE d uuid := eduos_ctx_district(); s preservation_fund_settings; r jsonb;
+BEGIN
+  IF d IS NULL OR eduos_ctx_user() IS NULL THEN RAISE EXCEPTION 'session context required' USING ERRCODE = '42501'; END IF;
+  SELECT * INTO s FROM preservation_fund_settings WHERE district_id = d;
+  IF NOT FOUND OR NOT s.grade_card_footnote THEN RETURN jsonb_build_object('shown', false, 'reason', 'footnote_off'); END IF;
+  r := eduos_preservation_fund_summary();
+  IF (r->>'shown')::boolean THEN r := r || jsonb_build_object('fundName', s.fund_name); END IF;
+  RETURN r;
+END $$;
+
 REVOKE ALL ON FUNCTION eduos_preservation_fund_collection_open(uuid), eduos_preservation_fund_gift_gate(), eduos_preservation_fund_available(uuid, uuid),
-  eduos_preservation_fund_request(uuid, text, text, text, text, integer), eduos_preservation_fund_vote(uuid, text, boolean, text),
+  eduos_preservation_fund_request(uuid, uuid, text, text, text, text, integer), eduos_preservation_fund_vote(uuid, text, boolean, text),
   eduos_preservation_fund_pay(uuid, text), eduos_preservation_fund_close(uuid, text), eduos_preservation_fund_summary(),
+  eduos_preservation_fund_seat(uuid), eduos_preservation_fund_grade_card_footnote(),
   eduos_preservation_fund_disbursement_guard() FROM PUBLIC;
