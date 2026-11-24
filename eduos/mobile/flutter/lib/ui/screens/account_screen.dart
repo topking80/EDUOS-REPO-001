@@ -5,6 +5,8 @@ import '../../app/role_tabs.dart';
 import '../../core/models.dart';
 import '../profile_switcher.dart';
 import '../widgets.dart';
+import 'device_approval_screen.dart';
+import 'privacy_screen.dart';
 import 'web_fallback_screen.dart';
 
 /// Account: who's signed in, switch profile, send saved changes, sign out.
@@ -25,6 +27,26 @@ class AccountScreen extends StatelessWidget {
             Text('${roleNames[me?.role] ?? me?.role ?? ''} · ${app.brand?.placeName ?? ''}'),
             const SizedBox(height: 4),
             Text(app.server?.host ?? '', style: Theme.of(context).textTheme.bodySmall),
+          ]),
+          if (app.readOnly)
+            const Notice('This TV can view EduOS but not change anything. Use the EduOS app on your phone or the website to make changes.'),
+          SectionCard(title: 'Screens and privacy', children: [
+            // Only a phone, tablet or browser approves other screens, never a TV or PC signed in by code.
+            if (!app.isDeviceSession)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.connected_tv),
+                title: const Text('Sign in a TV or computer'),
+                subtitle: const Text('Android TV, Google TV, Fire TV, Roku or Windows: enter the code it shows'),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const DeviceApprovalScreen())),
+              ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.lock_outline),
+              title: const Text('Screen lock'),
+              subtitle: Text(app.privacy.hasPin ? 'On · locks after ${app.privacy.autoLockMinutes} minutes' : 'Off · set a PIN for a shared screen'),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PrivacyScreen())),
+            ),
           ]),
           if (memberships.length > 1)
             SectionCard(title: 'Switch profile', children: [
@@ -51,7 +73,7 @@ class AccountScreen extends StatelessWidget {
           FilledButton.tonalIcon(
             style: FilledButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
             icon: const Icon(Icons.logout),
-            label: const Text('Sign out'),
+            label: Text(app.isTv ? 'Sign out of this TV' : 'Sign out'),
             onPressed: () async {
               final unsent = app.queued + app.heldForOthers;
               if (unsent > 0) {

@@ -153,7 +153,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final role = app.me?.role ?? '';
-    final tabs = tabsFor(role);
+    final tabs = tabsFor(role, tv: app.isTv);
     final live = app.liveIncidents;
     // SafetyOS: while an incident is live, families see the safety screen;
     // they may open pick-up once reunification starts (as in the web app).
@@ -176,7 +176,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     final overflow = tabs.length <= 5 ? <RoleTab>[] : tabs.skip(4).toList();
     final navIndex = index < primary.length ? index : primary.length;
     // Tablets in landscape, desktops and TVs: a side rail with every tab.
-    final wide = MediaQuery.sizeOf(context).width >= railMinWidth;
+    final wide = MediaQuery.sizeOf(context).width >= railMinWidth || app.isTv;
 
     return Scaffold(
       appBar: AppBar(
@@ -187,7 +187,8 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
             onPressed: tabs.any((t) => t.id == 'alerts') ? () => _go('alerts') : null,
             icon: Badge(isLabelVisible: app.unread > 0, label: Text('${app.unread}'), child: const Icon(Icons.notifications_none)),
           ),
-          if (app.canInitiateSafety || app.canLeadSafety)
+          // A view-only TV can show a live incident but can't start or lead one.
+          if ((app.canInitiateSafety || app.canLeadSafety) && !app.readOnly)
             IconButton(
               tooltip: live.isNotEmpty ? 'Safety board' : 'Safety: start an alert',
               icon: Icon(Icons.shield_outlined, color: live.isNotEmpty ? Theme.of(context).colorScheme.error : null),
@@ -257,7 +258,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
 
   Widget _withRail(BuildContext context, bool rail, List<RoleTab> tabs, int index, Widget body) {
     if (!rail) return body;
-    final extended = MediaQuery.sizeOf(context).width >= 1200;
+    final extended = MediaQuery.sizeOf(context).width >= 1200 || AppScope.read(context).isTv;
     return Row(children: [
       LayoutBuilder(
         builder: (context, constraints) => SingleChildScrollView(
