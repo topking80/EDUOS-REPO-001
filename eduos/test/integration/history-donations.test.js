@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import pg from "pg";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
+import { openFund } from "./fund-helpers.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 const SETTINGS = { enabled: true, minCents: 500, maxCents: 100000, suggestedCents: [1000, 2500], acknowledgementText: "Thank you for helping keep our students' histories safe." };
@@ -42,6 +43,10 @@ describe("TC-09 donations against real PostgreSQL", { skip }, () => {
     for (const who of ["p1", "t1", "pa", "pu"]) assert.equal((await as(who)("PUT", "/api/donations/settings", SETTINGS)).status, 403, who);
     assert.equal((await as("supt1")("PUT", "/api/donations/settings", { ...SETTINGS, taxWordingEnabled: true })).status, 400, "tax wording needs its text");
     ok(await as("supt1")("PUT", "/api/donations/settings", SETTINGS));
+    // TC-12: gifts go into the preservation fund, closed until its approvals are documented.
+    assert.equal(ok(await as("pa")("GET", "/api/donations/status")).reason, "fund_collection_closed");
+    assert.equal((await give("pa", { amountCents: 1000 })).status, 503);
+    await openFund(as("supt1"));
     assert.equal(ok(await as("pa")("GET", "/api/donations/status")).reason, "no_sandbox_method");
     ok(await as("supt1")("PUT", "/api/commerce/payment-methods", { enabledMethods: ["sandbox", "paypal"], defaultMethod: "sandbox" }));
     const now = ok(await as("pa")("GET", "/api/donations/status"));
