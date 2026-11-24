@@ -255,7 +255,7 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/students/c9/history-privacy": return { data: { student: { id: "c9", name: "Alice A" }, guardians: [{ id: "u1", name: "Parent A", restricted: false }, { id: "u2", name: "Parent Two", restricted: true }],
       restrictions: [{ id: "r1", person: "Parent Two", kind: "court_order", basis: "Order 2026-114", documentRef: null, setBy: "Principal S1", setAt: now, endsOn: null, liftedAt: null }],
       transition: null, grants: [], emergency: [{ id: "e1", person: "Counselor S1", role: "counselor", reason: "Student in crisis; safety plan needed", openedAt: now, expiresAt: now, closed: true, reviewed: false }] } };
-    case "/api/students/c9/history-transfers": return { data: { signingReady: true, keyFingerprint: "0123456789abcdef0123456789abcdef", transfers: [
+    case "/api/students/c9/history-transfers": return { data: { signingReady: true, keyFingerprint: "TEST-FP", transfers: [
       { id: "tr1", receivingDistrict: "Lakeside Unified", basis: "enrollment_request", note: "Request dated Nov 20", includeFamily: true, familyDecision: "approved", status: "ready",
         requestedBy: "Principal S1", createdAt: now, readyAt: now, items: 4, downloads: 1 }] } };
     case "/api/family/history-transfers": return { data: [{ id: "tr2", studentId: "c1", studentName: "Alice A", school: "Maple", receivingDistrict: "Lakeside Unified",
@@ -1081,7 +1081,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.eval(`document.querySelector('main button[aria-label="Privacy: Alice A"]').click()`);
       if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Alice A: records & privacy")`))) failures.push("principal: no privacy page");
       const t = await page.eval(`document.querySelector("main").textContent`);
-      for (const w of ["Restricted", "Order 2026-114", "Who looked", "Teacher S1 (teacher)", "Transfer to another district", "Download transfer file", "0123456789abcdef0123456789abcdef"]) if (!t.includes(w)) failures.push(`privacy page: ${w}`);
+      for (const w of ["Restricted", "Order 2026-114", "Who looked", "Teacher S1 (teacher)", "Transfer to another district", "Download transfer file", "TEST-FP"]) if (!t.includes(w)) failures.push(`privacy page: ${w}`);
       await axeScan(page, "principal: records & privacy", a11y);
       if (page.errors.length) failures.push(`privacy page: ${page.errors[0].split("\n")[0]}`);
       page.close();
