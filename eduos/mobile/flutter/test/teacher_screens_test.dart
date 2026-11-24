@@ -40,6 +40,7 @@ class FakeServer {
           'GET /api/notifications': (_) => {'data': {'unread': 0, 'items': []}},
           'GET /api/rosters': (_) => {'data': []},
           'GET /api/attendance': (_) => {'data': []},
+          'GET /api/arrival/today': (_) => {'data': []},
           'GET /api/learning/courses': (_) => {'data': {'courses': [
             {'id': course, 'title': 'Grade 4 Math', 'term': 'Fall', 'students': 2, 'lessons': 6, 'teacher_name': 'Ms. Rivera', 'to_review': 1, 'to_grade': 0},
           ]}},
