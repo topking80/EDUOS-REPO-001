@@ -4860,7 +4860,7 @@ async function preservationCard() {
         catch { toast("Couldn't save it. Check the numbers."); } } }, "Save")) : null,
     d.canEdit && holds.length ? [h("h4", {}, `Legal holds (${holds.length})`), h("ul", { class: "list small" }, holds.map(x => h("li", { class: "row wrap" },
       h("span", { class: "grow" }, `${x.student.name} · ${x.school} · ${x.reason}${x.matterRef ? ` (${x.matterRef})` : ""} · since ${fmtDay(x.placedAt)}`),
-      h("button", { class: "btn small", type: "button", "aria-label": `Privacy: ${x.student.name}`, onclick: () => openView("historyprivacy", { privacyStudentId: x.student.id }) }, "Open"))))] : null);
+      h("button", { class: "btn small", type: "button", "aria-label": `Open privacy for ${x.student.name}`, onclick: () => openView("historyprivacy", { privacyStudentId: x.student.id }) }, "Open"))))] : null);
 }
 async function legalHoldCard(student) {
   const d = (await safe(api.get(`/api/students/${student.id}/legal-holds`)))?.data;
