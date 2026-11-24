@@ -79,14 +79,34 @@ export function registerWeatherRoutes(app) {
     const x = await one(c, `SELECT * FROM school_weather_alerts WHERE id=$1`, [req.params.id]);
     if (!x || (req.actor.role !== "superintendent" && x.school_id !== req.actor.schoolId)) throw new HttpError(404, "alert_not_found");
     if (x.decision) throw new HttpError(409, "already_decided");
+    if (x.ended_at || (x.expires && new Date(x.expires).getTime() <= Date.now()))
+      throw new HttpError(410, "alert_no_longer_active");
     return x;
+  };
+
+  // The preflight above gives a useful error, but it is not a concurrency
+  // control. Claim the decision with one conditional UPDATE so two leaders
+  // cannot both act on the same warning.
+  const claimDecision = async (c, id, values) => {
+    const changed = await c.query(
+      `UPDATE school_weather_alerts
+          SET decision=$2,decided_by=$3,decided_at=now(),decision_note=$4,incident_id=$5
+        WHERE id=$1 AND decision IS NULL AND ended_at IS NULL
+          AND (expires IS NULL OR expires > now())
+        RETURNING id`,
+      [id, values.decision, values.userId, values.note ?? null, values.incidentId ?? null]);
+    if (changed.rowCount) return;
+    const current = await one(c, `SELECT decision,ended_at,expires FROM school_weather_alerts WHERE id=$1`, [id]);
+    if (!current) throw new HttpError(404, "alert_not_found");
+    if (current.decision) throw new HttpError(409, "already_decided");
+    throw new HttpError(410, "alert_no_longer_active");
   };
 
   app.post("/api/safety/weather/:id/dismiss", limiter, requireSession, requireCsrf, lead, run(async (c, req) => {
     const note = req.body?.note;
     if (!cleanText(note, 300, 3)) throw new HttpError(400, "note_required");
     const x = await alertFor(c, req);
-    await c.query(`UPDATE school_weather_alerts SET decision='dismissed',decided_by=$2,decided_at=now(),decision_note=$3 WHERE id=$1`, [x.id, req.actor.userId, note.trim()]);
+    await claimDecision(c, x.id, { decision: "dismissed", userId: req.actor.userId, note: note.trim() });
     await audit(c, req, "dismiss", "weather_alert", x.id, `${x.event}: ${note.trim()}`.slice(0, 300));
     return { id: x.id, decision: "dismissed" };
   }));
@@ -97,7 +117,7 @@ export function registerWeatherRoutes(app) {
     if (!validId(incidentId)) throw new HttpError(400, "invalid_incident_id");
     const i = await one(c, `SELECT id,school_id,hazard,status FROM safety_incidents WHERE id=$1`, [incidentId]);
     if (!i || i.school_id !== x.school_id || i.hazard !== x.hazard || !["pending", "active", "reunification"].includes(i.status)) throw new HttpError(400, "incident_does_not_match");
-    await c.query(`UPDATE school_weather_alerts SET decision='started',decided_by=$2,decided_at=now(),incident_id=$3 WHERE id=$1`, [x.id, req.actor.userId, i.id]);
+    await claimDecision(c, x.id, { decision: "started", userId: req.actor.userId, incidentId: i.id });
     await audit(c, req, "start_from_weather", "weather_alert", x.id, i.id);
     return { id: x.id, decision: "started", incidentId: i.id };
   }));
