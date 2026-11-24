@@ -77,7 +77,7 @@ export function registerHistoryTransferRoutes(app, { keys = transferKeys() } = {
           student: { name: t.display_name, localStudentNumber: t.local_student_number, gradeLevel: t.grade_level },
           items: items.map(i => ({ sourceEntryId: i.entry_id, revision: i.revision_no, type: i.snapshot.entryType, kind: i.snapshot.classification,
             title: i.snapshot.title, body: i.snapshot.body || "", occurredAt: i.snapshot.occurredAt, schoolYear: i.snapshot.schoolYear,
-            source: i.snapshot.sourceType, author: i.author_name || null, photos: i.photos })),
+            source: i.snapshot.sourceType, audience: i.snapshot.audience, author: i.author_name || null, photos: i.photos })),
           note: "Signed by the sending district. Photos are listed by their descriptions; image files are not included."
         };
         const signed = signTransfer(body, keys);

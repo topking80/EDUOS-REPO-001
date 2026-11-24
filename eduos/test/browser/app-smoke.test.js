@@ -258,6 +258,14 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/students/c9/history-transfers": return { data: { signingReady: true, keyFingerprint: "TEST-FP", transfers: [
       { id: "tr1", receivingDistrict: "Lakeside Unified", basis: "enrollment_request", note: "Request dated Nov 20", includeFamily: true, familyDecision: "approved", status: "ready",
         requestedBy: "Principal S1", createdAt: now, readyAt: now, items: 4, downloads: 1 }] } };
+    // TC-06b: a transfer file received from another district, waiting to be checked.
+    case "/api/history-imports": return { data: [{ id: "hi1", status: "received", from: { district: "Lakeside Unified", school: "Elm School" }, student: { name: "Alice A" },
+      localStudent: null, items: 3, receivedAt: now }] };
+    case "/api/history-imports/hi1": return { data: { id: "hi1", status: "received", from: { district: "Lakeside Unified", school: "Elm School", districtId: "x" }, addressedTo: "Maple District",
+      basis: "enrollment_request", basisNote: "Request dated Nov 20", includesFamily: false, student: { name: "Alice A", number: "L-1", grade: "10" }, localStudent: null,
+      fingerprint: "TEST-SENDER-FP", packagedAt: now, items: [{ pos: 1, title: "Report card", kind: "official_record", type: "event", body: "", occurredAt: now, decision: "pending" }], receivedBy: "Supt One", receivedAt: now, confirmedBy: null,
+      candidates: [{ id: "c9", name: "Alice A", number: "S1-A", grade: "10", school: "Maple", sameName: true, sameNumber: false }], knownFingerprints: [],
+      accepted: 0, rejected: 0 } };
     case "/api/family/history-transfers": return { data: [{ id: "tr2", studentId: "c1", studentName: "Alice A", school: "Maple", receivingDistrict: "Lakeside Unified",
       basis: "enrollment_request", note: "Request dated Nov 20", createdAt: now }] };
     case "/api/students/c9/history-access-log": return { data: [{ who: "Teacher S1", access: "teacher", action: "view_history", items: 3, at: now }] };
@@ -1070,6 +1078,13 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("Emergency access to review")`))) failures.push("superintendent: no emergency reviews");
       if (!(await page.eval(`!!document.querySelector('section[aria-label="Records and privacy"]')`))) failures.push("superintendent: no records & privacy");
       await axeScan(page, "superintendent: history with privacy controls", a11y);
+      if (!(await waitFor(`!!document.querySelector('main button[aria-label="Open transfer: Alice A"]')`))) failures.push("superintendent: no incoming transfers");
+      await page.eval(`document.querySelector('main button[aria-label="Open transfer: Alice A"]').click()`);
+      if (!(await waitFor(`(document.querySelector("main")?.textContent || "").includes("1. Check who sent it")`))) failures.push("superintendent: no transfer check page");
+      const ti = await page.eval(`document.querySelector("main").textContent`);
+      for (const w of ["Alice A: history from Lakeside Unified", "TEST-SENDER-FP", "Possible matches", "Choose the student", "Reject the whole file"]) if (!ti.includes(w)) failures.push(`incoming transfer: ${w}`);
+      await axeScan(page, "superintendent: incoming history transfer", a11y);
+      if (page.errors.length) failures.push(`incoming transfer: ${page.errors[0].split("\n")[0]}`);
       page.close();
 
       state.role = "principal"; page = await Page.open(chrome.port);
