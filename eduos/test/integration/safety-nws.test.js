@@ -116,4 +116,45 @@ describe("SAFE-04 National Weather Service prompts against real PostgreSQL", { s
     const r = await sweepWeather({ db: sweep.pool, log: { error: () => {} }, fetchAlertsImpl: async () => { throw new Error("NWS answered 503"); } });
     assert.deepEqual([r.locations, r.failed], [1, 1]);
   });
+
+  it("refreshes all guidance fields when NWS updates an existing alert ID", async () => {
+    features = [feature("urn:oid:8", "Tornado Warning")];
+    await sweep();
+    const first = ok(await as("p1")("GET", "/api/safety/weather")).alerts.find(x => x.event === "Tornado Warning");
+    features = [feature("urn:oid:8", "Tornado Warning", {
+      severity: "Moderate", headline: "Updated tornado warning", areaDesc: "Updated County",
+      instruction: "Move to the lowest interior room immediately",
+      expires: new Date(Date.now() + 7200e3).toISOString()
+    })];
+    await sweep();
+    const updated = ok(await as("p1")("GET", "/api/safety/weather")).alerts.find(x => x.id === first.id);
+    assert.equal(updated.severity, "Moderate");
+    assert.equal(updated.headline, "Updated tornado warning");
+    assert.equal(updated.area, "Updated County");
+    assert.equal(updated.instruction, "Move to the lowest interior room immediately");
+  });
+
+  it("allows only one simultaneous leader decision and rejects ended or expired alerts", async () => {
+    features = [feature("urn:oid:9", "Tornado Warning")];
+    await sweep();
+    const concurrent = ok(await as("p1")("GET", "/api/safety/weather")).alerts.find(x => x.event === "Tornado Warning");
+    const [oneDecision, otherDecision] = await Promise.all([
+      as("p1")("POST", `/api/safety/weather/${concurrent.id}/dismiss`, { note: "Reviewed by principal" }),
+      as("vp1")("POST", `/api/safety/weather/${concurrent.id}/dismiss`, { note: "Reviewed by vice principal" })
+    ]);
+    assert.deepEqual([oneDecision.status, otherDecision.status].sort(), [200, 409]);
+
+    features = [feature("urn:oid:10", "Tornado Warning")];
+    await sweep();
+    const ended = ok(await as("p1")("GET", "/api/safety/weather")).alerts.find(x => x.event === "Tornado Warning");
+    features = [];
+    await sweep();
+    assert.equal((await as("p1")("POST", `/api/safety/weather/${ended.id}/dismiss`, { note: "Late action" })).status, 410);
+
+    features = [feature("urn:oid:11", "Tornado Warning")];
+    await sweep();
+    const expired = ok(await as("p1")("GET", "/api/safety/weather")).alerts.find(x => x.event === "Tornado Warning");
+    await admin.query("UPDATE school_weather_alerts SET expires=now()-interval '1 minute' WHERE id=$1", [expired.id]);
+    assert.equal((await as("p1")("POST", `/api/safety/weather/${expired.id}/dismiss`, { note: "Late action" })).status, 410);
+  });
 });
