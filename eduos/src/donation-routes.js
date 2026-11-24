@@ -23,6 +23,7 @@ import { audit, rows, one, validId, HttpError } from "./role-app-util.js";
 import { wrap, created } from "./route-helpers.js";
 import { resolveCheckout, checkoutMethods } from "./commerce/setup.js";
 import { SANDBOX_OUTCOMES, sandboxProvider } from "./commerce/payments.js";
+import { isDonationFinance } from "./donation-accounting-routes.js";
 
 export const DONATION_STATEMENT = "Gifts are voluntary. They never change storage limits, what is kept, or anything a student gets.";
 export const DONATION_FEES = "The payment processor keeps a fee from each gift (in test mode 2.9% plus 30 cents), shown before you give.";
@@ -37,12 +38,14 @@ export const loadDonationSettings = async (c, districtId) =>
 const donationOut = (g, { forOffice = false } = {}) => ({ id: g.id, status: g.status, amountCents: g.amount_cents, currency: g.currency,
   processingFeeCents: g.processing_fee_cents, designation: g.school_name ? { schoolId: g.school_id, name: g.school_name } : { district: true },
   anonymous: g.anonymous, donor: forOffice ? (g.anonymous ? "Anonymous" : g.donor_name) : undefined, method: g.payment_method, test: g.mode === "test",
-  createdAt: g.created_at, confirmedAt: g.confirmed_at, refundedAt: g.refunded_at, acknowledgement: g.ack_number ? { id: g.ack_id, number: g.ack_number } : null });
+  createdAt: g.created_at, confirmedAt: g.confirmed_at, refundedAt: g.refunded_at, acknowledgement: g.ack_number ? { id: g.ack_id, number: g.ack_number } : null,
+  refundNotice: g.refund_number ? { number: g.refund_number } : null });
 const ackOut = a => ({ id: a.id, number: a.number, issuedAt: a.issued_at, district: a.district_name, designation: a.designation, donor: a.donor_name,
   amountCents: a.amount_cents, currency: a.currency, body: a.body, taxWording: a.tax_wording, test: a.test_mode,
   note: a.test_mode ? "Test gift through the sandbox. No money moved." : undefined });
-const GIFTS_SQL = `SELECT g.*, s.name AS school_name, a.id AS ack_id, a.number AS ack_number FROM history_donations g
-  LEFT JOIN schools s ON s.id=g.school_id LEFT JOIN history_donation_acknowledgements a ON a.donation_id=g.id`;
+const GIFTS_SQL = `SELECT g.*, s.name AS school_name, a.id AS ack_id, a.number AS ack_number, f.number AS refund_number FROM history_donations g
+  LEFT JOIN schools s ON s.id=g.school_id LEFT JOIN history_donation_acknowledgements a ON a.donation_id=g.id
+  LEFT JOIN history_donation_refunds f ON f.donation_id=g.id`;
 const PG = { P0002: [404, "not_found"], "55000": [409, null], "22023": [400, null], "23503": [400, "invalid_value"] };
 const pgWrap = fn => wrap(async (c, req, res) => {
   try { return await fn(c, req, res); }
@@ -121,13 +124,15 @@ export function registerDonationRoutes(app) {
   app.get("/api/donations/:id/acknowledgement", requireSession, pgWrap(async (c, req) => {
     if (!validId(req.params.id)) throw new HttpError(400, "invalid_id");
     const a = await one(c, `SELECT a.* FROM history_donation_acknowledgements a JOIN history_donations g ON g.id=a.donation_id
-        WHERE a.donation_id=$1 AND (g.donor_user_id=$2 OR $3='superintendent')`, [req.params.id, req.actor.userId, req.actor.role]);
+        WHERE a.donation_id=$1`, [req.params.id]); // RLS: the donor or finance (db/136)
     if (!a) throw new HttpError(404, "not_found");
     await audit(c, req, "read", "history_donation_acknowledgement", a.id, null);
     return ackOut(a);
   }));
 
-  app.get("/api/donations", requireSession, supt, pgWrap(async (c, req) => {
+  // The superintendent or a named finance reviewer (db/136).
+  app.get("/api/donations", requireSession, pgWrap(async (c, req) => {
+    if (!(await isDonationFinance(c))) throw new HttpError(403, "forbidden");
     const list = await rows(c, `${GIFTS_SQL} WHERE g.district_id=$1 ORDER BY g.created_at DESC LIMIT 200`, [req.actor.districtId]);
     const t = await one(c, `SELECT count(*) FILTER (WHERE status='succeeded')::int AS gifts, coalesce(sum(amount_cents) FILTER (WHERE status='succeeded'),0)::bigint AS gross,
         coalesce(sum(processing_fee_cents) FILTER (WHERE status='succeeded'),0)::bigint AS fees FROM history_donations WHERE district_id=$1`, [req.actor.districtId]);
