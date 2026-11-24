@@ -3,7 +3,7 @@
 Student history photos live in the district's private S3-compatible bucket
 (see `MEDIA-STORAGE.md`). TC-08 makes sure they stay intact, cost less to
 keep as they age, and can't be deleted while a legal matter needs them.
-`db/131_history_preservation.sql`, `src/history-preservation.js`,
+`db/132_history_preservation.sql`, `src/history-preservation.js`,
 `src/history-preservation-routes.js`.
 
 ## What the district sets (superintendent, Student history → Preservation)
