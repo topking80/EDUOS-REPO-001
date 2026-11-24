@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder Android TV / Fire TV launcher banner (320x180 dp, the size the
+     TV home screen asks for). Replace with the final EduOS banner artwork as a
+     PNG at res/drawable-xhdpi/tv_banner.png and delete this file. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:fillColor="#1D3A8A" android:pathData="M0,0h320v180h-320z"/>
+    <path android:fillColor="#F2A900" android:pathData="M0,150h320v30h-320z"/>
+    <!-- "E" mark -->
+    <path android:fillColor="#FFFFFF" android:pathData="M40,45h50v14h-34v14h28v14h-28v14h34v14h-50z"/>
+    <!-- underline bar standing in for the wordmark -->
+    <path android:fillColor="#FFFFFF" android:pathData="M110,70h170v16h-170z"/>
+    <path android:fillColor="#C8D3F0" android:pathData="M110,96h120v10h-120z"/>
+</vector>

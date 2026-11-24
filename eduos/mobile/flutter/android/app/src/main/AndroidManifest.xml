@@ -2,11 +2,16 @@
     <!-- Talks only to the district's EduOS server over HTTPS. No location,
          camera, microphone or contacts permissions are requested. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- One APK for phones, tablets, Android TV / Google TV and Fire TV:
+         TVs have no touchscreen, phones have no leanback. Neither is required. -->
+    <uses-feature android:name="android.software.leanback" android:required="false"/>
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
     <application
         android:label="EduOS"
         android:allowBackup="false"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/tv_banner">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -27,6 +32,8 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+                <!-- Android TV / Google TV / Fire TV home screen row. -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
             </intent-filter>
         </activity>
         <!-- Native sign-in (RFC 8252): the district sign-in page returns to
