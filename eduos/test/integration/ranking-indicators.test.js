@@ -41,7 +41,7 @@ describe("RANK-01 U.S. News indicators against real PostgreSQL", { skip }, () =>
     assert.equal((await put("p1", ID.s1, "2024-25", "college_readiness", { ...body, sourceNote: "" })).body.error, "source_required");
     assert.equal((await put("p1", ID.s1, "2024-25", "college_readiness", { ...body, values: { seniors: 200, tookExam: 100, qualified: 120 } })).body.error, "check_the_figures");
     assert.equal((await put("p1", ID.s2, "2024-25", "college_readiness", body)).status, 404, "not another school");
-    assert.equal((await put("vp1", ID.s1, "2024-25", "college_readiness", body)).status, 403);
+    assert.equal((await put("vp1", ID.s1, "2024-25", "college_readiness", { ...body, sourceNote: "" })).body.error, "source_required", "a vice principal enters figures as the principal");
     entry = ok(await put("p1", ID.s1, "2024-25", "college_readiness", body));
     assert.deepEqual(entry.shown, { "Took an exam": 60, "Qualifying score": 45 });
     ok(await put("p1", ID.s1, "2024-25", "graduation_rate", { values: { rate: 91.4, cohortStart: 2021 }, sourceUrl: "https://example.gov/report-card" }));

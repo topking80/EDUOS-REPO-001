@@ -70,8 +70,8 @@ export async function withTenantTransaction(actor, callback) {
     await client.query("BEGIN");
     transactionOpen = true;
     await client.query(
-      "SELECT set_config('app.district_id', $1, true), set_config('app.user_id', $2, true), set_config('app.role', $3, true), set_config('app.school_id', $4, true)",
-      [String(actor.districtId), String(actor.userId), String(actor.role), actor.schoolId ? String(actor.schoolId) : ""]
+      "SELECT set_config('app.district_id', $1, true), set_config('app.user_id', $2, true), set_config('app.role', $3, true), set_config('app.school_id', $4, true), set_config('app.membership_role', $5, true)",
+      [String(actor.districtId), String(actor.userId), String(actor.role), actor.schoolId ? String(actor.schoolId) : "", String(actor.membershipRole || actor.role)]
     );
     const result = await callback(client);
     await client.query("COMMIT");

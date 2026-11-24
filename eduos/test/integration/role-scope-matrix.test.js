@@ -153,8 +153,8 @@ describe("role and tenant scope matrix against real PostgreSQL", { skip }, () =>
     const expected = [
       ["/api/students", { p1: 200, vp1: 200, t1: 200, pa: 200, pu: 200, "counselor-x": 403, "nurse-x": 403, "librarian-x": 403, "sro-x": 403, "driver-x": 403, "itadmin-x": 403 }],
       [`/api/students/${ID.alice}`, { p1: 200, vp1: 200, pa: 200, pu: 200, pb: 404, "counselor-x": 403, "driver-x": 403 }],
-      ["/api/cases", { p1: 200, t1: 200, pa: 200, vp1: 403, "counselor-x": 403, "nurse-x": 403 }],
-      ["/api/pickup/queue", { p1: 200, t1: 200, vp1: 403, pa: 403, "counselor-x": 403 }],
+      ["/api/cases", { p1: 200, t1: 200, pa: 200, vp1: 200, "counselor-x": 403, "nurse-x": 403 }],
+      ["/api/pickup/queue", { p1: 200, t1: 200, vp1: 200, pa: 403, "counselor-x": 403 }],
       [`/api/attendance/day?date=${day}`, { p1: 200, vp1: 200, t1: 200, pa: 200, pu: 200, "counselor-x": 403, "driver-x": 403 }],
       ["/api/transport/today", { p1: 200, vp1: 200, t1: 200, pa: 200, "driver-x": 200, "counselor-x": 403, "nurse-x": 403 }],
       ["/api/safety/status", { p1: 200, vp1: 200, t1: 200, pa: 200, pu: 200, "sro-x": 200, "driver-x": 200, "counselor-x": 200 }], // SAFE-01: every adult at the school sees a live alert

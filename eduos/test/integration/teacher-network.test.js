@@ -45,7 +45,8 @@ describe("TEACH-01 district teacher network against real PostgreSQL", { skip }, 
     assert.ok(d.schools.some(x => x.name === "S2"));
     assert.deepEqual(ok(await as("t1")("GET", "/api/network/colleagues?q=s2")).colleagues.map(c => c.name), ["Principal S2"], "search by school");
     assert.deepEqual(ok(await as("t1")("GET", `/api/network/colleagues?schoolId=${ID.s1}`)).colleagues.map(c => c.name).sort(), ["Principal S1", "Teacher Parent"]);
-    for (const who of ["pa", "pu", "vp1"]) assert.equal((await as(who)("GET", "/api/network/colleagues")).status, 403, who);
+    for (const who of ["pa", "pu"]) assert.equal((await as(who)("GET", "/api/network/colleagues")).status, 403, who);
+    assert.equal((await as("vp1")("GET", "/api/network/colleagues")).status, 200, "a vice principal acts as the principal");
     assert.deepEqual(ok(await as("supt2")("GET", "/api/network/colleagues")).colleagues, [], "another district sees none of them");
   });
 
@@ -60,7 +61,8 @@ describe("TEACH-01 district teacher network against real PostgreSQL", { skip }, 
     assert.equal((await as("tp")("GET", `/api/comms/threads/${thread.id}`)).status, 404, "not a participant");
     const n = await admin.query("SELECT count(*)::int AS n FROM notification_outbox WHERE recipient_user_id=$1 AND ref_id=$2", [USERS.p2[0], thread.id]);
     assert.equal(n.rows[0].n, 1, "the principal at the other school was notified");
-    for (const who of ["pa", "vp1"]) assert.equal((await as(who)("POST", "/api/network/threads", { subject: "x", body: "y", participantIds: [USERS.t1[0]] })).status, 403, who);
+    assert.equal((await as("pa")("POST", "/api/network/threads", { subject: "x", body: "y", participantIds: [USERS.t1[0]] })).status, 403);
+    assert.equal((await as("vp1")("POST", "/api/network/threads", { subject: "x", body: "y", participantIds: [USERS.pa[0]] })).body.error, "participant_not_in_network", "a vice principal may message colleagues (as the principal)");
   });
 
   it("any member adds colleagues to a conversation", async () => {

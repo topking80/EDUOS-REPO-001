@@ -288,7 +288,7 @@ export async function exchangeNativeLogin(req, res, next) {
       userId: h.user_id, districtId: h.district_id, schoolId: h.school_id, role: h.role, verifiedEmail: h.verified_email
     });
     res.json({ tokenType: "Bearer", sessionToken: rawSession, csrfToken: csrfTokenFor(rawSession),
-      expiresAt: expiresAt.toISOString(), role: h.role, idleMinutes: config.sessionIdleMinutes });
+      expiresAt: expiresAt.toISOString(), role: authorityRole(h.role).role, membershipRole: h.role, idleMinutes: config.sessionIdleMinutes });
   } catch (error) { next(error); }
 }
 
@@ -339,7 +339,7 @@ export async function requireSession(req, res, next) {
     }
     req.actor = {
       userId: row.user_id, districtId: row.district_id,
-      schoolId: row.school_id, role: row.role,
+      schoolId: row.school_id, ...authorityRole(row.role),
       displayName: row.display_name, sessionId: row.session_id,
       csrfTokenHash: row.csrf_token_hash, verifiedEmail: row.verified_email || null
     };
@@ -402,6 +402,19 @@ export function issueCsrfToken(req, res) {
   res.json({ csrfToken: token });
 }
 
+/**
+ * The role a session acts with. A vice principal acts with the principal's
+ * authority at their school (routes, permissions and row policies all see
+ * "principal"), except assigning roles: the membership stays in
+ * membershipRole, which those routes, the audit log and db/121 check.
+ */
+export function authorityRole(membershipRole) {
+  return membershipRole === "vice_principal" ? { role: "principal", membershipRole } : { role: membershipRole, membershipRole };
+}
+/** Principal-only actions a vice principal can't take. */
+export const isVicePrincipal = actor => actor?.membershipRole === "vice_principal";
+export const principalOnly = (req, res, next) => isVicePrincipal(req.actor) ? res.status(403).json({ error: "principal_only" }) : next();
+
 /** Lists the signed-in user's active memberships (roles/schools). */
 export async function listMemberships(req, res, next) {
   try {
@@ -430,7 +443,7 @@ export async function listMemberships(req, res, next) {
     }
     res.setHeader("Cache-Control", "no-store");
     res.json({ data: result.rows.map(r => ({ ...r,
-      current: r.district_id === req.actor.districtId && r.role === req.actor.role && (r.school_id || null) === (req.actor.schoolId || null) })) });
+      current: r.district_id === req.actor.districtId && r.role === (req.actor.membershipRole || req.actor.role) && (r.school_id || null) === (req.actor.schoolId || null) })) });
   } catch (error) { next(error); }
 }
 
@@ -462,7 +475,7 @@ export async function switchMembership(req, res, next) {
     res.setHeader("Cache-Control", "no-store");
     // Browsers get the new session only as an HttpOnly cookie. The native app
     // authenticates with a bearer token, so it receives the replacement here.
-    res.json({ role: m.role, districtId: m.district_id, schoolId: m.school_id, csrfToken: csrfTokenFor(rawSession),
+    res.json({ role: authorityRole(m.role).role, membershipRole: m.role, districtId: m.district_id, schoolId: m.school_id, csrfToken: csrfTokenFor(rawSession),
       ...(req._sessionViaBearer ? { sessionToken: rawSession, expiresAt: expiresAt.toISOString() } : {}) });
   } catch (error) { next(error); }
 }

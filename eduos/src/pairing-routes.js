@@ -16,7 +16,7 @@
 //   POST /api/pairings/:id/end                 (also leaders)
 import crypto from "node:crypto";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import { requireSession, requireCsrf } from "./auth.js";
+import { requireSession, requireCsrf, principalOnly } from "./auth.js";
 import { pool, withTenantTransaction } from "./db.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
 
@@ -77,7 +77,7 @@ export function registerPairingRoutes(app) {
     return teachers.map(t => ({ ...t, courses: courses.filter(x => x.teacher_user_id === t.id).map(x => ({ id: x.id, title: x.title })) }));
   }));
 
-  app.post("/api/rooms/:id/timetable", limiter, requireSession, requireCsrf, only(MANAGERS), run(async (c, req) => {
+  app.post("/api/rooms/:id/timetable", limiter, requireSession, principalOnly, requireCsrf, only(MANAGERS), run(async (c, req) => {
     const v = parseSlot(req.body || {});
     if (!validId(req.params.id) || !v) throw new HttpError(400, "invalid_slot");
     const room = await one(c, `SELECT id,school_id FROM classroom_rooms WHERE id=$1 AND archived_at IS NULL`, [req.params.id]);
@@ -92,7 +92,7 @@ export function registerPairingRoutes(app) {
     return t;
   }, 201));
 
-  app.post("/api/room-timetable/:id/end", limiter, requireSession, requireCsrf, only(MANAGERS), run(async (c, req) => {
+  app.post("/api/room-timetable/:id/end", limiter, requireSession, principalOnly, requireCsrf, only(MANAGERS), run(async (c, req) => {
     if (!validId(req.params.id)) throw new HttpError(400, "invalid_id");
     const t = await one(c, `UPDATE classroom_room_teachers SET ended_at=now(),ended_by=$2 WHERE id=$1 AND ended_at IS NULL RETURNING id`, [req.params.id, req.actor.userId]);
     if (!t) throw new HttpError(404, "slot_not_found");

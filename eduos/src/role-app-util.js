@@ -8,7 +8,7 @@ export function audit(client, req, action, resourceType, resourceId = null, deta
   return client.query(
     `INSERT INTO audit_events(district_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [req.actor.districtId, req.actor.userId, req.actor.role, action, resourceType, resourceId, outcome,
+    [req.actor.districtId, req.actor.userId, req.actor.membershipRole || req.actor.role, action, resourceType, resourceId, outcome,
      detail === null ? null : String(detail).slice(0, 1000), req.requestId]);
 }
 

@@ -111,7 +111,9 @@ export const ROLE_PERMISSIONS = Object.freeze({
   // principals and teachers (and the superintendent), and the counselor works
   // the "counseling" operations queue. Granting any of these later means
   // changing the route and its row policies too, with tests.
-  // SAFE-01b: vice principals start and lead safety alerts (db/120); the pick-up desk stays with principals and teachers.
+  // A vice principal's session acts with the principal's permissions (src/auth.js
+  // authorityRole, db/121), except assigning roles. This entry is what the role
+  // alone would allow, kept for reference and for sessions created before it.
   vice_principal: { schools:["read"], students:["read"], attendance:["read","create"], safety:["read","initiate","lead"], transport:["read"], branding:["read"] },
   counselor: { schools:["read"], wellbeing:["queue"], safety:["read"] }, // 37.6.0: own school's check-ins and crisis alerts
   nurse: { schools:["read"], safety:["read"], health_office:["read","create","update"] },

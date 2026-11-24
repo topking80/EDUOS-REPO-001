@@ -9,7 +9,7 @@
 // Families get generic in-app notices only (no student, staff or room detail);
 // during reunification they see their own children's release status.
 import rateLimit from "express-rate-limit";
-import { requireSession, requireCsrf } from "./auth.js";
+import { requireSession, requireCsrf, principalOnly } from "./auth.js";
 import { requirePermission } from "./policy.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
@@ -331,7 +331,7 @@ export function registerSafetyRoutes(app) {
     } catch (e) { sendError(res, next, e); }
   });
 
-  app.post("/api/safety/incidents/:id/sro-assignment", limiter, requireSession, requireCsrf, lead, async (req, res, next) => {
+  app.post("/api/safety/incidents/:id/sro-assignment", limiter, requireSession, principalOnly, requireCsrf, lead, async (req, res, next) => {
     const { sroUserId, note = null } = req.body || {};
     if (!validId(req.params.id) || !validId(sroUserId) || (note !== null && !cleanText(note, 180))) return res.status(400).json({ error: "invalid_sro_assignment" });
     try {

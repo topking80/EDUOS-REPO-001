@@ -18,7 +18,7 @@
 //    change superintendent or IT-admin accounts, nor give themselves a role.
 //  - 32.2.0: optional district caps (district_settings; NULL = unlimited) are
 //    enforced when schools and users are created.
-import { requireSession, requireCsrf } from "./auth.js";
+import { requireSession, requireCsrf, principalOnly } from "./auth.js";
 import { requirePermission, isDistrictRole } from "./policy.js";
 import { pageOf, pageSql, paged } from "./paging.js";
 import { withTenantTransaction } from "./db.js";
@@ -206,7 +206,7 @@ export function registerAdminRoutes(app) {
     } catch (e) { next(e); }
   });
 
-  app.post("/api/users", requireSession, requireCsrf, async (req, res, next) => {
+  app.post("/api/users", requireSession, principalOnly, requireCsrf, async (req, res, next) => {
     const { displayName, email, oidcSubject, oidcIssuer = config.oidcIssuer, role, schoolId = null } = req.body || {};
     if (!text(displayName, 160) || typeof email !== "string" || email.trim().length > 320 || !EMAIL_RE.test(email.trim()) ||
         typeof oidcSubject !== "string" || !SUBJECT_RE.test(oidcSubject) || typeof oidcIssuer !== "string" || !/^https?:\/\/\S{1,500}$/.test(oidcIssuer))
@@ -247,7 +247,7 @@ export function registerAdminRoutes(app) {
     }
   });
 
-  app.post("/api/users/:userId/memberships", requireSession, requireCsrf, async (req, res, next) => {
+  app.post("/api/users/:userId/memberships", requireSession, principalOnly, requireCsrf, async (req, res, next) => {
     if (!validId(req.params.userId)) return res.status(400).json({ error: "invalid_user_id" });
     const { role, schoolId = null } = req.body || {};
     const problem = membershipError(role, schoolId);
@@ -273,7 +273,7 @@ export function registerAdminRoutes(app) {
     } catch (e) { next(e); }
   });
 
-  app.patch("/api/memberships/:membershipId", requireSession, requireCsrf, async (req, res, next) => {
+  app.patch("/api/memberships/:membershipId", requireSession, principalOnly, requireCsrf, async (req, res, next) => {
     if (!validId(req.params.membershipId)) return res.status(400).json({ error: "invalid_membership_id" });
     const { status } = req.body || {};
     if (!["active", "disabled"].includes(status)) return res.status(400).json({ error: "invalid_status" });
@@ -295,7 +295,7 @@ export function registerAdminRoutes(app) {
     } catch (e) { next(e); }
   });
 
-  app.patch("/api/users/:userId", requireSession, requireCsrf, async (req, res, next) => {
+  app.patch("/api/users/:userId", requireSession, principalOnly, requireCsrf, async (req, res, next) => {
     if (!isDistrictRole(req.actor.role)) return res.status(403).json({ error: "district_administrator_required" });
     if (!validId(req.params.userId)) return res.status(400).json({ error: "invalid_user_id" });
     const { status, displayName, email } = req.body || {};

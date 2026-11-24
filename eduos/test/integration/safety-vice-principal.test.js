@@ -1,8 +1,8 @@
 // SAFE-01b: vice principals start and lead safety alerts, against real
 // PostgreSQL as the runtime role: start and confirm, everyone at the school
 // (vice principals included) is alerted, the board and delivery report,
-// SRO assignment, reunification and the all clear; another school's vice
-// principal can do none of it; the pick-up desk stays with principals and teachers.
+// reunification, the all clear and the pick-up desk; another school's vice
+// principal can do none of it; assigning the SRO stays with the principal.
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
@@ -57,14 +57,15 @@ describe("SAFE-01b vice principals lead safety alerts against real PostgreSQL", 
     assert.ok(b.notifications.inApp.available >= 3, JSON.stringify(b.notifications));
     assert.equal((await as("vp2")("GET", `/api/safety/incidents/${incident.id}/board`)).status, 404);
     assert.equal((await as("vp1")("GET", `/api/safety/incidents/${incident.id}/sro-assignment`)).status, 200);
-    ok(await as("vp1")("POST", `/api/safety/incidents/${incident.id}/sro-assignment`, { sroUserId: SRO }), 201);
+    assert.equal((await as("vp1")("POST", `/api/safety/incidents/${incident.id}/sro-assignment`, { sroUserId: SRO })).body.error, "principal_only");
+    ok(await as("p1")("POST", `/api/safety/incidents/${incident.id}/sro-assignment`, { sroUserId: SRO }), 201);
     ok(await as("vp1")("POST", `/api/safety/incidents/${incident.id}/events`, { event: "responders", detail: "Police on scene" }));
   });
 
-  it("reunification and the all clear; the pick-up desk stays with principals and teachers", async () => {
+  it("reunification and the all clear; the vice principal works the pick-up desk as the principal", async () => {
     ok(await as("vp1")("POST", `/api/safety/incidents/${incident.id}/reunification`, { point: "Gym doors" }));
-    assert.equal((await as("vp1")("GET", "/api/pickup/queue")).status, 403);
-    assert.equal((await as("vp1")("POST", "/api/pickup/verify", { code: "ABCDE-FGHJK" })).status, 403);
+    assert.equal((await as("vp1")("GET", "/api/pickup/queue")).status, 200);
+    assert.equal((await as("vp1")("POST", "/api/pickup/verify", { code: "ABCDE-FGHJK" })).status === 403, false);
     assert.equal((await as("vp2")("POST", `/api/safety/incidents/${incident.id}/all-clear`, { kind: "lockdown" })).status, 404);
     ok(await as("vp1")("POST", `/api/safety/incidents/${incident.id}/all-clear`, { kind: "lockdown" }));
     assert.equal(ok(await as("pa")("GET", "/api/safety/status")).incidents.length, 0);
