@@ -71,8 +71,12 @@ export function registerHistoryMediaRoutes(app, providers = historyMediaProvider
   app.post("/api/history/entries/:id/photos", limiter, requireSession, requireCsrf, raw, async (req, res, next) => {
     if (!ready) return res.status(503).json({ error: "media_storage_not_configured" });
     const mime = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    if ((req.query.caption !== undefined && typeof req.query.caption !== "string") || (req.query.alt !== undefined && typeof req.query.alt !== "string"))
+      return res.status(400).json({ error: "describe_the_photo" });
     const caption = typeof req.query.caption === "string" ? req.query.caption.trim() : "", alt = typeof req.query.alt === "string" ? req.query.alt.trim() : "";
-    const key = req.headers["idempotency-key"] ?? null;
+    const rawKey = req.headers["idempotency-key"];
+    const key = typeof rawKey === "string" ? rawKey : null;
+    if (rawKey !== undefined && key === null) return res.status(400).json({ error: "invalid_idempotency_key" });
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_entry_id" });
     if (!HISTORY_IMAGE_TYPES[mime] || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(415).json({ error: "unsupported_media_type", types: Object.keys(HISTORY_IMAGE_TYPES) });
     if (caption.length > 500 || alt.length < 3 || alt.length > 300) return res.status(400).json({ error: "describe_the_photo", hint: "alt text: 3 to 300 characters; caption: up to 500" });

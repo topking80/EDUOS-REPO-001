@@ -8,6 +8,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import crypto from "node:crypto";
 import net from "node:net";
 import pg from "pg";
 import sharp from "sharp";
@@ -15,7 +16,8 @@ import { signS3 } from "../../src/s3-storage.js";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
-const S3 = { region: "us-east-1", accessKeyId: "AKIDEXAMPLETEST01", secretAccessKey: "test-secret-key-0123456789abcdefghij", bucket: "eduos-media" };
+// Throwaway credentials for the mock bucket, made fresh for each run.
+const S3 = { region: "us-east-1", accessKeyId: `TEST${crypto.randomBytes(6).toString("hex").toUpperCase()}`, secretAccessKey: crypto.randomBytes(24).toString("base64url"), bucket: "eduos-media" };
 
 describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
   let db, idp, server, admin, s3, clam, clamUp = true, s = {}, item, photoId;
