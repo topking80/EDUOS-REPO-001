@@ -66,7 +66,7 @@ describe("TC-05 safe export against real PostgreSQL", { skip }, () => {
     const r = await download("pu", "html", null);
     assert.equal(r.status, 200, r.text);
     assert.match(r.headers.get("content-security-policy"), /default-src 'none'/);
-    assert.doesNotMatch(r.text, /<script>/);
+    assert.doesNotMatch(r.text, /<script/i);
     assert.match(r.text, /Report card &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
     assert.match(r.text, /Reading: strong<br>Math: growing/);
     assert.doesNotMatch(r.text, /Private note|Bob's award/);
