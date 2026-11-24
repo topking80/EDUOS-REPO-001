@@ -124,6 +124,8 @@ export function registerHistoryMediaRoutes(app, providers = historyMedia()) {
       const storageKey = `history/${req.actor.districtId}/${begun.studentId}/${asset}.${HISTORY_IMAGE_TYPES[mime]}`;
       await storage.put(storageKey, out.buffer, out.mimeType);
       await record("clean", "processed", { key: storageKey, bytes: out.buffer.length, width: out.width, height: out.height });
+      // TC-08: the checksum the preservation job verifies against later.
+      await withTenantTransaction(req.actor, c => c.query(`SELECT eduos_history_media_checksum($1,$2)`, [asset, crypto.createHash("sha256").update(out.buffer).digest("hex")]));
       await withTenantTransaction(req.actor, c => audit(c, req, "add", "history_photo", asset, `${target}=${req.params[idParam]};bytes=${out.buffer.length}`));
       res.status(201).json({ data: { assetId: asset, status: "processed", width: out.width, height: out.height, bytes: out.buffer.length } });
     } catch (e) { sendError(res, next, e); }

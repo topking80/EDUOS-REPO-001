@@ -1498,7 +1498,7 @@ VIEWS.history = async () => {
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
   const teacher = await teacherReviewSection();
-  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard()] : null] : null;
+  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard()] : null, await preservationCard()] : null;
   return [privacy, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
     h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),
@@ -4810,8 +4810,58 @@ VIEWS.historyprivacy = async () => {
       d.grants.length ? h("p", { class: "small" }, `Shared: ${d.grants.filter(g => !g.revoked).map(g => `${g.grantee} (${g.classifications.map(c => CLASS_TEXT[c]).join(", ")})`).join("; ") || "nothing now"}`) : null),
     d.emergency.length ? h("section", { class: "card", "aria-label": "Emergency access" }, h("h3", {}, "Emergency access"),
       h("ul", { class: "list small" }, d.emergency.map(a => h("li", {}, `${a.person} (${a.role}) · ${new Date(a.openedAt).toLocaleString()} · ${a.reason}${a.reviewed ? " · reviewed" : " · not reviewed yet"}`)))) : null,
-    await transferCard(d.student), accessLogCard(log)];
+    await transferCard(d.student), await legalHoldCard(d.student), accessLogCard(log)];
 };
+// ---- TC-08: preservation (capacity, integrity, legal holds) ----------------
+const fmtBytes = n => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`;
+async function preservationCard() {
+  const d = (await safe(api.get("/api/history/preservation")))?.data;
+  if (!d?.policy) return null;
+  const holds = d.canEdit ? (await safe(api.get("/api/history/legal-holds")))?.data || [] : [];
+  const p = d.policy;
+  const verify = h("input", { id: "pp-verify", type: "number", min: 7, max: 365, value: p.verifyEveryDays, style: "width:6em" });
+  const archive = h("input", { id: "pp-archive", type: "number", min: 30, max: 3650, value: p.archiveAfterDays ?? "", placeholder: "never", style: "width:7em", disabled: !d.archiveStorageClass || undefined });
+  const alertPct = h("input", { id: "pp-alert", type: "number", min: 50, max: 99, value: p.capacityAlertPercent, style: "width:5em" });
+  const schedule = h("input", { id: "pp-sched", maxlength: 300, value: p.recordsScheduleRef, placeholder: "e.g. Board policy 8310, state schedule GS-7" });
+  return h("section", { class: "card", "aria-label": "Preservation" }, h("h3", {}, "Preservation"),
+    h("p", { class: "small muted" }, `Photos are checked against their checksums every ${p.verifyEveryDays} days${d.lastCheckedAt ? ` (last check ${fmtDay(d.lastCheckedAt)})` : ""}. Limits are the district's; donations never change them.`),
+    !d.storageReady ? h("p", { class: "small muted" }, "Private photo storage isn't connected yet, so there's nothing to check.") : null,
+    d.problems.length ? h("ul", { class: "list small" }, d.problems.map(x => h("li", {}, chip("absent", x.kind === "archive_failed" ? "Archive" : "Check"), ` ${x.text} · ${fmtDay(x.at)}`))) : null,
+    h("table", { class: "table small" }, h("thead", {}, h("tr", {}, ["School", "Students with photos", "Used", "In archive", `Over ${p.capacityAlertPercent}%`, "Full", "Checked OK", "Problems", "Holds"].map(t => h("th", {}, t)))),
+      h("tbody", {}, d.schools.map(x => h("tr", {}, h("td", {}, x.school), h("td", {}, String(x.studentsWithMedia)), h("td", {}, fmtBytes(x.usedBytes)), h("td", {}, fmtBytes(x.archiveBytes)),
+        h("td", {}, String(x.nearLimit)), h("td", {}, String(x.atLimit)), h("td", {}, String(x.integrity.ok)), h("td", {}, String(x.integrity.mismatch + x.integrity.missing)), h("td", {}, String(x.activeHolds)))))),
+    d.canEdit ? h("details", {}, h("summary", {}, "Preservation settings"),
+      h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "pp-verify" }, "Check every (days)"), verify),
+        h("div", {}, h("label", { for: "pp-archive" }, "Move to archive storage after (days)"), archive),
+        h("div", {}, h("label", { for: "pp-alert" }, "Flag students over (%)"), alertPct)),
+      !d.archiveStorageClass ? h("p", { class: "small muted" }, "District IT sets HISTORY_ARCHIVE_STORAGE_CLASS before photos can move to cheaper storage.") : null,
+      h("label", { for: "pp-sched" }, "Records retention schedule (reference)"), schedule,
+      h("button", { class: "btn small", type: "button", onclick: async () => {
+        try { await api.put("/api/history/preservation-policy", { verifyEveryDays: Number(verify.value), archiveAfterDays: archive.value ? Number(archive.value) : null, capacityAlertPercent: Number(alertPct.value), recordsScheduleRef: schedule.value.trim() }); toast("Saved."); }
+        catch { toast("Couldn't save it. Check the numbers."); } } }, "Save")) : null,
+    d.canEdit && holds.length ? [h("h4", {}, `Legal holds (${holds.length})`), h("ul", { class: "list small" }, holds.map(x => h("li", { class: "row wrap" },
+      h("span", { class: "grow" }, `${x.student.name} · ${x.school} · ${x.reason}${x.matterRef ? ` (${x.matterRef})` : ""} · since ${fmtDay(x.placedAt)}`),
+      h("button", { class: "btn small", type: "button", "aria-label": `Open privacy for ${x.student.name}`, onclick: () => openView("historyprivacy", { privacyStudentId: x.student.id }) }, "Open"))))] : null);
+}
+async function legalHoldCard(student) {
+  const d = (await safe(api.get(`/api/students/${student.id}/legal-holds`)))?.data;
+  if (!Array.isArray(d?.holds)) return null;
+  const reload = () => go("historyprivacy", { push: false });
+  return h("section", { class: "card", "aria-label": "Legal hold" }, h("h3", {}, "Legal hold"),
+    h("p", { class: "small muted" }, d.onHold ? `${student.name}'s history is on hold: nothing can be deleted and no Time Capsule opens until the superintendent lifts it.`
+      : "Put a hold on this student's history when it may be needed for a legal matter or records request. Nothing can be deleted while it's on."),
+    d.holds.length ? h("ul", { class: "list small" }, d.holds.map(x => h("li", {}, h("b", {}, x.releasedAt ? "Lifted" : "On hold"), ` · ${x.reason}${x.matterRef ? ` (${x.matterRef})` : ""} · placed by ${x.placedBy} ${fmtDay(x.placedAt)}`,
+      x.releasedAt ? ` · lifted by ${x.releasedBy}: ${x.releaseNote}` : null,
+      !x.releasedAt && d.canRelease ? h("button", { class: "btn small", type: "button", "aria-label": "Lift the legal hold", onclick: async () => {
+        const note = await ask({ title: "Lift this legal hold?", label: "Why (e.g. matter closed)", confirm: "Lift" }); if (!note) return;
+        try { await api.post(`/api/legal-holds/${x.id}/release`, { note }); toast("Lifted."); reload(); } catch { toast("Couldn't lift it. The note needs at least 5 characters."); } } }, "Lift") : null))) : null,
+    h("button", { class: "btn small", type: "button", onclick: async () => {
+      const v = await dialogForm(`Put ${student.name}'s history on hold`, () => ({
+        fields: [h("label", { for: "lh-r" }, "Why"), h("input", { id: "lh-r", required: true, maxlength: 500 }), h("label", { for: "lh-m" }, "Matter or case number (optional)"), h("input", { id: "lh-m", maxlength: 120 })],
+        value: () => ({ reason: document.getElementById("lh-r").value.trim(), matterRef: document.getElementById("lh-m").value.trim() || null }) }), "Place hold");
+      if (!v) return;
+      try { await api.post(`/api/students/${student.id}/legal-holds`, v); toast("On hold."); reload(); } catch { toast("Couldn't place it. The reason needs at least 5 characters."); } } }, "Place a legal hold"));
+}
 function accessLogCard(log) {
   return h("section", { class: "card", "aria-label": "Who looked" }, h("h3", {}, "Who looked"),
     log.length ? h("ul", { class: "list small" }, log.slice(0, 40).map(l => h("li", {}, `${l.who} (${ACCESS_TEXT[l.access] || l.access})${l.action === "export_history" ? " downloaded a copy" : ""} · ${new Date(l.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`)))

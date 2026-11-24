@@ -84,6 +84,18 @@ export function createS3Storage({ endpoint, region, bucket, accessKeyId, secretA
       const r = await send("PUT", key, { body, headers: { "content-type": mimeType, "content-length": String(body.length) } });
       if (!r.ok) throw new Error(`storage PUT ${r.status}`);
     },
+    /**
+     * TC-08: move an object to another storage class in place (same key, same
+     * permissions; S3 copies it onto itself). Only instant-read classes are
+     * used, so presigned reads keep working.
+     */
+    async setStorageClass(key, storageClass) {
+      const source = `/${[bucket, ...key.split("/")].map(p => enc(p)).join("/")}`;
+      const r = await send("PUT", key, { headers: { "x-amz-copy-source": source, "x-amz-metadata-directive": "COPY", "x-amz-storage-class": storageClass } });
+      if (!r.ok) throw new Error(`storage COPY ${r.status}`);
+      const text = await r.text();
+      if (/<Error>/.test(text)) throw new Error("storage COPY error");
+    },
     async remove(key) {
       const r = await send("DELETE", key);
       if (!r.ok && r.status !== 404) throw new Error(`storage DELETE ${r.status}`);
