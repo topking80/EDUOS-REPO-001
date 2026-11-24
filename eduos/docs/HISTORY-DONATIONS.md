@@ -4,7 +4,7 @@ Voluntary one-time gifts from families and staff toward keeping student historie
 
 ## What it does
 
-- A superintendent turns gifts on (`PUT /api/donations/settings`). Off by default. They set the smallest and largest gift, suggested amounts, and the acknowledgement text.
+- A superintendent turns gifts on (`PUT /api/donations/settings`). Off by default. Gifts also stay closed until the preservation fund is open (TC-12, `PRESERVATION-FUND.md`): fund on, not paused, and legal, finance and governance approvals recorded. They set the smallest and largest gift, suggested amounts, and the acknowledgement text.
 - Adults (parents and staff) see a **Support preservation** card on the history page. Students never see it and can't give (`403 guardian_payment_required`).
 - The gift runs through the district's existing payment setup (`commerce_payment_setup`, migration 065/066). Only a ready **sandbox** method is used. A method carried by a real processor answers `donations_sandbox_only`. The live-payments kill switch (`EDUOS_COMMERCE_LIVE_PAYMENTS`) is not consulted because nothing live can run here.
 - On success the donor gets a plain acknowledgement, numbered `GIFT-YYYY-NNNNNN`, with the district, the designation (a school or the whole district), the amount and the district's acknowledgement text. It is append-only.

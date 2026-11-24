@@ -792,3 +792,18 @@ GRANT SELECT ON history_donation_finance_reviewers, history_donation_ledger, his
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON history_donation_finance_reviewers, history_donation_ledger, history_donation_refunds, history_donation_reconciliations FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_history_donation_finance(), eduos_history_donation_reviewer_set(uuid, boolean), eduos_history_donation_refund(uuid, text, text),
   eduos_history_donation_reconciliation(date, date), eduos_history_donation_reconcile(date, date, text) TO eduos_app;
+
+-- TC-12 (db/137): the preservation fund. Settings and governance records are
+-- written by the superintendent through RLS; disbursements, votes and the fund
+-- ledger only through functions. The gift gate is a trigger (no grant needed).
+GRANT SELECT, INSERT ON preservation_fund_settings TO eduos_app;
+GRANT UPDATE (enabled, collection_paused, disbursement_paused, pause_reason, fund_name, purpose, eligible_categories, allocation_rules, governance_text,
+  refund_policy, approvals_required, public_report, report_min_donors, updated_by, updated_at) ON preservation_fund_settings TO eduos_app;
+REVOKE DELETE, TRUNCATE ON preservation_fund_settings FROM eduos_app;
+GRANT SELECT, INSERT ON preservation_fund_governance_records TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON preservation_fund_governance_records FROM eduos_app;
+GRANT SELECT ON preservation_fund_disbursements, preservation_fund_votes, preservation_fund_ledger TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON preservation_fund_disbursements, preservation_fund_votes, preservation_fund_ledger FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_preservation_fund_collection_open(uuid), eduos_preservation_fund_available(uuid, uuid),
+  eduos_preservation_fund_request(uuid, text, text, text, text, integer), eduos_preservation_fund_vote(uuid, text, boolean, text),
+  eduos_preservation_fund_pay(uuid, text), eduos_preservation_fund_close(uuid, text), eduos_preservation_fund_summary() TO eduos_app;
