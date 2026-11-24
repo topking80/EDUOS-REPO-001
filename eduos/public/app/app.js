@@ -1388,6 +1388,7 @@ async function donationCard(role) {
   const st = (await safe(api.get("/api/donations/status")))?.data;
   if (!st?.enabled || !Array.isArray(st.methods)) return null;
   const mine = (await safe(api.get("/api/donations/mine")))?.data || [];
+  const fund = (await safe(api.get("/api/preservation-fund")))?.data;
   const amount = h("input", { id: "don-amt", type: "number", min: st.minCents / 100, max: st.maxCents / 100, step: "1", value: (st.suggestedCents[0] || st.minCents) / 100, style: "width:7em" });
   const where = h("select", { id: "don-where" }, h("option", { value: "" }, "The whole district"), (st.schools || []).map(x => h("option", { value: x.id }, x.name)));
   const anon = h("input", { id: "don-anon", type: "checkbox" });
@@ -1412,6 +1413,7 @@ async function donationCard(role) {
     h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "don-amt" }, "Amount ($)"), amount), h("div", {}, h("label", { for: "don-where" }, "For"), where),
       h("label", { for: "don-anon", class: "small" }, anon, " Don't show my name in district reports")),
     h("button", { class: "btn primary small", type: "button", onclick: give }, "Give (test)"),
+    fund ? fundAbout(fund) : null,
     mine.length ? [h("h4", {}, "Your gifts"), h("ul", { class: "list small" }, mine.map(g => h("li", {}, `${money(g.amountCents)} · ${g.designation.name || "District"} · ${g.status}${g.acknowledgement ? ` · ${g.acknowledgement.number}` : ""}${g.refundNotice ? ` · refund ${g.refundNotice.number}` : ""}`)))] : null);
 }
 async function donationSettingsCard() {
@@ -1485,6 +1487,121 @@ async function donationAccountsCard() {
       ppl.reviewers.length ? h("ul", { class: "list small" }, ppl.reviewers.map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, x.name),
         h("button", { class: "btn small", type: "button", "aria-label": `Remove ${x.name}`, onclick: () => setReviewer(x.userId, false) }, "Remove")))) : h("p", { class: "small" }, "No reviewers yet."),
       h("div", { class: "row wrap" }, h("label", { for: "fr-u", class: "sr-only" }, "Staff member"), pick, h("button", { class: "btn small", type: "button", onclick: () => setReviewer(pick.value, true) }, "Name reviewer"))] : null);
+}
+// ---- TC-12: the district preservation fund ----------------
+const FUND_STATUS = { pending: "Waiting for approvals", approved: "Approved, not yet paid", rejected: "Rejected", withdrawn: "Withdrawn", cancelled: "Cancelled", paid: "Paid" };
+function fundAbout(f) {
+  const sm = f.summary || {};
+  return [h("h4", {}, `About the ${f.fundName}`), h("p", { class: "small" }, f.purpose), h("p", { class: "small muted" }, f.limits),
+    h("ul", { class: "list small" }, kv("Can pay for", f.eligibleCategories.map(c => c.label).join(", ")), f.allocationRules ? kv("How money is allocated", f.allocationRules) : null,
+      f.governanceText ? kv("Who decides", `${f.governanceText} Every payment needs ${f.approvalsRequired} approvals.`) : null, f.refundPolicy ? kv("Refunds", f.refundPolicy) : null,
+      sm.shown ? kv("So far", `${money(sm.givenCents)} given · ${money(sm.feesCents)} in fees · ${money(sm.spentCents)} spent`) : null)];
+}
+async function fundSettingsCard() {
+  const s = (await safe(api.get("/api/preservation-fund/settings")))?.data;
+  if (!s || typeof s.enabled !== "boolean") return null;
+  const chk = (id, on) => h("input", { id, type: "checkbox", checked: on || undefined });
+  const on = chk("pf-on", s.enabled), pc = chk("pf-pc", s.collectionPaused), pd = chk("pf-pd", s.disbursementPaused), pub = chk("pf-pub", s.publicReport);
+  const reason = h("input", { id: "pf-why", maxlength: 500, value: s.pauseReason || "" });
+  const name = h("input", { id: "pf-name", maxlength: 120, value: s.fundName });
+  const purpose = h("textarea", { id: "pf-purpose", rows: 2, maxlength: 1000 }, s.purpose);
+  const cats = Object.entries(s.categories).map(([k, label]) => ({ k, box: h("input", { id: `pf-c-${k}`, type: "checkbox", checked: s.eligibleCategories.includes(k) || undefined }), label }));
+  const alloc = h("textarea", { id: "pf-alloc", rows: 2, maxlength: 2000 }, s.allocationRules || "");
+  const gov = h("textarea", { id: "pf-gov", rows: 2, maxlength: 2000 }, s.governanceText || "");
+  const refund = h("textarea", { id: "pf-ref", rows: 2, maxlength: 1000 }, s.refundPolicy || "");
+  const need = h("input", { id: "pf-need", type: "number", min: 2, max: 5, value: s.approvalsRequired, style: "width:5em" });
+  const minD = h("input", { id: "pf-min", type: "number", min: 3, max: 100, value: s.reportMinDonors, style: "width:5em" });
+  const save = async () => {
+    try {
+      await api.put("/api/preservation-fund/settings", { enabled: on.checked, collectionPaused: pc.checked, disbursementPaused: pd.checked, pauseReason: reason.value.trim() || null,
+        fundName: name.value.trim(), purpose: purpose.value.trim(), eligibleCategories: cats.filter(c => c.box.checked).map(c => c.k), allocationRules: alloc.value.trim() || null,
+        governanceText: gov.value.trim() || null, refundPolicy: refund.value.trim() || null, approvalsRequired: Number(need.value), publicReport: pub.checked, reportMinDonors: Number(minD.value) });
+      toast("Saved."); go(state.tab, { push: false });
+    } catch (e) { toast(e?.body?.error === "pause_reason_required" ? "Say why it's paused." : "Couldn't save. Check the fields."); }
+  };
+  const kind = h("select", { id: "pf-gk" }, ["legal", "finance", "governance"].map(k => h("option", { value: k }, { legal: "Legal", finance: "Finance", governance: "Governance" }[k])));
+  const ref = h("input", { id: "pf-gref", maxlength: 300, placeholder: "Board minutes, memo or resolution" });
+  const day = h("input", { id: "pf-gday", type: "date" });
+  const document_ = async () => {
+    try { await api.post("/api/preservation-fund/governance", { kind: kind.value, reference: ref.value.trim(), approvedOn: day.value }); toast("Recorded."); go(state.tab, { push: false }); }
+    catch { toast("Couldn't record it. Add a reference and a date that isn't in the future."); }
+  };
+  const g = s.governance;
+  return h("section", { class: "card", "aria-label": "Preservation fund" }, h("h3", {}, "Preservation fund"),
+    h("p", { class: "small muted" }, "Gifts pool into this fund. It stays closed to gifts until legal, finance and governance approvals are recorded here and the fund is on. Sandbox only: no money moves."),
+    h("p", { class: "small", role: "status" }, g.missing.length ? `Still needed before gifts open: ${g.missing.join(", ")} approval.` : "All three approvals are recorded."),
+    g.records.length ? h("ul", { class: "list small" }, g.records.map(r => h("li", {}, `${r.kind}: ${r.reference} · ${r.approvedOn} · ${r.recordedBy}`))) : null,
+    h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "pf-gk" }, "Approval"), kind), h("div", { class: "grow" }, h("label", { for: "pf-gref" }, "Reference"), ref),
+      h("div", {}, h("label", { for: "pf-gday" }, "Approved on"), day), h("button", { class: "btn small", type: "button", onclick: document_ }, "Record approval")),
+    h("label", { for: "pf-on", class: "small" }, on, " Fund is on"),
+    h("label", { for: "pf-pc", class: "small" }, pc, " Pause new gifts"), h("label", { for: "pf-pd", class: "small" }, pd, " Pause disbursements"),
+    h("label", { for: "pf-why" }, "Why it's paused"), reason,
+    h("label", { for: "pf-name" }, "Fund name"), name, h("label", { for: "pf-purpose" }, "Purpose"), purpose,
+    h("fieldset", {}, h("legend", { class: "small" }, "What it can pay for"), cats.map(c => h("label", { for: `pf-c-${c.k}`, class: "small" }, c.box, ` ${c.label}`))),
+    h("p", { class: "small muted" }, "It can never buy a student more storage or any preferential access."),
+    h("label", { for: "pf-alloc" }, "How money is allocated"), alloc, h("label", { for: "pf-gov" }, "Who decides (shown to families)"), gov,
+    h("label", { for: "pf-ref" }, "Refund policy"), refund,
+    h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "pf-need" }, "Approvals per payment"), need), h("div", {}, h("label", { for: "pf-min" }, "Fewest donors before totals show"), minD)),
+    h("label", { for: "pf-pub", class: "small" }, pub, " Show families the fund's totals"),
+    h("button", { class: "btn small", type: "button", onclick: save }, "Save fund settings"));
+}
+async function fundDisbursementsCard() {
+  const r = (await safe(api.get("/api/preservation-fund/report")))?.data;
+  if (!r?.settings?.enabled) return null;
+  const reload = () => go(state.tab, { push: false });
+  const act = async (path, body, msg) => {
+    try { await api.post(path, body); toast(msg); reload(); }
+    catch (e) { toast({ requester_cannot_approve: "Someone other than the requester approves.", requester_cannot_pay: "Someone other than the requester records the payment.",
+      insufficient_funds: "Not enough in that source.", disbursement_paused: "Disbursements are paused.", reason_required: "Add a reason (at least 5 characters)." }[e?.body?.error] || "Couldn't do that."); }
+  };
+  const request = async () => {
+    const v = await dialogForm("Request a payment from the fund", () => {
+      const cat = h("select", { id: "fd-c" }, r.settings.eligibleCategories.map(k => h("option", { value: k }, r.categories[k])));
+      const src = h("select", { id: "fd-s" }, r.balances.map(b => h("option", { value: b.source.schoolId || "" }, `${b.source.name} (${money(b.availableCents)} available)`)));
+      return { fields: [h("p", { class: "small" }, "District-wide preservation only. It can't pay for any one student."),
+        h("label", { for: "fd-c" }, "For"), cat, h("label", { for: "fd-s" }, "From"), src,
+        h("label", { for: "fd-d" }, "What it pays for"), h("textarea", { id: "fd-d", rows: 2, required: true, minlength: 10, maxlength: 1000 }),
+        h("label", { for: "fd-p" }, "Payee"), h("input", { id: "fd-p", required: true, maxlength: 200 }),
+        h("label", { for: "fd-i" }, "Invoice or quote"), h("input", { id: "fd-i", required: true, maxlength: 120 }),
+        h("label", { for: "fd-a" }, "Amount ($)"), h("input", { id: "fd-a", type: "number", min: 1, step: "0.01", required: true })],
+        value: () => ({ category: cat.value, sourceSchoolId: src.value || null, description: document.getElementById("fd-d").value.trim(), payee: document.getElementById("fd-p").value.trim(),
+          invoiceRef: document.getElementById("fd-i").value.trim(), amountCents: Math.round(Number(document.getElementById("fd-a").value) * 100) }) };
+    }, "Request");
+    if (v) act("/api/preservation-fund/disbursements", v, "Requested. It needs approvals from other people.");
+  };
+  const reasonThen = async (title, path, key, msg) => {
+    const why = await dialogForm(title, () => ({ fields: [h("label", { for: "fd-why" }, "Reason"), h("input", { id: "fd-why", required: true, minlength: 5, maxlength: 500 })],
+      value: () => document.getElementById("fd-why").value.trim() }), "Confirm");
+    if (why) act(path, key === "note" ? { decision: "reject", noConflict: true, note: why } : { [key]: why }, msg);
+  };
+  const approve = async x => {
+    const yes = await dialogForm(`Approve ${money(x.amountCents)} to ${x.payee}?`, () => {
+      const box = h("input", { id: "fd-nc", type: "checkbox", required: true });
+      return { fields: [h("p", { class: "small" }, x.description), h("label", { for: "fd-nc", class: "small" }, box, " I have no personal or financial interest in this payment")], value: () => box.checked };
+    }, "Approve");
+    if (yes) act(`/api/preservation-fund/disbursements/${x.id}/vote`, { decision: "approve", noConflict: true }, "Approved.");
+  };
+  const pay = async x => {
+    const ref = await dialogForm(`Record payment of ${money(x.amountCents)} to ${x.payee}`, () => ({ fields: [h("p", { class: "small" }, "Test mode: this records the payment; no money moves."),
+      h("label", { for: "fd-ref" }, "Payment reference (from your accounts payable)"), h("input", { id: "fd-ref", required: true, maxlength: 120 })],
+      value: () => document.getElementById("fd-ref").value.trim() }), "Record payment");
+    if (ref) act(`/api/preservation-fund/disbursements/${x.id}/pay`, { paymentRef: ref }, "Payment recorded.");
+  };
+  const mine = x => x.requestedById === r.me, voted = x => x.votes.some(v => v.voterId === r.me);
+  return h("section", { class: "card", "aria-label": "Fund payments" }, h("h3", {}, "Fund payments"),
+    h("p", { class: "small muted" }, `Each payment needs ${r.settings.approvalsRequired} approvals from people other than the requester, and someone other than the requester records it. Sandbox only.`),
+    r.settings.disbursementPaused ? h("p", { class: "small", role: "status" }, `Paused: ${r.settings.pauseReason}`) : null,
+    h("ul", { class: "list small" }, r.balances.map(b => kv(b.source.name, `${money(b.availableCents)} available · ${money(b.paidCents)} paid`))),
+    h("button", { class: "btn small", type: "button", onclick: request }, "Request a payment"),
+    r.disbursements.length ? h("ul", { class: "list small" }, r.disbursements.slice(0, 30).map(x => h("li", {},
+      h("div", {}, `${money(x.amountCents)} · ${x.categoryLabel} · ${x.payee} · ${FUND_STATUS[x.status] || x.status}`),
+      h("div", { class: "muted" }, `${x.description} · asked by ${x.requestedBy}${x.votes.length ? ` · ${x.votes.map(v => `${v.voter} ${v.decision === "approve" ? "approved" : "rejected"}`).join(", ")}` : ""}`),
+      h("div", { class: "btns" },
+        x.status === "pending" && !mine(x) && !voted(x) ? [h("button", { class: "btn small", type: "button", "aria-label": `Approve ${money(x.amountCents)} to ${x.payee}`, onclick: () => approve(x) }, "Approve"),
+          h("button", { class: "btn small", type: "button", "aria-label": `Reject ${money(x.amountCents)} to ${x.payee}`, onclick: () => reasonThen("Reject this request", `/api/preservation-fund/disbursements/${x.id}/vote`, "note", "Rejected.") }, "Reject")] : null,
+        x.status === "pending" && mine(x) ? h("button", { class: "btn small", type: "button", "aria-label": `Withdraw ${money(x.amountCents)} to ${x.payee}`, onclick: () => reasonThen("Withdraw your request", `/api/preservation-fund/disbursements/${x.id}/close`, "reason", "Withdrawn.") }, "Withdraw") : null,
+        x.status === "approved" && !mine(x) ? h("button", { class: "btn small", type: "button", "aria-label": `Record payment ${money(x.amountCents)} to ${x.payee}`, onclick: () => pay(x) }, "Record payment") : null,
+        x.status === "approved" ? h("button", { class: "btn small", type: "button", "aria-label": `Cancel ${money(x.amountCents)} to ${x.payee}`, onclick: () => reasonThen("Cancel this approved payment", `/api/preservation-fund/disbursements/${x.id}/close`, "reason", "Cancelled.") }, "Cancel") : null)))) : h("p", { class: "small" }, "No payments requested yet."));
 }
 // ---------------- Time Capsules ----------------
 const MILESTONE_TEXT = { grade_5_completion: "Finishing grade 5", grade_8_completion: "Finishing grade 8", graduation: "Graduation", age_18: "Turning 18" };
@@ -1625,8 +1742,8 @@ VIEWS.history = async () => {
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
   const teacher = await teacherReviewSection();
-  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard(), await donationSettingsCard()] : null, await preservationCard()] : null;
-  const accounts = ["parent", "pupil"].includes(state.me.role) ? null : await donationAccountsCard();
+  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard(), await donationSettingsCard(), await fundSettingsCard()] : null, await preservationCard()] : null;
+  const accounts = ["parent", "pupil"].includes(state.me.role) ? null : [await donationAccountsCard(), await fundDisbursementsCard()];
   return [privacy, accounts, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
     h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),
