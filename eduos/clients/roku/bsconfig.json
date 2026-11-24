@@ -1,0 +1,24 @@
+{
+  "rootDir": "src",
+  "files": [
+    "manifest",
+    "source/**/*.brs",
+    "components/**/*",
+    {
+      "src": "../out/placeholder-art/**/*",
+      "dest": "images"
+    },
+    {
+      "src": "../art/**/*.png",
+      "dest": "images"
+    }
+  ],
+  "plugins": [
+    "@rokucommunity/bslint"
+  ],
+  "stagingDir": "out/staging",
+  "outFile": "out/eduos-roku.zip",
+  "createPackage": true,
+  "retainStagingDir": false,
+  "lintConfig": "bslint.json"
+}
