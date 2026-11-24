@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- What every full-screen stage shares with MainScene. -->
+<component name="Stage" extends="Group">
+  <interface>
+    <!-- true while the stage is on screen (each stage observes it) -->
+    <field id="active" type="boolean" value="false" />
+    <!-- a line to show on arrival ("Signed out: the session ended.") -->
+    <field id="note" type="string" />
+    <!-- {go: "setup" | "pair" | "lock" | "home" | "next", note?} -->
+    <field id="outcome" type="assocarray" alwaysNotify="true" />
+  </interface>
+</component>
