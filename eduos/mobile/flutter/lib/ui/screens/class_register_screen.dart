@@ -69,6 +69,10 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
     for (final m in objs(results[2]['data']).map(AttendanceMark.fromJson)) {
       if (m.day == _day) marks.putIfAbsent(m.studentId, () => m.status);
     }
+    final handoffs = <String, Json>{};
+    for (final h in objs(results[3]['data'])) {
+      handoffs.putIfAbsent(str(h['student_id']), () => h);
+    }
     return _ClassToday(
       schoolName: str(home['school_name']),
       students: integer(home['students']),
@@ -77,6 +81,7 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
       absences7d: integer(home['absences_7d']),
       roster: roster,
       marks: marks,
+      handoffs: handoffs,
     );
   }
 
