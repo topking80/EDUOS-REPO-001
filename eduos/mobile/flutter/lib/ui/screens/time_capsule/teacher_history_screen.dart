@@ -17,6 +17,50 @@ class _TeacherData {
   final List<HistoryItem> items;
 }
 
+class _FixTeacherHistoryItemDialog extends StatefulWidget {
+  const _FixTeacherHistoryItemDialog({required this.item});
+  final HistoryItem item;
+
+  @override
+  State<_FixTeacherHistoryItemDialog> createState() => _FixTeacherHistoryItemDialogState();
+}
+
+class _FixTeacherHistoryItemDialogState extends State<_FixTeacherHistoryItemDialog> {
+  late final _title = TextEditingController(text: widget.item.title);
+  late final _body = TextEditingController(text: widget.item.body);
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _body.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Fix and resubmit'),
+        content: SizedBox(
+          width: 480,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: _title, maxLength: 180, decoration: const InputDecoration(labelText: 'Title')),
+            TextField(controller: _body, maxLength: 12000, minLines: 3, maxLines: 8, decoration: const InputDecoration(labelText: 'Description')),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final title = _title.text.trim();
+              if (title.isNotEmpty) {
+                Navigator.pop(context, {'title': title, 'body': _body.text.trim()});
+              }
+            },
+            child: const Text('Resubmit'),
+          ),
+        ],
+      );
+}
+
 class TeacherHistoryItemsScreen extends StatelessWidget {
   const TeacherHistoryItemsScreen({super.key});
 
@@ -35,27 +79,13 @@ class TeacherHistoryItemsScreen extends StatelessWidget {
       },
       builder: (context, d, reload) {
         Future<void> edit(HistoryItem i) async {
-          final title = TextEditingController(text: i.title), body = TextEditingController(text: i.body);
-          final ok = await showDialog<bool>(
+          final values = await showDialog<Map<String, String>>(
             context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Fix and resubmit'),
-              content: SizedBox(
-                width: 480,
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  TextField(controller: title, maxLength: 180, decoration: const InputDecoration(labelText: 'Title')),
-                  TextField(controller: body, maxLength: 12000, minLines: 3, maxLines: 8, decoration: const InputDecoration(labelText: 'Description')),
-                ]),
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-                FilledButton(onPressed: () => Navigator.pop(context, title.text.trim().isNotEmpty), child: const Text('Resubmit')),
-              ],
-            ),
+            builder: (_) => _FixTeacherHistoryItemDialog(item: i),
           );
-          if (ok != true) return;
+          if (values == null || !context.mounted) return;
           try {
-            await app.api.patch('/api/teacher/history-items/${i.id}', {'title': title.text.trim(), 'body': body.text.trim()});
+            await app.api.patch('/api/teacher/history-items/${i.id}', values);
             await app.api.post('/api/teacher/history-items/${i.id}/submit');
             if (context.mounted) toast(context, 'Resubmitted to the school.');
             await reload();

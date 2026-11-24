@@ -155,6 +155,8 @@ void main() {
                 'decisions': [{'decision': 'changes_requested', 'reasonCode': 'needs_edits', 'note': 'Add the date', 'by': 'school', 'at': '2026-10-03T12:00:00Z'}]},
             ]
           },
+      'PATCH /api/teacher/history-items/h1': (_) => {'data': {'id': 'h1', 'status': 'draft'}},
+      'POST /api/teacher/history-items/h1/submit': (_) => {'data': {'id': 'h1', 'status': 'submitted'}},
       'POST /api/students/k1/history/teacher-items': (_) => {'data': {'id': 'h2', 'status': 'submitted'}},
     }, role: 'teacher');
     await launch(tester, fake);
@@ -162,6 +164,17 @@ void main() {
     expect(find.text('Bridge model'), findsOneWidget);
     expect(find.text('Changes requested · Needs edits · “Add the date”'), findsOneWidget);
     expect(find.text('Fix and resubmit'), findsOneWidget);
+    await tester.tap(find.text('Fix and resubmit'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Title'), 'Bridge model with date');
+    await tester.enterText(find.widgetWithText(TextField, 'Description'), 'Completed on October 2.');
+    await tester.tap(find.text('Resubmit'));
+    await tester.pumpAndSettle();
+    expect(jsonDecode(fake.sent('PATCH', '/api/teacher/history-items/h1').single.body), {
+      'title': 'Bridge model with date',
+      'body': 'Completed on October 2.',
+    });
+    expect(fake.sent('POST', '/api/teacher/history-items/h1/submit'), hasLength(1));
     await tester.tap(find.byType(DropdownButtonFormField<String>).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Ava Lee').last);
