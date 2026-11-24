@@ -355,6 +355,15 @@ async function checkSafety({ rerender = true } = {}) {
   if (!r) return;
   state.safety = r.data.incidents || [];
   state.safetyCaps = { canInitiate: r.data.canInitiate, canLead: r.data.canLead };
+  // SAFE-04: National Weather Service warnings waiting for a leader's decision.
+  const wx = r.data.weather || [], wsig = wx.map(w => w.id).join("|");
+  const firstWx = state.weatherSig === undefined;
+  if (firstWx || wsig !== state.weatherSig) {
+    const first = firstWx, seen = new Set((state.weather || []).map(w => w.id)), fresh = wx.filter(w => !seen.has(w.id));
+    state.weather = wx; state.weatherSig = wsig;
+    if (fresh.length && !first) toast(`${fresh[0].event} (National Weather Service) for ${fresh[0].school}. Open Safety to decide.`);
+    if (!first && ["sos", "safety"].includes(state.tab) && !document.querySelector("dialog[open]") && !liveIncidents().length) go(state.tab, { push: false });
+  }
   const sig = liveIncidents().map(i => `${i.id}:${i.status}`).join("|");
   if (sig !== state.safetySig) {
     const was = state.safetySig;
@@ -1999,7 +2008,7 @@ function sosBanner(i) {
 }
 VIEWS.safety = async () => {
   const list = liveIncidents();
-  if (!list.length) return [h("h2", {}, "Safety"), empty("No emergency is active. The school will alert you here if one starts.")];
+  if (!list.length) return [h("h2", {}, "Safety"), weatherPromptCard(), empty("No emergency is active. The school will alert you here if one starts.")];
   const role = state.me.role, out = [];
   for (const i of list) {
     out.push(sosBanner(i));
@@ -2200,6 +2209,44 @@ async function shelterAreasCard() {
       d.hazards.map(x => h("option", { value: x.key, selected: x.key === hz }, x.label))),
     h("ul", { class: "list" }, row("School default", null, d.defaults[hz], "default"), d.rooms.map(r => row(r.building ? `${r.name} (${r.building})` : r.name, r.id, r.areas[hz], r.id))));
 }
+// ---- SAFE-04: National Weather Service prompts -----------------------------
+function weatherPromptCard() {
+  const list = state.weather || [];
+  if (!list.length) return null;
+  return h("section", { class: "card", "aria-label": "Weather warnings" }, h("h3", {}, "National Weather Service warnings"),
+    h("ul", { class: "list" }, list.map(w => h("li", {}, h("b", {}, `${w.event}: ${w.school}`),
+      h("p", { class: "small" }, `${w.headline || ""}${w.expires ? ` Until ${fmtTime(w.expires)}.` : ""}`),
+      w.instruction ? h("p", { class: "small muted" }, w.instruction.slice(0, 300)) : null,
+      h("div", { class: "btns" },
+        h("button", { class: "btn danger small", type: "button", "aria-label": `Start ${w.suggestedKind === "hold" ? "hold" : "shelter"}: ${w.hazardLabel}, ${w.school}`, onclick: () => {
+          Object.assign(state, { sosKind: w.suggestedKind, sosHazard: w.hazard, sosWeatherId: w.id, sosDrill: false }); go("sos"); } },
+          `Start ${w.suggestedKind === "hold" ? "hold" : "shelter"}: ${w.hazardLabel}`),
+        h("button", { class: "btn small", type: "button", "aria-label": `Dismiss: ${w.event}, ${w.school}`, onclick: async () => {
+          const note = await ask({ title: `Dismiss the ${w.event}?`, label: "Why (e.g. outside our area, already sheltering)", confirm: "Dismiss" }); if (!note) return;
+          try { await api.post(`/api/safety/weather/${w.id}/dismiss`, { note }); state.weather = list.filter(x => x.id !== w.id); toast("Dismissed."); go(state.tab, { push: false }); } catch { toast("Couldn't dismiss it."); } } }, "Dismiss"))))),
+    h("p", { class: "small muted" }, "From api.weather.gov. EduOS never starts an alert on its own: you start it (with the usual confirm) or dismiss it."));
+}
+async function weatherSettingsCard() {
+  const d = (await safe(api.get("/api/safety/weather")))?.data;
+  if (!d) return null;
+  const info = d.alerts.filter(a => !a.prompt);
+  return h("section", { class: "card", "aria-label": "Weather alerts" }, h("h3", {}, "Weather alerts"),
+    h("p", { class: "small muted" }, "EduOS can check the National Weather Service every two minutes for each school's location and prompt you when a warning (tornado, severe thunderstorm, hurricane, flooding, winter storm, extreme heat, hazardous materials) covers it. Only the school's coordinates are sent."),
+    d.canToggle ? h("label", { class: "check" }, h("input", { type: "checkbox", checked: d.enabled, onchange: async e => {
+        try { await api.put("/api/safety/weather/settings", { enabled: e.target.checked }); toast(e.target.checked ? "Weather alerts on." : "Weather alerts off."); } catch { toast("Couldn't change it."); } } }), " Check the National Weather Service for this district")
+      : h("p", { class: "small" }, d.enabled ? "Weather alerts are on for the district." : "Weather alerts are off. The superintendent can turn them on."),
+    !d.running ? h("p", { class: "small muted" }, "The server isn't checking yet: district IT sets WEATHER_ALERTS_USER_AGENT with a contact address (NWS requires one).") : null,
+    h("h4", {}, "School locations"),
+    h("ul", { class: "list" }, d.schools.map(sc => {
+      const lat = h("input", { id: `wx-lat-${sc.id}`, inputmode: "decimal", value: sc.lat ?? "", style: "width:8em" });
+      const lon = h("input", { id: `wx-lon-${sc.id}`, inputmode: "decimal", value: sc.lon ?? "", style: "width:8em" });
+      return h("li", {}, h("b", {}, sc.name), h("div", { class: "row wrap" },
+        h("div", {}, h("label", { for: `wx-lat-${sc.id}` }, "Latitude"), lat), h("div", {}, h("label", { for: `wx-lon-${sc.id}` }, "Longitude"), lon),
+        h("button", { class: "btn small", type: "button", "aria-label": `Save location: ${sc.name}`, onclick: async () => {
+          try { await api.put("/api/safety/weather/points", { schoolId: sc.id, lat: Number(lat.value), lon: Number(lon.value) }); toast("Saved."); } catch { toast("Enter a latitude and longitude, e.g. 39.7392 and -104.9903."); } } }, "Save")));
+    })),
+    info.length ? [h("h4", {}, "Watches and advisories"), h("ul", { class: "list small" }, info.map(a => h("li", {}, `${a.event}: ${a.school}${a.expires ? ` · until ${fmtTime(a.expires)}` : ""}${a.decision ? ` · ${a.decision} by ${a.decidedBy}` : ""}`)))] : null);
+}
 // What the alert reached. In-app notices are in each person's app; email,
 // SMS and push are only queued until a channel confirms them, and nothing
 // here means emergency services were contacted.
@@ -2246,7 +2293,7 @@ const EVENT_TEXT = { initiated: "Started", confirmed: "Confirmed and alerted", c
 VIEWS.sos = async () => {
   if (liveIncidents().length) return VIEWS.safety();
   const caps = state.safetyCaps || {};
-  const out = [h("h2", {}, "Safety")];
+  const out = [h("h2", {}, "Safety"), weatherPromptCard()];
   if (caps.canInitiate) {
     let kind = state.sosKind || "lockdown", drill = state.sosDrill ?? true, hazard = ["shelter", "hold"].includes(kind) ? state.sosHazard || null : null;
     const hz = h("select", { id: "sos-hazard", onchange: e => { state.sosHazard = e.target.value || null; if (e.target.value) state.sosKind = HAZARD_KIND[e.target.value]; go("sos", { push: false }); } },
@@ -2268,7 +2315,8 @@ VIEWS.sos = async () => {
           const yes = await ask({ title: `Start ${drill ? "a DRILL" : "a REAL"} ${KIND_TEXT[kind]}${hazard ? ` (${HAZARD_TEXT[hazard]})` : ""}?`, text: `Everyone at ${started.schoolName}, its bus drivers and families are alerted now${drill ? ", marked as a drill" : ""}. Confirm within 2 minutes.`, confirm: `Yes, start ${drill ? "drill" : KIND_TEXT[kind].toLowerCase()}`, danger: true });
           if (!yes) { await safe(api.post(`/api/safety/incidents/${started.id}/cancel`)); toast("Not started"); return; }
           await api.post(`/api/safety/incidents/${started.id}/confirm`, { kind, isDrill: drill, ...(hazard ? { hazard } : {}) });
-          state.sosKind = null; state.sosDrill = null; state.sosHazard = null;
+          if (state.sosWeatherId) await safe(api.post(`/api/safety/weather/${state.sosWeatherId}/started`, { incidentId: started.id }));
+          state.sosKind = null; state.sosDrill = null; state.sosHazard = null; state.sosWeatherId = null;
           await checkSafety();
         } catch (e) { toast(e.body?.error === "incident_already_live" ? "An alert is already active." : e.status === 410 ? "Took too long. Start again." : "Couldn't start the alert."); }
       } }, icon("shield"), "Continue"),
@@ -2281,6 +2329,7 @@ VIEWS.sos = async () => {
         x.status === "closed" && !x.debrief ? h("button", { class: "btn small", type: "button", onclick: async () => { const t = await ask({ title: "Debrief", text: "What went well and what to fix. No student names.", label: "Debrief notes", confirm: "Save debrief", maxlength: 4000 }); if (t) { await api.post(`/api/safety/incidents/${x.id}/debrief`, { text: t }); toast("Debrief saved"); go("sos", { push: false }); } } }, "Debrief") : x.debrief ? chip("present", "Debriefed") : null)))) : empty("No incidents yet.")));
   }
   out.push(h("p", { class: "notice" }, "A person starts every alert. EduOS has no cameras, location tracking, facial recognition or threat scoring."));
+  if (["principal", "superintendent"].includes(state.me.role) && caps.canLead) out.push(await weatherSettingsCard());
   return out;
 };
 

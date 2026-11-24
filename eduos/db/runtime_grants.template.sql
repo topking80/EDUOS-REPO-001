@@ -715,3 +715,13 @@ GRANT SELECT, INSERT ON school_shelter_areas TO eduos_app;
 GRANT UPDATE (ended_by, ended_at) ON school_shelter_areas TO eduos_app;
 REVOKE DELETE, TRUNCATE ON school_shelter_areas FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_shelter_area_manager(uuid), eduos_shelter_area_for(uuid, uuid, uuid, text) TO eduos_app;
+
+-- SAFE-04 (db/124): National Weather Service prompts. Alerts are written by
+-- the sweep's functions; leaders decide them. Settings and points are edited.
+GRANT SELECT, INSERT ON district_weather_settings, school_weather_points TO eduos_app;
+GRANT UPDATE (enabled, set_by, set_at) ON district_weather_settings TO eduos_app;
+GRANT UPDATE (lat, lon, set_by, set_at), DELETE ON school_weather_points TO eduos_app;
+GRANT SELECT ON school_weather_alerts TO eduos_app;
+GRANT UPDATE (decision, decided_by, decided_at, decision_note, incident_id) ON school_weather_alerts TO eduos_app;
+REVOKE DELETE, TRUNCATE ON district_weather_settings, school_weather_alerts FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_weather_lead(uuid), eduos_weather_targets(), eduos_weather_record(uuid, uuid, jsonb), eduos_weather_recipients(uuid, uuid) TO eduos_app;

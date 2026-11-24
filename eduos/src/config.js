@@ -127,6 +127,10 @@ export const config = {
   integrationsKey: process.env.INTEGRATIONS_KEY || "",
   // Global operational kill switch for scheduled roster jobs; manual sync remains available.
   sisSyncDispatchEnabled: process.env.SIS_SYNC_DISPATCH_ENABLED !== "false",
+  // SAFE-04: National Weather Service alerts. NWS requires a User-Agent with a
+  // contact (e.g. "EduOS (it@district.org)"); unset, the sweep doesn't run.
+  weatherAlertsUserAgent: (process.env.WEATHER_ALERTS_USER_AGENT || "").trim(),
+  weatherAlertsIntervalSeconds: Number(process.env.WEATHER_ALERTS_INTERVAL_SECONDS ?? 120),
   apiRateLimitPerMinute: Number(process.env.API_RATE_LIMIT_PER_MINUTE ?? 1200),
   // Bounded in-memory PowerSchool roster ceiling; larger districts need staged ingestion.
   powerschoolMaxStudents: Number(process.env.POWERSCHOOL_MAX_STUDENTS || 200_000),
@@ -367,6 +371,7 @@ if (config.webhookPreviousSigningKey) {
   if (config.webhookPreviousSigningKey === config.webhookSigningKey) throw new Error("WEBHOOK_SIGNING_KEY_PREVIOUS must differ from WEBHOOK_SIGNING_KEY");
 }
 intIn("WEBHOOK_DISPATCH_INTERVAL_SECONDS", config.webhookDispatchIntervalSeconds, 0, 3600);
+intIn("WEATHER_ALERTS_INTERVAL_SECONDS", config.weatherAlertsIntervalSeconds, 0, 3600);
 intIn("API_RATE_LIMIT_PER_MINUTE", config.apiRateLimitPerMinute, 60, 100000);
 if (config.nodeEnv === "production" && config.webhookSigningKey && !config.webhookAllowedHosts.length && !config.webhookAllowAnyPublicHost) {
   throw new Error("Webhooks are on in production without WEBHOOK_ALLOWED_HOSTS: list the receivers' domains, or set WEBHOOK_ALLOW_ANY_PUBLIC_HOST=true to allow any public HTTPS receiver");

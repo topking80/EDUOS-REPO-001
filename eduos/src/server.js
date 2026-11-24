@@ -52,6 +52,8 @@ import { registerRankingRoutes } from "./ranking-routes.js";
 import { registerHistoryPrivacyRoutes } from "./history-privacy-routes.js";
 import { registerSafetyRoutes } from "./safety-routes.js";
 import { registerSafetyRoomRoutes } from "./safety-room-routes.js";
+import { registerWeatherRoutes } from "./weather-routes.js";
+import { sweepWeather } from "./weather-alerts.js";
 import { registerPickupRoutes } from "./pickup-routes.js";
 import { registerEnrollmentRoutes } from "./enrollment-routes.js";
 import { registerArrivalRoutes } from "./arrival-routes.js";
@@ -2018,6 +2020,7 @@ registerRankingRoutes(app);
 registerHistoryPrivacyRoutes(app);
 registerSafetyRoutes(app);
 registerSafetyRoomRoutes(app);
+registerWeatherRoutes(app);
 registerPickupRoutes(app);
 registerEnrollmentRoutes(app);
 registerArrivalRoutes(app);
@@ -2093,6 +2096,21 @@ function startWebhookSweep(){
   timer.unref?.();
 }
 
+// SAFE-04: National Weather Service alerts for schools in districts that
+// turned them on (src/weather-alerts.js). Prompts only; never starts an alert.
+let weatherSweepRunning=false;
+function startWeatherSweep(){
+  if(!config.weatherAlertsUserAgent||!config.weatherAlertsIntervalSeconds)return;
+  const timer=setInterval(()=>{
+    if(weatherSweepRunning)return;
+    weatherSweepRunning=true;
+    sweepWeather({db:pool})
+      .catch(error=>console.error("Weather sweep failed",{message:error.message}))
+      .finally(()=>{weatherSweepRunning=false;});
+  },Math.max(60,config.weatherAlertsIntervalSeconds)*1000);
+  timer.unref?.();
+}
+
 let sisSyncSweepRunning=false;
 function startSisSyncSweep(){
   if(!config.integrationsKey||!config.sisSyncDispatchEnabled)return;
@@ -2115,6 +2133,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
   app.listen(config.port,()=>{
     console.log(`EduOS API listening on ${config.port}${config.nodeTier?` (EDEN ${config.nodeTier} tier)`:""}`);
     startWebhookSweep();
+    startWeatherSweep();
     startSisSyncSweep();
     startCommerceReconcile();
     startCapsuleReleaseSweep();
