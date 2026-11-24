@@ -135,8 +135,11 @@ describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
       await assert.rejects(runtime.query("DELETE FROM history_donation_reconciliations"), /permission denied/);
       await assert.rejects(runtime.query("INSERT INTO history_donation_finance_reviewers(district_id,user_id,named_by) VALUES($1,$2,$2)", [ID.d1, USERS.pa[0]]), /permission denied/);
       await assert.rejects(runtime.query("SELECT eduos_history_donation_post_gift($1)", [gifts.pb.id]), /permission denied/);
+      await runtime.query("SELECT set_config('app.role','principal',false), set_config('app.user_id',$1,false), set_config('app.school_id',$2,false)", [USERS.p1[0], ID.s1]);
+      assert.equal((await runtime.query("SELECT count(*)::int AS n FROM history_donation_finance_reviewers")).rows[0].n, 1, "a reviewer sees their own appointment");
       await runtime.query("SELECT set_config('app.role','parent',false), set_config('app.user_id',$1,false)", [USERS.pa[0]]);
       assert.equal((await runtime.query("SELECT count(*)::int AS n FROM history_donation_ledger")).rows[0].n, 0, "a donor doesn't see the books");
+      assert.equal((await runtime.query("SELECT count(*)::int AS n FROM history_donation_finance_reviewers")).rows[0].n, 0);
       await assert.rejects(runtime.query("SELECT eduos_history_donation_reconciliation(current_date, current_date)"), /forbidden/);
     } finally { await runtime.end(); }
     await assert.rejects(admin.query("UPDATE history_donation_ledger SET amount_cents=1"), /append-only/);

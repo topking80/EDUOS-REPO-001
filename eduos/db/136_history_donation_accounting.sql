@@ -124,8 +124,10 @@ END $$;
 -- their own appointment. Writes only through the functions below.
 CREATE POLICY scope_read ON history_donation_finance_reviewers AS RESTRICTIVE FOR SELECT
   USING (eduos_is_table_owner() OR eduos_ctx_role() = 'superintendent' OR user_id = eduos_ctx_user());
-CREATE POLICY scope_write ON history_donation_finance_reviewers AS RESTRICTIVE FOR ALL
-  USING (eduos_is_table_owner() OR eduos_ctx_role() = 'superintendent') WITH CHECK (eduos_is_table_owner());
+CREATE POLICY scope_insert ON history_donation_finance_reviewers AS RESTRICTIVE FOR INSERT WITH CHECK (eduos_is_table_owner());
+CREATE POLICY scope_update ON history_donation_finance_reviewers AS RESTRICTIVE FOR UPDATE
+  USING (eduos_is_table_owner()) WITH CHECK (eduos_is_table_owner());
+CREATE POLICY scope_delete ON history_donation_finance_reviewers AS RESTRICTIVE FOR DELETE USING (eduos_is_table_owner());
 CREATE POLICY scope_read ON history_donation_ledger AS RESTRICTIVE FOR SELECT
   USING (eduos_is_table_owner() OR eduos_history_donation_finance());
 CREATE POLICY scope_write ON history_donation_ledger AS RESTRICTIVE FOR INSERT WITH CHECK (eduos_is_table_owner());
