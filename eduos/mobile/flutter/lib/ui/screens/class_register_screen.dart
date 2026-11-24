@@ -4,9 +4,17 @@ import '../../app/app_scope.dart';
 import '../../core/api_client.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
-import '../widgets.dart';\nimport 'class_planner_screen.dart';
+import '../widgets.dart';
+import 'class_planner_screen.dart';
 
-class _ClassTodayHandoff {\n  const _ClassTodayHandoff(this.value);\n  final Json? value;\n  String get id => str(value?['id']);\n  String get status => str(value?['status']);\n}\n\nclass _ClassToday {
+class _ClassTodayHandoff {
+  const _ClassTodayHandoff(this.value);
+  final Json? value;
+  String get id => str(value?['id']);
+  String get status => str(value?['status']);
+}
+
+class _ClassToday {
   const _ClassToday({required this.schoolName, required this.students, required this.toGrade, required this.openAssignments,
       required this.absences7d, required this.roster, required this.marks, required this.handoffs});
   final String schoolName;
@@ -72,7 +80,7 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
     );
   }
 
-  Future<void> _mark(RosterLearner learner, String status, Future<void> Function() reload) async {
+  Future<void> _mark(_ClassToday t, RosterLearner learner, String status, Future<void> Function() reload) async {
     final app = AppScope.read(context);
     setState(() => _sending.add(learner.studentId));
     try {
@@ -116,7 +124,14 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
         return ListView(padding: const EdgeInsets.all(16), children: [
           SectionCard(children: [
             Text(t.schoolName, style: Theme.of(context).textTheme.bodySmall),
-            Row(children: [\n              Expanded(child: Semantics(header: true, child: Text('Today in class', style: Theme.of(context).textTheme.titleLarge))),\n              OutlinedButton.icon(\n                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ClassPlannerScreen())),\n                icon: const Icon(Icons.event_note_outlined),\n                label: const Text('Plan lessons'),\n              ),\n            ]),
+            Row(children: [
+              Expanded(child: Semantics(header: true, child: Text('Today in class', style: Theme.of(context).textTheme.titleLarge))),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ClassPlannerScreen())),
+                icon: const Icon(Icons.event_note_outlined),
+                label: const Text('Plan lessons'),
+              ),
+            ]),
             const SizedBox(height: 12),
             Row(children: [
               Expanded(child: StatTile(t.students, 'learners')),
@@ -142,7 +157,7 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
                     if (!ok) return;
                     for (final l in unmarked) {
                       if (!mounted) return;
-                      await _mark(l, 'present', reload);
+                      await _mark(t, l, 'present', reload);
                     }
                   },
                 ),
@@ -166,7 +181,7 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
                     onSelectionChanged: _sending.contains(l.studentId)
                         ? null
                         : (v) {
-                            if (v.isNotEmpty && v.first != status(l)) _mark(l, v.first, reload);
+                            if (v.isNotEmpty && v.first != status(l)) _mark(t, l, v.first, reload);
                           },
                   ),
                 ]),
