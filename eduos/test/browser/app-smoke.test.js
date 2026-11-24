@@ -389,6 +389,20 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       retention: { recordsScheduleRef: "Board policy 8310", text: "Official school records are kept by the district under its records schedule." },
       export: { allowed: true, href: "/api/history/export?studentId=c1" }, guidance: ["JPEG, PNG and WebP photos are accepted."],
       donations: { changeStorage: false, text: "Donations never change this limit." } } };
+    // TC-09: preservation gifts (sandbox only).
+    case "/api/donations/status": return { data: { enabled: true, districtEnabled: true, canGive: role !== "pupil", sandboxOnly: true, minCents: 500, maxCents: 50000,
+      suggestedCents: [1000, 2500], schools: [{ id: "s1", name: "Maple" }], methods: [{ method: "sandbox", label: "Sandbox", available: true, default: true }],
+      statement: "Gifts are voluntary. They never change storage limits, what is kept, or anything a student gets.", changesStorage: false } };
+    case "/api/donations/mine": return { data: [{ id: "g1", status: "succeeded", amountCents: 2500, currency: "USD", designation: { schoolId: "s1", name: "Maple" }, acknowledgement: { id: "a1", number: "GIFT-2026-000001" } }] };
+    case "/api/donations/settings": return { data: { enabled: true, minCents: 500, maxCents: 50000, suggestedCents: [1000, 2500], acknowledgementText: "Thank you for your voluntary gift.", taxWordingEnabled: false, taxWording: null } };
+    case "/api/donations": return { data: { totals: { gifts: 3, grossCents: 7500, feesCents: 400, netCents: 7100 }, sandboxOnly: true,
+      gifts: [{ id: "g2", status: "succeeded", amountCents: 2500, processingFeeCents: 103, donor: "Parent A", acknowledgement: { id: "a2", number: "GIFT-2026-000002" }, refundNotice: null }] } };
+    // TC-10: gift accounts (superintendent; reviewers are named staff).
+    case "/api/donations/finance/access": return { data: { finance: role === "superintendent" } };
+    case "/api/donations/reconciliation": return { data: { gifts: 3, grossCents: 7500, feesCents: 400, refunds: 1, refundedCents: 1000, netCents: 6100, ledgerNetCents: 6100,
+      ledgerLines: 7, matched: true, discrepancies: [], canSignOff: true, signOffBlocked: null, sandboxOnly: true } };
+    case "/api/donations/reconciliations": return { data: [{ id: "r1", periodStart: "2026-10-01", periodEnd: "2026-10-31", matched: true, reconciledBy: "Supt One" }] };
+    case "/api/donations/finance/reviewers": return { data: { reviewers: [{ userId: "u7", name: "Pat Finance" }], history: [], staff: [{ id: "u7", name: "Pat Finance" }, { id: "u8", name: "Sam Office" }], rules: [] } };
     // TC-08: preservation and legal holds.
     case "/api/history/preservation": return { data: { policy: { verifyEveryDays: 90, archiveAfterDays: null, capacityAlertPercent: 80, recordsScheduleRef: "" },
       canEdit: role === "superintendent", storageReady: true, archiveStorageClass: null, maxBytesPerStudent: 262144000, lastCheckedAt: now, donationsAffectLimits: false,
@@ -557,6 +571,13 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         const storageExpect = { "parent/portfolio": ["Storage: 25.0 MB of 250.0 MB used", "14 photos (3 in long-term storage", "4 accepted · 1 waiting · 1 declined", "can't be raised by payment or donation", "Board policy 8310"],
           "pupil/portfolio": ["Storage: 25.0 MB of 250.0 MB used"] }[`${role}/${tab}`];
         for (const want of storageExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
+        // TC-09: the gift card for parents; the settings for the superintendent.
+        const giftExpect = { "parent/portfolio": ["Support preservation", "never change storage limits", "Give (test)", "GIFT-2026-000001"],
+          "superintendent/history": ["Preservation gifts", "3 gifts · $75.00 given", "Accept gifts", "no claim that a gift is tax-deductible",
+            "Gift accounts", "The gift records and the ledger match.", "Sign off this month", "2026-10-01 to 2026-10-31 · matched · Supt One", "GIFT-2026-000002", "Pat Finance", "Name reviewer"] }[`${role}/${tab}`];
+        for (const want of giftExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
+        if (["principal", "teacher"].includes(role) && tab === "history" && text.includes("Gift accounts")) failures.push(`${role} #/history: gift accounts shown without being named`);
+        if (role === "pupil" && tab === "portfolio" && text.includes("Support preservation")) failures.push("pupil #/portfolio: students must not be asked to give");
         // TC-08: preservation for the records office; settings and holds for the superintendent.
         const preserveExpect = { "principal/history": ["Preservation", "Maple", "failed its integrity check"],
           "superintendent/history": ["Preservation", "Preservation settings", "Legal holds (1)", "Case 26-CV-0142"] }[`${role}/${tab}`];

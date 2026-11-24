@@ -1358,6 +1358,7 @@ VIEWS.portfolio = async () => {
     historyDownloadCard(first.student.id, role),
     ["parent", "pupil"].includes(role) ? await familyTransferCard(first.student.id) : null,
     await familyStorageCard(first.student.id, role),
+    await donationCard(role),
     await studentSharingCard(first.student.id)];
 };
 // ---- TC-11: family storage dashboard ---------------------------------------
@@ -1380,6 +1381,110 @@ async function familyStorageCard(studentId, role) {
     h("h4", {}, "How long it's kept"), h("p", { class: "small" }, d.retention.text, d.retention.recordsScheduleRef ? ` District schedule: ${d.retention.recordsScheduleRef}.` : ""),
     h("h4", {}, "Saving space"), h("ul", { class: "list small" }, d.guidance.map(g => h("li", {}, g))),
     h("p", { class: "small muted" }, d.donations.text));
+}
+// ---- TC-09: voluntary gifts toward preservation (sandbox only) ----------------
+async function donationCard(role) {
+  if (role !== "parent") return null;
+  const st = (await safe(api.get("/api/donations/status")))?.data;
+  if (!st?.enabled || !Array.isArray(st.methods)) return null;
+  const mine = (await safe(api.get("/api/donations/mine")))?.data || [];
+  const amount = h("input", { id: "don-amt", type: "number", min: st.minCents / 100, max: st.maxCents / 100, step: "1", value: (st.suggestedCents[0] || st.minCents) / 100, style: "width:7em" });
+  const where = h("select", { id: "don-where" }, h("option", { value: "" }, "The whole district"), (st.schools || []).map(x => h("option", { value: x.id }, x.name)));
+  const anon = h("input", { id: "don-anon", type: "checkbox" });
+  const feeLine = h("span", {});
+  const fee = () => { const c = Math.round(Number(amount.value) * 100); feeLine.textContent = c > 0 ? `Estimated fee ${money(Math.round(c * 0.029) + 30)}, so about ${money(Math.max(0, c - Math.round(c * 0.029) - 30))} reaches the fund.` : ""; return feeLine; };
+  amount.addEventListener("input", fee);
+  const give = async () => {
+    const cents = Math.round(Number(amount.value) * 100);
+    if (!(cents >= st.minCents && cents <= st.maxCents)) return toast(`Choose between ${money(st.minCents)} and ${money(st.maxCents)}.`);
+    try {
+      const g = (await api.post("/api/donations", { amountCents: cents, schoolId: where.value || null, anonymous: anon.checked, idempotencyKey: `web-${crypto.randomUUID()}` })).data;
+      const r = (await api.post(`/api/donations/${g.id}/confirm`, { testOutcome: "sandbox_success" })).data;
+      toast(r.acknowledgement ? `Thank you. Test gift recorded as ${r.acknowledgement.number}.` : "The test gift didn't go through.");
+      go(state.tab, { push: false });
+    } catch { toast("Couldn't record the gift."); }
+  };
+  return h("section", { class: "card", "aria-label": "Support preservation" }, h("h3", {}, "Support preservation"),
+    h("p", { class: "small" }, st.statement),
+    h("p", { class: "small muted" }, "Test mode: gifts go through the sandbox and no money moves. ", st.fees || "", " ", st.help || ""),
+    h("p", { class: "small", "aria-live": "polite" }, fee()),
+    h("div", { class: "btns" }, st.suggestedCents.map(c => h("button", { class: "btn small", type: "button", onclick: () => { amount.value = c / 100; fee(); } }, money(c)))),
+    h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "don-amt" }, "Amount ($)"), amount), h("div", {}, h("label", { for: "don-where" }, "For"), where),
+      h("label", { for: "don-anon", class: "small" }, anon, " Don't show my name in district reports")),
+    h("button", { class: "btn primary small", type: "button", onclick: give }, "Give (test)"),
+    mine.length ? [h("h4", {}, "Your gifts"), h("ul", { class: "list small" }, mine.map(g => h("li", {}, `${money(g.amountCents)} · ${g.designation.name || "District"} · ${g.status}${g.acknowledgement ? ` · ${g.acknowledgement.number}` : ""}${g.refundNotice ? ` · refund ${g.refundNotice.number}` : ""}`)))] : null);
+}
+async function donationSettingsCard() {
+  const s = (await safe(api.get("/api/donations/settings")))?.data;
+  if (!s || typeof s.enabled !== "boolean") return null;
+  const report = (await safe(api.get("/api/donations")))?.data;
+  const on = h("input", { id: "ds-on", type: "checkbox", checked: s.enabled || undefined });
+  const min = h("input", { id: "ds-min", type: "number", min: 1, value: s.minCents / 100, style: "width:6em" });
+  const max = h("input", { id: "ds-max", type: "number", min: 1, value: s.maxCents / 100, style: "width:7em" });
+  const sugg = h("input", { id: "ds-sugg", value: s.suggestedCents.map(c => c / 100).join(", "), style: "width:12em" });
+  const ack = h("textarea", { id: "ds-ack", rows: 2, maxlength: 1000 }, s.acknowledgementText);
+  const taxOn = h("input", { id: "ds-tax-on", type: "checkbox", checked: s.taxWordingEnabled || undefined });
+  const tax = h("textarea", { id: "ds-tax", rows: 2, maxlength: 1000, placeholder: "Only wording your district's advisers approved" }, s.taxWording || "");
+  const t = report?.totals;
+  return h("section", { class: "card", "aria-label": "Preservation gifts" }, h("h3", {}, "Preservation gifts"),
+    h("p", { class: "small muted" }, "Voluntary gifts from families and staff, never from students. Sandbox only for now: no money moves. Gifts never change storage limits."),
+    t ? h("p", { class: "small" }, `${t.gifts} gift${t.gifts === 1 ? "" : "s"} · ${money(t.grossCents)} given · ${money(t.feesCents)} processing · ${money(t.netCents)} net`) : null,
+    h("label", { for: "ds-on", class: "small" }, on, " Accept gifts"),
+    h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "ds-min" }, "Smallest ($)"), min), h("div", {}, h("label", { for: "ds-max" }, "Largest ($)"), max),
+      h("div", {}, h("label", { for: "ds-sugg" }, "Suggested ($, commas)"), sugg)),
+    h("label", { for: "ds-ack" }, "Acknowledgement text"), ack,
+    h("label", { for: "ds-tax-on", class: "small" }, taxOn, " Add tax-receipt wording to acknowledgements"),
+    h("label", { for: "ds-tax" }, "Tax-receipt wording"), tax,
+    h("p", { class: "small muted" }, "EduOS makes no claim that a gift is tax-deductible. Add wording only after your district's own advice."),
+    h("button", { class: "btn small", type: "button", onclick: async () => {
+      try {
+        await api.put("/api/donations/settings", { enabled: on.checked, minCents: Math.round(Number(min.value) * 100), maxCents: Math.round(Number(max.value) * 100),
+          suggestedCents: sugg.value.split(",").map(v => v.trim()).filter(Boolean).map(v => Math.round(Number(v) * 100)),
+          acknowledgementText: ack.value, taxWordingEnabled: taxOn.checked, taxWording: tax.value.trim() || null });
+        toast("Saved."); go(state.tab, { push: false });
+      } catch { toast("Couldn't save. Check the amounts and wording."); } } }, "Save"));
+}
+// ---- TC-10: gift accounts for the superintendent and named finance reviewers ----
+async function donationAccountsCard() {
+  if (!(await safe(api.get("/api/donations/finance/access")))?.data?.finance) return null;
+  const today = new Date().toISOString().slice(0, 10), from = `${today.slice(0, 7)}-01`;
+  const [rep, list, recs, people] = await Promise.all([safe(api.get(`/api/donations/reconciliation?from=${from}&to=${today}`)), safe(api.get("/api/donations")),
+    safe(api.get("/api/donations/reconciliations")), state.me.role === "superintendent" ? safe(api.get("/api/donations/finance/reviewers")) : null]);
+  const r = rep?.data, gifts = list?.data?.gifts || [], done = recs?.data || [], ppl = people?.data;
+  const reload = () => go(state.tab, { push: false });
+  const refund = async g => {
+    const reason = await dialogForm(`Refund ${money(g.amountCents)} from ${g.donor}`, () => ({ fields: [
+      h("p", { class: "small" }, `The full ${money(g.amountCents)} goes back to the donor. The processor keeps its ${money(g.processingFeeCents)} fee. Test mode: no money moves.`),
+      h("label", { for: "rf-r" }, "Reason"), h("input", { id: "rf-r", required: true, minlength: 5, maxlength: 500 })],
+      value: () => document.getElementById("rf-r").value.trim() }), "Refund");
+    if (!reason) return;
+    try { const x = (await api.post(`/api/donations/${g.id}/refund`, { reason })).data; toast(`Refunded. Notice ${x.number}.`); reload(); }
+    catch (e) { toast(e?.body?.error === "own_gift" ? "Someone else has to refund your own gift." : "Couldn't refund it. The reason needs at least 5 characters."); }
+  };
+  const signOff = async () => {
+    try { const x = (await api.post("/api/donations/reconciliations", { from, to: today })).data; toast(x.matched ? "Signed off: the books match." : "Signed off with differences recorded."); reload(); }
+    catch (e) { toast(e?.body?.error === "separation_of_duties" ? "You recorded a refund in this period, so someone else signs it off." : "Couldn't sign it off."); }
+  };
+  const pick = ppl ? h("select", { id: "fr-u" }, h("option", { value: "" }, "Choose staff"), ppl.staff.filter(x => !ppl.reviewers.some(y => y.userId === x.id)).map(x => h("option", { value: x.id }, x.name))) : null;
+  const setReviewer = async (userId, on) => {
+    if (!userId) return toast("Choose someone first.");
+    try { await api.put(`/api/donations/finance/reviewers/${userId}`, { on }); toast(on ? "Named." : "Removed."); reload(); } catch { toast("Couldn't change reviewers."); }
+  };
+  return h("section", { class: "card", "aria-label": "Gift accounts" }, h("h3", {}, "Gift accounts"),
+    h("p", { class: "small muted" }, "Sandbox only: no money moves. Nobody refunds their own gift, and whoever records a refund doesn't sign off that period."),
+    r ? [h("h4", {}, `This month (${from} to ${today}, UTC)`),
+      h("ul", { class: "list small" }, kv("Gifts", `${r.gifts} · ${money(r.grossCents)}`), kv("Processing fees", money(r.feesCents)), kv("Refunds", `${r.refunds} · ${money(r.refundedCents)}`),
+        kv("Net", money(r.netCents)), kv("Ledger", `${r.ledgerLines} lines · ${money(r.ledgerNetCents)}`)),
+      h("p", { class: "small", role: "status" }, r.matched ? "The gift records and the ledger match." : `${r.discrepancies.length} difference${r.discrepancies.length === 1 ? "" : "s"} between the gift records and the ledger.`),
+      r.canSignOff ? h("button", { class: "btn small", type: "button", onclick: signOff }, "Sign off this month") : h("p", { class: "small muted" }, r.signOffBlocked)] : null,
+    done.length ? [h("h4", {}, "Signed off"), h("ul", { class: "list small" }, done.slice(0, 5).map(x => h("li", {}, `${x.periodStart} to ${x.periodEnd} · ${x.matched ? "matched" : "differences recorded"} · ${x.reconciledBy}`)))] : null,
+    gifts.length ? [h("h4", {}, "Recent gifts"), h("ul", { class: "list small" }, gifts.slice(0, 20).map(g => h("li", { class: "row wrap" },
+      h("span", { class: "grow" }, `${money(g.amountCents)} · ${g.donor} · ${g.status}${g.acknowledgement ? ` · ${g.acknowledgement.number}` : ""}${g.refundNotice ? ` · ${g.refundNotice.number}` : ""}`),
+      g.status === "succeeded" ? h("button", { class: "btn small", type: "button", "aria-label": `Refund ${money(g.amountCents)} from ${g.donor}`, onclick: () => refund(g) }, "Refund") : null)))] : null,
+    ppl ? [h("h4", {}, "Finance reviewers"), h("p", { class: "small muted" }, "Staff you name can see the gift accounts, refund gifts and sign off periods."),
+      ppl.reviewers.length ? h("ul", { class: "list small" }, ppl.reviewers.map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, x.name),
+        h("button", { class: "btn small", type: "button", "aria-label": `Remove ${x.name}`, onclick: () => setReviewer(x.userId, false) }, "Remove")))) : h("p", { class: "small" }, "No reviewers yet."),
+      h("div", { class: "row wrap" }, h("label", { for: "fr-u", class: "sr-only" }, "Staff member"), pick, h("button", { class: "btn small", type: "button", onclick: () => setReviewer(pick.value, true) }, "Name reviewer"))] : null);
 }
 // ---------------- Time Capsules ----------------
 const MILESTONE_TEXT = { grade_5_completion: "Finishing grade 5", grade_8_completion: "Finishing grade 8", graduation: "Graduation", age_18: "Turning 18" };
@@ -1520,8 +1625,9 @@ VIEWS.history = async () => {
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
   const teacher = await teacherReviewSection();
-  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard()] : null, await preservationCard()] : null;
-  return [privacy, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
+  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard(), await donationSettingsCard()] : null, await preservationCard()] : null;
+  const accounts = ["parent", "pupil"].includes(state.me.role) ? null : await donationAccountsCard();
+  return [privacy, accounts, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
     h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),
     ...(response ? [h("h3", {}, "Family memories"), ...content] : []),
