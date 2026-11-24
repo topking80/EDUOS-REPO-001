@@ -74,19 +74,38 @@ export function registerWeatherRoutes(app) {
     return { schoolId, lat: r, lon: s };
   }));
 
+  // 37.7.4: why a decision can't be recorded. 409 already_decided: someone
+  // decided it first. 410 alert_ended / alert_expired: NWS no longer lists it,
+  // or it's past its expiry (the same rule as ACTIVE_ALERTS, so a stale prompt
+  // left open on a screen can't be acted on).
+  const notOpen = x => x.decision ? new HttpError(409, "already_decided")
+    : x.ended_at ? new HttpError(410, "alert_ended")
+    : x.expires && new Date(x.expires).getTime() <= Date.now() ? new HttpError(410, "alert_expired") : null;
   const alertFor = async (c, req) => {
     if (!validId(req.params.id)) throw new HttpError(400, "invalid_id");
     const x = await one(c, `SELECT * FROM school_weather_alerts WHERE id=$1`, [req.params.id]);
     if (!x || (req.actor.role !== "superintendent" && x.school_id !== req.actor.schoolId)) throw new HttpError(404, "alert_not_found");
-    if (x.decision) throw new HttpError(409, "already_decided");
+    const why = notOpen(x); if (why) throw why;
     return x;
+  };
+  // The check above gives a clear answer but isn't a lock: two leaders can both
+  // pass it. The decision is claimed with ONE conditional UPDATE (undecided,
+  // not ended, not expired); PostgreSQL re-checks that condition on the row a
+  // concurrent decision just committed, so exactly one wins and the other gets
+  // 409. A decision that loses writes no audit record.
+  const claim = async (c, id, set, params) => {
+    const r = await c.query(`UPDATE school_weather_alerts SET ${set}
+        WHERE id=$1 AND decision IS NULL AND ended_at IS NULL AND (expires IS NULL OR expires > now()) RETURNING id`, [id, ...params]);
+    if (r.rowCount === 1) return;
+    const now = await one(c, `SELECT decision,ended_at,expires FROM school_weather_alerts WHERE id=$1`, [id]);
+    throw (now && notOpen(now)) || new HttpError(409, "already_decided");
   };
 
   app.post("/api/safety/weather/:id/dismiss", limiter, requireSession, requireCsrf, lead, run(async (c, req) => {
     const note = req.body?.note;
     if (!cleanText(note, 300, 3)) throw new HttpError(400, "note_required");
     const x = await alertFor(c, req);
-    await c.query(`UPDATE school_weather_alerts SET decision='dismissed',decided_by=$2,decided_at=now(),decision_note=$3 WHERE id=$1`, [x.id, req.actor.userId, note.trim()]);
+    await claim(c, x.id, `decision='dismissed',decided_by=$2,decided_at=now(),decision_note=$3`, [req.actor.userId, note.trim()]);
     await audit(c, req, "dismiss", "weather_alert", x.id, `${x.event}: ${note.trim()}`.slice(0, 300));
     return { id: x.id, decision: "dismissed" };
   }));
@@ -97,7 +116,7 @@ export function registerWeatherRoutes(app) {
     if (!validId(incidentId)) throw new HttpError(400, "invalid_incident_id");
     const i = await one(c, `SELECT id,school_id,hazard,status FROM safety_incidents WHERE id=$1`, [incidentId]);
     if (!i || i.school_id !== x.school_id || i.hazard !== x.hazard || !["pending", "active", "reunification"].includes(i.status)) throw new HttpError(400, "incident_does_not_match");
-    await c.query(`UPDATE school_weather_alerts SET decision='started',decided_by=$2,decided_at=now(),incident_id=$3 WHERE id=$1`, [x.id, req.actor.userId, i.id]);
+    await claim(c, x.id, `decision='started',decided_by=$2,decided_at=now(),incident_id=$3`, [req.actor.userId, i.id]);
     await audit(c, req, "start_from_weather", "weather_alert", x.id, i.id);
     return { id: x.id, decision: "started", incidentId: i.id };
   }));
