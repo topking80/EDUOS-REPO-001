@@ -50,3 +50,47 @@ export function verifyTransfer(pkg) {
 export const RECORD_KINDS = ["official_record", "teacher_artifact", "system_milestone"];
 export const FAMILY_KINDS = ["family_memory", "student_portfolio"];
 export const TRANSFER_BASES = ["enrollment_request", "records_request", "family_request", "other"];
+
+const ENTRY_TYPES = ["achievement", "project", "coursework", "reflection", "event", "portfolio_artifact", "educator_note", "system_milestone"];
+const SOURCES = ["student", "guardian", "teacher", "school", "district", "sis", "system", "other"];
+const AUDIENCES = ["student", "family", "classroom", "school"];
+const str = (v, max, min = 0) => typeof v === "string" && v.trim().length >= min && v.length <= max;
+const isDate = v => typeof v === "string" && v.length <= 40 && !Number.isNaN(Date.parse(v));
+export const MAX_TRANSFER_ITEMS = 2000;
+
+/**
+ * The receiving side's reading of a verified package body: what it says about
+ * the sender and the student, and each item ready to be added if accepted.
+ * Anything that doesn't fit the format is refused as a whole (it was signed
+ * that way, so it isn't something to repair here).
+ */
+export function readTransfer(body) {
+  const b = body || {}, src = b.source || {}, st = b.student || {};
+  if (!str(b.packageId, 64, 1) || !isDate(b.createdAt) || !str(src.districtName, 200, 1) || !str(String(src.districtId ?? ""), 64, 1)
+      || !str(st.name, 200, 1) || !Array.isArray(b.items) || b.items.length > MAX_TRANSFER_ITEMS) return { ok: false, reason: "malformed" };
+  const items = [];
+  for (const i of b.items) {
+    if (!i || typeof i !== "object" || !str(i.sourceEntryId, 64, 1) || !Number.isInteger(i.revision) || i.revision < 1
+        || !ENTRY_TYPES.includes(i.type) || ![...RECORD_KINDS, ...FAMILY_KINDS].includes(i.kind) || !str(i.title, 180, 1)
+        || !(i.body === undefined || i.body === null || typeof i.body === "string") || !isDate(i.occurredAt)
+        || !(i.schoolYear === undefined || i.schoolYear === null || str(i.schoolYear, 32))
+        || !(i.photos === undefined || Array.isArray(i.photos))) return { ok: false, reason: "malformed" };
+    if (FAMILY_KINDS.includes(i.kind) && b.includes?.familyItems !== true) return { ok: false, reason: "malformed" };
+    // Photos aren't in the file; keep what they showed with the item.
+    const photos = (i.photos || []).map(p => [p?.description, p?.caption].filter(x => typeof x === "string" && x.trim()).join(": ").slice(0, 300)).filter(Boolean);
+    let text = typeof i.body === "string" ? i.body : "";
+    if (photos.length) text += `${text ? "\n\n" : ""}Photos (not transferred): ${photos.join("; ")}`;
+    items.push({ sourceEntryId: i.sourceEntryId, revision: i.revision, type: i.type, kind: i.kind, title: i.title.trim(),
+      body: text.slice(0, 12000), occurredAt: new Date(i.occurredAt).toISOString(), schoolYear: i.schoolYear?.trim() || null,
+      source: SOURCES.includes(i.source) ? i.source : "other", audience: AUDIENCES.includes(i.audience) ? i.audience : null,
+      author: str(i.author, 200, 1) ? i.author.trim() : null });
+  }
+  const meta = { packageId: b.packageId, packagedAt: new Date(b.createdAt).toISOString(), sourceDistrictId: String(src.districtId),
+    sourceDistrictName: src.districtName.trim(), sourceSchoolName: str(src.schoolName, 200) ? src.schoolName.trim() : "",
+    addressedTo: str(b.receiving?.name, 200, 1) ? b.receiving.name.trim() : null,
+    basis: str(b.basis?.kind, 40, 1) ? b.basis.kind : "other", basisNote: str(b.basis?.note, 500) ? b.basis.note.trim() : "",
+    includesFamily: b.includes?.familyItems === true, studentName: st.name.trim(),
+    studentNumber: str(st.localStudentNumber, 100, 1) ? st.localStudentNumber.trim() : null,
+    studentGrade: st.gradeLevel === null || st.gradeLevel === undefined ? null : String(st.gradeLevel).slice(0, 20) };
+  return { ok: true, meta, items };
+}

@@ -300,7 +300,7 @@ VIEWS.more = () => {
       h("li", {}, h("a", { href: `#/${id}` }, icon(ic), h("span", {}, label), icon("chevron"))))));
 };
 // 32.6.0: screens opened from a tab keep that tab highlighted.
-const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room", "scan", "roll", "mywork", "portfolioreview", "rankings", "historyprivacy", "emergencyrecords"];
+const SUBVIEWS = ["staffing", "course", "lesson", "quiz", "attempt", "mastery", "gradebook", "progress", "proof", "review", "rubric", "approvals", "edal", "roster", "node", "history", "portfolio", "capsule", "draft", "plan", "present", "teams", "coachplan", "coachlib", "states", "stateinfo", "licenses", "room", "scan", "roll", "mywork", "portfolioreview", "rankings", "historyprivacy", "emergencyrecords", "historyimport"];
 function parentTab(tab) {
   if (!SUBVIEWS.includes(tab) || tabsFor().some(t => t[0] === tab)) return tab;
   if (["review", "rubric"].includes(tab)) return "grading";
@@ -308,7 +308,7 @@ function parentTab(tab) {
   if (tab === "capsule") return "capsules";
   if (tab === "draft") return "network";
   if (["states", "stateinfo", "licenses", "mywork", "portfolioreview", "rankings", "emergencyrecords"].includes(tab)) return "me";
-  if (tab === "historyprivacy") return "history";
+  if (tab === "historyprivacy" || tab === "historyimport") return "history";
   if (tab === "plan" || tab === "present" || tab === "room") return "classes";
   if (tab === "scan") return tabsFor()[0]?.[0];
   if (tab === "roll") return tabsFor().some(t => t[0] === "classes") ? "classes" : tabsFor().some(t => t[0] === "mediacenter") ? "mediacenter" : "devices";
@@ -1325,7 +1325,7 @@ VIEWS.portfolio = async () => {
   const sections = new Map();
   const card = item => h("li", { class: "card" },
     h("div", { class: "row" }, h("strong", { class: "grow" }, item.title), h("span", { class: "chip" }, PORTFOLIO_TYPE[item.entryType] || item.entryType)),
-    h("p", { class: "small muted" }, `${fmtDay(item.occurredAt)} · ${PORTFOLIO_KIND[item.kind] || item.kind}${item.authorName ? ` · ${item.authorName}` : ""}`),
+    h("p", { class: "small muted" }, `${fmtDay(item.occurredAt)} · ${PORTFOLIO_KIND[item.kind] || item.kind}${item.authorName ? ` · ${item.authorName}` : ""}${item.transferredFrom ? ` · from ${item.transferredFrom}` : ""}`),
     item.body ? h("p", {}, item.body) : null, photoStrip(item.photos));
   const add = items => {
     for (const item of items) {
@@ -1498,7 +1498,7 @@ VIEWS.history = async () => {
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
   const teacher = await teacherReviewSection();
-  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard()] : null] : null;
+  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard()] : null] : null;
   return [privacy, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
     h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),
@@ -4662,6 +4662,97 @@ async function familyTransferCard(studentId) {
         try { await api.post(`/api/family/history-transfers/${t.id}`, { decision: d }); toast(d === "approve" ? "They'll go too." : "Only school records will go."); go(state.tab, { push: false }); } catch { toast("Couldn't save your answer."); } } },
         d === "approve" ? "Include them" : "School records only"))))));
 }
+// ---- TC-06b: receiving a student's history from another district ----------
+const IMPORT_STATUS = { received: ["expected", "Check & choose student"], reviewing: ["expected", "Choosing items"], completed: ["present", "Done"], rejected: ["absent", "Rejected"] };
+const IMPORT_ERRORS = { not_a_transfer_package: "That isn't a history transfer file.", malformed: "The file is damaged or not in the expected format.",
+  altered: "The file was changed after it was signed. Ask the sending district for a new copy.", bad_signature: "The signature doesn't check out. Ask the sending district for a new copy.",
+  received_elsewhere: "Another school in your district has already received this file." };
+async function incomingTransfersCard() {
+  const list = (await safe(api.get("/api/history-imports")))?.data;
+  if (!list) return null;
+  const file = h("input", { id: "hi-file", type: "file", accept: ".json,application/json" });
+  return h("section", { class: "card", "aria-label": "Records from other districts" }, h("h3", {}, "Records from other districts"),
+    h("p", { class: "small muted" }, "Upload a signed history transfer file you received from a student's previous district. Nothing is added until you confirm who sent it, choose the student and accept each item."),
+    list.length ? h("ul", { class: "list" }, list.slice(0, 20).map(i => h("li", { class: "row wrap" },
+      h("span", { class: "grow" }, h("b", {}, i.student.name), h("span", { class: "small muted" }, ` · from ${i.from.district} · ${fmtDay(i.receivedAt)} · ${i.items} items${i.localStudent ? ` · for ${i.localStudent.name}` : ""}`)),
+      chip(...IMPORT_STATUS[i.status]),
+      h("button", { class: "btn small", type: "button", "aria-label": `Open transfer: ${i.student.name}`, onclick: () => openView("historyimport", { historyImportId: i.id }) }, "Open")))) : null,
+    h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault();
+        const f = file.files?.[0]; if (!f) return toast("Choose the file first.");
+        if (f.size > 8 * 1024 * 1024) return toast("That file is too large.");
+        let pkg; try { pkg = JSON.parse(await f.text()); } catch { return toast(IMPORT_ERRORS.not_a_transfer_package); }
+        try { const d = (await api.post("/api/history-imports", pkg)).data; toast(d.existing ? "You've already received this file." : "Signature checked."); openView("historyimport", { historyImportId: d.id }); }
+        catch (err) { toast(IMPORT_ERRORS[err.code || err.body?.error] || "Couldn't read that file."); } } },
+      h("div", { class: "grow" }, h("label", { for: "hi-file" }, "Transfer file"), file), h("button", { class: "btn", type: "submit" }, "Check file")));
+}
+VIEWS.historyimport = async () => {
+  if (!state.historyImportId) return VIEWS.history();
+  const d = (await api.get(`/api/history-imports/${state.historyImportId}`)).data;
+  const reload = () => go("historyimport", { push: false });
+  const info = h("section", { class: "card", "aria-label": "About this file" }, h("h3", {}, "About this file"),
+    h("ul", { class: "list small" },
+      h("li", {}, `From ${d.from.district}${d.from.school ? `, ${d.from.school}` : ""}${d.addressedTo ? ` · addressed to ${d.addressedTo}` : ""}`),
+      h("li", {}, `Student in the file: ${d.student.name}${d.student.number ? ` (${d.student.number})` : ""}${d.student.grade ? ` · grade ${d.student.grade}` : ""}`),
+      h("li", {}, `Why it was sent: ${TRANSFER_BASIS[d.basis] || d.basis}${d.basisNote ? `: ${d.basisNote}` : ""}`),
+      h("li", {}, `${d.items.length} items${d.includesFamily ? " (the family agreed to include family memories and the portfolio)" : " (school records only)"} · made ${fmtDay(d.packagedAt)}`),
+      h("li", {}, `Received by ${d.receivedBy} · ${fmtDay(d.receivedAt)}${d.confirmedBy ? ` · checked by ${d.confirmedBy}` : ""}`)),
+    h("button", { class: "btn small", type: "button", onclick: async () => { try { await downloadFile(`/api/history-imports/${d.id}/file`, "received-history-transfer.json"); } catch { toast("Couldn't download it."); } } }, "Download the file as received"));
+  const closeBtn = (label, title) => h("button", { class: "btn small", type: "button", onclick: async () => {
+    const note = await ask({ title, label: "Why", confirm: label }); if (!note) return;
+    try { await api.post(`/api/history-imports/${d.id}/close`, { note }); toast("Done."); reload(); } catch { toast("Couldn't save it."); } } }, label);
+  let step = null;
+  if (d.status === "received") {
+    const fp = h("input", { id: "hi-fp", maxlength: 100, autocomplete: "off", placeholder: "e.g. 3f9a…" });
+    const pickBox = h("div", { class: "stack" });
+    let chosen = null;
+    const choose = (s, btn) => { chosen = s; pickBox.querySelectorAll("button[aria-pressed]").forEach(b => b.setAttribute("aria-pressed", "false")); btn.setAttribute("aria-pressed", "true"); };
+    const option = s => { const b = h("button", { class: "btn small", type: "button", "aria-pressed": "false", "aria-label": `Choose ${s.name}`, onclick: () => choose(s, b) }, "Choose");
+      return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, s.name), h("span", { class: "small muted" }, ` · ${s.number || ""}${s.grade ? ` · grade ${s.grade}` : ""}${s.school ? ` · ${s.school}` : ""}${s.sameName ? " · same name" : ""}${s.sameNumber ? " · same student number" : ""}`)), b); };
+    const results = h("ul", { class: "list" }, d.candidates.map(option));
+    const q = h("input", { id: "hi-q", type: "search", maxlength: 100, placeholder: "Name or student number" });
+    pickBox.append(d.candidates.length ? h("p", { class: "small" }, "Possible matches (check them; nothing is matched for you):") : h("p", { class: "small" }, "No student here has the same name or number. Search for the student:"), results,
+      h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault();
+          const r = (await safe(api.get(`/api/students?q=${encodeURIComponent(q.value.trim())}&limit=10`)))?.data;
+          const found = (Array.isArray(r) ? r : r?.students || r?.items || []).map(x => ({ id: x.id, name: x.display_name, number: x.local_student_number, grade: x.grade_level }));
+          results.replaceChildren(...found.map(option)); } },
+        h("div", { class: "grow" }, h("label", { for: "hi-q" }, "Find a student"), q), h("button", { class: "btn", type: "submit" }, "Search")));
+    step = h("section", { class: "card", "aria-label": "Check and choose the student" }, h("h3", {}, "1. Check who sent it"),
+      h("p", { class: "small" }, `The file is signed with fingerprint `, h("code", {}, d.fingerprint), `. Get ${d.from.district}'s signing fingerprint from them another way (a phone call to their records office, or their letterhead) and type it here. Don't copy it from the file.`),
+      d.knownFingerprints.length ? h("p", { class: "small" }, d.knownFingerprints.some(k => k.fingerprint === d.fingerprint)
+        ? `You confirmed this same fingerprint for ${d.from.district} on ${fmtDay(d.knownFingerprints.find(k => k.fingerprint === d.fingerprint).confirmedAt)}.`
+        : `Careful: earlier files from ${d.from.district} had a different fingerprint. Check with them before going on.`) : null,
+      h("label", { for: "hi-fp" }, "Fingerprint from the sending district"), fp,
+      h("h3", {}, "2. Choose the student"), pickBox,
+      h("div", { class: "btns" }, h("button", { class: "btn primary", type: "button", onclick: async () => {
+          if (!chosen) return toast("Choose the student first.");
+          try { await api.post(`/api/history-imports/${d.id}/confirm`, { fingerprint: fp.value.trim(), studentId: chosen.id }); toast(`Checked. Now choose what to add to ${chosen.name}'s history.`); reload(); }
+          catch (err) { toast((err.code || err.body?.error) === "fingerprint_mismatch" ? "That fingerprint doesn't match the file. Don't go on until you've checked with the sending district." : "Couldn't save it."); } } }, "Confirm"),
+        closeBtn("Reject the whole file", "Reject this whole file?")));
+  }
+  const KIND = { ...CLASS_TEXT, student_portfolio: "Student's portfolio", system_milestone: "Milestones" };
+  const pending = d.items.filter(i => i.decision === "pending");
+  const decide = async list => {
+    try { const r = (await api.post(`/api/history-imports/${d.id}/decisions`, { decisions: list })).data;
+      const dup = r.results.filter(x => x.result === "duplicate").length; toast(dup ? `Saved. ${dup} already came in an earlier transfer, so they weren't added again.` : "Saved."); reload(); }
+    catch { toast("Couldn't save it."); } };
+  const items = h("section", { class: "card", "aria-label": "Items" }, h("h3", {}, d.status === "reviewing" ? `3. Choose what to add to ${d.localStudent.name}'s history` : "Items"),
+    d.status === "reviewing" ? h("p", { class: "small muted" }, "Accepted items are added to the student's history as they were, marked as coming from the other district. Nothing else changes: no grades, enrollment or other records.") : null,
+    d.status === "reviewing" && pending.length ? h("div", { class: "btns" },
+      h("button", { class: "btn primary small", type: "button", onclick: () => decide(pending.map(i => ({ pos: i.pos, decision: "accept" }))) }, `Accept all ${pending.length} waiting`),
+      closeBtn("Finish (reject the rest)", "Reject the items still waiting?")) : null,
+    h("ul", { class: "list" }, d.items.map(i => h("li", {},
+      h("div", { class: "row wrap" }, h("b", { class: "grow" }, i.title), chip(i.decision === "accepted" ? "present" : i.decision === "rejected" ? "absent" : "expected", i.decision === "accepted" ? "Added" : i.decision === "rejected" ? "Not added" : "Waiting")),
+      h("p", { class: "small muted" }, `${fmtDay(i.occurredAt)} · ${KIND[i.kind] || i.kind}${i.author ? ` · ${i.author}` : ""}${i.decidedBy ? ` · ${i.decision === "accepted" ? "added" : "not added"} by ${i.decidedBy}` : ""}${i.note ? ` · ${i.note}` : ""}`),
+      i.body ? h("p", { class: "small" }, i.body) : null,
+      d.status === "reviewing" && i.decision === "pending" ? h("div", { class: "btns" },
+        h("button", { class: "btn small", type: "button", "aria-label": `Accept: ${i.title}`, onclick: () => decide([{ pos: i.pos, decision: "accept" }]) }, "Accept"),
+        h("button", { class: "btn small", type: "button", "aria-label": `Don't add: ${i.title}`, onclick: async () => {
+          if (!await ask({ title: `Don't add "${i.title}"?`, text: "It stays in the file as received but isn't added to the student's history.", confirm: "Don't add" })) return;
+          decide([{ pos: i.pos, decision: "reject" }]); } }, "Don't add")) : null))));
+  return [back("history", "Student history"), h("h2", {}, `${d.student.name}: history from ${d.from.district}`),
+    h("p", {}, chip(...IMPORT_STATUS[d.status]), d.status === "completed" ? ` ${d.accepted} added to ${d.localStudent?.name}'s history, ${d.rejected} not added.` : d.status === "rejected" ? ` ${d.closeNote || ""}` : ""),
+    step, info, d.status === "received" ? null : items];
+};
 // ---- TC-05: history privacy controls --------------------------------------
 const CLASS_TEXT = { family_memory: "Family memories", student_portfolio: "My portfolio", teacher_artifact: "Teachers' items", official_record: "Official records" };
 const ACCESS_TEXT = { guardian: "guardian", student: "student", teacher: "teacher", school_lead: "school leader", district: "district office", grant: "shared by the student", emergency: "emergency access" };

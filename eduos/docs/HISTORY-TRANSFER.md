@@ -40,3 +40,37 @@ confirm the file came from you.
 
 Cancelling a transfer (with a reason) stops further downloads. A copy already
 sent can't be recalled; tell the receiving district.
+
+## Receiving a file (TC-06b)
+
+The receiving school's records office (principal, a vice principal acting as
+one, or the superintendent) uploads the file on the Student history page under
+**Records from other districts**. Nothing is added to anyone's history until a
+person has done all three steps:
+
+1. **Check who sent it.** The server checks the signature and that nothing was
+   changed (an altered or badly signed file is refused). It then shows the
+   signing fingerprint in the file. Get the sending district's fingerprint from
+   them another way (a phone call to their records office, their letterhead)
+   and type it in; a file signed by anyone else won't match. If earlier files
+   from the same district had a different fingerprint, the page warns you.
+2. **Choose the student.** Local students with the same name or student number
+   are suggested; you can search for anyone else your office may choose. The
+   file is never matched to a student automatically.
+3. **Accept or reject each item** (or accept all, or finish and reject the
+   rest). An accepted item is added to the student's history as published, as
+   it was saved at the sending district: its kind, date and school year, who
+   could see it (family memories and the portfolio stay with the family and
+   student), the original author's name, and "from <district>, <school>".
+   What its photos showed is kept in the text; the image files aren't
+   transferred.
+
+Receiving the same file again opens the same import. An item that already came
+in an earlier file for the same student isn't added again. A decision, once
+made, stays: an added item can be archived like any other. The file is kept
+exactly as received and can be downloaded again; uploads, checks and decisions
+are audited.
+
+Another school in the district can't see or take a file one school received;
+the district office sees all of them. Nothing here changes grades, enrollment
+or any other record.
