@@ -13,6 +13,7 @@
     "db:migrate": "node src/migrate.js",
     "db:retention": "node src/retention.js",
     "history:preserve": "node src/history-preservation.js",
+    "donations:charge": "node src/donation-schedules.js",
     "db:bootstrap": "node src/bootstrap-district.js",
     "edal:verify": "node src/edal-verify.js",
     "test:integration": "node --test test/integration/*.test.js",

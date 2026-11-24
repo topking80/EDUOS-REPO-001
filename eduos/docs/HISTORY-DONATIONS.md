@@ -1,6 +1,6 @@
 # Preservation gifts (TC-09)
 
-Voluntary one-time gifts from families and staff toward keeping student histories safe. This phase is **sandbox only**: no money moves, and the database refuses anything but the sandbox provider in test mode.
+Voluntary gifts, once or recurring (TC-13), from families and staff toward keeping student histories safe. This phase is **sandbox only**: no money moves, and the database refuses anything but the sandbox provider in test mode.
 
 ## What it does
 
@@ -36,7 +36,7 @@ Voluntary one-time gifts from families and staff toward keeping student historie
 ## Accounting, refunds and reconciliation (TC-10, migration 136)
 
 - **Ledger.** Every completed gift posts two append-only lines: the gift (+) and the processor's fee (−). A refund posts a refund line (−, the full gift). The processor keeps its fee on a refund, as card processors do, so a refunded gift nets to minus the fee. Only definer functions write the ledger; gifts completed before 136 are backfilled.
-- **Who sees the books.** The superintendent, and staff the superintendent names as **finance reviewers** (`PUT /api/donations/finance/reviewers/:userId {on}`). There's no finance role, so this is the designation. A reviewer acts only while signed in under a staff role. Appointments are kept, never deleted.
+- **Who sees the books.** The district account (the superintendent), and **school secretaries** the superintendent designates as finance reviewers (`PUT /api/donations/finance/reviewers/:userId {on}`; TC-13, migration 140). A designated secretary acts only while signed in as school secretary at their own school. Nobody else can be designated; designations of other staff made under TC-10 stop counting (the records are kept). Appointments are kept, never deleted.
 - **Refunds.** `POST /api/donations/:id/refund {reason}` (finance) refunds a completed gift through the sandbox. Nobody refunds their own gift. The donor gets a plain refund notice (`GIFT-…-R`, `GET /api/donations/:id/refund-notice`) with no tax wording.
 - **Reconciliation.** `GET /api/donations/reconciliation?from&to` (UTC dates) compares the gift records with the ledger line by line and lists any differences. `POST /api/donations/reconciliations` signs a period off and keeps the result, matched or not. Whoever recorded a refund in the period can't sign it off (`403 separation_of_duties`).
 - The **Gift accounts** card on the history page shows this month, sign-off, recent gifts with Refund, and (for the superintendent) the reviewer list.
@@ -53,7 +53,23 @@ Voluntary one-time gifts from families and staff toward keeping student historie
 
 With the sandbox there is no processor statement to compare against, so reconciliation checks EduOS's own gift records against its ledger. A real processor would add its settlement report as a third column.
 
+## Recurring gifts (TC-13, migration 139)
+
+District decision 2026-11-24: donors choose a one-time or a recurring gift. **Sandbox only**, like every gift.
+
+- `POST /api/donations` takes `frequency`: `one_time` (default), `monthly` or `yearly`. A recurring gift creates a schedule (`history_donation_schedules`) and its first charge (installment 1), which the donor confirms like any gift. On success the schedule becomes active, anchored on that day (UTC); a declined first payment fails the schedule.
+- Later charges are made by the schedule job, `npm run donations:charge` (cron, daily), or `DONATION_SCHEDULE_INTERVAL_SECONDS` to let the API run it (0 = off, the default). Each charge is its own gift row with its own acknowledgement (`… (monthly gift, installment N)`) and its own gift and fee ledger lines, so refunds and reconciliation work per charge.
+- A charge **waits** while the district has donations off, recurring gifts off (`recurringEnabled`, on by default once gifts are on) or fund collection closed. Missed dates are never made up in a burst: the next run makes one charge and moves to the next date after today.
+- Three declined charges in a row stop the schedule.
+- The donor stops a recurring gift at any time (**Stop** under *Your recurring gifts*, `POST /api/donations/schedules/:id/cancel`); finance can stop one on the donor's request. Past gifts stay recorded.
+- Schedule terms can't change and schedules can't be deleted. The provider must be `sandbox` and the mode `test` (CHECK constraints), whatever processor or live switch is configured.
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/donations/schedules/mine` | the donor |
+| POST | `/api/donations/schedules/:id/cancel` | the donor, or finance |
+| GET | `/api/donations/schedules` | finance |
+
 ## Not built yet (decisions)
 
-- Hosted checkout with a real processor (needs a two-phase flow, webhooks, settlement import).
-- Recurring gifts.
+- Hosted checkout with a real processor (needs a two-phase flow, webhooks, settlement import, and stored payment methods for recurring charges).
