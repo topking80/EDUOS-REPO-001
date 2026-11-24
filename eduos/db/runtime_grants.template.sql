@@ -736,3 +736,9 @@ GRANT UPDATE (images_enabled, max_image_bytes, max_per_entry, max_bytes_per_stud
 REVOKE DELETE, TRUNCATE ON district_history_media_policies FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_history_media_begin(uuid, uuid, text, text, bigint, text, text, text), eduos_history_media_get(uuid, text),
   eduos_history_media_set(uuid, text, bigint, text, text, int, int), eduos_history_entry_photos(uuid[]) TO eduos_app;
+
+-- MEDIA-02 (db/127): family photos; reached only through these functions.
+GRANT EXECUTE ON FUNCTION eduos_history_student_media_bytes(uuid, uuid), eduos_history_contribution_mine(uuid), eduos_history_contribution_reviewer(uuid),
+  eduos_history_contribution_photo_begin(uuid, uuid, text, text, bigint, text, text, text),
+  eduos_history_contribution_photo_set(uuid, text, bigint, text, text, int, int), eduos_history_contribution_photo_get(uuid),
+  eduos_history_contribution_photos(uuid[]), eduos_history_contribution_photos_publish(uuid), eduos_history_contribution_photos_release(uuid) TO eduos_app;

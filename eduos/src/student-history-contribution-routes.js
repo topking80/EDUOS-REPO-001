@@ -3,6 +3,26 @@ import { randomUUID } from "node:crypto";
 import { requireSession, requireCsrf } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { audit, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
+import { historyMedia } from "./history-media-routes.js";
+
+// MEDIA-02: each contribution's ready photos (for its guardian or the reviewer).
+async function withPhotos(client, list) {
+  if (!list.length) return list;
+  const photos = (await client.query(`SELECT * FROM eduos_history_contribution_photos($1::uuid[])`, [list.map(c => c.id)])).rows;
+  return list.map(c => ({ ...c, photos: photos.filter(p => p.contribution_id === c.id).map(p => ({ id: p.asset_id, caption: p.caption, alt: p.alt_text, width: p.width, height: p.height })) }));
+}
+// A rejected or withdrawn contribution's photos stop counting and leave the bucket (best effort; a failure leaves an unreachable object).
+async function releasePhotos(client, contributionId) {
+  return (await client.query(`SELECT storage_key FROM eduos_history_contribution_photos_release($1)`, [contributionId])).rows.map(r => r.storage_key);
+}
+function deleteReleased(keys) {
+  const { storage } = historyMedia();
+  if (!storage || !keys.length) return;
+  Promise.allSettled(keys.map(k => storage.remove(k))).then(rs => {
+    const failed = rs.filter(r => r.status === "rejected").length;
+    if (failed) console.error("History photo cleanup failed", { failed });
+  });
+}
 
 const isDistrictLead = role => role === "superintendent";
 const canReview = role => role === "principal" || role === "superintendent";
@@ -42,13 +62,13 @@ export function registerStudentHistoryContributionRoutes(app) {
     requireSession, wrap(async (client, req) => {
       if (req.actor.role !== "parent") throw new HttpError(403, "guardian_role_required");
       await linkedStudent(client, req.actor, req.params.studentId);
-      return (await client.query(`
+      return withPhotos(client, (await client.query(`
         SELECT id, title, body, occurred_at, status, review_note, created_at, reviewed_at
           FROM student_history_contributions
          WHERE district_id=$1 AND student_id=$2 AND guardian_user_id=$3
          ORDER BY created_at DESC, id DESC
          LIMIT 100
-      `, [req.actor.districtId, req.params.studentId, req.actor.userId])).rows;
+      `, [req.actor.districtId, req.params.studentId, req.actor.userId])).rows);
     }));
 
   app.post("/api/family/children/:studentId/history-contributions",
@@ -110,6 +130,7 @@ export function registerStudentHistoryContributionRoutes(app) {
              RETURNING id, status, updated_at
           `, [contribution.id]);
           if (!updated) throw new HttpError(409, "contribution_already_reviewed");
+          updated.released = await releasePhotos(client, contribution.id);
           await client.query(`
             INSERT INTO student_history_contribution_events
               (district_id, school_id, student_id, contribution_id, actor_user_id, event_type)
@@ -118,15 +139,17 @@ export function registerStudentHistoryContributionRoutes(app) {
           await audit(client, req, "withdraw", "student_history_contribution", contribution.id);
           return updated;
         });
+        const { released = [], ...out } = result;
+        deleteReleased(released);
         res.setHeader("Cache-Control", "no-store");
-        res.json({ data: result });
+        res.json({ data: out });
       } catch (error) { sendError(res, next, error); }
     });
 
   app.get("/api/history-contributions",
     requireSession, wrap(async (client, req) => {
       if (!canReview(req.actor.role)) throw new HttpError(403, "school_reviewer_required");
-      return (await client.query(`
+      return withPhotos(client, (await client.query(`
         SELECT c.id, c.student_id, c.school_id, s.display_name AS student_name,
                c.title, c.body, c.occurred_at, c.created_at,
                c.guardian_user_id, u.display_name AS guardian_name
@@ -136,14 +159,14 @@ export function registerStudentHistoryContributionRoutes(app) {
          WHERE c.district_id=$1 AND c.status='submitted'
          ORDER BY c.created_at, c.id
          LIMIT 200
-      `, [req.actor.districtId])).rows;
+      `, [req.actor.districtId])).rows);
     }));
 
   app.get("/api/students/:studentId/history-contributions",
     requireSession, wrap(async (client, req) => {
       if (!canReview(req.actor.role)) throw new HttpError(403, "school_reviewer_required");
       await linkedStudent(client, req.actor, req.params.studentId);
-      return (await client.query(`
+      return withPhotos(client, (await client.query(`
         SELECT c.id, c.title, c.body, c.occurred_at, c.status, c.created_at,
                c.guardian_user_id, u.display_name AS guardian_name
           FROM student_history_contributions c
@@ -152,7 +175,7 @@ export function registerStudentHistoryContributionRoutes(app) {
            AND c.status='submitted'
          ORDER BY c.created_at, c.id
          LIMIT 100
-      `, [req.actor.districtId, req.params.studentId])).rows;
+      `, [req.actor.districtId, req.params.studentId])).rows);
     }));
 
   app.patch("/api/students/:studentId/history-contributions/:contributionId",
@@ -200,6 +223,9 @@ export function registerStudentHistoryContributionRoutes(app) {
              RETURNING id, status, reviewed_at, history_entry_id
           `, [contribution.id, status, actor.userId, (body.note || "").trim() || null, historyEntryId]);
           if (!updated) throw new HttpError(409, "contribution_already_reviewed");
+          // MEDIA-02: approved photos go onto the family memory; rejected ones are released.
+          if (status === "approved") updated.photos = (await one(client, `SELECT eduos_history_contribution_photos_publish($1) AS n`, [contribution.id])).n;
+          else updated.released = await releasePhotos(client, contribution.id);
           await client.query(`
             INSERT INTO student_history_contribution_events
               (district_id, school_id, student_id, contribution_id, actor_user_id, event_type, detail)
@@ -209,8 +235,10 @@ export function registerStudentHistoryContributionRoutes(app) {
           await audit(client, req, status, "student_history_contribution", contribution.id);
           return updated;
         });
+        const { released = [], ...out } = result;
+        deleteReleased(released);
         res.setHeader("Cache-Control", "no-store");
-        res.json({ data: result });
+        res.json({ data: out });
       } catch (error) { sendError(res, next, error); }
     });
 }

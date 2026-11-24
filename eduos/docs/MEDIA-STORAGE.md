@@ -28,6 +28,17 @@ history → Photos in student history).
 Downloads of a student's history (TC-05 export) list each photo's description
 and caption; the image files aren't included.
 
+## Family photos (MEDIA-02)
+
+A guardian adds photos to a family memory they've sent for review, through
+exactly the same checks. Only that guardian (while it's pending, and while no
+custody restriction applies) can add them; the guardian and the school's
+reviewer (principal, vice principal, superintendent) can see them while it's
+pending. Approval puts the photos on the published family memory, where
+exactly the people who can see that memory see them. If the memory is
+withdrawn or rejected, its photos stop counting toward the student's total and
+are deleted from the bucket.
+
 ## Setting it up
 
 ### Bucket
@@ -82,7 +93,6 @@ are the district's alone.
 
 * **Video.** Needs a transcoding step that sanitizes the file the way
   re-encoding does for photos.
-* **Family photos** (guardian contributions, TC-02) and **Time Capsule**
-  photos: the same pipeline, next.
+* **Time Capsule** photos: the same pipeline, next.
 * **Deleting** a photo after publication follows the district's records rules
   (TC-08 retention work).
