@@ -166,8 +166,11 @@ class _HubList extends StatelessWidget {
           onTap: () => onOpen(c.id),
         );
 
+    // A TV is view-only: it shows capsules and history but makes no changes.
+    final readOnly = AppScope.of(context).readOnly;
     return ListView(padding: const EdgeInsets.all(16), children: [
-      if (role == 'parent' && hub.children.isNotEmpty)
+      if (readOnly) const Notice('This TV shows Time Capsules and history. Use the EduOS app on your phone to make or answer a capsule.'),
+      if (role == 'parent' && hub.children.isNotEmpty && !readOnly)
         Align(
           alignment: Alignment.centerLeft,
           child: Padding(
@@ -197,7 +200,7 @@ class _HubList extends StatelessWidget {
                 Text('For ${i.studentName} · ${opensText(i.releaseKind, i.releaseAt, i.milestone, fmtDay)}'),
                 if (i.status == 'released')
                   const Text('This capsule has opened; you withdrew, so it\'s closed to you.')
-                else
+                else if (!readOnly)
                   Wrap(spacing: 8, children: [
                     if (i.consent != 'approved') FilledButton.tonal(onPressed: () => answer(i.capsuleId, 'approved'), child: const Text('Accept')),
                     if (i.consent == 'pending') TextButton(onPressed: () => answer(i.capsuleId, 'denied'), child: const Text('Decline')),
@@ -214,7 +217,7 @@ class _HubList extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               title: Text('${m.studentName}: ${milestoneText[m.milestone] ?? m.milestone}'),
               subtitle: Text('From ${m.from} · ${m.accepted} recipient${m.accepted == 1 ? '' : 's'} accepted'),
-              trailing: FilledButton.tonal(onPressed: () => release(m), child: const Text('Release')),
+              trailing: readOnly ? null : FilledButton.tonal(onPressed: () => release(m), child: const Text('Release')),
             ),
         ]),
       SectionCard(title: 'My capsules', children: [
