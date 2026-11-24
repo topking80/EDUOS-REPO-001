@@ -27,7 +27,11 @@ Quiz answers are never queued offline; the app says when one isn't saved.
 
 **Phase 5** adds teachers: Classes (offline-safe attendance and a native daily
 lesson planner for warm-ups, lesson blocks, assignments, timers, instructions
-and links), Courses (course view with lesson approval status and
+and links), School day (classroom and media-center connections, roster-scoped
+bus riders, bus/car arrival handoffs, the school pick-up duty queue, library and
+lunchroom shifts/checklists, and staff handoffs), and Colleagues (district
+educator directory, direct messages and discoverable professional groups).
+Courses (course view with lesson approval status and
 accommodations, roster, gradebook with final grades), Grading (quiz open
 answers, rubric grading, hand-ins) and the Christie copilot (class mastery,
 reading and reviewing tutoring conversations). Staffing (time away,
