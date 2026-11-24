@@ -157,4 +157,99 @@ describe("SAFE-04 National Weather Service prompts against real PostgreSQL", { s
     await admin.query("UPDATE school_weather_alerts SET expires=now()-interval '1 minute' WHERE id=$1", [expired.id]);
     assert.equal((await as("p1")("POST", `/api/safety/weather/${expired.id}/dismiss`, { note: "Late action" })).status, 410);
   });
+  // 37.7.4 weather safety, on top of #145: the winner's decision and audit are
+  // the only ones kept; started is refused too; NWS Update/Cancel handling.
+  const current = async event => ok(await as("p1")("GET", "/api/safety/weather")).alerts.find(x => x.event === event);
+  const audits = async id => (await admin.query("SELECT count(*)::int AS n FROM audit_events WHERE resource_type='weather_alert' AND resource_id::text=$1", [id])).rows[0].n;
+
+  it("37.7.4: three leaders at once, five rounds: one wins, its note is kept, one audit record", async () => {
+    for (let round = 0; round < 5; round++) {
+      features = [feature(`urn:oid:race-${round}`, "Tornado Warning")];
+      await sweep();
+      const w = await current("Tornado Warning");
+      const rs = await Promise.all([
+        as("p1")("POST", `/api/safety/weather/${w.id}/dismiss`, { note: "Reviewed by principal" }),
+        as("vp1")("POST", `/api/safety/weather/${w.id}/dismiss`, { note: "Reviewed by vice principal" }),
+        as("supt1")("POST", `/api/safety/weather/${w.id}/dismiss`, { note: "Reviewed by superintendent" })]);
+      assert.deepEqual(rs.map(r => r.status).sort(), [200, 409, 409], JSON.stringify(rs.map(r => r.body)));
+      for (const r of rs.filter(r => r.status === 409)) assert.equal(r.body.error, "already_decided");
+      const row = (await admin.query("SELECT decision,decision_note FROM school_weather_alerts WHERE id=$1", [w.id])).rows[0];
+      const winner = rs.findIndex(r => r.status === 200);
+      assert.equal(row.decision, "dismissed");
+      assert.equal(row.decision_note, ["Reviewed by principal", "Reviewed by vice principal", "Reviewed by superintendent"][winner], "the winner's decision isn't overwritten");
+      assert.equal(await audits(w.id), 1, "only the winning decision is audited");
+    }
+  });
+
+  it("37.7.4: ended and expired alerts refuse dismiss and started (410) and write nothing", async () => {
+    features = [feature("urn:oid:ended", "Tornado Warning")];
+    await sweep();
+    const ended = await current("Tornado Warning");
+    features = [];
+    await sweep();
+    const r1 = await as("p1")("POST", `/api/safety/weather/${ended.id}/dismiss`, { note: "Late action" });
+    assert.deepEqual([r1.status, r1.body.error], [410, "alert_no_longer_active"]);
+
+    features = [feature("urn:oid:expired", "Tornado Warning")];
+    await sweep();
+    const expired = await current("Tornado Warning");
+    await admin.query("UPDATE school_weather_alerts SET expires=now()-interval '1 minute' WHERE id=$1", [expired.id]);
+    const r2 = await as("p1")("POST", `/api/safety/weather/${expired.id}/dismiss`, { note: "Late action" });
+    assert.deepEqual([r2.status, r2.body.error], [410, "alert_no_longer_active"]);
+    const i = ok(await as("vp1")("POST", "/api/safety/incidents", { kind: "shelter", isDrill: true, hazard: "tornado" }), 201);
+    const r3 = await as("vp1")("POST", `/api/safety/weather/${expired.id}/started`, { incidentId: i.id });
+    assert.deepEqual([r3.status, r3.body.error], [410, "alert_no_longer_active"]);
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM school_weather_alerts WHERE id = ANY($1::uuid[]) AND decision IS NOT NULL", [[ended.id, expired.id]])).rows[0].n, 0);
+    assert.equal(await audits(ended.id) + await audits(expired.id), 0);
+    await admin.query("DELETE FROM safety_incidents WHERE id=$1", [i.id]).catch(() => {});
+  });
+
+  it("37.7.4: an NWS Update (new id, references the old one) replaces the guidance on the same alert", async () => {
+    features = [feature("urn:oid:orig", "Severe Thunderstorm Warning", { severity: "Severe" })];
+    assert.equal((await sweep()).newWarnings, 1);
+    const orig = await current("Severe Thunderstorm Warning");
+    features = [feature("urn:oid:upd1", "Severe Thunderstorm Warning", { messageType: "Update", severity: "Severe",
+      references: [{ "@id": "https://api.weather.gov/alerts/urn:oid:orig", identifier: "urn:oid:orig", sender: "w-nws.webmaster@noaa.gov", sent: new Date().toISOString() }],
+      headline: "Severe thunderstorm warning remains in effect", areaDesc: "East Test County", instruction: "Stay away from windows" })];
+    assert.equal((await sweep()).newWarnings, 0, "an update doesn't alert leaders again");
+    const all = ok(await as("p1")("GET", "/api/safety/weather")).alerts.filter(x => x.event === "Severe Thunderstorm Warning");
+    assert.equal(all.length, 1, "one alert, not a second copy");
+    assert.equal(all[0].id, orig.id, "the same alert, so the prompt and any decision carry over");
+    assert.deepEqual([all[0].headline, all[0].area, all[0].instruction], ["Severe thunderstorm warning remains in effect", "East Test County", "Stay away from windows"]);
+    assert.equal((await admin.query("SELECT nws_id FROM school_weather_alerts WHERE id=$1", [orig.id])).rows[0].nws_id, "urn:oid:upd1");
+  });
+
+  it("37.7.4: an update to an already-decided warning keeps the decision, unless it raises the stakes", async () => {
+    features = [feature("urn:oid:dec", "Flash Flood Warning", { severity: "Moderate" })];
+    await sweep();
+    const w = await current("Flash Flood Warning");
+    ok(await as("p1")("POST", `/api/safety/weather/${w.id}/dismiss`, { note: "Creek is far from campus" }));
+    const ref = id => [{ identifier: id }];
+    // Same hazard, same severity: the dismissal stays, nobody is alerted again, guidance is refreshed.
+    features = [feature("urn:oid:dec2", "Flash Flood Warning", { messageType: "Update", severity: "Moderate", references: ref("urn:oid:dec"), instruction: "Avoid low roads" })];
+    assert.equal((await sweep()).newWarnings, 0);
+    let now = await current("Flash Flood Warning");
+    assert.deepEqual([now.id, now.decision, now.prompt, now.instruction], [w.id, "dismissed", false, "Avoid low roads"]);
+    // NWS raises the severity: the dismissal no longer fits, the prompt returns and leaders are alerted.
+    features = [feature("urn:oid:dec3", "Flash Flood Warning", { messageType: "Update", severity: "Extreme", references: ref("urn:oid:dec2"), instruction: "Flash flood emergency: move to higher ground" })];
+    assert.equal((await sweep()).newWarnings, 1);
+    now = await current("Flash Flood Warning");
+    assert.deepEqual([now.id, now.decision, now.prompt, now.instruction], [w.id, null, true, "Flash flood emergency: move to higher ground"]);
+    assert.equal(await audits(w.id), 1, "the original dismissal stays in the audit trail");
+    // It can be decided again.
+    ok(await as("vp1")("POST", `/api/safety/weather/${w.id}/dismiss`, { note: "Campus is on high ground" }));
+  });
+
+  it("37.7.4: an NWS Cancel ends the alert it references, even if NWS still lists the original", async () => {
+    features = [feature("urn:oid:can", "Tornado Warning")];
+    await sweep();
+    const w = await current("Tornado Warning");
+    features = [feature("urn:oid:can", "Tornado Warning"),
+      feature("urn:oid:can-x", "Tornado Warning", { messageType: "Cancel", references: [{ identifier: "urn:oid:can" }], instruction: null })];
+    assert.equal((await sweep()).newWarnings, 0);
+    assert.equal(await current("Tornado Warning"), undefined, "cancelled");
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM school_weather_alerts WHERE nws_id='urn:oid:can-x'")).rows[0].n, 0, "the cancel itself isn't an alert");
+    const r = await as("p1")("POST", `/api/safety/weather/${w.id}/dismiss`, { note: "Late action" });
+    assert.deepEqual([r.status, r.body.error], [410, "alert_no_longer_active"]);
+  });
 });
