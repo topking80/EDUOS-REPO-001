@@ -1358,6 +1358,7 @@ VIEWS.portfolio = async () => {
     historyDownloadCard(first.student.id, role),
     ["parent", "pupil"].includes(role) ? await familyTransferCard(first.student.id) : null,
     await familyStorageCard(first.student.id, role),
+    await donationCard(role),
     await studentSharingCard(first.student.id)];
 };
 // ---- TC-11: family storage dashboard ---------------------------------------
@@ -1380,6 +1381,68 @@ async function familyStorageCard(studentId, role) {
     h("h4", {}, "How long it's kept"), h("p", { class: "small" }, d.retention.text, d.retention.recordsScheduleRef ? ` District schedule: ${d.retention.recordsScheduleRef}.` : ""),
     h("h4", {}, "Saving space"), h("ul", { class: "list small" }, d.guidance.map(g => h("li", {}, g))),
     h("p", { class: "small muted" }, d.donations.text));
+}
+// ---- TC-09: voluntary gifts toward preservation (sandbox only) ----------------
+async function donationCard(role) {
+  if (role !== "parent") return null;
+  const st = (await safe(api.get("/api/donations/status")))?.data;
+  if (!st?.enabled || !Array.isArray(st.methods)) return null;
+  const mine = (await safe(api.get("/api/donations/mine")))?.data || [];
+  const amount = h("input", { id: "don-amt", type: "number", min: st.minCents / 100, max: st.maxCents / 100, step: "1", value: (st.suggestedCents[0] || st.minCents) / 100, style: "width:7em" });
+  const where = h("select", { id: "don-where" }, h("option", { value: "" }, "The whole district"), (st.schools || []).map(x => h("option", { value: x.id }, x.name)));
+  const anon = h("input", { id: "don-anon", type: "checkbox" });
+  const feeLine = h("span", {});
+  const fee = () => { const c = Math.round(Number(amount.value) * 100); feeLine.textContent = c > 0 ? `Estimated fee ${money(Math.round(c * 0.029) + 30)}, so about ${money(Math.max(0, c - Math.round(c * 0.029) - 30))} reaches the fund.` : ""; return feeLine; };
+  amount.addEventListener("input", fee);
+  const give = async () => {
+    const cents = Math.round(Number(amount.value) * 100);
+    if (!(cents >= st.minCents && cents <= st.maxCents)) return toast(`Choose between ${money(st.minCents)} and ${money(st.maxCents)}.`);
+    try {
+      const g = (await api.post("/api/donations", { amountCents: cents, schoolId: where.value || null, anonymous: anon.checked, idempotencyKey: `web-${crypto.randomUUID()}` })).data;
+      const r = (await api.post(`/api/donations/${g.id}/confirm`, { testOutcome: "sandbox_success" })).data;
+      toast(r.acknowledgement ? `Thank you. Test gift recorded as ${r.acknowledgement.number}.` : "The test gift didn't go through.");
+      go(state.tab, { push: false });
+    } catch { toast("Couldn't record the gift."); }
+  };
+  return h("section", { class: "card", "aria-label": "Support preservation" }, h("h3", {}, "Support preservation"),
+    h("p", { class: "small" }, st.statement),
+    h("p", { class: "small muted" }, "Test mode: gifts go through the sandbox and no money moves. ", st.fees || "", " ", st.help || ""),
+    h("p", { class: "small", "aria-live": "polite" }, fee()),
+    h("div", { class: "btns" }, st.suggestedCents.map(c => h("button", { class: "btn small", type: "button", onclick: () => { amount.value = c / 100; fee(); } }, money(c)))),
+    h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "don-amt" }, "Amount ($)"), amount), h("div", {}, h("label", { for: "don-where" }, "For"), where),
+      h("label", { for: "don-anon", class: "small" }, anon, " Don't show my name in district reports")),
+    h("button", { class: "btn primary small", type: "button", onclick: give }, "Give (test)"),
+    mine.length ? [h("h4", {}, "Your gifts"), h("ul", { class: "list small" }, mine.map(g => h("li", {}, `${money(g.amountCents)} · ${g.designation.name || "District"} · ${g.status}${g.acknowledgement ? ` · ${g.acknowledgement.number}` : ""}`)))] : null);
+}
+async function donationSettingsCard() {
+  const s = (await safe(api.get("/api/donations/settings")))?.data;
+  if (!s || typeof s.enabled !== "boolean") return null;
+  const report = (await safe(api.get("/api/donations")))?.data;
+  const on = h("input", { id: "ds-on", type: "checkbox", checked: s.enabled || undefined });
+  const min = h("input", { id: "ds-min", type: "number", min: 1, value: s.minCents / 100, style: "width:6em" });
+  const max = h("input", { id: "ds-max", type: "number", min: 1, value: s.maxCents / 100, style: "width:7em" });
+  const sugg = h("input", { id: "ds-sugg", value: s.suggestedCents.map(c => c / 100).join(", "), style: "width:12em" });
+  const ack = h("textarea", { id: "ds-ack", rows: 2, maxlength: 1000 }, s.acknowledgementText);
+  const taxOn = h("input", { id: "ds-tax-on", type: "checkbox", checked: s.taxWordingEnabled || undefined });
+  const tax = h("textarea", { id: "ds-tax", rows: 2, maxlength: 1000, placeholder: "Only wording your district's advisers approved" }, s.taxWording || "");
+  const t = report?.totals;
+  return h("section", { class: "card", "aria-label": "Preservation gifts" }, h("h3", {}, "Preservation gifts"),
+    h("p", { class: "small muted" }, "Voluntary gifts from families and staff, never from students. Sandbox only for now: no money moves. Gifts never change storage limits."),
+    t ? h("p", { class: "small" }, `${t.gifts} gift${t.gifts === 1 ? "" : "s"} · ${money(t.grossCents)} given · ${money(t.feesCents)} processing · ${money(t.netCents)} net`) : null,
+    h("label", { for: "ds-on", class: "small" }, on, " Accept gifts"),
+    h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "ds-min" }, "Smallest ($)"), min), h("div", {}, h("label", { for: "ds-max" }, "Largest ($)"), max),
+      h("div", {}, h("label", { for: "ds-sugg" }, "Suggested ($, commas)"), sugg)),
+    h("label", { for: "ds-ack" }, "Acknowledgement text"), ack,
+    h("label", { for: "ds-tax-on", class: "small" }, taxOn, " Add tax-receipt wording to acknowledgements"),
+    h("label", { for: "ds-tax" }, "Tax-receipt wording"), tax,
+    h("p", { class: "small muted" }, "EduOS makes no claim that a gift is tax-deductible. Add wording only after your district's own advice."),
+    h("button", { class: "btn small", type: "button", onclick: async () => {
+      try {
+        await api.put("/api/donations/settings", { enabled: on.checked, minCents: Math.round(Number(min.value) * 100), maxCents: Math.round(Number(max.value) * 100),
+          suggestedCents: sugg.value.split(",").map(v => v.trim()).filter(Boolean).map(v => Math.round(Number(v) * 100)),
+          acknowledgementText: ack.value, taxWordingEnabled: taxOn.checked, taxWording: tax.value.trim() || null });
+        toast("Saved."); go(state.tab, { push: false });
+      } catch { toast("Couldn't save. Check the amounts and wording."); } } }, "Save"));
 }
 // ---------------- Time Capsules ----------------
 const MILESTONE_TEXT = { grade_5_completion: "Finishing grade 5", grade_8_completion: "Finishing grade 8", graduation: "Graduation", age_18: "Turning 18" };
@@ -1520,7 +1583,7 @@ VIEWS.history = async () => {
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
   const teacher = await teacherReviewSection();
-  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard()] : null, await preservationCard()] : null;
+  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard(), await donationSettingsCard()] : null, await preservationCard()] : null;
   return [privacy, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
     h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),

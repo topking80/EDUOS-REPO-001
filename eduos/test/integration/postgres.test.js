@@ -83,7 +83,9 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
     // so is webhook_delivery_slots (2026-11-17 audit, the deployment-wide delivery ceiling; migration 067),
     // classroom_pair_codes (DEV-02, migration 109) and classroom_checkin_codes (ROOM-01, migration 111): codes
     // are made and used only by definer functions.
-    const definerOnly = ["edal_heads", "webhook_delivery_slots", "lti_launch_replays", "classroom_pair_codes", "classroom_checkin_codes", "student_history_contribution_photos", "student_time_capsule_photos", "history_transfer_items"];
+    const definerOnly = ["edal_heads", "webhook_delivery_slots", "lti_launch_replays", "classroom_pair_codes", "classroom_checkin_codes", "student_history_contribution_photos", "student_time_capsule_photos", "history_transfer_items",
+      // TC-09 (migration 135): acknowledgement numbers are issued only by eduos_history_donation_record().
+      "history_donation_counters"];
     assert.deepEqual(r.rows.map(x => x.tablename).filter(t => !definerOnly.includes(t)), []);
     for (const fn of ["eduos_webhook_slot_acquire(integer,integer)", "eduos_webhook_slot_release(uuid)", "eduos_webhook_slots_free(integer)"])
       assert.ok((await sql("SELECT has_function_privilege($1,$2,'EXECUTE') AS ok", [db.names.app, fn])).rows[0].ok, fn);
