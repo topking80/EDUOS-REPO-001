@@ -387,4 +387,24 @@ void main() {
     expect(jsonDecode(pair.body), {'code': '123456', 'controllerName': 'Teacher mobile app'});
   });
 
+
+  testWidgets('classes: first attendance after arrival uses the verified handoff endpoint', (tester) async {
+    final fake = FakeServer({
+      'GET /api/home': (_) => {'data': {'school_name': 'Maple Elementary', 'students': 1, 'to_grade': 0, 'open_assignments': 0, 'absences_7d': 0}},
+      'GET /api/rosters': (_) => {'data': [{'student_id': ada, 'student_name': 'Ada Lovelace'}]},
+      'GET /api/attendance': (_) => {'data': []},
+      'GET /api/arrival/today': (_) => {'data': [
+        {'id': 'handoff-1', 'student_id': ada, 'method': 'bus', 'status': 'received'},
+      ]},
+      'POST /api/arrival/handoffs/handoff-1/first-attendance': (_) => {'data': {'id': 'attendance-1', 'status': 'present'}},
+    });
+    await launch(tester, fake);
+    await openTab(tester, 'Classes');
+    await tester.tap(find.text('Present').last);
+    await tester.pumpAndSettle();
+    final request = fake.sent('POST', '/api/arrival/handoffs/handoff-1/first-attendance').single;
+    expect(jsonDecode(request.body), {'status': 'present'});
+    expect(fake.sent('POST', '/api/attendance'), isEmpty);
+  });
+
 }
