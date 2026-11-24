@@ -39,6 +39,17 @@ exactly the people who can see that memory see them. If the memory is
 withdrawn or rejected, its photos stop counting toward the student's total and
 are deleted from the bucket.
 
+## Time Capsule photos (MEDIA-03)
+
+A capsule's owner adds their own photos to it while it's a draft, beside the
+message, through the same checks; photos already on the history items placed
+in the capsule come along with them. The owner sees them while drafting.
+Recipients see nothing, not even that photos exist, until the capsule is
+released to them, exactly like the rest of its contents; withheld items keep
+their photos withheld. Sealing stops changes. Cancelling a capsule deletes the
+owner's own photos from the bucket (photos that belong to history items stay
+with those items). Capsule photos count toward the student's total.
+
 ## Setting it up
 
 ### Bucket
@@ -93,6 +104,5 @@ are the district's alone.
 
 * **Video.** Needs a transcoding step that sanitizes the file the way
   re-encoding does for photos.
-* **Time Capsule** photos: the same pipeline, next.
 * **Deleting** a photo after publication follows the district's records rules
   (TC-08 retention work).
