@@ -51,7 +51,9 @@ class _FixTeacherHistoryItemDialogState extends State<_FixTeacherHistoryItemDial
           FilledButton(
             onPressed: () {
               final title = _title.text.trim();
-              if (title.isNotEmpty) Navigator.pop(context, {'title': title, 'body': _body.text.trim()});
+              if (title.isNotEmpty) {
+                Navigator.pop(context, {'title': title, 'body': _body.text.trim()});
+              }
             },
             child: const Text('Resubmit'),
           ),
