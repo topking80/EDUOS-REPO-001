@@ -134,6 +134,28 @@ class ApiClient {
   /// PUT (never queued: quiz answers must reach the server while the attempt is open).
   Future<Map<String, Object?>> put(String path, [Map<String, Object?> body = const {}]) => _writeJson('PUT', path, body);
 
+  /// PATCH (never queued).
+  Future<Map<String, Object?>> patch(String path, [Map<String, Object?> body = const {}]) => _writeJson('PATCH', path, body);
+
+  /// Authorized GET that does not follow a redirect: returns where the server
+  /// points (e.g. a short-lived signed photo URL), resolved against the server.
+  /// The session token is only ever sent to the EduOS server, never to the
+  /// storage host the redirect names. Null when the server answers without one.
+  Future<Uri?> location(String path) async {
+    final res = await _send(() async {
+      final req = http.Request('GET', _uri(path))
+        ..followRedirects = false
+        ..headers.addAll(_headers());
+      return http.Response.fromStream(await _http.send(req));
+    });
+    if (res.statusCode >= 300 && res.statusCode < 400) {
+      final to = res.headers['location'];
+      return to == null ? null : _uri(to);
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) throw ApiException(res.statusCode, _errorCode(res));
+    return null;
+  }
+
   /// Sends queued writes now (call when the app resumes or the network returns).
   /// Only the current identity's writes are sent; anyone else's stay put.
   Future<FlushResult> flushQueue() => queue.flush(_owner(), (write) async {
@@ -167,9 +189,11 @@ class ApiClient {
   Future<Map<String, Object?>> _postJson(String path, Map<String, Object?> body) => _writeJson('POST', path, body);
 
   Future<Map<String, Object?>> _writeJson(String method, String path, Map<String, Object?> body) async {
-    Future<http.Response> send(String csrf) => method == 'PUT'
-        ? _http.put(_uri(path), headers: _headers(write: true, csrf: csrf), body: jsonEncode(body))
-        : _http.post(_uri(path), headers: _headers(write: true, csrf: csrf), body: jsonEncode(body));
+    Future<http.Response> send(String csrf) => switch (method) {
+          'PUT' => _http.put(_uri(path), headers: _headers(write: true, csrf: csrf), body: jsonEncode(body)),
+          'PATCH' => _http.patch(_uri(path), headers: _headers(write: true, csrf: csrf), body: jsonEncode(body)),
+          _ => _http.post(_uri(path), headers: _headers(write: true, csrf: csrf), body: jsonEncode(body)),
+        };
     var res = await _send(() => send(_session().csrfToken));
     if (res.statusCode == 403 && _errorCode(res) == 'csrf_validation_failed') {
       final fresh = await refreshCsrf();

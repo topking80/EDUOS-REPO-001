@@ -21,6 +21,9 @@ class RoleTab {
 /// staffing for every staff role.
 /// Phase 6: everything else: operations queues, attendance, transport,
 /// library desk, nodes status and the SRO workspace. Every tab is native.
+/// 37.8 Time Capsules: "Time Capsules" for families, learners and school
+/// leads, "My history" for learners and "History items" for teachers. They
+/// come last so each role's everyday tabs keep their place in the bar.
 const roleTabs = <String, List<RoleTab>>{
   'parent': [
     RoleTab('children', 'Children', Icons.child_care, native: true),
@@ -29,6 +32,7 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('pickup', 'Pick-up', Icons.directions_car, native: true),
     RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true),
     RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true),
+    RoleTab('capsules', 'Time Capsules', Icons.hourglass_bottom, native: true),
   ],
   'pupil': [
     RoleTab('home', 'Home', Icons.home_outlined, native: true),
@@ -38,6 +42,8 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('path', 'My path', Icons.route, native: true),
     RoleTab('news', 'News', Icons.newspaper, native: true),
     RoleTab('activities', 'Clubs & Sports', Icons.emoji_events_outlined, native: true),
+    RoleTab('portfolio', 'My history', Icons.auto_stories_outlined, native: true),
+    RoleTab('capsules', 'Time Capsules', Icons.hourglass_bottom, native: true),
   ],
   'teacher': [
     RoleTab('classes', 'Classes', Icons.grid_view, native: true),
@@ -46,6 +52,7 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('grading', 'Grading', Icons.check_circle_outline, native: true),
     RoleTab('copilot', 'Christie', Icons.auto_awesome, native: true),
     RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true),
+    RoleTab('contributions', 'History items', Icons.auto_stories_outlined, native: true),
   ],
   'librarian': [RoleTab('library', 'Library desk', Icons.menu_book, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
   'vice_principal': [
@@ -54,6 +61,7 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('attendance', 'Attendance', Icons.check_circle_outline, native: true),
     RoleTab('safety', 'Safety', Icons.shield_outlined, native: true),
     RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true),
+    RoleTab('capsules', 'Time Capsules', Icons.hourglass_bottom, native: true),
   ],
   'counselor': [RoleTab('guidance', 'Counseling', Icons.favorite_border, native: true), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
   'nurse': [RoleTab('healthoffice', 'Health office', Icons.monitor_heart_outlined, native: true), RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true)],
@@ -67,6 +75,7 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('transport', 'Transport', Icons.directions_bus, native: true),
     RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true),
     RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true),
+    RoleTab('capsules', 'Time Capsules', Icons.hourglass_bottom, native: true),
   ],
   'superintendent': [
     RoleTab('overview', 'District', Icons.grid_view, native: true),
@@ -75,6 +84,7 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true),
     RoleTab('transport', 'Transport', Icons.directions_bus, native: true),
     RoleTab('nodes', 'Nodes', Icons.dns_outlined, native: true),
+    RoleTab('capsules', 'Time Capsules', Icons.hourglass_bottom, native: true),
   ],
   'driver': [RoleTab('route', 'Route', Icons.directions_bus, native: true), RoleTab('messages', 'Messages', Icons.chat_bubble_outline, native: true), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
   'sro': [RoleTab('safety', 'Safety', Icons.shield_outlined, native: true), RoleTab('alerts', 'Alerts', Icons.notifications_none, native: true)],
