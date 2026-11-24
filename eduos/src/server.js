@@ -51,7 +51,9 @@ import { registerSportsConnectorRoutes } from "./sports-connector-routes.js";
 import { registerRankingRoutes } from "./ranking-routes.js";
 import { registerHistoryPrivacyRoutes } from "./history-privacy-routes.js";
 import { registerHistoryExportRoutes } from "./history-export-routes.js";
-import { registerHistoryMediaRoutes } from "./history-media-routes.js";
+import { registerHistoryMediaRoutes, historyMedia } from "./history-media-routes.js";
+import { registerHistoryPreservationRoutes } from "./history-preservation-routes.js";
+import { startHistoryPreservationSweep } from "./history-preservation.js";
 import { registerSafetyRoutes } from "./safety-routes.js";
 import { registerSafetyRoomRoutes } from "./safety-room-routes.js";
 import { registerWeatherRoutes } from "./weather-routes.js";
@@ -2022,6 +2024,7 @@ registerRankingRoutes(app);
 registerHistoryPrivacyRoutes(app);
 registerHistoryExportRoutes(app);
 registerHistoryMediaRoutes(app);
+registerHistoryPreservationRoutes(app);
 registerSafetyRoutes(app);
 registerSafetyRoomRoutes(app);
 registerWeatherRoutes(app);
@@ -2141,6 +2144,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
     startSisSyncSweep();
     startCommerceReconcile();
     startCapsuleReleaseSweep();
+    startHistoryPreservationSweep(historyMedia().storage);
     if(config.nodeTier==="school"&&process.env.EDEN_AGENT!=="off")startAgent();
   });
 }

@@ -213,7 +213,7 @@ export function registerStudentHistoryCapsuleRoutes(app) {
  */
 export async function releaseDueCapsules({ db = pool, limit = 100 } = {}) {
   const rows = (await db.query("SELECT * FROM eduos_capsule_release_due($1)", [limit])).rows;
-  return { released: rows.filter(r => r.outcome === "released").length, blocked: rows.filter(r => r.outcome === "blocked").length };
+  return { released: rows.filter(r => r.outcome === "released").length, blocked: rows.filter(r => r.outcome === "blocked").length, held: rows.filter(r => r.outcome === "held").length };
 }
 let releasing = false;
 export function startCapsuleReleaseSweep() {
