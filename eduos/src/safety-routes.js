@@ -15,10 +15,10 @@ import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { enqueueNotifications } from "./notify.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
-import { INCIDENT_KINDS, ROLLCALL_STATUSES, LIVE, KIND_LABEL, audienceFor, incidentMessage, familyTitle, confirmMatches, accountability } from "./safety-model.js";
+import { INCIDENT_KINDS, ROLLCALL_STATUSES, LIVE, KIND_LABEL, HAZARDS, audienceFor, incidentMessage, hazardMessage, alertTitle, familyTitle, confirmMatches, accountability } from "./safety-model.js";
 import { queuedAt, idempotencyKey, claimReplay } from "./offline-replay.js";
 
-const INCIDENT_COLS = `i.id,i.school_id,sc.name AS school_name,i.kind,i.is_drill,i.status,i.instructions,i.reunification_point,
+const INCIDENT_COLS = `i.id,i.school_id,sc.name AS school_name,i.kind,i.hazard,i.is_drill,i.status,i.instructions,i.reunification_point,
   i.initiated_by,i.initiated_at,i.confirm_by,i.confirmed_at,i.reunification_at,i.closed_at,i.debrief`;
 
 function logEvent(client, req, incident, event, detail = null) {
@@ -31,11 +31,12 @@ async function notifyIncident(client, req, incident, status) {
   const families = (await rows(client, `SELECT user_id FROM eduos_safety_recipients($1,'families')`, [incident.id])).map(r => r.user_id);
   const drill = incident.is_drill ? " (drill)" : "";
   const staffTitle = status === "closed" ? `All clear${drill}: ${KIND_LABEL[incident.kind]} ended` : status === "reunification" ? `Reunification started${drill}`
-    : `${KIND_LABEL[incident.kind]}${drill} at ${incident.school_name}`;
+    : `${alertTitle(incident.kind, incident.hazard)}${drill} at ${incident.school_name}`;
+  const live = status === "active";
   const base = { districtId: req.actor.districtId, schoolId: incident.school_id, kind: "safety", refType: "safety_incident", refId: incident.id };
-  const a = await enqueueNotifications(client, { ...base, recipients: staff, title: staffTitle, body: status === "closed" ? "Normal operations resume." : incidentMessage(incident.kind, status, "staff", { reunificationPoint: incident.reunification_point }) });
-  const b = await enqueueNotifications(client, { ...base, recipients: families.filter(u => !staff.includes(u)), title: familyTitle(incident.kind, incident.is_drill, incident.school_name, status),
-    body: status === "closed" ? "The school has given the all clear. Thank you for your patience." : incidentMessage(incident.kind, status, "family", { reunificationPoint: incident.reunification_point }) });
+  const a = await enqueueNotifications(client, { ...base, recipients: staff, title: staffTitle, body: status === "closed" ? "Normal operations resume." : (live && hazardMessage(incident.hazard, "staff")) || incidentMessage(incident.kind, status, "staff", { reunificationPoint: incident.reunification_point }) });
+  const b = await enqueueNotifications(client, { ...base, recipients: families.filter(u => !staff.includes(u)), title: familyTitle(incident.kind, incident.is_drill, incident.school_name, status, incident.hazard),
+    body: status === "closed" ? "The school has given the all clear. Thank you for your patience." : (live && hazardMessage(incident.hazard, "family")) || incidentMessage(incident.kind, status, "family", { reunificationPoint: incident.reunification_point }) });
   return notificationSummary(staff.length, families.filter(u => !staff.includes(u)).length, a + b);
 }
 
@@ -68,9 +69,11 @@ const loadIncident = (client, id) => one(client, `SELECT ${INCIDENT_COLS} FROM s
 /** The view of an incident for one audience. Families never get instructions written by staff. */
 function present(i, role, userId) {
   const audience = audienceFor(role);
-  const out = { id: i.id, schoolId: i.school_id, schoolName: i.school_name, kind: i.kind, label: KIND_LABEL[i.kind], isDrill: i.is_drill, status: i.status,
+  const label = alertTitle(i.kind, i.hazard, audience);
+  const out = { id: i.id, schoolId: i.school_id, schoolName: i.school_name, kind: i.kind, label, isDrill: i.is_drill, status: i.status,
+    hazard: label === KIND_LABEL[i.kind] ? null : i.hazard,
     startedAt: i.confirmed_at || i.initiated_at, reunificationAt: i.reunification_at, closedAt: i.closed_at,
-    message: incidentMessage(i.kind, i.status, audience, { reunificationPoint: i.reunification_point }), audience };
+    message: (i.status !== "reunification" && hazardMessage(i.hazard, audience)) || incidentMessage(i.kind, i.status, audience, { reunificationPoint: i.reunification_point }), audience };
   if (audience !== "family") out.instructions = i.instructions;
   if (i.status === "reunification" || audience === "family") out.reunificationPoint = i.status === "reunification" ? i.reunification_point : null;
   if (i.status === "pending") { out.confirmBy = i.confirm_by; out.mine = i.initiated_by === userId; }
@@ -117,9 +120,11 @@ export function registerSafetyRoutes(app) {
   // ---- step 1: start (pending; nothing is broadcast yet) ----
   app.post("/api/safety/incidents", limiter, requireSession, requireCsrf, requirePermission("safety", "initiate"), async (req, res, next) => {
     const a = req.actor;
-    const { kind, isDrill, instructions = null, schoolId: bodySchool } = req.body || {};
+    const { kind, isDrill, instructions = null, schoolId: bodySchool, hazard = null } = req.body || {};
     if (!INCIDENT_KINDS.includes(kind) || typeof isDrill !== "boolean" || (instructions !== null && !cleanText(instructions, 500)))
       return res.status(400).json({ error: "invalid_incident", kinds: INCIDENT_KINDS });
+    // SAFE-03: a shelter or hold can name its hazard (db/123).
+    if (hazard !== null && (!HAZARDS.includes(hazard) || !["shelter", "hold"].includes(kind))) return res.status(400).json({ error: "invalid_hazard", hazards: HAZARDS });
     if (!canInitiate(a)) return res.status(403).json({ error: "not_authorized_to_initiate" });
     const schoolId = a.role === "superintendent" ? bodySchool : a.schoolId;
     if (!validId(schoolId)) return res.status(400).json({ error: "invalid_school_id" });
@@ -134,9 +139,9 @@ export function registerSafetyRoutes(app) {
         const stale = await rows(client, `UPDATE safety_incidents SET status='cancelled',closed_at=now(),closed_by=$2
             WHERE school_id=$1 AND status='pending' AND (confirm_by<=now() OR initiated_by=$2) RETURNING id,school_id`, [schoolId, a.userId]);
         for (const s of stale) await logEvent(client, req, s, "expired", "replaced by a new start");
-        const i = await one(client, `INSERT INTO safety_incidents(district_id,school_id,kind,is_drill,instructions,initiated_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,school_id`,
-          [a.districtId, schoolId, kind, isDrill, instructions?.trim() || null, a.userId]);
-        await logEvent(client, req, i, "initiated", `${kind}${isDrill ? " drill" : ""}`);
+        const i = await one(client, `INSERT INTO safety_incidents(district_id,school_id,kind,hazard,is_drill,instructions,initiated_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,school_id`,
+          [a.districtId, schoolId, kind, hazard, isDrill, instructions?.trim() || null, a.userId]);
+        await logEvent(client, req, i, "initiated", `${kind}${hazard ? ` (${hazard})` : ""}${isDrill ? " drill" : ""}`);
         await audit(client, req, "initiate", "safety_incident", i.id, `${kind};drill=${isDrill}`);
         return present(await loadIncident(client, i.id), a.role, a.userId);
       });

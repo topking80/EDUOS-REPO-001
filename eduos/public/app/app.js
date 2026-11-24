@@ -1983,9 +1983,13 @@ function ask({ title, text = null, label = null, confirm = "OK", cancel = "Cance
 
 // ---------------- SafetyOS ----------------
 const KIND_TEXT = { lockdown: "LOCKDOWN", shelter: "SHELTER IN PLACE", evacuate: "EVACUATE", hold: "HOLD IN ROOMS" };
+// SAFE-03: hazards (src/safety-model.js HAZARD_LABEL / HAZARD_KIND).
+const HAZARD_TEXT = { tornado: "Tornado warning", severe_thunderstorm: "Severe thunderstorm", lightning: "Lightning", hurricane: "Hurricane", flood: "Flooding",
+  winter_storm: "Winter storm", extreme_heat: "Extreme heat", earthquake: "Earthquake", hazmat: "Hazardous materials" };
+const HAZARD_KIND = { tornado: "shelter", severe_thunderstorm: "shelter", lightning: "hold", hurricane: "shelter", flood: "shelter", winter_storm: "hold", extreme_heat: "hold", earthquake: "shelter", hazmat: "shelter" };
 const KIND_HELP = { lockdown: "Threat inside or near the building", shelter: "Weather or hazardous air", evacuate: "Leave the building", hold: "Keep halls clear" };
 function sosBanner(i) {
-  const status = i.status === "reunification" ? "REUNIFICATION" : KIND_TEXT[i.kind];
+  const status = i.status === "reunification" ? "REUNIFICATION" : `${KIND_TEXT[i.kind]}${i.hazard ? `: ${HAZARD_TEXT[i.hazard].toUpperCase()}` : ""}`;
   return h("section", { class: `sos-banner ${i.status === "reunification" ? "reunify" : i.kind}`, "aria-labelledby": `sos-${i.id}` },
     i.isDrill ? h("p", { class: "drill" }, "DRILL · THIS IS A DRILL") : h("p", { class: "drill real" }, "THIS IS NOT A DRILL"),
     h("div", { class: "row" }, icon("shield"), h("div", { class: "grow" }, h("h2", { id: `sos-${i.id}` }, status), h("p", { class: "small" }, `${i.schoolName} · since ${fmtTime(i.startedAt)}`))),
@@ -2127,13 +2131,18 @@ async function roomStatusCard(i, compact = false) {
       h("option", { value: "", selected: !d.suggestedRoomId }, "Somewhere else"));
     const place = h("input", { id: "rs-place", maxlength: 80, placeholder: "e.g. Gym, hallway B, bus loop", value: d.last?.place || "" });
     const placeRow = h("div", { hidden: Boolean(d.suggestedRoomId) || undefined }, h("label", { for: "rs-place" }, "Where are you?"), place);
-    room.onchange = () => { placeRow.hidden = Boolean(room.value); };
+    const shelterFor = id => (d.rooms.find(r => r.id === id)?.shelter) || (id ? null : d.defaultArea);
+    const shelterNote = h("p", { class: "notice", "aria-live": "polite" });
+    const showShelter = () => { const a = d.hazard ? shelterFor(room.value) : null;
+      shelterNote.hidden = !d.hazard; shelterNote.textContent = d.hazard ? (a ? `${d.hazardLabel}: your shelter area is ${a.area}${a.route ? `. ${a.route}` : ""}.` : `${d.hazardLabel}: no shelter area is set for this room. Follow the school's plan.`) : ""; };
+    room.onchange = () => { placeRow.hidden = Boolean(room.value); showShelter(); };
+    showShelter();
     const needSel = h("select", { id: "rs-need", onchange: e => { need = e.target.value; } }, Object.entries(ROOM_NEED_TEXT).map(([k, t]) => h("option", { value: k, selected: k === need }, t)));
     const num = (id, label, max) => h("div", {}, h("label", { for: id }, label), h("input", { id, type: "number", inputmode: "numeric", min: 0, max, style: "width:6em" }));
     const body = [h(compact ? "summary" : "h2", {}, "My room"),
       d.last ? h("p", { class: "small" }, chip(ROOM_CHIP[d.last.status], ROOM_STATUS_TEXT[d.last.status]), ` Sent ${fmtTime(d.last.at)}. Send again whenever it changes.`)
         : h("p", { class: "small muted" }, "Tell the office how your room stands. Send again whenever it changes."),
-      h("label", { for: "rs-room" }, "Room"), room, placeRow,
+      shelterNote, h("label", { for: "rs-room" }, "Room"), room, placeRow,
       h("div", { class: "seg", role: "group", "aria-label": "Room status" }, Object.entries(ROOM_STATUS_TEXT).map(([k, t]) =>
         h("button", { type: "button", class: k === "secured" ? "present" : k === "moved" ? "" : "missing", "aria-pressed": String(status === k), onclick: () => { status = k; draw(); } }, t))),
       status === "needs_help" ? h("div", {}, h("label", { for: "rs-need" }, "What help?"), needSel) : null,
@@ -2172,6 +2181,24 @@ async function roomBoardCard(i) {
     dv?.total ? h("p", { class: "small" }, `Classroom screens: ${dv.switched} of ${dv.total} switched${i.kind === "lockdown" && i.status === "active" ? " (dark and silent)" : ""}.`,
       late.length ? ` Not yet: ${late.slice(0, 6).map(d => `${d.name}${d.room ? ` (${d.room})` : ""}${d.lastSeenAt ? `, last heard ${fmtTime(d.lastSeenAt)}` : ", never heard from"}`).join("; ")}${late.length > 6 ? ` and ${late.length - 6} more` : ""}.` : "") : null,
     h("p", { class: "small muted" }, "Rooms report themselves; EduOS doesn't track anyone's location."));
+}
+// ---- SAFE-03: shelter areas per room and hazard ----------------------------
+async function shelterAreasCard() {
+  const d = (await api.get("/api/safety/shelter-areas")).data;
+  const hz = state.shelterHazard || "tornado";
+  const row = (label, roomId, cur, key) => {
+    const inp = h("input", { id: `sa-${key}`, maxlength: 120, value: cur?.area || "", placeholder: roomId ? "Use the school default" : "e.g. Interior hallway, ground floor", disabled: !d.canEdit || undefined });
+    return h("li", {}, h("label", { for: `sa-${key}` }, label), h("div", { class: "row wrap" }, inp,
+      d.canEdit ? h("button", { class: "btn small", type: "button", "aria-label": `Save: ${label}`, onclick: async () => {
+        try { await api.put("/api/safety/shelter-areas", { roomId, hazard: hz, area: inp.value.trim() }); toast(inp.value.trim() ? "Saved." : "Cleared."); go("devices", { push: false }); }
+        catch { toast("Couldn't save it (2 to 120 characters)."); } } }, "Save") : null),
+      cur ? h("p", { class: "small muted" }, `Set by ${cur.setBy} · ${fmtDay(cur.setAt)}`) : null);
+  };
+  return h("section", { class: "card", "aria-label": "Shelter areas" }, h("h3", {}, "Shelter areas"),
+    h("p", { class: "small muted" }, "Where each room goes for each hazard. During a shelter, staff see their room's area and the room's screen shows it. A room without its own area uses the school default."),
+    h("label", { for: "sa-hz" }, "Hazard"), h("select", { id: "sa-hz", onchange: e => { state.shelterHazard = e.target.value; go("devices", { push: false }); } },
+      d.hazards.map(x => h("option", { value: x.key, selected: x.key === hz }, x.label))),
+    h("ul", { class: "list" }, row("School default", null, d.defaults[hz], "default"), d.rooms.map(r => row(r.building ? `${r.name} (${r.building})` : r.name, r.id, r.areas[hz], r.id))));
 }
 // What the alert reached. In-app notices are in each person's app; email,
 // SMS and push are only queued until a channel confirms them, and nothing
@@ -2221,7 +2248,9 @@ VIEWS.sos = async () => {
   const caps = state.safetyCaps || {};
   const out = [h("h2", {}, "Safety")];
   if (caps.canInitiate) {
-    let kind = state.sosKind || "lockdown", drill = state.sosDrill ?? true;
+    let kind = state.sosKind || "lockdown", drill = state.sosDrill ?? true, hazard = ["shelter", "hold"].includes(kind) ? state.sosHazard || null : null;
+    const hz = h("select", { id: "sos-hazard", onchange: e => { state.sosHazard = e.target.value || null; if (e.target.value) state.sosKind = HAZARD_KIND[e.target.value]; go("sos", { push: false }); } },
+      h("option", { value: "" }, "No specific hazard"), Object.entries(HAZARD_TEXT).map(([k, t]) => h("option", { value: k, selected: k === hazard }, t)));
     const notes = h("textarea", { id: "sos-notes", maxlength: 500 });
     const schools = state.me.role === "superintendent" ? ((await safe(api.get("/api/schools")))?.data || []).filter(x => x.status !== "inactive") : [];
     const school = schools.length ? h("select", { id: "sos-school" }, schools.map(x => h("option", { value: x.id }, x.name))) : null;
@@ -2230,14 +2259,16 @@ VIEWS.sos = async () => {
         h("strong", {}, KIND_TEXT[k]), h("span", {}, KIND_HELP[k])))),
       seg([["drill", "Drill"], ["real", "Real emergency"]], drill ? "drill" : "real", v => { state.sosDrill = v === "drill"; go("sos", { push: false }); }),
       school ? [h("label", { for: "sos-school" }, "School"), school] : null,
+      ["shelter", "hold"].includes(kind) ? [h("label", { for: "sos-hazard" }, "Hazard (severe weather and others)"), hz,
+        hazard ? h("p", { class: "small muted" }, "Staff, students and classroom screens get this hazard's instructions and each room's shelter area.") : null] : null,
       h("label", { for: "sos-notes" }, "Short note for staff (optional, not sent to families)"), notes,
       h("button", { class: "btn danger block big", type: "button", onclick: async () => {
         try {
-          const started = (await api.post("/api/safety/incidents", { kind, isDrill: drill, ...(notes.value.trim() ? { instructions: notes.value.trim() } : {}), ...(school ? { schoolId: school.value } : {}) })).data;
-          const yes = await ask({ title: `Start ${drill ? "a DRILL" : "a REAL"} ${KIND_TEXT[kind]}?`, text: `Everyone at ${started.schoolName}, its bus drivers and families are alerted now${drill ? ", marked as a drill" : ""}. Confirm within 2 minutes.`, confirm: `Yes, start ${drill ? "drill" : KIND_TEXT[kind].toLowerCase()}`, danger: true });
+          const started = (await api.post("/api/safety/incidents", { kind, isDrill: drill, ...(hazard ? { hazard } : {}), ...(notes.value.trim() ? { instructions: notes.value.trim() } : {}), ...(school ? { schoolId: school.value } : {}) })).data;
+          const yes = await ask({ title: `Start ${drill ? "a DRILL" : "a REAL"} ${KIND_TEXT[kind]}${hazard ? ` (${HAZARD_TEXT[hazard]})` : ""}?`, text: `Everyone at ${started.schoolName}, its bus drivers and families are alerted now${drill ? ", marked as a drill" : ""}. Confirm within 2 minutes.`, confirm: `Yes, start ${drill ? "drill" : KIND_TEXT[kind].toLowerCase()}`, danger: true });
           if (!yes) { await safe(api.post(`/api/safety/incidents/${started.id}/cancel`)); toast("Not started"); return; }
-          await api.post(`/api/safety/incidents/${started.id}/confirm`, { kind, isDrill: drill });
-          state.sosKind = null; state.sosDrill = null;
+          await api.post(`/api/safety/incidents/${started.id}/confirm`, { kind, isDrill: drill, ...(hazard ? { hazard } : {}) });
+          state.sosKind = null; state.sosDrill = null; state.sosHazard = null;
           await checkSafety();
         } catch (e) { toast(e.body?.error === "incident_already_live" ? "An alert is already active." : e.status === 410 ? "Took too long. Start again." : "Couldn't start the alert."); }
       } }, icon("shield"), "Continue"),
@@ -3702,7 +3733,8 @@ VIEWS.devices = async () => {
     h("p", { class: "small muted" }, it ? "Schools ask for displays, student devices and room equipment. Approve what's on the district's list; the school then puts it in a room. Teachers can control only approved devices in rooms they teach in."
       : "Ask district IT to approve a classroom device, then put it in a room. Changing what a device can do needs approving again. Student devices can be locked or pointed at a link; no one can view their screens."),
     h("div", { class: "btns", role: "group", "aria-label": "Show" }, it ? seg("pending", "Waiting for approval") : null, seg("all", "All devices"), seg("rooms", "Rooms"), seg("paired", "Paired now"),
-      it ? seg("storage", "Teachers' storage") : null, it ? seg("sports", "Sports connectors") : null),
+      it ? seg("storage", "Teachers' storage") : null, it ? seg("sports", "Sports connectors") : null, !it ? seg("shelter", "Shelter areas") : null),
+    filter === "shelter" && !it ? await shelterAreasCard() :
     filter === "storage" && it ? [await storageReviewCard(), await offloadLogCard()] :
     filter === "sports" && it ? await connectorsCard() :
     filter === "paired" ? await pairingsCard() :

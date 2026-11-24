@@ -53,16 +53,16 @@ export function incidentMessage(kind, status, audience, { reunificationPoint = n
   return table[kind] || "";
 }
 
-export function familyTitle(kind, isDrill, schoolName, status = "active") {
+export function familyTitle(kind, isDrill, schoolName, status = "active", hazard = null) {
   const drill = isDrill ? " (drill)" : "";
   if (status === "reunification") return `${schoolName}: reunification has started${drill}`;
   if (status === "closed") return `${schoolName}: all clear${drill}`;
-  return `${schoolName}: ${KIND_LABEL[kind]} in effect${drill}`;
+  return `${schoolName}: ${alertTitle(kind, hazard, "family")} in effect${drill}`;
 }
 
 /** Two-step confirm: the second request must repeat the kind and drill flag. */
 export function confirmMatches(incident, body) {
-  return body && body.kind === incident.kind && body.isDrill === incident.is_drill;
+  return Boolean(body && body.kind === incident.kind && body.isDrill === incident.is_drill && (body.hazard ?? null) === (incident.hazard ?? null));
 }
 
 /** Roll-call totals across the latest entry per learner. */
@@ -111,10 +111,60 @@ export function deviceSafetyView(s) {
   const quiet = s.deviceKind === "student_device";
   if (!s.incident) return s.allClearAt ? { mode: "all_clear", title: "All clear", message: "Normal school operations resume.", volume: null, at: s.allClearAt } : { mode: "normal" };
   const i = s.incident, drill = i.isDrill ? " (drill)" : "";
-  const title = i.status === "reunification" ? `Reunification${drill}` : `${KIND_LABEL[i.kind]}${drill}`;
-  const message = incidentMessage(i.kind, i.status, "student", { reunificationPoint: i.reunificationPoint });
+  const title = i.status === "reunification" ? `Reunification${drill}` : `${alertTitle(i.kind, i.hazard, "student")}${drill}`;
+  let message = (i.status !== "reunification" && hazardMessage(i.hazard, "student")) || incidentMessage(i.kind, i.status, "student", { reunificationPoint: i.reunificationPoint });
+  if (i.status !== "reunification" && i.shelterArea) message += ` Shelter area: ${i.shelterArea}.`;
   if (i.kind === "lockdown" && i.status === "active")
     return quiet ? { mode: "quiet", title, message: "Silence this device and stay out of sight.", volume: 0, incidentId: i.id }
       : { mode: "dark", title, message: null, volume: 0, incidentId: i.id };
   return { mode: "alert", title, message, volume: 0, incidentId: i.id };
+}
+
+// ---- SAFE-03: severe weather and other hazards ----
+// A shelter or hold can name its hazard. Staff, students and screens get the
+// hazard's instructions; each room has a shelter area for it (db/123).
+// Families are told the weather hazard (it's public); a hazardous-materials
+// release stays generic.
+export const HAZARDS = ["tornado", "severe_thunderstorm", "lightning", "hurricane", "flood", "winter_storm", "extreme_heat", "earthquake", "hazmat"];
+export const HAZARD_LABEL = { tornado: "Tornado warning", severe_thunderstorm: "Severe thunderstorm", lightning: "Lightning", hurricane: "Hurricane",
+  flood: "Flooding", winter_storm: "Winter storm", extreme_heat: "Extreme heat", earthquake: "Earthquake", hazmat: "Hazardous materials" };
+/** The alert each hazard usually calls for (the person starting it can choose). */
+export const HAZARD_KIND = { tornado: "shelter", severe_thunderstorm: "shelter", lightning: "hold", hurricane: "shelter", flood: "shelter",
+  winter_storm: "hold", extreme_heat: "hold", earthquake: "shelter", hazmat: "shelter" };
+const HAZARD_STAFF = {
+  tornado: "Take everyone to your room's tornado shelter area: an interior hallway or room on the lowest floor, away from windows, doors and large open rooms. Crouch low and cover heads. Take roll call there.",
+  severe_thunderstorm: "Bring everyone indoors and away from windows. Suspend outdoor activities. Take roll call.",
+  lightning: "Everyone indoors now: end recess, practices and outdoor classes. Wait 30 minutes after the last thunder before anyone goes back out.",
+  hurricane: "Move everyone to your shelter area, away from windows. Follow the district's hurricane plan. Take roll call.",
+  flood: "Move everyone to your shelter area on a higher floor. Keep away from flooded areas and doors. Take roll call.",
+  winter_storm: "Keep everyone indoors. Buses and dismissal follow the district's plan; wait for instructions here.",
+  extreme_heat: "Keep everyone indoors in cooled rooms; no outdoor activity. Make water available.",
+  earthquake: "Drop, cover and hold on until the shaking stops. Then wait for instructions here; evacuate only if told to.",
+  hazmat: "Close windows and doors and turn off fans; the office shuts down ventilation. Stay inside. Take roll call."
+};
+const HAZARD_STUDENT = {
+  tornado: "Go with your teacher to the shelter area. Crouch low and cover your head.",
+  severe_thunderstorm: "Stay inside with your teacher, away from windows.",
+  lightning: "Stay inside. Outdoor activities are stopped for now.",
+  hurricane: "Go with your teacher to the shelter area, away from windows.",
+  flood: "Go with your teacher to the shelter area.",
+  winter_storm: "Stay inside with your teacher and wait for instructions.",
+  extreme_heat: "Stay inside where it's cool, and drink water.",
+  earthquake: "Drop, cover and hold on. Stay with your teacher.",
+  hazmat: "Stay inside with your teacher. Keep doors and windows closed."
+};
+const WEATHER = new Set(["tornado", "severe_thunderstorm", "lightning", "hurricane", "flood", "winter_storm", "extreme_heat", "earthquake"]);
+/** Hazard instructions for an audience, or null (no hazard, or none for families). */
+export function hazardMessage(hazard, audience) {
+  if (!hazard || !HAZARDS.includes(hazard)) return null;
+  if (audience === "student") return HAZARD_STUDENT[hazard];
+  if (audience === "family") return WEATHER.has(hazard) ? `The school is sheltering for ${HAZARD_LABEL[hazard].toLowerCase()}. Students are with staff in safe areas. Please don't come to the school until it's safe; we'll update you here.` : null;
+  if (audience === "driver") return WEATHER.has(hazard) ? `${HAZARD_LABEL[hazard]}: follow dispatch; don't unload at the school until it's safe.` : null;
+  return HAZARD_STAFF[hazard];
+}
+/** The heading for an alert with its hazard, e.g. "Shelter in place: Tornado warning". Families never see a non-weather hazard. */
+export function alertTitle(kind, hazard, audience = "staff") {
+  const base = KIND_LABEL[kind];
+  if (!hazard || (audience === "family" && !WEATHER.has(hazard))) return base;
+  return `${base}: ${HAZARD_LABEL[hazard]}`;
 }
