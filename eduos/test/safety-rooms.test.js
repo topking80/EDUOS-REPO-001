@@ -23,3 +23,16 @@ test("the board: latest report per room, needs help first, places outside rooms 
   assert.deepEqual(b.rooms.map(r => [r.name, r.report?.status || null]), [["Gym", "needs_help"], ["Room 14", "not_secured"], ["Room 12", "secured"], ["Room 16", null]]);
   assert.equal(b.totals.reported, 2); assert.equal(b.totals.waiting, 1); assert.equal(b.totals.students, 68); assert.equal(b.totals.needs_help, 1);
 });
+
+import { deviceSafetyView } from "../src/safety-model.js";
+test("SAFE-02: a lockdown darkens displays and quiets student devices; other alerts show a muted notice; all clear, then normal", () => {
+  const live = (kind, deviceKind, status = "active") => ({ incident: { id: "i", kind, isDrill: false, status, startedAt: "x", reunificationPoint: status === "reunification" ? "Gym" : null }, deviceKind });
+  assert.deepEqual(deviceSafetyView(live("lockdown", "display")), { mode: "dark", title: "Lockdown", message: null, volume: 0, incidentId: "i" });
+  assert.equal(deviceSafetyView(live("lockdown", "kiosk")).mode, "dark");
+  assert.equal(deviceSafetyView(live("lockdown", "student_device")).mode, "quiet");
+  for (const k of ["shelter", "evacuate", "hold"]) { const v = deviceSafetyView(live(k, "display")); assert.equal(v.mode, "alert"); assert.equal(v.volume, 0); assert.ok(v.message); }
+  assert.equal(deviceSafetyView(live("lockdown", "display", "reunification")).mode, "alert", "reunification is a notice, not dark");
+  assert.equal(deviceSafetyView({ incident: null, allClearAt: "t", deviceKind: "display" }).mode, "all_clear");
+  assert.deepEqual(deviceSafetyView({ incident: null, allClearAt: null, deviceKind: "display" }), { mode: "normal" });
+  assert.doesNotMatch(JSON.stringify(deviceSafetyView(live("evacuate", "display"))), /roll call|staff/i, "student text only on a screen anyone can see");
+});

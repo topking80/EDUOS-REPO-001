@@ -139,6 +139,8 @@ function mockApi(role, pathname, failWebhookLoads = false) {
         totals: { rooms: 2, reported: 1, secured: 0, not_secured: 0, needs_help: 1, moved: 0, students: 2, adults: 1, waiting: 1 },
         rooms: [{ roomId: "r12", name: "Room 12", building: "North", report: { status: "needs_help", need: "medical", students: 2, adults: 1, note: "Asthma", by: "Teacher S1", at: now } },
           { roomId: "r14", name: "Room 14", building: "North", report: null }] } };
+    case "/api/safety/incidents/inc1/displays": return { data: { total: 3, switched: 2, devices: [{ id: "d1", name: "Front board", kind: "display", room: "Room 14", lastSeenAt: now, switched: false },
+        { id: "d2", name: "Door kiosk", kind: "kiosk", room: "Room 12", lastSeenAt: now, switched: true }, { id: "d3", name: "Cart A", kind: "student_device", room: "Room 12", lastSeenAt: now, switched: true }] } };
     case "/api/safety/incidents/inc1/rollcall": return { data: { incident: {}, learners: [{ studentId: "c9", name: "Alice A", grade: "3", status: null, note: null }], extras: [], submittedAt: null } };
     case "/api/safety/incidents/inc1/sro-status": return { data: { incident: {}, updates: [] } };
     case "/api/home": if (role === "parent") return { data: { children: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", absences_30d: 0, due_7d: 0, overdue: 0, to_acknowledge: 0 },
@@ -1107,6 +1109,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/safety` });
       await page.mainText();
       if (!(await waitFor(`(document.querySelector('main section[aria-label="Rooms"]')?.textContent || "").includes("Needs help: Medical")`))) failures.push("sro: no room board");
+      if (!(await page.eval(`document.querySelector('main section[aria-label="Rooms"]').textContent.includes("Classroom screens: 2 of 3 switched (dark and silent). Not yet: Front board (Room 14)")`))) failures.push("sro: no display check");
       await waitFor(`!!document.querySelector("main #rs-room")`);
       await axeScan(page, "sro: room board", a11y);
       if (page.errors.length) failures.push(`sro board: ${page.errors[0].split("\n")[0]}`);

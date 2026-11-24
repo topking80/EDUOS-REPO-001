@@ -14,6 +14,7 @@
 //
 // A check-in records presence only. The teacher confirms attendance through the
 // attendance route, as before.
+import { deviceSafetyView } from "./safety-model.js";
 import crypto from "node:crypto";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { requireSession, requireCsrf } from "./auth.js";
@@ -48,7 +49,13 @@ export function registerRoomCheckinRoutes(app) {
     catch (e) { next(e); }
   };
 
+  // SAFE-02: check-in pauses while a safety alert is live at the school; people stay where they are.
+  const agentSafety = async (device, keyHash) => (await pool.query(`SELECT eduos_classroom_agent_safety($1,$2) AS out`, [device, keyHash])).rows[0].out;
+
   app.post("/api/classroom-agent/checkin-code", agentLimiter, agent(async (device, keyHash) => {
+    const live = await agentSafety(device, keyHash);
+    if (!live) return null;
+    if (live.incident) return { path: null, paused: true, safety: deviceSafetyView(live) };
     const secret = crypto.randomBytes(16).toString("base64url");
     const r = (await pool.query(`SELECT eduos_classroom_agent_checkin_code($1,$2,$3) AS out`, [device, keyHash, checkinHash(secret)])).rows[0].out;
     if (!r) return null;
@@ -60,6 +67,9 @@ export function registerRoomCheckinRoutes(app) {
   app.post("/api/classroom-agent/kiosk-checkin", agentLimiter, agent(async (device, keyHash, req) => {
     const n = req.body?.studentNumber;
     if (typeof n !== "string" || n.trim().length < 1 || n.length > 40) return { error: "not_found" };
+    const live = await agentSafety(device, keyHash);
+    if (!live) return null;
+    if (live.incident) return { error: "paused_for_safety", safety: deviceSafetyView(live) };
     return (await pool.query(`SELECT eduos_classroom_agent_kiosk_checkin($1,$2,$3) AS out`, [device, keyHash, n])).rows[0].out;
   }));
 
@@ -67,6 +77,7 @@ export function registerRoomCheckinRoutes(app) {
     const { code, door } = req.body || {};
     const secret = code ?? door, method = code != null ? "display_qr" : "door_qr";
     if (!validId(req.params.id) || typeof secret !== "string" || !SECRET_RE.test(secret)) throw new HttpError(400, "invalid_checkin");
+    if (req.actor.schoolId && (await one(c, `SELECT eduos_safety_live_at($1) AS live`, [req.actor.schoolId])).live) throw new HttpError(409, "paused_for_safety");
     const r = (await one(c, `SELECT eduos_room_checkin($1,$2,$3) AS out`, [req.params.id, method, checkinHash(secret)])).out;
     if (r.error) throw new HttpError(r.error === "room_not_found" ? 404 : r.error === "code_expired" ? 410 : 403, r.error);
     return { ...r, method };

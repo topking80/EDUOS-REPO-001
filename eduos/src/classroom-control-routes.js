@@ -14,6 +14,7 @@ import { pool, withTenantTransaction } from "./db.js";
 import { audit, rows, one, validId, HttpError, sendError } from "./role-app-util.js";
 import { parseCommand } from "./classroom-command.js";
 import { KEY_RE } from "./pairing-routes.js";
+import { deviceSafetyView } from "./safety-model.js";
 
 const sha256 = s => crypto.createHash("sha256").update(s).digest("hex");
 const keyOf = req => KEY_RE.exec(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
@@ -36,6 +37,8 @@ export function registerClassroomControlRoutes(app) {
       const { capability, args } = req.body || {};
       const clean = parseCommand(capability, args ?? {});
       if (!validId(req.params.id) || !clean) throw new HttpError(400, "invalid_command");
+      // SAFE-02: during a safety alert the room's devices follow the alert, not commands.
+      if ((await one(c, `SELECT eduos_safety_live_at($1) AS live`, [req.actor.schoolId])).live) throw new HttpError(409, "paused_for_safety");
       const r = (await one(c, `SELECT eduos_classroom_command($1,$2,$3::jsonb) AS out`, [req.params.id, capability, JSON.stringify(clean)])).out;
       if (r.error) throw new HttpError(r.error === "device_not_found" ? 404 : r.error === "device_not_ready" ? 409 : 403, r.error);
       await audit(c, req, "command", "classroom_device", req.params.id, capability);
@@ -57,8 +60,23 @@ export function registerClassroomControlRoutes(app) {
     try {
       const r = (await pool.query(`SELECT eduos_classroom_agent_take($1,$2) AS out`, [m[1], sha256(m[2])])).rows[0].out;
       if (!r) return res.status(401).json({ error: "invalid_device_key" });
+      // SAFE-02: what to show while an alert is live at the school (db/122).
+      const safety = deviceSafetyView((await pool.query(`SELECT eduos_classroom_agent_safety($1,$2) AS out`, [m[1], sha256(m[2])])).rows[0].out);
       res.setHeader("Cache-Control", "no-store");
-      res.json({ data: r });
+      res.json({ data: { ...r, safety } });
+    } catch (e) { next(e); }
+  });
+
+  // SAFE-02: a device that only shows things (a kiosk, a display without
+  // commands) asks what to show: normal, an alert notice, dark, or all clear.
+  app.post("/api/classroom-agent/safety", agentLimiter, async (req, res, next) => {
+    const m = keyOf(req);
+    if (!m) return res.status(401).json({ error: "device_key_required" });
+    try {
+      const r = (await pool.query(`SELECT eduos_classroom_agent_safety($1,$2) AS out`, [m[1], sha256(m[2])])).rows[0].out;
+      if (!r) return res.status(401).json({ error: "invalid_device_key" });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data: { safety: deviceSafetyView(r) } });
     } catch (e) { next(e); }
   });
 
