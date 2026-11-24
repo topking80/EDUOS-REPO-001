@@ -381,6 +381,14 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       recipients: [{ userId: "u9", name: "Pupil A", type: "student", consent: "pending" }], events: [] } };
     case "/api/history/capsules/cap1/candidates": return { data: [{ id: "e2", title: "First day of school", entryType: "event", kind: "family_memory", occurredAt: now }] };
     case "/api/history/capsule-recipient-options": return { data: [{ userId: "u9", name: "Pupil A", type: "student" }, { userId: "u1", name: "Smoke Test", type: "guardian" }] };
+    // TC-11: the family storage dashboard.
+    case "/api/history/storage": return { data: { student: { id: "c1", name: "Alice A" }, limits: { photosAllowed: true, maxPhotoBytes: 10485760, maxPhotosPerItem: 6, maxBytesPerStudent: 262144000, types: ["image/jpeg"], setBy: "district" },
+      usage: { usedBytes: 26214400, percent: 10, photos: 14, inLongTermStorage: 3, roomForAnotherPhoto: true }, items: { inHistory: 9, waitingForReview: 1, drafts: 0 },
+      ...(role === "parent" ? { myContributions: { waiting: 1, accepted: 4, declined: 1, withdrawn: 0 } } : {}),
+      capsules: [{ id: "cap1", title: "For Alice at 18", status: "scheduled", opens: { on: now } }],
+      retention: { recordsScheduleRef: "Board policy 8310", text: "Official school records are kept by the district under its records schedule." },
+      export: { allowed: true, href: "/api/history/export?studentId=c1" }, guidance: ["JPEG, PNG and WebP photos are accepted."],
+      donations: { changeStorage: false, text: "Donations never change this limit." } } };
     // TC-08: preservation and legal holds.
     case "/api/history/preservation": return { data: { policy: { verifyEveryDays: 90, archiveAfterDays: null, capacityAlertPercent: 80, recordsScheduleRef: "" },
       canEdit: role === "superintendent", storageReady: true, archiveStorageClass: null, maxBytesPerStudent: 262144000, lastCheckedAt: now, donationsAffectLimits: false,
@@ -545,6 +553,10 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           "principal/capsules": ["Milestones to confirm", "Alice A: Graduation", "1 recipient accepted", "Confirm milestone"],
           "parent/capsule": ["Choose a capsule from Time Capsules."] }[`${role}/${tab}`];
         for (const want of capsuleExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
+        // TC-11: the family storage dashboard on the history page.
+        const storageExpect = { "parent/portfolio": ["Storage: 25.0 MB of 250.0 MB used", "14 photos (3 in long-term storage", "4 accepted · 1 waiting · 1 declined", "can't be raised by payment or donation", "Board policy 8310"],
+          "pupil/portfolio": ["Storage: 25.0 MB of 250.0 MB used"] }[`${role}/${tab}`];
+        for (const want of storageExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
         // TC-08: preservation for the records office; settings and holds for the superintendent.
         const preserveExpect = { "principal/history": ["Preservation", "Maple", "failed its integrity check"],
           "superintendent/history": ["Preservation", "Preservation settings", "Legal holds (1)", "Case 26-CV-0142"] }[`${role}/${tab}`];

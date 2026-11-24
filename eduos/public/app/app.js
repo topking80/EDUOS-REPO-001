@@ -1357,8 +1357,30 @@ VIEWS.portfolio = async () => {
     cursor ? more : null,
     historyDownloadCard(first.student.id, role),
     ["parent", "pupil"].includes(role) ? await familyTransferCard(first.student.id) : null,
+    await familyStorageCard(first.student.id, role),
     await studentSharingCard(first.student.id)];
 };
+// ---- TC-11: family storage dashboard ---------------------------------------
+async function familyStorageCard(studentId, role) {
+  if (!["parent", "pupil"].includes(role)) return null;
+  const d = (await safe(api.get(`/api/history/storage?studentId=${encodeURIComponent(studentId)}`)))?.data;
+  if (!d?.usage) return null;
+  const mb = n => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${(n / 1048576).toFixed(1)} MB`;
+  const opens = x => x.opens.on ? `opens ${fmtDay(x.opens.on)}` : `opens at ${MILESTONE_TEXT[x.opens.milestone] || "a milestone"}`;
+  const c = d.myContributions;
+  return h("section", { class: "card", "aria-label": "Storage and preservation" }, h("h3", {}, `Storage: ${mb(d.usage.usedBytes)} of ${mb(d.limits.maxBytesPerStudent)} used`),
+    h("progress", { max: 100, value: d.usage.percent, "aria-label": `${d.usage.percent}% of the district's limit used` }),
+    h("p", { class: "small" }, `${d.usage.photos} photo${d.usage.photos === 1 ? "" : "s"}${d.usage.inLongTermStorage ? ` (${d.usage.inLongTermStorage} in long-term storage, still opens normally)` : ""}. `,
+      d.limits.photosAllowed ? `Up to ${mb(d.limits.maxPhotoBytes)} per photo and ${d.limits.maxPhotosPerItem} per item.` : "Photos aren't turned on in this district yet.",
+      d.usage.roomForAnotherPhoto ? "" : " The limit is reached: no more photos can be added."),
+    h("p", { class: "small muted" }, "The district sets the same limit for every student. It can't be raised by payment or donation."),
+    h("ul", { class: "list small" }, kv("In the history", String(d.items.inHistory)), kv("Waiting for school review", String(d.items.waitingForReview)), kv("Drafts", String(d.items.drafts)),
+      c ? kv("Your memories", `${c.accepted} accepted · ${c.waiting} waiting · ${c.declined} declined`) : null),
+    d.capsules.length ? [h("h4", {}, "Your Time Capsules"), h("ul", { class: "list small" }, d.capsules.map(x => h("li", {}, `${x.title} · ${{ draft: "draft", sealed: "sealed", scheduled: "sealed", released: "opened" }[x.status] || x.status}${x.status === "released" ? "" : ` · ${opens(x)}`}`)))] : null,
+    h("h4", {}, "How long it's kept"), h("p", { class: "small" }, d.retention.text, d.retention.recordsScheduleRef ? ` District schedule: ${d.retention.recordsScheduleRef}.` : ""),
+    h("h4", {}, "Saving space"), h("ul", { class: "list small" }, d.guidance.map(g => h("li", {}, g))),
+    h("p", { class: "small muted" }, d.donations.text));
+}
 // ---------------- Time Capsules ----------------
 const MILESTONE_TEXT = { grade_5_completion: "Finishing grade 5", grade_8_completion: "Finishing grade 8", graduation: "Graduation", age_18: "Turning 18" };
 const CAPSULE_STATUS = { draft: "Draft", sealed: "Sealed, waiting for the milestone", scheduled: "Sealed", released: "Released", cancelled: "Cancelled" };
