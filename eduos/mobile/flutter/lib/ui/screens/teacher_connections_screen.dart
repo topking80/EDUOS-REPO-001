@@ -200,14 +200,94 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
     }
   }
 
-  Future<void> _showOnDevice(Json device) async {
+  Future<void> _sendDeviceCommand(Json device, String capability, Json args) async {
     try {
-      await AppScope.read(context).api.post('/api/devices/${device['id']}/commands', {'capability': 'show', 'args': {}});
+      await AppScope.read(context).api.post('/api/devices/${device['id']}/commands', {'capability': capability, 'args': args});
       if (!mounted) return;
-      toast(context, 'Classroom display command sent.');
+      toast(context, capability == 'show' ? 'Classroom display command sent.' : 'Device command sent.');
     } on ApiException catch (e) {
-      if (mounted) toast(context, e.error == 'paused_for_safety' ? 'Classroom controls are paused during a safety alert.' : 'Pair your teacher device with this room before sharing.');
+      if (mounted) toast(context, e.error == 'paused_for_safety' ? 'Classroom controls are paused during a safety alert.' : 'Pair your teacher device with this room before controlling equipment.');
     }
+  }
+
+  Future<void> _controlDevice(Json device) async {
+    final capabilities = (device['capabilities'] as List? ?? const []).whereType<String>().toSet();
+    final actions = <Map<String, Object?>>[];
+    void add(String label, String capability, Json args) {
+      if (capabilities.contains(capability)) actions.add({'label': label, 'capability': capability, 'args': args});
+    }
+    add('Share teacher screen', 'show', {});
+    add('Blank display', 'blank', {'on': true});
+    add('Restore display', 'blank', {'on': false});
+    add('Power on', 'power', {'on': true});
+    add('Power off', 'power', {'on': false});
+    add('Lights on', 'lights', {'on': true});
+    add('Lights off', 'lights', {'on': false});
+    add('Lock student devices', 'lock', {});
+    add('Unlock student devices', 'unlock', {});
+    add('Exit focus mode', 'focus', {'off': true});
+    if (actions.isEmpty && !capabilities.any((c) => ['volume', 'input', 'open_link', 'focus'].contains(c))) {
+      if (mounted) toast(context, 'This device has no supported teacher controls.');
+      return;
+    }
+    final selected = await showDialog<Map<String, Object?>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(str(device['name'], 'Classroom device')),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            for (final action in actions)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.tune),
+                title: Text(str(action['label'])),
+                onTap: () => Navigator.pop(dialogContext, action),
+              ),
+            if (capabilities.contains('volume'))
+              ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.volume_up), title: const Text('Set volume'), onTap: () => Navigator.pop(dialogContext, {'prompt': 'volume'})),
+            if (capabilities.contains('input'))
+              ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.input), title: const Text('Switch input'), onTap: () => Navigator.pop(dialogContext, {'prompt': 'input'})),
+            if (capabilities.contains('open_link'))
+              ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.link), title: const Text('Open secure link'), onTap: () => Navigator.pop(dialogContext, {'prompt': 'open_link'})),
+            if (capabilities.contains('focus'))
+              ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.center_focus_strong), title: const Text('Open focus link'), onTap: () => Navigator.pop(dialogContext, {'prompt': 'focus'})),
+          ])),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel'))],
+      ),
+    );
+    if (selected == null || !mounted) return;
+    final prompt = str(selected['prompt']);
+    if (prompt.isNotEmpty) {
+      final value = await promptText(context,
+        title: prompt == 'volume' ? 'Set device volume' : prompt == 'input' ? 'Switch device input' : prompt == 'focus' ? 'Open focus link' : 'Open secure link',
+        text: prompt == 'volume' ? 'Enter a volume from 0 to 100.' : prompt == 'input' ? 'Enter the input source name.' : 'Enter an HTTPS URL approved by your school.',
+        label: prompt == 'volume' ? 'Volume (0–100)' : prompt == 'input' ? 'Input source' : 'HTTPS URL',
+        action: 'Send',
+        maxLength: 500,
+      );
+      if (value == null || !mounted) return;
+      if (prompt == 'volume') {
+        final level = int.tryParse(value.trim());
+        if (level == null || level < 0 || level > 100) {
+          toast(context, 'Volume must be a whole number from 0 to 100.');
+          return;
+        }
+        await _sendDeviceCommand(device, 'volume', {'level': level});
+      } else if (prompt == 'input') {
+        await _sendDeviceCommand(device, 'input', {'source': value.trim()});
+      } else {
+        final uri = Uri.tryParse(value.trim());
+        if (uri == null || uri.scheme != 'https' || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
+          toast(context, 'Enter a valid HTTPS URL.');
+          return;
+        }
+        await _sendDeviceCommand(device, prompt, {'url': value.trim()});
+      }
+      return;
+    }
+    await _sendDeviceCommand(device, str(selected['capability']), obj(selected['args']));
   }
 
   Future<void> _openRoll(Json room) async {
@@ -336,8 +416,15 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
             padding: const EdgeInsets.only(left: 12, bottom: 8),
             child: Text('Connected as ${str(obj(room['pairing'])['controller'])}', style: Theme.of(context).textTheme.bodySmall),
           ),
-          for (final device in objs(room['devices']).where((d) => objs(room['devices']).isNotEmpty && (d['capabilities'] as List? ?? const []).contains('show')))
-            Align(alignment: Alignment.centerLeft, child: TextButton.icon(onPressed: room['pairing'] == null ? null : () => _showOnDevice(device), icon: const Icon(Icons.cast), label: Text('Share to ${str(device['name'])}'))),
+          for (final device in objs(room['devices']).where((d) => (d['capabilities'] as List? ?? const []).isNotEmpty))
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: room['pairing'] == null ? null : () => _controlDevice(device),
+                icon: const Icon(Icons.tune),
+                label: Text('Control ${str(device['name'])}'),
+              ),
+            ),
         ],
         if (d.mediaRooms.isNotEmpty) ...[
           const Divider(),
