@@ -208,7 +208,7 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
       SectionCard(title: 'Classroom connections', children: [
         const Text('Your school classrooms and media center, connected devices and authorized class rolls.'),
         if (d.rooms.isEmpty) const EmptyState('No classrooms or media centers are listed for your school.'),
-        for (final room in d.rooms)
+        for (final room in d.rooms.where((x) => ['classroom', 'media_center'].contains(str(x['kind']))))
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(str(room['kind']) == 'media_center' ? Icons.local_library_outlined : Icons.meeting_room_outlined),
@@ -219,8 +219,13 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
           ),
         if (d.checkins.isNotEmpty) Text('Your room check-ins today: ${d.checkins.map((x) => str(x['room'])).where((x) => x.isNotEmpty).join(', ')}'),
       ]),
-      SectionCard(title: 'Bus rider handoffs', children: [
-        const Text('Students arriving by bus. Confirm the physical handoff when the student is in your care.'),
+      SectionCard(title: 'Bus riders and handoffs', children: [
+        const Text('Bus assignments for students on your roster, with the latest driver check-in.'),
+        if (d.riders.isEmpty) const EmptyState('No bus riders are assigned to your roster.'),
+        for (final rider in d.riders)
+          ListTile(contentPadding: EdgeInsets.zero, title: Text(str(rider['display_name'])), subtitle: Text('${str(rider['bus_label'])} · ${str(rider['route_name'])} · stop ${str(rider['stop_name'])}'), trailing: StatusChip(str(rider['status']))),
+        const Divider(),
+        const Text('Arrival handoffs awaiting your confirmation:'),
         if (bus.isEmpty) const EmptyState('No bus handoffs assigned to you today.'),
         for (final h in bus) _arrivalTile(h),
       ]),
