@@ -6,6 +6,49 @@ import '../../core/models.dart';
 import '../widgets.dart';
 import 'messages_screen.dart';
 
+class _ClassroomPairDialog extends StatefulWidget {
+  const _ClassroomPairDialog({required this.roomName});
+  final String roomName;
+
+  @override
+  State<_ClassroomPairDialog> createState() => _ClassroomPairDialogState();
+}
+
+class _ClassroomPairDialogState extends State<_ClassroomPairDialog> {
+  final _code = TextEditingController();
+  final _deviceName = TextEditingController(text: 'Teacher mobile app');
+
+  @override
+  void dispose() {
+    _code.dispose();
+    _deviceName.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text('Connect to ${widget.roomName}'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Enter the six-digit code currently displayed by the classroom device.'),
+          TextField(controller: _code, keyboardType: TextInputType.number, maxLength: 6, decoration: const InputDecoration(labelText: 'Classroom code')),
+          TextField(controller: _deviceName, maxLength: 60, decoration: const InputDecoration(labelText: 'This device name')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final code = _code.text.trim();
+              final deviceName = _deviceName.text.trim();
+              if (code.length == 6 && deviceName.isNotEmpty) {
+                Navigator.pop(context, {'code': code, 'controllerName': deviceName});
+              }
+            },
+            child: const Text('Connect'),
+          ),
+        ],
+      );
+}
+
 class _TeacherDay {
   const _TeacherDay({required this.rooms, required this.mediaRooms, required this.arrivals, required this.pickup, required this.workspace, required this.checkins, required this.riders, required this.shifts});
   final List<Json> rooms, mediaRooms, arrivals, checkins, riders, shifts;
@@ -85,34 +128,18 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
   }
 
   Future<void> _pair(Json room) async {
-    final code = TextEditingController();
-    final controller = TextEditingController(text: 'Teacher mobile app');
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (_) => _ClassroomPairDialog(roomName: str(room['name'])),
+    );
+    if (result == null || !mounted) return;
     try {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Connect to ${str(room['name'])}'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Text('Enter the six-digit code currently displayed by the classroom device.'),
-            TextField(controller: code, keyboardType: TextInputType.number, maxLength: 6, decoration: const InputDecoration(labelText: 'Classroom code')),
-            TextField(controller: controller, maxLength: 60, decoration: const InputDecoration(labelText: 'This device name')),
-          ]),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(context, code.text.trim().length == 6 && controller.text.trim().isNotEmpty), child: const Text('Connect')),
-          ],
-        ),
-      );
-      if (ok != true || !mounted) return;
-      await AppScope.read(context).api.post('/api/rooms/${room['id']}/pair', {'code': code.text.trim(), 'controllerName': controller.text.trim()});
+      await AppScope.read(context).api.post('/api/rooms/${room['id']}/pair', result);
       if (!mounted) return;
       toast(context, 'Connected to ${str(room['name'])}.');
       _refreshDay();
     } on ApiException catch (e) {
       if (mounted) toast(context, e.error == 'wrong_code' ? 'That classroom code is incorrect or expired.' : 'Could not connect to this classroom.');
-    } finally {
-      code.dispose();
-      controller.dispose();
     }
   }
 
