@@ -49,3 +49,15 @@ EduOS while in an alert mode, it stays in that mode.
 It doesn't lock a student device, open anything on it, show its screen or
 record anything in the room. It doesn't contact emergency services. An alert
 starts only because a person started it.
+
+## Severe weather and other hazards (SAFE-03)
+
+A shelter or hold can name its hazard (tornado, severe thunderstorm,
+lightning, hurricane, flooding, winter storm, extreme heat, earthquake,
+hazardous materials). The `safety` object's `title` then names it ("Shelter
+in place: Tornado warning") and `message` carries the hazard's student
+instructions plus the room's shelter area when one is set ("Shelter area:
+Interior hallway B."). Show both in `alert` mode as usual.
+
+The principal (or a vice principal) sets each room's shelter area per hazard,
+with a school default, under Rooms & devices → Shelter areas.

@@ -36,3 +36,22 @@ test("SAFE-02: a lockdown darkens displays and quiets student devices; other ale
   assert.deepEqual(deviceSafetyView({ incident: null, allClearAt: null, deviceKind: "display" }), { mode: "normal" });
   assert.doesNotMatch(JSON.stringify(deviceSafetyView(live("evacuate", "display"))), /roll call|staff/i, "student text only on a screen anyone can see");
 });
+
+import { hazardMessage, alertTitle, familyTitle, confirmMatches, HAZARDS, HAZARD_KIND } from "../src/safety-model.js";
+test("SAFE-03: hazard titles and instructions per audience; families never hear a non-weather hazard", () => {
+  assert.equal(alertTitle("shelter", "tornado"), "Shelter in place: Tornado warning");
+  assert.equal(alertTitle("shelter", "hazmat", "family"), "Shelter in place");
+  assert.equal(alertTitle("hold", null), "Hold in rooms");
+  assert.equal(familyTitle("shelter", false, "Maple", "active", "tornado"), "Maple: Shelter in place: Tornado warning in effect");
+  assert.equal(familyTitle("shelter", false, "Maple", "active", "hazmat"), "Maple: Shelter in place in effect");
+  for (const h of HAZARDS) { assert.ok(hazardMessage(h, "staff")); assert.ok(hazardMessage(h, "student")); assert.ok(["shelter", "hold"].includes(HAZARD_KIND[h])); }
+  assert.equal(hazardMessage("hazmat", "family"), null);
+  assert.match(hazardMessage("lightning", "staff"), /30 minutes after the last thunder/);
+  assert.equal(hazardMessage("meteor", "staff"), null);
+  const inc = { kind: "shelter", is_drill: false, hazard: "tornado" };
+  assert.equal(confirmMatches(inc, { kind: "shelter", isDrill: false, hazard: "tornado" }), true);
+  assert.equal(confirmMatches(inc, { kind: "shelter", isDrill: false }), false);
+  assert.equal(confirmMatches({ ...inc, hazard: null }, { kind: "shelter", isDrill: false }), true);
+  const v = deviceSafetyView({ incident: { id: "i", kind: "shelter", hazard: "tornado", isDrill: true, status: "active", shelterArea: "Hallway B" }, deviceKind: "display" });
+  assert.equal(v.title, "Shelter in place: Tornado warning (drill)"); assert.match(v.message, /Crouch low.*Shelter area: Hallway B\./);
+});

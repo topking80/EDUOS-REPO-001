@@ -709,3 +709,9 @@ GRANT EXECUTE ON FUNCTION eduos_ctx_membership_role(), eduos_ctx_is_vice_princip
 -- SAFE-02 (db/122): classroom displays follow a safety alert. The device's
 -- safety columns are written only by eduos_classroom_agent_safety.
 GRANT EXECUTE ON FUNCTION eduos_classroom_agent_safety(uuid, text), eduos_safety_live_at(uuid), eduos_safety_displays(uuid) TO eduos_app;
+
+-- SAFE-03 (db/123): hazards and shelter areas. Areas are ended, never deleted.
+GRANT SELECT, INSERT ON school_shelter_areas TO eduos_app;
+GRANT UPDATE (ended_by, ended_at) ON school_shelter_areas TO eduos_app;
+REVOKE DELETE, TRUNCATE ON school_shelter_areas FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_shelter_area_manager(uuid), eduos_shelter_area_for(uuid, uuid, uuid, text) TO eduos_app;

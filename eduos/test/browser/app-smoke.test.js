@@ -95,7 +95,7 @@ const BRAND = () => ({ data: { school: { id: "s1", name: "Maple" }, districtName
   branding: { primary: "#1f4e79", secondary: "#2f6f73", accent: "#f2b134", font: "system", appAppearance: appearance, mascotUploadId: null,
     tiles: { preset: "bold", base: { shape: "square", bg: "cycle", glyphMode: "color", glyphColor: "auto", labelColor: "auto", badge: false }, overrides: {} } },
   preferences: { theme: "school", reduceMotion: false } } });
-let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false, checkins = [], attendanceSent = [], remoteJoins = [], adultStudent = false, liveLockdown = false, roomReports = [];
+let mockSchool = "s1", switches = [], copies = [], draftSaves = [], planSaves = [], commandsSent = [], pairedRoom = false, checkins = [], attendanceSent = [], remoteJoins = [], adultStudent = false, liveLockdown = false, roomReports = [], sosCaps = false;
 function mockApi(role, pathname, failWebhookLoads = false) {
   const now = new Date().toISOString();
   // TEACH-04: today's classes and one plan (any date).
@@ -131,7 +131,7 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role: role === "vice_principal" ? "principal" : role, membershipRole: role, districtId: "d1", schoolId: mockSchool, memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: liveLockdown ? [{ id: "inc1", schoolId: "s1", schoolName: "Maple", kind: "lockdown", label: "Lockdown", isDrill: true, status: "active",
-        startedAt: now, message: "Lock doors, lights off, out of sight.", audience: "staff", instructions: null }] : [], canInitiate: false, canLead: false } };
+        startedAt: now, message: "Lock doors, lights off, out of sight.", audience: "staff", instructions: null }] : [], canInitiate: sosCaps, canLead: sosCaps } };
     // SAFE-01: room status.
     case "/api/safety/incidents/inc1/my-room": return { data: { incidentId: "inc1", live: true, rooms: [{ id: "r12", name: "Room 12", building: "North", kind: "classroom" }, { id: "r14", name: "Room 14", building: "North", kind: "classroom" }],
         suggestedRoomId: "r12", last: null } };
@@ -141,6 +141,9 @@ function mockApi(role, pathname, failWebhookLoads = false) {
           { roomId: "r14", name: "Room 14", building: "North", report: null }] } };
     case "/api/safety/incidents/inc1/displays": return { data: { total: 3, switched: 2, devices: [{ id: "d1", name: "Front board", kind: "display", room: "Room 14", lastSeenAt: now, switched: false },
         { id: "d2", name: "Door kiosk", kind: "kiosk", room: "Room 12", lastSeenAt: now, switched: true }, { id: "d3", name: "Cart A", kind: "student_device", room: "Room 12", lastSeenAt: now, switched: true }] } };
+    case "/api/safety/shelter-areas": return { data: { schoolId: "s1", canEdit: true, hazards: [{ key: "tornado", label: "Tornado warning" }, { key: "lightning", label: "Lightning" }],
+        defaults: { tornado: { id: "a1", area: "Gym hallway", route: null, setBy: "Principal S1", setAt: now } },
+        rooms: [{ id: "r12", name: "Room 12", building: "North", areas: { tornado: { id: "a2", area: "Interior hallway B", route: null, setBy: "Principal S1", setAt: now } } }, { id: "r14", name: "Room 14", building: "North", areas: {} }] } };
     case "/api/safety/incidents/inc1/rollcall": return { data: { incident: {}, learners: [{ studentId: "c9", name: "Alice A", grade: "3", status: null, note: null }], extras: [], submittedAt: null } };
     case "/api/safety/incidents/inc1/sro-status": return { data: { incident: {}, updates: [] } };
     case "/api/home": if (role === "parent") return { data: { children: [{ id: "c1", display_name: "Alice A", grade_level: "3", school_id: "s1", school_name: "Maple", absences_30d: 0, due_7d: 0, overdue: 0, to_acknowledge: 0 },
@@ -1121,6 +1124,29 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (!(await waitFor(`!!document.querySelector("main #rs-room")`))) failures.push("nurse lockdown: no room status");
       await axeScan(page, "nurse: room status", a11y);
     } finally { page?.close(); liveLockdown = false; }
+  }
+  // SAFE-03: the principal's shelter areas, and the start-an-alert hazard picker. Both pass axe.
+  {
+    let page;
+    const waitFor = async js => { for (let i = 0; i < 100; i++) { if (await page.eval(js)) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+    try {
+      state.role = "principal"; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/devices` });
+      await page.mainText();
+      await waitFor(`[...document.querySelectorAll("main button")].some(b => b.textContent === "Shelter areas")`);
+      await page.eval(`[...document.querySelectorAll("main button")].find(b => b.textContent === "Shelter areas").click()`);
+      if (!(await waitFor(`document.querySelector("#sa-r12")?.value === "Interior hallway B" && document.querySelector("#sa-default")?.value === "Gym hallway"`))) failures.push("principal: shelter areas");
+      await axeScan(page, "principal: shelter areas", a11y);
+      page.close();
+      sosCaps = true; page = await Page.open(chrome.port);
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/sos` });
+      await page.mainText();
+      await waitFor(`!!document.querySelector('main button.kind.shelter')`);
+      await page.eval(`document.querySelector('main button.kind.shelter').click()`);
+      if (!(await waitFor(`!!document.querySelector("main #sos-hazard")`))) failures.push("sos: no hazard picker for shelter");
+      await axeScan(page, "principal: start a shelter with a hazard", a11y);
+      if (page.errors.length) failures.push(`sos hazard: ${page.errors[0].split("\n")[0]}`);
+    } finally { page?.close(); sosCaps = false; }
   }
   // STATE-01: Account shows my licenses; the state index and staff licenses open and pass axe.
   {

@@ -14,8 +14,8 @@ import { requirePermission } from "./policy.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { enqueueNotifications } from "./notify.js";
-import { audit, rows, one, validId, HttpError, sendError } from "./role-app-util.js";
-import { LIVE, KIND_LABEL } from "./safety-model.js";
+import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
+import { LIVE, KIND_LABEL, HAZARDS, HAZARD_LABEL } from "./safety-model.js";
 import { queuedAt, idempotencyKey, claimReplay } from "./offline-replay.js";
 import { ROOM_STATUSES, ROOM_NEEDS, REPORTER_ROLES, VIEWER_ROLES, NEED_TEXT, parseRoomReport, roomBoard } from "./safety-rooms.js";
 
@@ -25,7 +25,7 @@ const shape = r => ({ id: r.id, roomId: r.room_id, place: r.place, status: r.sta
 
 export function registerSafetyRoomRoutes(app) {
   const limiter = rateLimit({ windowMs: 60_000, limit: config.safetyRateLimit, standardHeaders: true, legacyHeaders: false });
-  const loadIncident = (client, id) => one(client, `SELECT i.id,i.school_id,i.kind,i.is_drill,i.status,sc.name AS school_name FROM safety_incidents i JOIN schools sc ON sc.id=i.school_id WHERE i.id=$1`, [id]);
+  const loadIncident = (client, id) => one(client, `SELECT i.id,i.school_id,i.kind,i.hazard,i.is_drill,i.status,sc.name AS school_name FROM safety_incidents i JOIN schools sc ON sc.id=i.school_id WHERE i.id=$1`, [id]);
 
   // My room: the rooms to choose from, the one I'm timetabled in, and what I last sent.
   app.get("/api/safety/incidents/:id/my-room", requireSession, requirePermission("safety", "read"), async (req, res, next) => {
@@ -40,7 +40,13 @@ export function registerSafetyRoomRoutes(app) {
         const now = (await one(client, `SELECT eduos_safety_my_room_now() AS id`)).id;
         const mine = await rows(client, `SELECT ${REPORT_COLS} FROM safety_room_reports r JOIN users u ON u.id=r.reported_by
             WHERE r.incident_id=$1 AND r.reported_by=$2 ORDER BY coalesce(r.observed_at,r.reported_at) DESC,r.id DESC LIMIT 5`, [i.id, a.userId]);
-        return { incidentId: i.id, live: LIVE.includes(i.status), rooms: rooms.map(r => ({ id: r.id, name: r.name, building: r.building, kind: r.kind })),
+        // SAFE-03: each room's shelter area for this hazard (else the school default).
+        const areas = i.hazard ? await rows(client, `SELECT room_id,area,route FROM school_shelter_areas WHERE school_id=$1 AND hazard=$2 AND ended_at IS NULL`, [i.school_id, i.hazard]) : [];
+        const fallback = areas.find(x => !x.room_id) || null;
+        const areaFor = id => { const x = areas.find(y => y.room_id === id) || fallback; return x ? { area: x.area, route: x.route } : null; };
+        return { incidentId: i.id, live: LIVE.includes(i.status), hazard: i.hazard, hazardLabel: i.hazard ? HAZARD_LABEL[i.hazard] : null,
+          defaultArea: fallback ? { area: fallback.area, route: fallback.route } : null,
+          rooms: rooms.map(r => ({ id: r.id, name: r.name, building: r.building, kind: r.kind, shelter: i.hazard ? areaFor(r.id) : null })),
           suggestedRoomId: mine[0]?.room_id || now || null, last: mine[0] ? shape(mine[0]) : null };
       });
       res.setHeader("Cache-Control", "no-store");
@@ -85,6 +91,52 @@ export function registerSafetyRoomRoutes(app) {
         return { id: row.id, status: r.status, room: roomName, alerted, at: observed || row.reported_at };
       });
       res.status(201).json({ data: out });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  // ---- SAFE-03: shelter areas, per room and hazard (and a school default) ----
+  const AREA_READERS = ["principal", "superintendent", "sro", "teacher"];
+  app.get("/api/safety/shelter-areas", requireSession, requirePermission("safety", "read"), async (req, res, next) => {
+    const a = req.actor;
+    if (!AREA_READERS.includes(a.role)) return res.status(403).json({ error: "role_not_allowed" });
+    const schoolId = a.role === "superintendent" ? req.query.schoolId : a.schoolId;
+    if (!validId(schoolId)) return res.status(400).json({ error: "invalid_school_id" });
+    try {
+      const data = await withTenantTransaction(a, async client => {
+        const rooms = await rows(client, `SELECT id,name,building FROM classroom_rooms WHERE school_id=$1 AND archived_at IS NULL ORDER BY building NULLS FIRST,name`, [schoolId]);
+        const areas = await rows(client, `SELECT a.id,a.room_id,a.hazard,a.area,a.route,a.set_at,u.display_name AS set_by FROM school_shelter_areas a JOIN users u ON u.id=a.set_by
+            WHERE a.school_id=$1 AND a.ended_at IS NULL`, [schoolId]);
+        const pick = room => Object.fromEntries(areas.filter(x => x.room_id === room).map(x => [x.hazard, { id: x.id, area: x.area, route: x.route, setBy: x.set_by, setAt: x.set_at }]));
+        return { schoolId, hazards: HAZARDS.map(h => ({ key: h, label: HAZARD_LABEL[h] })), canEdit: ["principal", "superintendent"].includes(a.role),
+          defaults: pick(null), rooms: rooms.map(r => ({ id: r.id, name: r.name, building: r.building, areas: pick(r.id) })) };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  // Set (or clear, with an empty area) a room's area for a hazard; roomId null = the school default.
+  app.put("/api/safety/shelter-areas", limiter, requireSession, requireCsrf, requirePermission("safety", "read"), async (req, res, next) => {
+    const a = req.actor;
+    if (!["principal", "superintendent"].includes(a.role)) return res.status(403).json({ error: "role_not_allowed" });
+    const { roomId = null, hazard, area = "", route = null } = req.body || {};
+    const schoolId = a.role === "superintendent" ? req.body?.schoolId : a.schoolId;
+    const clear = typeof area === "string" && area.trim() === "";
+    if (!validId(schoolId) || (roomId !== null && !validId(roomId)) || !HAZARDS.includes(hazard) || typeof area !== "string"
+        || (!clear && !cleanText(area, 120, 2)) || (route !== null && route !== "" && !cleanText(route, 300)))
+      return res.status(400).json({ error: "invalid_shelter_area", hazards: HAZARDS });
+    try {
+      const data = await withTenantTransaction(a, async client => {
+        if (roomId && !(await one(client, `SELECT id FROM classroom_rooms WHERE id=$1 AND school_id=$2 AND archived_at IS NULL`, [roomId, schoolId]))) throw new HttpError(404, "room_not_found");
+        if (!roomId && !(await one(client, `SELECT id FROM schools WHERE id=$1`, [schoolId]))) throw new HttpError(404, "school_not_found");
+        await client.query(`UPDATE school_shelter_areas SET ended_at=now(),ended_by=$4 WHERE school_id=$1 AND room_id IS NOT DISTINCT FROM $2 AND hazard=$3 AND ended_at IS NULL`, [schoolId, roomId, hazard, a.userId]);
+        let id = null;
+        if (!clear) id = (await one(client, `INSERT INTO school_shelter_areas(district_id,school_id,room_id,hazard,area,route,set_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+          [a.districtId, schoolId, roomId, hazard, area.trim(), route?.trim() || null, a.userId])).id;
+        await audit(client, req, clear ? "clear" : "set", "shelter_area", roomId || schoolId, hazard);
+        return { id, roomId, hazard, area: clear ? null : area.trim() };
+      });
+      res.json({ data });
     } catch (e) { sendError(res, next, e); }
   });
 
