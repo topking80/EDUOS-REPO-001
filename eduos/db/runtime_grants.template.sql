@@ -774,3 +774,14 @@ GRANT EXECUTE ON FUNCTION eduos_history_on_hold(uuid, uuid), eduos_history_hold_
 
 -- TC-11 (db/134): the family storage dashboard's totals.
 GRANT EXECUTE ON FUNCTION eduos_history_family_storage(uuid) TO eduos_app;
+
+-- TC-09 (db/135): donations (sandbox only). Gifts are started by the donor;
+-- outcomes and acknowledgements only through the function.
+GRANT SELECT, INSERT ON district_donation_settings TO eduos_app;
+GRANT UPDATE (enabled, min_cents, max_cents, suggested_cents, acknowledgement_text, tax_wording_enabled, tax_wording, updated_by, updated_at) ON district_donation_settings TO eduos_app;
+REVOKE DELETE, TRUNCATE ON district_donation_settings FROM eduos_app;
+GRANT SELECT, INSERT ON history_donations TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON history_donations FROM eduos_app;
+GRANT SELECT ON history_donation_acknowledgements TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON history_donation_acknowledgements, history_donation_counters FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_history_donation_record(uuid, text, text) TO eduos_app;
