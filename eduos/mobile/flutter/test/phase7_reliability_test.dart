@@ -27,6 +27,9 @@ import 'package:eduos_mobile_branding/ui/screens/safety_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/staff_pickup_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/staffing_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/teacher_screens.dart';
+import 'package:eduos_mobile_branding/ui/screens/time_capsule/history_timeline_screen.dart';
+import 'package:eduos_mobile_branding/ui/screens/time_capsule/teacher_history_screen.dart';
+import 'package:eduos_mobile_branding/ui/screens/time_capsule/time_capsules_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/web_fallback_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -64,6 +67,9 @@ Type expectedScreen(String role, String tab) => switch (tab) {
       'nodes' => NodesScreen,
       'messages' => MessagesScreen,
       'alerts' => AlertsScreen,
+      'capsules' => TimeCapsulesScreen,
+      'portfolio' => HistoryTimeline,
+      'contributions' => TeacherHistoryItemsScreen,
       _ => throw StateError('no screen specified for $role/$tab'),
     };
 

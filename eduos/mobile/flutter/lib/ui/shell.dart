@@ -27,6 +27,9 @@ import 'screens/staff_pickup_screen.dart';
 import 'screens/staffing_screen.dart';
 import 'screens/teacher_screens.dart';
 import 'screens/safety_screen.dart';
+import 'screens/time_capsule/history_timeline_screen.dart';
+import 'screens/time_capsule/teacher_history_screen.dart';
+import 'screens/time_capsule/time_capsules_screen.dart';
 import 'screens/web_fallback_screen.dart';
 import 'widgets.dart' show TabVisit;
 
@@ -107,6 +110,10 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       'nodes' => const NodesScreen(),
       'messages' => const MessagesScreen(),
       'alerts' => const AlertsScreen(),
+      // Time Capsules and student history (TC-01..TC-11).
+      'capsules' => const TimeCapsulesScreen(),
+      'portfolio' => const HistoryTimeline(),
+      'contributions' when role == 'teacher' => const TeacherHistoryItemsScreen(),
       _ => WebFallbackScreen(tab: tab),
     };
   }
@@ -168,6 +175,8 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     final primary = tabs.length <= 5 ? tabs : tabs.take(4).toList();
     final overflow = tabs.length <= 5 ? <RoleTab>[] : tabs.skip(4).toList();
     final navIndex = index < primary.length ? index : primary.length;
+    // Tablets in landscape, desktops and TVs: a side rail with every tab.
+    final wide = MediaQuery.sizeOf(context).width >= railMinWidth;
 
     return Scaffold(
       appBar: AppBar(
@@ -199,7 +208,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: Column(children: [
+      body: _withRail(context, wide && !safetyLock, tabs, index, Column(children: [
         if (app.queued > 0)
           MaterialBanner(
             content: Text('${app.queued} change${app.queued == 1 ? '' : 's'} saved on this phone. ${app.queued == 1 ? 'It sends' : 'They send'} when you\'re back online.'),
@@ -218,8 +227,8 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
               ? SafetyScreen(onOpenPickup: reunification && (role == 'parent' || tabs.any((t) => t.id == 'pickup')) ? () => _go('pickup') : null)
               : _tabs(current, role),
         ),
-      ]),
-      bottomNavigationBar: safetyLock
+      ])),
+      bottomNavigationBar: safetyLock || wide
           ? null
           : NavigationBar(
               selectedIndex: navIndex,
@@ -241,5 +250,33 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
               ],
             ),
     );
+  }
+
+  /// Width from which the side rail replaces the bottom bar (Material "expanded").
+  static const railMinWidth = 840.0;
+
+  Widget _withRail(BuildContext context, bool rail, List<RoleTab> tabs, int index, Widget body) {
+    if (!rail) return body;
+    final extended = MediaQuery.sizeOf(context).width >= 1200;
+    return Row(children: [
+      LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: IntrinsicHeight(
+              child: NavigationRail(
+                extended: extended,
+                labelType: extended ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+                selectedIndex: index,
+                onDestinationSelected: (i) => _go(tabs[i].id),
+                destinations: [for (final t in tabs) NavigationRailDestination(icon: Icon(t.icon), label: Text(t.label))],
+              ),
+            ),
+          ),
+        ),
+      ),
+      const VerticalDivider(width: 1),
+      Expanded(child: body),
+    ]);
   }
 }
