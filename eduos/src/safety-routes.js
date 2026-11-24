@@ -17,6 +17,7 @@ import { enqueueNotifications } from "./notify.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
 import { INCIDENT_KINDS, ROLLCALL_STATUSES, LIVE, KIND_LABEL, HAZARDS, audienceFor, incidentMessage, hazardMessage, alertTitle, familyTitle, confirmMatches, accountability } from "./safety-model.js";
 import { queuedAt, idempotencyKey, claimReplay } from "./offline-replay.js";
+import { ACTIVE_ALERTS, alertOut } from "./weather-routes.js";
 
 const INCIDENT_COLS = `i.id,i.school_id,sc.name AS school_name,i.kind,i.hazard,i.is_drill,i.status,i.instructions,i.reunification_point,
   i.initiated_by,i.initiated_at,i.confirm_by,i.confirmed_at,i.reunification_at,i.closed_at,i.debrief`;
@@ -110,7 +111,10 @@ export function registerSafetyRoutes(app) {
              WHERE l.user_id=$1 AND l.status='active' AND l.relationship IN ('parent','guardian') ORDER BY s.display_name`, [a.userId, incidents.map(i => i.id)]);
           for (const i of incidents) i.children = kids.filter(k => k.school_id === i.schoolId).map(k => ({ id: k.id, name: k.display_name, released: k.released }));
         }
-        return { incidents, canInitiate: canInitiate(a), canLead: ["principal", "vice_principal", "superintendent"].includes(a.role) };
+        // SAFE-04: leaders also see National Weather Service warnings waiting for a decision.
+        const weather = ["principal", "superintendent"].includes(a.role)
+          ? (await rows(client, ACTIVE_ALERTS, [a.role === "superintendent" ? null : a.schoolId])).map(alertOut).filter(w => w.prompt) : [];
+        return { incidents, weather, canInitiate: canInitiate(a), canLead: ["principal", "vice_principal", "superintendent"].includes(a.role) };
       });
       res.setHeader("Cache-Control", "no-store");
       res.json({ data });

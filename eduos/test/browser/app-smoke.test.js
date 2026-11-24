@@ -131,7 +131,11 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/me": return { userId: "u1", displayName: "Smoke Test", role: role === "vice_principal" ? "principal" : role, membershipRole: role, districtId: "d1", schoolId: mockSchool, memberships: [] };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: liveLockdown ? [{ id: "inc1", schoolId: "s1", schoolName: "Maple", kind: "lockdown", label: "Lockdown", isDrill: true, status: "active",
-        startedAt: now, message: "Lock doors, lights off, out of sight.", audience: "staff", instructions: null }] : [], canInitiate: sosCaps, canLead: sosCaps } };
+        startedAt: now, message: "Lock doors, lights off, out of sight.", audience: "staff", instructions: null }] : [], canInitiate: sosCaps, canLead: sosCaps,
+        weather: sosCaps ? [{ id: "w1", schoolId: "s1", school: "Maple", event: "Tornado Warning", level: "warning", hazard: "tornado", hazardLabel: "Tornado warning", suggestedKind: "shelter",
+          headline: "Tornado Warning issued until 8:15PM", instruction: "TAKE COVER NOW!", expires: now, prompt: true }] : [] } };
+    case "/api/safety/weather": return { data: { enabled: true, running: true, canToggle: false, schools: [{ id: "s1", name: "Maple", lat: 39.7393, lon: -104.9903 }],
+        alerts: [{ id: "w2", school: "Maple", event: "Wind Advisory", level: "advisory", prompt: false, expires: now }] } };
     // SAFE-01: room status.
     case "/api/safety/incidents/inc1/my-room": return { data: { incidentId: "inc1", live: true, rooms: [{ id: "r12", name: "Room 12", building: "North", kind: "classroom" }, { id: "r14", name: "Room 14", building: "North", kind: "classroom" }],
         suggestedRoomId: "r12", last: null } };
@@ -1144,6 +1148,10 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await waitFor(`!!document.querySelector('main button.kind.shelter')`);
       await page.eval(`document.querySelector('main button.kind.shelter').click()`);
       if (!(await waitFor(`!!document.querySelector("main #sos-hazard")`))) failures.push("sos: no hazard picker for shelter");
+      // SAFE-04: the NWS prompt starts a shelter for the tornado; the weather card lists locations and advisories.
+      if (!(await waitFor(`!!document.querySelector('main section[aria-label="Weather warnings"]') && !!document.querySelector("main #wx-lat-s1")`))) failures.push("sos: no weather prompt or settings");
+      await page.eval(`document.querySelector('main button[aria-label="Start shelter: Tornado warning, Maple"]').click()`);
+      if (!(await waitFor(`document.querySelector("main #sos-hazard")?.value === "tornado"`))) failures.push("sos: weather prompt didn't choose the tornado");
       await axeScan(page, "principal: start a shelter with a hazard", a11y);
       if (page.errors.length) failures.push(`sos hazard: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); sosCaps = false; }
