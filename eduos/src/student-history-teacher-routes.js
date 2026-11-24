@@ -80,7 +80,9 @@ export function registerStudentHistoryTeacherRoutes(app) {
        WHERE e.author_user_id=$1 AND e.classification='teacher_artifact'
        ORDER BY e.updated_at DESC, e.id LIMIT 200`, [req.actor.userId])).rows;
     const decisions = await decisionsFor(client, rows.map(r => r.id));
-    return rows.map(r => view(r, decisions));
+    // MEDIA-01: each item's ready photos.
+    const photos = rows.length ? (await client.query(`SELECT * FROM eduos_history_entry_photos($1::uuid[])`, [rows.map(r => r.id)])).rows : [];
+    return rows.map(r => ({ ...view(r, decisions), photos: photos.filter(p => p.entry_id === r.id).map(p => ({ id: p.asset_id, caption: p.caption, alt: p.alt_text })) }));
   }));
 
   // Edit after the school asked for changes, then resubmit.

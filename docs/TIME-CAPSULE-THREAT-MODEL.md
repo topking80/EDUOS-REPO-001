@@ -50,7 +50,9 @@ takes over their rights (`eduos_history_own_after_transition`).
 | Break-glass abuse | reason (20+ characters), four-hour limit (database check), official records only, logged, visible to the student and family, reviewed by the superintendent | `history-privacy` |
 | Silent access | every history read is written to `history_access_log`; the student, guardians (before the transition) and the records office can see who looked | `history-privacy` |
 | Public or guessable links | there are no public links to history items or capsules; every route needs a session | route contract tests |
-| Signed URL leakage | no signed URLs are issued for history media (media storage is TC-02–TC-04 follow-up work; it must use short-lived, session-checked access) | — (residual, below) |
+| Signed URL leakage | photos are shown only through `/api/history/photos/:id`, which checks that the viewer can see the item and redirects to a 60-second presigned link (`no-store`, `no-referrer`); storage keys and credentials never reach a browser; a changed link fails its signature | `history-media` |
+| Malicious or tracking files | every photo is scanned by ClamAV (fails closed), decoded as its declared type, re-encoded from its pixels (EXIF/GPS and everything else dropped) and scanned again; only the processed copy is stored | `history-media`, `history-image` |
+| Storage exhaustion | the district's limits (size, per item, per student) are checked in the database before anything is stored | `history-media` |
 | Cache poisoning / shared caches | history routes send `Cache-Control: no-store` | route code |
 | Bulk export abuse | export is one student per request, only by the student, guardians, a guardian the student shares with, school leaders or the superintendent (not teachers, not emergency access); 5 per person per student per hour and 20 per person per day (db/125, checked in the database) plus a route limit | `history-export` |
 | Export leaking more than the viewer sees | the export runs the same visibility rules as the portfolio, published items only; the copy equals the view | `history-export` |
@@ -67,13 +69,15 @@ takes over their rights (`eduos_history_own_after_transition`).
   (TC-03) still go to guardians' review queue; after the transition the
   student should decide. Until that's changed, the records office should
   handle those items for students who hold their own rights.
-* **Media files.** Attachments are text-only today. When production media
-  storage lands, downloads must be session-checked and short-lived, and must
-  apply the same relationship and grant checks.
+* **Media files.** Photos are built (MEDIA-01, `docs/MEDIA-STORAGE.md`). A
+  60-second link can be passed on within its minute; that window is the
+  residual. Video, family-contributed photos and capsule photos are still to
+  come and must use the same pipeline.
 * **Exports.** Built (db/125): per student, by the people listed above,
   logged and limited, no links. A downloaded file is outside EduOS's control
   once saved; the page says so, and records offices should treat a copy like
-  a printout. Media files aren't included until media storage lands.
+  a printout. Photos are listed by their descriptions; the image files
+  aren't included.
 * **Capsules.** Sealed Time Capsule contents are not part of an export; they
   stay sealed until released (TC-07).
 * **Telemetry and analytics.** No history content is sent to analytics. Any
