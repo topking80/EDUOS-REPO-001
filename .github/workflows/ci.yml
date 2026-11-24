@@ -286,7 +286,7 @@ jobs:
   # Simulator without signing, so pull requests need no Apple certificates,
   # provisioning profiles, or App Store Connect secrets.
   ios-simulator:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 35
     defaults:
       run:
