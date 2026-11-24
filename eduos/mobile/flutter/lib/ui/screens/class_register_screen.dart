@@ -4,7 +4,7 @@ import '../../app/app_scope.dart';
 import '../../core/api_client.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
-import '../widgets.dart';
+import '../widgets.dart';\nimport 'class_planner_screen.dart';
 
 class _ClassToday {
   const _ClassToday({required this.schoolName, required this.students, required this.toGrade, required this.openAssignments,
@@ -103,7 +103,7 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
         return ListView(padding: const EdgeInsets.all(16), children: [
           SectionCard(children: [
             Text(t.schoolName, style: Theme.of(context).textTheme.bodySmall),
-            Semantics(header: true, child: Text('Today in class', style: Theme.of(context).textTheme.titleLarge)),
+            Row(children: [\n              Expanded(child: Semantics(header: true, child: Text('Today in class', style: Theme.of(context).textTheme.titleLarge))),\n              OutlinedButton.icon(\n                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ClassPlannerScreen())),\n                icon: const Icon(Icons.event_note_outlined),\n                label: const Text('Plan lessons'),\n              ),\n            ]),
             const SizedBox(height: 12),
             Row(children: [
               Expanded(child: StatTile(t.students, 'learners')),
