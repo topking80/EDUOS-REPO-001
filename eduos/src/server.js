@@ -55,6 +55,7 @@ import { registerHistoryMediaRoutes, historyMedia } from "./history-media-routes
 import { registerHistoryPreservationRoutes } from "./history-preservation-routes.js";
 import { registerFamilyStorageRoutes } from "./family-storage-routes.js";
 import { registerDonationRoutes } from "./donation-routes.js";
+import { registerDonationAccountingRoutes } from "./donation-accounting-routes.js";
 import { startHistoryPreservationSweep } from "./history-preservation.js";
 import { registerHistoryTransferRoutes } from "./history-transfer-routes.js";
 import { registerHistoryImportRoutes, HISTORY_IMPORT_PATHS } from "./history-import-routes.js";
@@ -2033,6 +2034,7 @@ registerHistoryImportRoutes(app);
 registerHistoryPreservationRoutes(app);
 registerFamilyStorageRoutes(app);
 registerDonationRoutes(app);
+registerDonationAccountingRoutes(app);
 registerSafetyRoutes(app);
 registerSafetyRoomRoutes(app);
 registerWeatherRoutes(app);
