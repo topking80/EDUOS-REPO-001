@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Draws a QR code from the server's module rows ("0"/"1" strings), so the
+     channel needs no QR library and makes no image request. -->
+<component name="QrCode" extends="Group">
+  <interface>
+    <field id="rows" type="array" onChange="draw" />
+    <field id="size" type="integer" value="420" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/components/QrCode.brs" />
+</component>
