@@ -742,3 +742,8 @@ GRANT EXECUTE ON FUNCTION eduos_history_student_media_bytes(uuid, uuid), eduos_h
   eduos_history_contribution_photo_begin(uuid, uuid, text, text, bigint, text, text, text),
   eduos_history_contribution_photo_set(uuid, text, bigint, text, text, int, int), eduos_history_contribution_photo_get(uuid),
   eduos_history_contribution_photos(uuid[]), eduos_history_contribution_photos_publish(uuid), eduos_history_contribution_photos_release(uuid) TO eduos_app;
+
+-- MEDIA-03 (db/128): Time Capsule photos; reached only through these functions.
+GRANT EXECUTE ON FUNCTION eduos_capsule_photo_begin(uuid, uuid, text, text, bigint, text, text, text),
+  eduos_capsule_photo_set(uuid, text, bigint, text, text, int, int), eduos_capsule_photos(uuid), eduos_capsule_photo_get(uuid),
+  eduos_capsule_photos_release(uuid) TO eduos_app;

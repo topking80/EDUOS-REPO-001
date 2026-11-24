@@ -1437,10 +1437,11 @@ VIEWS.capsule = async () => {
   const act = async (path, body, done) => { try { await api.post(path, body); toast(done); reload(); } catch (error) { toast(error.message || "That didn't work."); } };
   const items = c.items.length ? h("ol", { class: "stack" }, c.items.map(i => h("li", { class: "card" },
     i.withheld ? h("p", { class: "small muted" }, "This item was withdrawn from the history and is no longer shown.")
-      : [h("strong", {}, i.title), h("p", { class: "small muted" }, fmtDay(i.occurredAt)), i.body ? h("p", {}, i.body) : null])))
+      : [h("strong", {}, i.title), h("p", { class: "small muted" }, fmtDay(i.occurredAt)), i.body ? h("p", {}, i.body) : null, photoStrip(i.photos)])))
     : h("p", { class: "small muted" }, "Nothing in it yet.");
   const out = [h("div", { class: "row" }, h("h2", { class: "grow" }, c.title), h("span", { class: "chip" }, CAPSULE_STATUS[c.status] || c.status)),
-    h("p", { class: "small muted" }, `For ${c.studentName} · ${opensText(c)}`), c.message ? h("p", {}, c.message) : null, h("h3", {}, "Inside"), items];
+    h("p", { class: "small muted" }, `For ${c.studentName} · ${opensText(c)}`), c.message ? h("p", {}, c.message) : null, photoStrip(c.photos),
+    c.mine && c.status === "draft" ? photoAdder(c.id, `/api/history/capsules/${c.id}/photos`, reload) : null, h("h3", {}, "Inside"), items];
   if (c.mine && c.status === "draft") {
     const [cands, opts] = await Promise.all([api.get(`/api/history/capsules/${c.id}/candidates`), api.get(`/api/history/capsule-recipient-options?studentId=${c.studentId}`)]);
     const entry = h("select", { "aria-label": "History item to add" }, ...cands.data.map(e => h("option", { value: e.id }, `${e.title} (${fmtDay(e.occurredAt)})`)));

@@ -362,7 +362,9 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       milestone: "graduation", sealedAt: now, accepted: 1 }] : [] };
     case "/api/history/capsules/cap1": return { data: { id: "cap1", studentId: "c1", studentName: "Alice A", title: "For Alice at 18", message: "Open when you're grown.",
       status: "draft", releaseKind: "scheduled", releaseAt: "2034-06-01T13:00:00Z", mine: true,
-      items: [{ position: 0, entryId: "e1", withheld: false, entryType: "reflection", kind: "family_memory", title: "The day you were born", body: "So happy.", occurredAt: now }],
+      items: [{ position: 0, entryId: "e1", withheld: false, entryType: "reflection", kind: "family_memory", title: "The day you were born", body: "So happy.", occurredAt: now,
+        photos: [{ id: "a3", alt: "Newborn Alice", caption: "" }] }],
+      photos: [{ id: "a4", alt: "Our family on the porch", caption: "Spring 2026" }],
       recipients: [{ userId: "u9", name: "Pupil A", type: "student", consent: "pending" }], events: [] } };
     case "/api/history/capsules/cap1/candidates": return { data: [{ id: "e2", title: "First day of school", entryType: "event", kind: "family_memory", occurredAt: now }] };
     case "/api/history/capsule-recipient-options": return { data: [{ userId: "u9", name: "Pupil A", type: "student" }, { userId: "u1", name: "Smoke Test", type: "guardian" }] };
