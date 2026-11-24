@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import pg from "pg";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
+import { openFund } from "./fund-helpers.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 const fee = c => Math.round(c * 0.029) + 30;
@@ -33,6 +34,7 @@ describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
     for (const name of ["t1", "p1", "supt1", "supt1b", "supt2", "pa", "pb", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     ok(await as("supt1")("PUT", "/api/donations/settings", { enabled: true, minCents: 500, maxCents: 100000, suggestedCents: [1000] }));
+    await openFund(as("supt1"));
     ok(await as("supt1")("PUT", "/api/commerce/payment-methods", { enabledMethods: ["sandbox"], defaultMethod: "sandbox" }));
     gifts.pa = await give("pa", 2500);
     gifts.pb = await give("pb", 1000);
@@ -113,6 +115,7 @@ describe("TC-10 donation accounting against real PostgreSQL", { skip }, () => {
   });
 
   it("a gift record with no ledger lines shows up as a discrepancy", async () => {
+    await admin.query("SELECT set_config('app.district_id',$1,false)", [ID.d1]); // the TC-12 fund gate reads the district's fund
     await admin.query(`INSERT INTO history_donations(district_id,donor_user_id,donor_name,amount_cents,processing_fee_cents,payment_method,provider,mode,provider_ref,idempotency_key,status,confirmed_at)
       VALUES($1,$2,'Parent B',4000,146,'sandbox','sandbox','test',$3,$4,'succeeded',now())`, [ID.d1, USERS.pb[0], `pay_sandbox_${crypto.randomBytes(12).toString("hex")}`, `k-${crypto.randomUUID()}`]);
     const rep = ok(await as("supt1b")("GET", `/api/donations/reconciliation?from=${today()}&to=${today()}`));
