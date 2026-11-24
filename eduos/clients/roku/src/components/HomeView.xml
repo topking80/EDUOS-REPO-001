@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Signed in: a menu on the left, the chosen list or item on the right.
+     Everything here is read-only; the server refuses changes from a TV session too. -->
+<component name="HomeView" extends="Stage">
+  <script type="text/brightscript" uri="pkg:/components/shared/util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/shared/api.brs" />
+  <script type="text/brightscript" uri="pkg:/components/HomeView.brs" />
+  <children>
+    <Label id="header" translation="[80,50]" width="1760" font="font:LargeBoldSystemFont" color="0xFFFFFFFF" text="EduOS" />
+    <Label id="who" translation="[80,115]" width="1760" font="font:SmallSystemFont" color="0xB8C1D1FF" text="" />
+    <LabelList id="menu" translation="[80,190]" itemSize="[520,72]" numRows="10" vertFocusAnimationStyle="floatingFocus"
+      color="0xDDE3EEFF" focusedColor="0x14213DFF" focusBitmapBlendColor="0xFCA311FF" />
+    <Label id="panelTitle" translation="[680,190]" width="1160" font="font:MediumBoldSystemFont" color="0xFFFFFFFF" text="" />
+    <Label id="panelNote" translation="[680,245]" width="1160" wrap="true" font="font:SmallSystemFont" color="0xFFD6A5FF" text="" />
+    <LabelList id="items" translation="[680,300]" itemSize="[1160,72]" numRows="9" vertFocusAnimationStyle="floatingFocus"
+      color="0xDDE3EEFF" focusedColor="0x14213DFF" focusBitmapBlendColor="0xFCA311FF" />
+    <ScrollableText id="detail" translation="[680,300]" width="1160" height="660" font="font:MediumSystemFont"
+      color="0xFFFFFFFF" visible="false" />
+    <PinEntry id="pinEntry" translation="[680,320]" visible="false" />
+    <Label translation="[80,1000]" width="1760" wrap="true" font="font:SmallestSystemFont" color="0x8F9BB3FF"
+      text="This TV can look but not change anything. To make, accept, or open a Time Capsule, use EduOS on a phone or computer." />
+    <PhotoViewer id="photoViewer" visible="false" />
+  </children>
+</component>
