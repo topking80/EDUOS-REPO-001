@@ -371,7 +371,7 @@ void main() {
     await tester.tap(find.text('+25% time'));
     await tester.pumpAndSettle();
     expect(find.text('Unsaved changes'), findsOneWidget);
-    await tester.tap(find.text('Read-aloud'));
+    await tester.tap(find.byType(Checkbox));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save', skipOffstage: false));
     await tester.pumpAndSettle();
