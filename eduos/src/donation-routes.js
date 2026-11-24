@@ -65,7 +65,11 @@ export function registerDonationRoutes(app) {
       reason: !m.ready ? m.reason : m.processor !== "sandbox" ? "donations_sandbox_only" : null }));
     const schools = await rows(c, "SELECT id, name FROM schools WHERE district_id=$1 ORDER BY name", [req.actor.districtId]);
     const usable = methods.some(m => m.available);
-    return { enabled: s.enabled && usable, districtEnabled: s.enabled, reason: !s.enabled ? "donations_not_enabled" : !usable ? "no_sandbox_method" : null,
+    // TC-12 (db/137): gifts go into the preservation fund, which stays closed until
+    // the district documents its approvals and opens it.
+    const fundOpen = (await one(c, "SELECT eduos_preservation_fund_collection_open($1) AS ok", [req.actor.districtId])).ok === true;
+    return { enabled: s.enabled && fundOpen && usable, districtEnabled: s.enabled, fundOpen,
+      reason: !s.enabled ? "donations_not_enabled" : !fundOpen ? "fund_collection_closed" : !usable ? "no_sandbox_method" : null,
       canGive: req.actor.role !== "pupil", sandboxOnly: true, liveSwitch: config.commerceLivePaymentsEnabled === true,
       minCents: s.min_cents, maxCents: s.max_cents, suggestedCents: (s.suggested_cents || []).map(Number), schools, methods,
       statement: DONATION_STATEMENT, fees: DONATION_FEES, help: DONATION_HELP, changesStorage: false };
@@ -75,6 +79,7 @@ export function registerDonationRoutes(app) {
     const a = req.actor, b = req.body || {};
     const s = await loadDonationSettings(c, a.districtId);
     if (!s.enabled) throw new HttpError(503, "donations_not_enabled");
+    if (!(await one(c, "SELECT eduos_preservation_fund_collection_open($1) AS ok", [a.districtId])).ok) throw new HttpError(503, "fund_collection_closed");
     if (!Number.isSafeInteger(b.amountCents) || b.amountCents < s.min_cents || b.amountCents > s.max_cents)
       throw new HttpError(400, "invalid_amount", { minCents: s.min_cents, maxCents: s.max_cents });
     if (b.schoolId !== undefined && b.schoolId !== null && !validId(b.schoolId)) throw new HttpError(400, "invalid_school");
