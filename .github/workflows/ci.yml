@@ -256,10 +256,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # 37.8: the Roku channel (eduos/clients/roku). Not a required check: it lints
-  # the BrightScript (bslint) and packages the sideloadable zip, which is kept
-  # as an artifact. Uses the channel's own lockfile; nothing here signs or
-  # publishes anything (that's done in the Roku Developer Dashboard).
+  # 37.8: the Roku channel (eduos/clients/roku). Lints BrightScript and packages
+  # the sideloadable ZIP. This job is required by the active Bot1 ruleset.
+  # It does not sign or publish the channel.
   roku-channel:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -280,5 +279,37 @@ jobs:
         with:
           name: eduos-roku-channel
           path: eduos/clients/roku/out/eduos-roku.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # Native Apple-platform validation. This deliberately builds for the iOS
+  # Simulator without signing, so pull requests need no Apple certificates,
+  # provisioning profiles, or App Store Connect secrets.
+  ios-simulator:
+    runs-on: macos-14
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: eduos/mobile/flutter
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+      - name: Record Apple toolchain
+        run: |
+          xcodebuild -version
+          xcrun simctl list devices available
+      - name: Resolve Flutter dependencies (from the committed lockfile)
+        run: flutter pub get --enforce-lockfile
+      - name: Compile iOS Simulator application without signing
+        run: flutter build ios --simulator --no-codesign --debug
+      - name: Upload iOS Simulator application
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eduos-ios-simulator-app
+          path: eduos/mobile/flutter/build/ios/iphonesimulator/Runner.app
           if-no-files-found: error
           retention-days: 14
