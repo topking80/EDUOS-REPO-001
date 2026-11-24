@@ -326,7 +326,15 @@ void main() {
     await tester.tap(find.text('Warm-up question'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Question'), 'Which fraction is larger?');
-    await tester.tap(find.text('Add'));
+    await tester.enterText(find.widgetWithText(TextField, 'Planned minutes (optional)'), '12');
+    await tester.enterText(find.widgetWithText(TextField, 'Private note for you (optional)'), 'Use fraction strips');
+    await tester.tap(find.text('Save activity'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit activity'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Question'), 'Which fraction is greatest?');
+    await tester.enterText(find.widgetWithText(TextField, 'Planned minutes (optional)'), '15');
+    await tester.tap(find.text('Save activity'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save draft'));
     await tester.pumpAndSettle();
@@ -334,7 +342,7 @@ void main() {
     final body = jsonDecode(request.body) as Map<String, dynamic>;
     expect(body['status'], 'draft');
     expect(body['blocks'], [
-      {'kind': 'warmup', 'minutes': null, 'note': null, 'prompt': 'Which fraction is larger?'}
+      {'kind': 'warmup', 'minutes': 15, 'note': 'Use fraction strips', 'prompt': 'Which fraction is greatest?'}
     ]);
   });
 

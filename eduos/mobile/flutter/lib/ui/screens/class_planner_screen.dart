@@ -6,56 +6,6 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
 
-class _PlanTextDialog extends StatefulWidget {
-  const _PlanTextDialog({required this.kind});
-  final String kind;
-
-  @override
-  State<_PlanTextDialog> createState() => _PlanTextDialogState();
-}
-
-class _PlanTextDialogState extends State<_PlanTextDialog> {
-  final _first = TextEditingController();
-  final _second = TextEditingController();
-
-  @override
-  void dispose() {
-    _first.dispose();
-    _second.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final a = _first.text.trim();
-    final b = _second.text.trim();
-    final kind = widget.kind;
-    Map<String, Object?>? result;
-    if (kind == 'warmup' && a.isNotEmpty) result = {'prompt': a};
-    if (kind == 'timer' && a.isNotEmpty && (int.tryParse(b) ?? 0) > 0) result = {'label': a, 'minutes': int.parse(b)};
-    if (kind == 'text' && b.isNotEmpty) result = {'title': a, 'body': b};
-    if (kind == 'link' && a.isNotEmpty && b.startsWith('https://')) result = {'label': a, 'url': b};
-    if (result != null) Navigator.pop(context, result);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final kind = widget.kind;
-    return AlertDialog(
-      title: Text(switch (kind) {'warmup' => 'Warm-up', 'timer' => 'Timed activity', 'link' => 'Web link', _ => 'Class instructions'}),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        TextField(controller: _first, decoration: InputDecoration(labelText: switch (kind) {'warmup' => 'Question', 'timer' => 'Activity label', 'link' => 'Link label', _ => 'Title'})),
-        if (kind == 'text' || kind == 'link')
-          TextField(controller: _second, decoration: InputDecoration(labelText: kind == 'link' ? 'HTTPS URL' : 'Instructions'), minLines: 2, maxLines: 5),
-        if (kind == 'timer') TextField(controller: _second, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Minutes')),
-      ]),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(onPressed: _submit, child: const Text('Add')),
-      ],
-    );
-  }
-}
-
 /// Native daily lesson planner backed by TEACH-04 class-plan APIs.
 class ClassPlannerScreen extends StatefulWidget {
   const ClassPlannerScreen({super.key, this.today});
@@ -242,6 +192,116 @@ class _ClassPlannerScreenState extends State<ClassPlannerScreen> {
       };
 }
 
+class _PlanBlockDialog extends StatefulWidget {
+  const _PlanBlockDialog({required this.kind, required this.initial});
+  final String kind;
+  final Json initial;
+
+  @override
+  State<_PlanBlockDialog> createState() => _PlanBlockDialogState();
+}
+
+class _PlanBlockDialogState extends State<_PlanBlockDialog> {
+  late final TextEditingController _first = TextEditingController(text: str(widget.initial[_firstKey]));
+  late final TextEditingController _second = TextEditingController(text: str(widget.initial[_secondKey]));
+  late final TextEditingController _minutes = TextEditingController(text: widget.initial['minutes'] == null ? '' : str(widget.initial['minutes']));
+  late final TextEditingController _note = TextEditingController(text: str(widget.initial['note']));
+
+  String get _firstKey => switch (widget.kind) {
+        'warmup' => 'prompt',
+        'timer' || 'link' => 'label',
+        _ => 'title',
+      };
+
+  String get _secondKey => widget.kind == 'link' ? 'url' : 'body';
+
+  @override
+  void dispose() {
+    _first.dispose();
+    _second.dispose();
+    _minutes.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final kind = widget.kind;
+    final first = _first.text.trim();
+    final second = _second.text.trim();
+    final rawMinutes = _minutes.text.trim();
+    final minutes = rawMinutes.isEmpty ? null : int.tryParse(rawMinutes);
+    if (rawMinutes.isNotEmpty && (minutes == null || minutes < 0 || minutes > 240)) {
+      toast(context, 'Planned minutes must be from 0 to 240.');
+      return;
+    }
+    if (kind == 'timer' && (minutes == null || minutes == 0)) {
+      toast(context, 'A timed activity needs at least one minute.');
+      return;
+    }
+    if (kind == 'warmup' && first.isEmpty) {
+      toast(context, 'Enter a warm-up question.');
+      return;
+    }
+    if (kind == 'text' && second.isEmpty) {
+      toast(context, 'Enter the class instructions.');
+      return;
+    }
+    if (kind == 'link' && (first.isEmpty || !second.startsWith('https://'))) {
+      toast(context, 'Enter a label and an HTTPS link.');
+      return;
+    }
+    Navigator.pop(context, <String, Object?>{
+      if (kind == 'warmup') 'prompt': first,
+      if (kind == 'timer' || kind == 'link') 'label': first,
+      if (kind == 'text') 'title': first,
+      if (kind == 'text' || kind == 'link') (kind == 'link' ? 'url' : 'body'): second,
+      'minutes': minutes,
+      'note': _note.text.trim().isEmpty ? null : _note.text.trim(),
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = widget.kind;
+    final title = switch (kind) {
+      'warmup' => 'Warm-up question',
+      'timer' => 'Timed activity',
+      'link' => 'Web link',
+      'text' => 'Class instructions',
+      'lesson' => 'Course lesson',
+      'assignment' => 'Assignment or quiz',
+      _ => 'Activity',
+    };
+    return AlertDialog(
+      title: Text(title),
+      content: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (kind == 'warmup' || kind == 'timer' || kind == 'link')
+            TextField(controller: _first, decoration: InputDecoration(labelText: switch (kind) {
+              'warmup' => 'Question',
+              'timer' => 'Activity label',
+              _ => 'Link label',
+            })),
+          if (kind == 'text') ...[
+            TextField(controller: _first, decoration: const InputDecoration(labelText: 'Title')),
+            TextField(controller: _second, minLines: 2, maxLines: 5, decoration: const InputDecoration(labelText: 'Instructions')),
+          ],
+          if (kind == 'link')
+            TextField(controller: _second, keyboardType: TextInputType.url, decoration: const InputDecoration(labelText: 'HTTPS URL')),
+          TextField(controller: _minutes, keyboardType: TextInputType.number, decoration: InputDecoration(
+            labelText: kind == 'timer' ? 'Minutes (required)' : 'Planned minutes (optional)',
+          )),
+          TextField(controller: _note, minLines: 1, maxLines: 3, decoration: const InputDecoration(labelText: 'Private note for you (optional)')),
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: _submit, child: const Text('Save activity')),
+      ],
+    );
+  }
+}
+
 class _PlanEditor extends StatefulWidget {
   const _PlanEditor({required this.title, required this.blocks, required this.lessons, required this.assignments});
   final TextEditingController title;
@@ -279,18 +339,24 @@ class _PlanEditorState extends State<_PlanEditor> {
       } else {
         block['assignmentId'] = selected['id'];
       }
-    } else {
-      final values = await _textFields(kind);
-      if (values == null || !mounted) return;
-      block.addAll(values);
     }
-    setState(() => widget.blocks.add(block));
+    final details = await showDialog<Map<String, Object?>>(
+      context: context,
+      builder: (_) => _PlanBlockDialog(kind: kind, initial: block),
+    );
+    if (details == null || !mounted) return;
+    setState(() => widget.blocks.add({...block, ...details}));
   }
 
-  Future<Map<String, Object?>?> _textFields(String kind) => showDialog<Map<String, Object?>>(
-        context: context,
-        builder: (_) => _PlanTextDialog(kind: kind),
-      );
+  Future<void> _edit(int index) async {
+    final block = Map<String, Object?>.from(widget.blocks[index]);
+    final details = await showDialog<Map<String, Object?>>(
+      context: context,
+      builder: (_) => _PlanBlockDialog(kind: str(block['kind']), initial: block),
+    );
+    if (details == null || !mounted) return;
+    setState(() => widget.blocks[index] = {...block, ...details});
+  }
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -303,10 +369,18 @@ class _PlanEditorState extends State<_PlanEditor> {
           for (var i = 0; i < widget.blocks.length; i++)
             ListTile(
               contentPadding: EdgeInsets.zero,
+              onTap: () => _edit(i),
               title: Text(_label(widget.blocks[i])),
-              subtitle: Text(str(widget.blocks[i]['kind'])),
+              subtitle: Text([
+                str(widget.blocks[i]['kind']),
+                if (widget.blocks[i]['minutes'] != null) '${widget.blocks[i]['minutes']} min',
+                if (widget.blocks[i]['note'] != null) 'private note',
+              ].join(' · ')),
               leading: IconButton(tooltip: 'Move up', onPressed: i == 0 ? null : () => setState(() { final b = widget.blocks.removeAt(i); widget.blocks.insert(i - 1, b); }), icon: const Icon(Icons.arrow_upward)),
-              trailing: IconButton(tooltip: 'Remove activity', onPressed: () => setState(() => widget.blocks.removeAt(i)), icon: const Icon(Icons.delete_outline)),
+              trailing: Wrap(spacing: 0, children: [
+                IconButton(tooltip: 'Edit activity', onPressed: () => _edit(i), icon: const Icon(Icons.edit_outlined)),
+                IconButton(tooltip: 'Remove activity', onPressed: () => setState(() => widget.blocks.removeAt(i)), icon: const Icon(Icons.delete_outline)),
+              ]),
             ),
           OutlinedButton.icon(onPressed: _add, icon: const Icon(Icons.add), label: const Text('Add activity')),
           const SizedBox(height: 8),
