@@ -49,6 +49,51 @@ class _ClassroomPairDialogState extends State<_ClassroomPairDialog> {
       );
 }
 
+class _ColleagueMessageDialog extends StatefulWidget {
+  const _ColleagueMessageDialog({required this.name});
+  final String name;
+
+  @override
+  State<_ColleagueMessageDialog> createState() => _ColleagueMessageDialogState();
+}
+
+class _ColleagueMessageDialogState extends State<_ColleagueMessageDialog> {
+  final _subject = TextEditingController(text: 'School collaboration');
+  final _body = TextEditingController();
+
+  @override
+  void dispose() {
+    _subject.dispose();
+    _body.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text('Message ${widget.name}'),
+        content: SizedBox(
+          width: 460,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: _subject, maxLength: 160, decoration: const InputDecoration(labelText: 'Subject')),
+            TextField(controller: _body, maxLength: 4000, minLines: 3, maxLines: 6, decoration: const InputDecoration(labelText: 'Message')),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final subject = _subject.text.trim();
+              final body = _body.text.trim();
+              if (subject.isNotEmpty && body.isNotEmpty) {
+                Navigator.pop(context, {'subject': subject, 'body': body});
+              }
+            },
+            child: const Text('Send'),
+          ),
+        ],
+      );
+}
+
 class _TeacherDay {
   const _TeacherDay({required this.rooms, required this.mediaRooms, required this.arrivals, required this.pickup, required this.workspace, required this.checkins, required this.riders, required this.shifts});
   final List<Json> rooms, mediaRooms, arrivals, checkins, riders, shifts;
@@ -214,27 +259,15 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
   }
 
   Future<void> _message(Json colleague) async {
-    final subject = TextEditingController(text: 'School collaboration');
-    final body = TextEditingController();
+    final message = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (_) => _ColleagueMessageDialog(name: str(colleague['name'])),
+    );
+    if (message == null || !mounted) return;
     try {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Message ${str(colleague['name'])}'),
-          content: SizedBox(width: 460, child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(controller: subject, maxLength: 160, decoration: const InputDecoration(labelText: 'Subject')),
-            TextField(controller: body, maxLength: 4000, minLines: 3, maxLines: 6, decoration: const InputDecoration(labelText: 'Message')),
-          ])),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(context, subject.text.trim().isNotEmpty && body.text.trim().isNotEmpty), child: const Text('Send')),
-          ],
-        ),
-      );
-      if (ok != true || !mounted) return;
       final result = await AppScope.read(context).api.post('/api/network/threads', {
-        'subject': subject.text.trim(),
-        'body': body.text.trim(),
+        'subject': message['subject'],
+        'body': message['body'],
         'participantIds': [str(colleague['user_id'])],
       });
       if (!mounted) return;
@@ -242,9 +275,6 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
       await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ThreadScreen(threadId: id)));
     } on ApiException catch (e) {
       if (mounted) toast(context, e.error == 'participant_not_in_network' ? 'That colleague is no longer in your educator network.' : 'Could not start the conversation.');
-    } finally {
-      subject.dispose();
-      body.dispose();
     }
   }
 
