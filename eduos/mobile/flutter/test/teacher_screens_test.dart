@@ -292,4 +292,48 @@ void main() {
       expect(jsonDecode(fake.sent('POST', '/api/staff-management/coverage/cv1/decision').single.body), {'decision': 'approved'});
     });
   });
+
+  testWidgets('classes: open the native daily planner and save a warm-up draft', (tester) async {
+    final day = isoDate(DateTime.now());
+    final fake = FakeServer({
+      'GET /api/home': (_) => {'data': {'school_name': 'Maple Elementary', 'students': 1, 'to_grade': 0, 'open_assignments': 1, 'absences_7d': 0}},
+      'GET /api/rosters': (_) => {'data': []},
+      'GET /api/attendance': (_) => {'data': []},
+      'GET /api/class-plans': (_) => {'data': [
+        {'course_id': course, 'title': 'Grade 4 Math', 'subject': 'Math', 'grade_level': '4', 'status': null, 'blocks': 0, 'minutes': 0},
+      ]},
+      'GET /api/class-plans/$course/$day': (_) => {'data': {
+        'course': {'id': course, 'title': 'Grade 4 Math'},
+        'date': day,
+        'plan': null,
+        'choices': {'lessons': [], 'assignments': []},
+      }},
+      'PUT /api/class-plans/$course/$day': (_) => {'data': {'id': 'plan-1', 'version': 1, 'status': 'draft', 'minutes': 0}},
+    });
+    await launch(tester, fake);
+    await openTab(tester, 'Classes');
+    await tester.tap(find.text('Plan lessons'));
+    await tester.pumpAndSettle();
+    expect(find.text('Grade 4 Math'), findsOneWidget);
+    await tester.tap(find.text('Open plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add activity'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Warm-up question'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Question'), 'Which fraction is larger?');
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save draft'));
+    await tester.pumpAndSettle();
+    final request = fake.sent('PUT', '/api/class-plans/$course/$day').single;
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    expect(body['status'], 'draft');
+    expect(body['blocks'], [
+      {'kind': 'warmup', 'minutes': null, 'note': null, 'prompt': 'Which fraction is larger?'}
+    ]);
+  });
+
 }
