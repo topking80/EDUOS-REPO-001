@@ -87,7 +87,14 @@ Built in `clients/02-tv` (what shipped, where it differs from the first plan):
 ## 4. Windows desktop (branches 01 and 04)
 
 - 01 enables the `windows/` platform. Sign-in: `flutter_web_auth_2` on Windows can't receive `org.eduos.app:` redirects without an embedded WebView (which RFC 8252 and our code comments forbid), and the server refuses loopback redirects. So Windows uses the **device sign-in** from 02 ("Sign in with your phone"). Allowing the RFC 8252 §7.3 loopback is a later option.
-- `clients/04-windows-msix`: the `msix` dev dependency and `msix_config` in pubspec (display name EduOS, publisher placeholder `CN=EduOS District`, identity `org.eduos.app`, capabilities `internetClient` only, no `runFullTrust` beyond Flutter's default), plus a README section. Building the MSIX needs a Windows runner: an optional `workflow_dispatch` workflow on `windows-latest`, non-required. **Signing needs Mathew's or the district's code-signing certificate**, stored as a GitHub secret, never in the repo.
+- `clients/04-windows-msix` (what shipped):
+  - `msix` 3.18.0 as a dev dependency (lockfile updated; the 10 new packages have no known advisories in OSV) and `msix_config` in `pubspec.yaml`: display name EduOS, identity `org.eduos.app`, version 37.8.0.0, x64, capability `internetClient` only, output `build/msix/`.
+  - `.github/workflows/windows-msix.yml`: **manual only** (`workflow_dispatch`), on `windows-2022`, so it never runs on push or pull requests and can't be a required check. It builds `flutter build windows --release` from the committed lockfile, then packages:
+    - sideload (default): signed with the `WINDOWS_CERTIFICATE_PFX_BASE64` / `WINDOWS_CERTIFICATE_PASSWORD` secrets when they exist, otherwise with msix's own test certificate (for trying it on a PC, not for families);
+    - store (`store: true`): unsigned for Partner Center, using the `MSIX_STORE_IDENTITY_NAME`, `MSIX_STORE_PUBLISHER` and `MSIX_STORE_PUBLISHER_DISPLAY_NAME` repository variables.
+    The `.msix` is kept as the `eduos-windows-msix` artifact. Nothing is published.
+  - Not run yet: the box has no Windows, so the first manual run of the workflow is the first Windows build. The Dart code it compiles is the same code `flutter analyze` and `flutter test` check in the required `flutter-mobile` job.
+  - The certificate (or the Store's publisher values) and the app icon (`logo_path`, 400 px or larger) come from Mathew; neither is in the repo.
 
 ## 5. iOS / iPadOS (branch 01)
 
@@ -116,7 +123,7 @@ What shipped (details in `eduos/clients/roku/README.md`):
 1. `clients/01-flutter-time-capsule`: Time Capsule screens, responsive shell, ios + windows platforms, tests.
 2. `clients/02-tv`: device sign-in (server + Flutter + `/device/` web page), TV/leanback layout + focus, manifest + banner, one APK for Play and Amazon, PIN/auto-lock.
 3. `clients/03-roku`: Roku channel + lint/package script + non-required CI job (depends on 02's device sign-in).
-4. `clients/04-windows-msix`: MSIX config + optional Windows workflow.
+4. `clients/04-windows-msix`: MSIX config + manual-only Windows workflow.
 
 Each branch keeps the 8 required checks green. No PRs, merges, pushes to main or force-pushes.
 
@@ -126,6 +133,6 @@ Each branch keeps the 8 required checks green. No PRs, merges, pushes to main or
 - **Google Play Console:** developer account, upload key / Play App Signing, store listing.
 - **Amazon Appstore:** developer account, Fire TV / Fire tablet listing, and ADM credentials if push is wanted.
 - **Roku:** developer account, channel listing, channel artwork.
-- **Windows:** a code-signing certificate (OV/EV) or a Microsoft Store (Partner Center) account, and the publisher name for the MSIX identity.
-- **Art:** app icons (1024 px master), an Android TV banner (320×180), Fire TV assets, Roku focus/side posters (HD 336×210 / FHD 540×405) and splash (1280×720 / 1920×1080).
+- **Windows:** a code-signing certificate (OV/EV; as the `WINDOWS_CERTIFICATE_PFX_BASE64` and `WINDOWS_CERTIFICATE_PASSWORD` secrets) or a Microsoft Store (Partner Center) account (its identity name, publisher and publisher display name as the `MSIX_STORE_*` repository variables).
+- **Art:** app icons (1024 px master; also the MSIX `logo_path`), an Android TV banner (320×180), Fire TV assets, Roku channel posters (HD 336×210 / FHD 540×405) and splash screens (1280×720 / 1920×1080) in `eduos/clients/roku/art/`.
 - **District config:** the `NATIVE_APP_REDIRECT_URIS` value for the store apps, and turning on device sign-in (`DEVICE_SIGN_IN_ENABLED`).

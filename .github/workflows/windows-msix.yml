@@ -1,0 +1,75 @@
+# 37.8 (clients/04): build the EduOS Windows app and package it as MSIX.
+# Manual only (Actions > windows-msix > Run workflow); it never runs on push or
+# pull requests, so it isn't, and can't become, a required check.
+# Nothing here publishes anything. Two kinds of package:
+#   - sideload (default): signed with the code-signing certificate in the
+#     WINDOWS_CERTIFICATE_PFX_BASE64 / WINDOWS_CERTIFICATE_PASSWORD secrets when
+#     they're set, otherwise with msix's own test certificate (fine for trying it
+#     on a PC in developer mode, not for families).
+#   - store: unsigned, for upload in Partner Center (Microsoft signs it). Needs
+#     the repository variables MSIX_STORE_IDENTITY_NAME, MSIX_STORE_PUBLISHER and
+#     MSIX_STORE_PUBLISHER_DISPLAY_NAME from Partner Center's Product identity page.
+name: windows-msix
+on:
+  workflow_dispatch:
+    inputs:
+      store:
+        description: "Package for the Microsoft Store (Partner Center upload) instead of a sideload package"
+        type: boolean
+        default: false
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: eduos/mobile/flutter
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+      - name: Resolve Flutter dependencies (from the committed lockfile)
+        run: flutter pub get --enforce-lockfile
+      - name: Build the Windows app (release)
+        run: flutter build windows --release
+      - name: Package for sideloading
+        if: ${{ !inputs.store }}
+        env:
+          CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ($env:CERT_PFX_BASE64) {
+            $pfx = Join-Path $env:RUNNER_TEMP "eduos-signing.pfx"
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_PFX_BASE64))
+            dart run msix:create --certificate-path $pfx --certificate-password "$env:CERT_PASSWORD" --output-name eduos-windows-signed
+            Remove-Item $pfx
+          } else {
+            Write-Output "No signing certificate secret: using msix's test certificate."
+            dart run msix:create --output-name eduos-windows-test-signed
+          }
+      - name: Package for the Microsoft Store
+        if: ${{ inputs.store }}
+        env:
+          STORE_IDENTITY: ${{ vars.MSIX_STORE_IDENTITY_NAME }}
+          STORE_PUBLISHER: ${{ vars.MSIX_STORE_PUBLISHER }}
+          STORE_PUBLISHER_NAME: ${{ vars.MSIX_STORE_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          if (-not $env:STORE_IDENTITY -or -not $env:STORE_PUBLISHER -or -not $env:STORE_PUBLISHER_NAME) {
+            Write-Error "Set the MSIX_STORE_IDENTITY_NAME, MSIX_STORE_PUBLISHER and MSIX_STORE_PUBLISHER_DISPLAY_NAME repository variables (Partner Center > Product identity)."
+            exit 1
+          }
+          dart run msix:create --store --identity-name "$env:STORE_IDENTITY" --publisher "$env:STORE_PUBLISHER" --publisher-display-name "$env:STORE_PUBLISHER_NAME" --output-name eduos-windows-store
+      - name: Upload the package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eduos-windows-msix
+          path: eduos/mobile/flutter/build/msix/*.msix
+          if-no-files-found: error
+          retention-days: 14
