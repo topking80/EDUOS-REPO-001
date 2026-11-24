@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:eduos_mobile_branding/app/app_controller.dart';
 import 'package:eduos_mobile_branding/core/key_value_store.dart';
+import 'package:eduos_mobile_branding/core/format.dart';
 import 'package:eduos_mobile_branding/core/session.dart';
 import 'package:eduos_mobile_branding/main.dart';
 import 'package:flutter/material.dart';
@@ -39,6 +40,7 @@ class FakeServer {
           'GET /api/notifications': (_) => {'data': {'unread': 0, 'items': []}},
           'GET /api/rosters': (_) => {'data': []},
           'GET /api/attendance': (_) => {'data': []},
+          'GET /api/arrival/today': (_) => {'data': []},
           'GET /api/learning/courses': (_) => {'data': {'courses': [
             {'id': course, 'title': 'Grade 4 Math', 'term': 'Fall', 'students': 2, 'lessons': 6, 'teacher_name': 'Ms. Rivera', 'to_review': 1, 'to_grade': 0},
           ]}},
@@ -292,4 +294,117 @@ void main() {
       expect(jsonDecode(fake.sent('POST', '/api/staff-management/coverage/cv1/decision').single.body), {'decision': 'approved'});
     });
   });
+
+  testWidgets('classes: open the native daily planner and save a warm-up draft', (tester) async {
+    final day = isoDate(DateTime.now());
+    final fake = FakeServer({
+      'GET /api/home': (_) => {'data': {'school_name': 'Maple Elementary', 'students': 1, 'to_grade': 0, 'open_assignments': 1, 'absences_7d': 0}},
+      'GET /api/rosters': (_) => {'data': []},
+      'GET /api/attendance': (_) => {'data': []},
+      'GET /api/class-plans': (_) => {'data': [
+        {'course_id': course, 'title': 'Grade 4 Math', 'subject': 'Math', 'grade_level': '4', 'status': null, 'blocks': 0, 'minutes': 0},
+      ]},
+      'GET /api/class-plans/$course/$day': (_) => {'data': {
+        'course': {'id': course, 'title': 'Grade 4 Math'},
+        'date': day,
+        'plan': null,
+        'choices': {'lessons': [], 'assignments': []},
+      }},
+      'PUT /api/class-plans/$course/$day': (_) => {'data': {'id': 'plan-1', 'version': 1, 'status': 'draft', 'minutes': 0}},
+    });
+    await launch(tester, fake);
+    await openTab(tester, 'Classes');
+    await tester.tap(find.text('Plan lessons'));
+    await tester.pumpAndSettle();
+    expect(find.text('Grade 4 Math'), findsOneWidget);
+    await tester.tap(find.text('Open plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add activity'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Warm-up question'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Question'), 'Which fraction is larger?');
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save draft'));
+    await tester.pumpAndSettle();
+    final request = fake.sent('PUT', '/api/class-plans/$course/$day').single;
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    expect(body['status'], 'draft');
+    expect(body['blocks'], [
+      {'kind': 'warmup', 'minutes': null, 'note': null, 'prompt': 'Which fraction is larger?'}
+    ]);
+  });
+
+
+  testWidgets('school day: teacher sees classroom, riders, pickup and duty connections', (tester) async {
+    final fake = FakeServer({
+      'GET /api/rooms': (_) => {'data': [
+        {'id': 'media-1', 'name': 'Library', 'kind': 'media_center', 'building': 'Main', 'devices': []},
+      ]},
+      'GET /api/my/rooms': (_) => {'data': [
+        {'id': 'room-1', 'name': 'Room 101', 'now': true, 'slots': [{'starts': '08:00', 'ends': '09:00'}], 'pairing': null, 'devices': [{'id': 'display-1', 'name': 'Front board', 'capabilities': ['show']}]},
+      ]},
+      'POST /api/rooms/room-1/pair': (_) => {'data': {'id': 'pair-1'}},
+      'GET /api/arrival/today': (_) => {'data': [
+        {'id': 'handoff-1', 'display_name': 'Ada Lovelace', 'grade_level': '4', 'method': 'bus', 'status': 'pending', 'initiated_at': now},
+        {'id': 'handoff-2', 'display_name': 'Ben Ortiz', 'grade_level': '4', 'method': 'car_rider', 'status': 'received', 'initiated_at': now},
+      ]},
+      'GET /api/pickup/queue': (_) => {'data': {'waiting': [{'name': 'Ada Lovelace', 'grade': '4'}], 'released': [], 'blocked': 0, 'denied': 0}},
+      'GET /api/staff-workspace': (_) => {'data': {
+        'tasks': [],
+        'checklists': [{'id': 'list-1', 'title': 'Lunchroom duty', 'domain': 'meal_service', 'item_id': 'item-1', 'label': 'Set up tables', 'completed_at': null}],
+        'handoffs': [],
+        'announcements': [],
+      }},
+      'GET /api/my/checkins': (_) => {'data': []},
+      'GET /api/transport/today': (_) => {'data': {'role': 'teacher', 'riders': [
+        {'id': ada, 'display_name': 'Ada Lovelace', 'bus_label': 'Bus 12', 'route_name': 'North', 'stop_name': 'Oak Street', 'status': 'expected'},
+      ]}},
+      'GET /api/staff-management': (_) => {'data': {
+        'shifts': [{'id': 'shift-1', 'department': 'meal_service', 'assignment': 'Lunchroom duty', 'shift_date': '2026-11-24', 'starts_at': now, 'ends_at': now}],
+        'absences': [], 'coverage': [], 'staffing': [],
+      }},
+    });
+    await launch(tester, fake);
+    await openTab(tester, 'School day');
+    expect(find.text('Classroom connections'), findsOneWidget);
+    expect(find.text('Room 101'), findsOneWidget);
+    expect(find.text('Bus riders and handoffs'), findsOneWidget);
+    expect(find.text('Ada Lovelace'), findsWidgets);
+    expect(find.text('Car rider arrivals'), findsOneWidget);
+    expect(find.text('Car rider dismissal'), findsOneWidget);
+    expect(find.text('Library and lunchroom duties'), findsOneWidget);
+    expect(find.text('Lunchroom duty'), findsWidgets);
+    await tester.tap(find.text('Connect'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Classroom code'), '123456');
+    await tester.tap(find.text('Connect').last);
+    await tester.pumpAndSettle();
+    final pair = fake.sent('POST', '/api/rooms/room-1/pair').single;
+    expect(jsonDecode(pair.body), {'code': '123456', 'controllerName': 'Teacher mobile app'});
+  });
+
+
+  testWidgets('classes: first attendance after arrival uses the verified handoff endpoint', (tester) async {
+    final fake = FakeServer({
+      'GET /api/home': (_) => {'data': {'school_name': 'Maple Elementary', 'students': 1, 'to_grade': 0, 'open_assignments': 0, 'absences_7d': 0}},
+      'GET /api/rosters': (_) => {'data': [{'student_id': ada, 'student_name': 'Ada Lovelace'}]},
+      'GET /api/attendance': (_) => {'data': []},
+      'GET /api/arrival/today': (_) => {'data': [
+        {'id': 'handoff-1', 'student_id': ada, 'method': 'bus', 'status': 'received'},
+      ]},
+      'POST /api/arrival/handoffs/handoff-1/first-attendance': (_) => {'data': {'id': 'attendance-1', 'status': 'present'}},
+    });
+    await launch(tester, fake);
+    await openTab(tester, 'Classes');
+    await tester.tap(find.text('Present').last);
+    await tester.pumpAndSettle();
+    final request = fake.sent('POST', '/api/arrival/handoffs/handoff-1/first-attendance').single;
+    expect(jsonDecode(request.body), {'status': 'present'});
+    expect(fake.sent('POST', '/api/attendance'), isEmpty);
+  });
+
 }

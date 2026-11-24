@@ -5,16 +5,25 @@ import '../../core/api_client.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
+import 'class_planner_screen.dart';
+
+class _ClassTodayHandoff {
+  const _ClassTodayHandoff(this.value);
+  final Json? value;
+  String get id => str(value?['id']);
+  String get status => str(value?['status']);
+}
 
 class _ClassToday {
   const _ClassToday({required this.schoolName, required this.students, required this.toGrade, required this.openAssignments,
-      required this.absences7d, required this.roster, required this.marks});
+      required this.absences7d, required this.roster, required this.marks, required this.handoffs});
   final String schoolName;
   final int students, toGrade, openAssignments, absences7d;
   final List<RosterLearner> roster;
 
   /// Latest mark recorded today per learner (studentId -> status).
   final Map<String, String> marks;
+  final Map<String, Json> handoffs;
 }
 
 const attendanceStatuses = ['present', 'absent', 'tardy'];
@@ -52,13 +61,17 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
 
   Future<_ClassToday> _load() async {
     final api = AppScope.read(context).api;
-    final results = await Future.wait([api.get('/api/home'), api.get('/api/rosters'), api.get('/api/attendance')]);
+    final results = await Future.wait([api.get('/api/home'), api.get('/api/rosters'), api.get('/api/attendance'), api.get('/api/arrival/today')]);
     final home = obj(results[0]['data']);
     final roster = objs(results[1]['data']).map(RosterLearner.fromJson).toList();
     // GET /api/attendance is newest first, so the first mark seen per learner today wins.
     final marks = <String, String>{};
     for (final m in objs(results[2]['data']).map(AttendanceMark.fromJson)) {
       if (m.day == _day) marks.putIfAbsent(m.studentId, () => m.status);
+    }
+    final handoffs = <String, Json>{};
+    for (final h in objs(results[3]['data'])) {
+      handoffs.putIfAbsent(str(h['student_id']), () => h);
     }
     return _ClassToday(
       schoolName: str(home['school_name']),
@@ -68,14 +81,27 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
       absences7d: integer(home['absences_7d']),
       roster: roster,
       marks: marks,
+      handoffs: handoffs,
     );
   }
 
-  Future<void> _mark(RosterLearner learner, String status, Future<void> Function() reload) async {
+  Future<void> _mark(_ClassToday t, RosterLearner learner, String status, Future<void> Function() reload) async {
     final app = AppScope.read(context);
     setState(() => _sending.add(learner.studentId));
     try {
-      final sent = await app.api.post('/api/attendance', {'studentId': learner.studentId, 'eventDate': _day, 'status': status});
+      final handoff = _ClassTodayHandoff(t.handoffs[learner.studentId]);
+      final firstMark = t.marks[learner.studentId] == null && handoff.value != null;
+      if (firstMark && handoff.status != 'received') {
+        if (mounted) toast(context, 'Confirm the physical arrival handoff before recording attendance.');
+        return;
+      }
+      if (firstMark && status == 'absent') {
+        if (mounted) toast(context, 'A student who has arrived must be marked present or tardy.');
+        return;
+      }
+      final sent = firstMark
+          ? await app.api.post('/api/arrival/handoffs/${handoff.id}/first-attendance', {'status': status})
+          : await app.api.post('/api/attendance', {'studentId': learner.studentId, 'eventDate': _day, 'status': status});
       if (!mounted) return;
       if (sent.queued) {
         setState(() => _pending[learner.studentId] = status);
@@ -103,7 +129,14 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
         return ListView(padding: const EdgeInsets.all(16), children: [
           SectionCard(children: [
             Text(t.schoolName, style: Theme.of(context).textTheme.bodySmall),
-            Semantics(header: true, child: Text('Today in class', style: Theme.of(context).textTheme.titleLarge)),
+            Row(children: [
+              Expanded(child: Semantics(header: true, child: Text('Today in class', style: Theme.of(context).textTheme.titleLarge))),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ClassPlannerScreen())),
+                icon: const Icon(Icons.event_note_outlined),
+                label: const Text('Plan lessons'),
+              ),
+            ]),
             const SizedBox(height: 12),
             Row(children: [
               Expanded(child: StatTile(t.students, 'learners')),
@@ -129,7 +162,7 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
                     if (!ok) return;
                     for (final l in unmarked) {
                       if (!mounted) return;
-                      await _mark(l, 'present', reload);
+                      await _mark(t, l, 'present', reload);
                     }
                   },
                 ),
@@ -153,7 +186,7 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
                     onSelectionChanged: _sending.contains(l.studentId)
                         ? null
                         : (v) {
-                            if (v.isNotEmpty && v.first != status(l)) _mark(l, v.first, reload);
+                            if (v.isNotEmpty && v.first != status(l)) _mark(t, l, v.first, reload);
                           },
                   ),
                 ]),
