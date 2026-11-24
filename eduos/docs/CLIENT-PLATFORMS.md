@@ -1,138 +1,193 @@
-# EduOS client platforms plan: Time Capsule on phone, tablet, desktop, TV and Roku
+# EduOS client platforms — current implementation and release gates
 
-Requested by Mathew (Nov 23, 2026): "Mobile screens should be extensive and include android/google tv, Roku, Amazon, iOS, and windows."
+Last reconciled against `main`: November 24, 2026.
 
-## 1. What exists today (inventory of origin/main)
+This document describes what is present in the repository now, what CI verifies,
+and what still requires external credentials or physical-device validation. A
+source directory or successful cross-platform unit test is not evidence that a
+store-ready binary has been built, signed, or certified on that platform.
 
-**Flutter app:** `eduos/mobile/flutter` (package `eduos_mobile_branding`, v32.32.0, Flutter 3.24.5 in CI)
-- **Platforms enabled:** Android only (`android/`). There's no `ios/`, `windows/`, `web/`, `macos/` or `linux/` folder, although `.metadata` already lists `ios/Runner.xcodeproj` as unmanaged.
-- **State:** a hand-rolled `AppController` (ChangeNotifier) exposed through `AppScope` (InheritedNotifier). No provider, riverpod or bloc. Screens use `Loader<T>` / `InlineLoader<T>` (FutureBuilder + retry + pull-to-refresh) and `TabVisit` keep-alive.
-- **API client:** `lib/core/api_client.dart`, `package:http`. Bearer session token plus `x-csrf-token` on writes, CSRF auto-refresh, an offline write queue (allowlist), in-flight GET de-dup and isolate JSON decode over 48 KB. It had no PATCH, no raw-bytes upload and no redirect-free GET; branch 01 adds those three.
-- **Sign-in:** RFC 8252 PKCE through the system browser (`flutter_web_auth_2`), redirect `org.eduos.app:/oauth2redirect`, then `POST /auth/native/token`. The server only allows reverse-domain or https redirects (`NATIVE_APP_REDIRECT_URIS`), with no loopback, so Windows desktop and TVs can't use this flow as-is (see section 4).
-- **Navigation:** `lib/app/role_tabs.dart` mirrors `ROLE_TABS` in `public/app/app.js`. `Shell` shows a bottom NavigationBar (4 + "More"), a profile switcher (`ui/profile_switcher.dart`) and a SafetyOS takeover. There's no tablet or desktop layout.
-- **Time Capsule screens:** none. The web app has `capsules`, `portfolio` ("My history"), `contributions` ("History items") and others, but the Flutter app has no history or capsule screen at all.
-- **Push:** no FCM in main (the `feat/fcm-device-push` branch belongs to someone else, and I'm not touching it).
-- **Tests:** 13 files, 111 tests, `FakeServer` (MockClient) in `test/operations_screens_test.dart`.
-- **CI:** the `flutter-mobile` job (ubuntu-24.04) runs `pub get --enforce-lockfile`, `analyze --fatal-infos`, `flutter test` and `build apk --debug`, then uploads the APK. It's one of the 8 required checks in the main ruleset.
+## 1. Current platform inventory
 
-**Time Capsule and student-history API on main (all `requireSession`; writes need `requireCsrf`):**
+| Platform | Implementation on main | Automated validation | Release status |
+|---|---|---|---|
+| Android phones and tablets | Flutter app in `eduos/mobile/flutter/android/`; native role screens, responsive layouts and Time Capsule/history features | Required `flutter-mobile` job: dependency lock, analyzer, Flutter tests and Android debug APK build | Release signing, store listing and device certification remain |
+| Android TV / Google TV | Same Android application package, leanback launcher support, remote/focus layout, view-only TV experience and device-code sign-in | Covered by Flutter analyzer/tests and Android APK build; no TV hardware in CI | Physical remote/focus and Play TV listing validation remain |
+| Amazon Fire tablets / Fire TV | Android-compatible build; Amazon store selection uses `EDUOS_STORE=amazon`; TV mode uses device sign-in | Same Flutter/Android CI path; no Fire hardware in CI | Fire OS/device testing and Amazon Appstore submission remain |
+| iOS / iPadOS | Flutter `ios/` project, bundle identifier `org.eduos.app`, URL scheme for native sign-in; tablet layout uses the responsive shell | Dart analyzer and Flutter tests run in Linux CI; no Xcode build is run | Requires macOS/Xcode build, signing/provisioning, physical-device testing and App Store Connect release |
+| Windows desktop | Flutter `windows/` runner and device-code sign-in | Dart analyzer and Flutter tests run in Linux CI; native Windows compilation is not part of required CI | Manual MSIX workflow exists; first verified Windows build, production signing/store identity and device testing remain |
+| Roku | Separate BrightScript/SceneGraph channel in `eduos/clients/roku/`; device-code sign-in; read-only family history and Time Capsule views | `roku-channel` CI job runs BrightScript lint and packages a ZIP artifact | No physical Roku validation; real channel artwork, developer account and publishing remain |
 
-| Area | Endpoints |
-|---|---|
-| Capsules | `GET/POST /api/history/capsules`, `GET/PATCH /api/history/capsules/:id`, `GET …/:id/candidates`, `POST …/:id/items {entryId}`, `POST …/:id/recipients {userId,type}`, `POST …/:id/seal|cancel|release`, `GET /api/history/capsule-recipient-options?studentId=`, `GET /api/history/capsule-milestones` (school leads), `GET /api/history/capsule-invitations`, `POST /api/history/capsule-invitations/:capsuleId {decision: approved|denied|withdrawn}` |
-| Portfolio / timeline | `GET /api/history/portfolio?studentId&type&kind&year&q&cursor` (50 per page, facets, photos, transferredFrom) · `GET /api/history/export?studentId=` |
-| Guardian contributions | `GET/POST /api/family/children/:studentId/history-contributions`, `PATCH …/:contributionId {decision:"withdraw"}` |
-| Teacher contributions | `POST /api/students/:studentId/history/teacher-items`, `GET /api/teacher/history-items`, `PATCH /api/teacher/history-items/:id`, `POST …/:id/submit`, `GET /api/history-review`, `POST /api/history-review/:id`, `GET /api/family/children/:studentId/history-items/pending`, `POST /api/family/children/:studentId/history-items/:id {decision: accept|decline}` |
-| Photos / media | `GET/PUT /api/history/media-policy`, `POST /api/history/entries/:id/photos`, `POST /api/family/children/:sid/history-contributions/:cid/photos`, `POST /api/history/capsules/:id/photos` (raw image body), `GET /api/history/photos/:assetId`, which returns a **302 to a 60-second signed URL** (the client must not forward its Bearer token to the storage host) |
-| Transfers / imports | `POST/GET /api/students/:id/history-transfers`, `POST /api/history-transfers/:id/cancel`, `GET …/:id/package`, `GET /api/family/history-transfers`, `POST /api/family/history-transfers/:id {decision: approve|decline}`, `POST/GET /api/history-imports…` (district IT) |
-| Privacy / sharing | `GET /api/students/:id/history-privacy`, custody restrictions, rights transition, `GET/POST /api/history/sharing`, `POST /api/history/sharing/:id/revoke`, emergency access, `GET /api/students/:id/history-access-log` |
-| **TC-08** (branch `tc/08-archival-storage-v2`, unmerged) | `GET /api/history/preservation`, `PUT /api/history/preservation-policy`, `GET/POST /api/students/:id/legal-holds`, `GET /api/history/legal-holds`, `POST /api/legal-holds/:id/release` (records office only) |
-| **TC-11** (branch `tc/11-family-storage-dashboard`, unmerged, stacked on TC-08) | `GET /api/history/storage?studentId=` (family storage dashboard: limits, usage, items, capsules, retention, export, guidance, donation note) |
-| Device pairing (#124, DEV-02) | `POST /api/classroom-agent/code` (room display with a district-issued `cdk1.` device key), `POST /api/rooms/:id/pair {code}` (teacher), `GET /api/my/rooms`, `POST /api/pairings/:id/end`. This is **room-display ↔ teacher** pairing, and it doesn't sign a person in on a family TV. |
+### Flutter capabilities
 
-**Stacking decision:** the client branches build on **main only**. The storage dashboard and records-office screens call the TC-08/TC-11 endpoints and show "not available on this server yet" on a 404, so they light up as soon as those TC branches merge. Nothing stacks on unmerged TC branches.
+The Flutter app includes role-aware navigation, parent and family workflows,
+student learning and history experiences, staff and school-leader workflows,
+and SafetyOS views. Time Capsule and student-history screens include capsule
+creation/detail, invitations, portfolio/timeline, family contributions,
+teacher submissions and review, sharing, transfer flows, and photo viewing.
+The family storage and preservation-related web experiences are separately
+implemented in the server/web application; do not assume every web workflow
+has a native Flutter screen.
 
-## 2. Flutter: phone, tablet, desktop (branch `clients/01-flutter-time-capsule`)
+The responsive shell uses the compact bottom navigation on narrower screens
+and a navigation rail on wider screens. TV mode applies remote-friendly focus
+and hides sensitive or operational workflows. TV and Roku device sessions are
+read-only on the server; Windows device sessions are full sessions.
 
-- **Responsive shell:** under 840 dp keeps today's bottom bar. From 840 dp (tablet landscape, desktop) it uses a NavigationRail, extended from 1200 dp. Content gets a max width with two-pane list/detail where it helps (capsule list + detail, timeline + item).
-- **New tabs, mirroring web ROLE_TABS:**
-  - parent: "Time Capsules"
-  - pupil: "My history" and "Time Capsules"
-  - teacher: "History items"
-  - principal / superintendent: "Time Capsules"
-  - vice principal: added on the leader side
-- **Screens:**
-  1. **Time Capsules hub:**
-     - invitations "Capsules for you" (accept, decline, withdraw)
-     - milestone confirmations (leaders)
-     - "My capsules" and "Opened for you"
-     - family: per-child entry points to history, family memories, teacher items, transfers and storage
-  2. **New capsule:** child, title, message, a date (09:00 local on that day) or a milestone (grade 5, grade 8, graduation, 18).
-  3. **Capsule detail:**
-     - status, opens-when, message, items with photos, own photos
-     - owner only: recipients with consent, event history, edit title and message, add items from history (candidates), add recipients (eligible options), seal, cancel (with confirmation)
-     - leaders: release a milestone capsule
-  4. **History timeline / portfolio:** grouped by school year, filters (year, kind, type), search, cursor paging, photo thumbnails, "transferred from", full-screen item and photo viewer.
-  5. **Family memories:** guardian contributions list, add (title, story, date) and withdraw while waiting.
-  6. **From teachers:** teacher items waiting for the family, keep or decline (with a reason).
-  7. **Teacher "History items":** my submissions with status and decision trail, a new item for a student on my roster (`/api/rosters`), edit and resubmit when changes are requested.
-  8. **Leaders' review queue:** approve, request changes or reject, with a reason.
-  9. **Transfers:** family approval of history transfers to a new district.
-  10. **Sharing:** pupils who hold their own rights see grants and can revoke them; parents see grants to them.
-  11. **Storage:** the TC-11 family storage dashboard (usage bar, limits, items, capsule opening dates, retention text, export link, "donations never change limits").
-- **Photos:** `ApiClient.location()` makes a redirect-free authorized GET, then `Image.network` loads the signed URL with no auth header, with a cache of signed URLs under 60 seconds.
-- **Platforms:** add `ios/` (bundle id `org.eduos.app`, the URL scheme for sign-in) and `windows/` via `flutter create --platforms=ios,windows`. Android stays as it is.
-- **Tests:** widget tests for each screen against `FakeServer`, wide-layout tests (rail at 1280 px), and the photo redirect test.
+### Device sign-in and shared screens
 
-## 3. Amazon Fire tablets (Fire OS = Android) and Android TV / Google TV / Fire TV (branch `clients/02-tv`)
+The device authorization flow is implemented in the server and clients:
+`POST /auth/device/code`, `POST /auth/device/token`, and authenticated
+approval/denial routes. Codes are short-lived and single-use; approval is
+audited and the approving membership is revalidated when the device redeems
+its code. Device sign-in is **disabled by default** and requires district
+configuration with `DEVICE_SIGN_IN_ENABLED=true`.
 
-Built in `clients/02-tv` (what shipped, where it differs from the first plan):
+TV and Roku sessions are read-only. The optional local screen-lock PIN is a
+shared-screen privacy measure, not a substitute for signing out or for
+district identity-provider controls. Test the lock, sign-out and account
+switching behavior on the actual target hardware before deployment.
 
-- **One APK, two stores (no Gradle flavors).** Gradle `productFlavors` would rename the APK and break the required `flutter-mobile` job's `flutter build apk --debug` + artifact upload, so the app ships one universal APK:
-  - Google Play (phones, tablets, Android TV / Google TV): the default build.
-  - Amazon Appstore (Fire tablets, Fire TV): the same APK, or `--dart-define=EDUOS_STORE=amazon`. It uses no Google Play services (none are used today). When push lands, the Amazon build uses Amazon Device Messaging (ADM) or the existing in-app notifications poll.
-  - Sign-in: phones and Fire tablets use the system browser (RFC 8252) as before; TVs use device sign-in below.
-- **TV manifest** (`android/app/src/main/AndroidManifest.xml`): `android.software.leanback` and `android.hardware.touchscreen` both `required="false"` (one APK serves phones and TVs), a `LEANBACK_LAUNCHER` intent filter, and `android:banner="@drawable/tv_banner"` (a 320×180 placeholder vector until Mathew supplies the banner art).
-- **TV detection:** `MainActivity.getDartEntrypointArgs()` passes `tv` (UiModeManager television mode or leanback), `fire_tv` (`amazon.hardware.fire_tv`) and `model=…` to `main(args)`; `DeviceProfile.fromLaunch` (`lib/core/device_profile.dart`) reads them before the first frame. `--dart-define=EDUOS_FORM_FACTOR=tv|firetv|desktop` overrides it for emulators.
-- **10-foot UI:** 1.25× text scale, comfortable density, a strong focus colour, the always-extended side rail, and remote keys (OK/select, game-pad A, play/pause) mapped to "activate". TVs drop work and sensitive tabs (`tvHiddenTabs`: pick-up, routes, registers/attendance, grading, Christie, counseling, health office, facilities, meals, nodes). On a TV the Time Capsule hub is view-only (no new capsule, accept/decline or release).
-- **Device sign-in (RFC 8628)**, server `src/device-sign-in.js` + migration `db/150_device_sign_in.sql` (numbered 150 to stay clear of TC 132/134 and donations 135+; renumber at merge time if needed), off unless `DEVICE_SIGN_IN_ENABLED=true`:
-  - `POST /auth/device/code {clientKind, deviceLabel?}` → `{deviceCode, userCode "BCDF-GHJK", verificationUri (/device/), verificationUriComplete, qr, expiresIn 600, interval 5}`. `qr` is the QR module rows, so TVs and Roku draw a scannable code with no QR library.
-  - The person approves on a phone (Account › **Sign in a TV or computer**) or on the web page `/device/` (signs in first if needed, then returns there): `POST /api/device-sign-in/check|approve|deny {userCode}` (session + CSRF, 30 per 15 min per person).
-  - The screen polls `POST /auth/device/token {deviceCode}` (RFC 8628 errors `authorization_pending`, `slow_down`, `access_denied`, `expired_token`); the approved request is consumed once and the approving membership is re-checked.
-  - Codes are stored only as SHA-256 hashes, last 10 minutes, are single-use, and approve / deny / session creation are written to `audit_events`.
-  - Sessions get `sessions.client_kind` (android_tv, fire_tv, roku, windows). **TV and Roku sessions are read-only**: a session guard refuses every write except sign-out and switching role (which keeps the kind). Windows sessions are full sessions (a personal computer). A device session can never approve another device.
-  - The classroom pairing from #124 stays for room displays, because it authenticates a room device key, not a person.
-- **Shared-screen privacy (TV, family Windows PC, shared tablets):** an optional 4–6-digit **screen-lock PIN** (Account › Screen lock), kept only on the device as a salted, 20,000-round HMAC-SHA256 in secure storage. It locks after 5/10/15/30 minutes idle (default 10), when the app goes to the background and when it reopens; 5 wrong PINs lock it out for 30 s, doubling to 15 minutes. "Forgot PIN? Sign out" and "Sign out of this TV" are always there, and signing out removes the PIN. One account is signed in per screen; switching between that person's roles uses the existing profile switcher.
+## 2. CI and branch protection
 
-## 4. Windows desktop (branches 01 and 04)
+The active default-branch ruleset currently requires these eight CI status
+checks:
 
-- 01 enables the `windows/` platform. Sign-in: `flutter_web_auth_2` on Windows can't receive `org.eduos.app:` redirects without an embedded WebView (which RFC 8252 and our code comments forbid), and the server refuses loopback redirects. So Windows uses the **device sign-in** from 02 ("Sign in with your phone"). Allowing the RFC 8252 §7.3 loopback is a later option.
-- `clients/04-windows-msix` (what shipped):
-  - `msix` 3.18.0 as a dev dependency (lockfile updated; the 10 new packages have no known advisories in OSV) and `msix_config` in `pubspec.yaml`: display name EduOS, identity `org.eduos.app`, version 37.8.0.0, x64, capability `internetClient` only, output `build/msix/`.
-  - `.github/workflows/windows-msix.yml`: **manual only** (`workflow_dispatch`), on `windows-2022`, so it never runs on push or pull requests and can't be a required check. It builds `flutter build windows --release` from the committed lockfile, then packages:
-    - sideload (default): signed with the `WINDOWS_CERTIFICATE_PFX_BASE64` / `WINDOWS_CERTIFICATE_PASSWORD` secrets when they exist, otherwise with msix's own test certificate (for trying it on a PC, not for families);
-    - store (`store: true`): unsigned for Partner Center, using the `MSIX_STORE_IDENTITY_NAME`, `MSIX_STORE_PUBLISHER` and `MSIX_STORE_PUBLISHER_DISPLAY_NAME` repository variables.
-    The `.msix` is kept as the `eduos-windows-msix` artifact. Nothing is published.
-  - Not run yet: the box has no Windows, so the first manual run of the workflow is the first Windows build. The Dart code it compiles is the same code `flutter analyze` and `flutter test` check in the required `flutter-mobile` job.
-  - The certificate (or the Store's publisher values) and the app icon (`logo_path`, 400 px or larger) come from Mathew; neither is in the repo.
+- `unit`
+- `integration`
+- `e2e`
+- `edge`
+- `flutter-mobile`
+- `dependency-security`
+- `source-and-container-security`
+- `prometheus-rules`
 
-## 5. iOS / iPadOS (branch 01)
+The ruleset also enables CodeQL code-scanning enforcement, blocks branch
+deletion and force-pushes, and requires pull requests. The current workflow
+contains a ninth CI job, `roku-channel`, which runs BrightScript lint and
+builds the Roku ZIP. **That job is not currently a required status check.**
+The repository's ruleset must be updated by an administrator to add the exact
+status context `roku-channel`; a green optional job does not block a merge if
+it later fails.
 
-- `ios/` platform, bundle id `org.eduos.app`, minimum iOS 13, `CFBundleURLTypes` `org.eduos.app`. iPad gets the tablet layout (rail).
-- CI: macOS runners cost about 10× Linux minutes, so **no iOS build is added to the required checks**. I'll note it and offer an optional manual `workflow_dispatch` job (`flutter build ios --no-codesign`) only if Mathew wants it.
-- Releasing needs an Apple Developer Program account ($99/year), signing certificates and provisioning profiles, and App Store Connect.
+The Windows MSIX workflow at
+`.github/workflows/windows-msix.yml` is manual-only
+(`workflow_dispatch`). It is not a required PR check and does not publish
+packages. The iOS project has no macOS/Xcode build workflow. Linux Flutter
+analysis and widget tests are useful shared-code checks, but do not validate
+native iOS signing, Windows compilation, TV remote behavior, Fire OS behavior,
+or Roku runtime compatibility.
 
-## 6. Roku (branch `clients/03-roku`)
+## 3. Release and certification gates
 
-What shipped (details in `eduos/clients/roku/README.md`):
+### Android / Google Play
 
-- Flutter can't target Roku, so it's a separate BrightScript/SceneGraph channel in `eduos/clients/roku/` (`src/manifest`, `src/source/main.brs`, `src/components/*`). Stages, one on screen at a time (`MainScene`):
-  - `SetupView`: the district address (https only), typed with the on-screen keyboard and checked against `/health` before it's saved.
-  - `PairView`: device sign-in from section 3 with `clientKind: "roku"` and the Roku's name as the label. Shows the code, the `/device/` address and a QR code drawn from the server's `qr` rows (`QrCode`, one rectangle per dark run). Polls `/auth/device/token` at the server's interval, adds 5 s on `slow_down`, gets a new code on `expired_token`, and explains `access_denied` and `device_sign_in_disabled`.
-  - `LockView`: the optional screen-lock PIN (4 or 6 numbers, picked with Up/Down since the remote has no number keys; `PinEntry`). Salted HMAC-SHA256, 2000 rounds, in the registry. Five free tries, then 30 s doubling to 15 min, the same as the phone app. "Sign this TV out" works without the PIN.
-  - `HomeView`: a menu that depends on the role (Time Capsules; History per child for a parent, or "My history" for a student; Screen lock; Sign out of this TV). Capsules list and detail (message, items, withheld items, sealed until it opens); history newest first, paged with "Show more"; screen-lock settings (set/change/off, 5/10/15/30 quiet minutes, lock now).
-  - `PhotoViewer`: full-screen photos with captions, Left/Right, Back. A `Poster` can't send the session header, so the channel asks `GET /api/history/photos/:assetId?format=json` (new in this branch: the same checks, answering `{data: {url, expiresIn: 60}}` instead of a 302) and the Poster loads that link.
-- Read-only: Roku sessions are read-only on the server (section 3); the channel only reads, plus sign-out.
-- Token storage: `roRegistrySection("eduos")`, cleared (with the PIN) on sign-out or when the server says the session ended (401).
-- **Tooling:** `package.json` in `eduos/clients/roku` with `brighterscript` 0.73.8 and `@rokucommunity/bslint` 0.8.47 (exact versions, own lockfile, 0 known vulnerabilities), and its `lint` and `build` package scripts (`build` makes `out/eduos-roku.zip`, git-ignored, with placeholder art until real art is in `art/`). A **non-required** CI job `roku-channel` (ubuntu) runs lint and build and keeps the zip as an artifact. The 8 required checks are unchanged.
-- Not tested on a Roku device from here (there's none in CI): it's checked by brighterscript/bslint, and the text helpers were run in a BrightScript interpreter. The first sideload on a real Roku is the remaining check.
-- Publishing needs a Roku developer account, a channel listing and artwork (channel posters, splash).
+- Configure production application signing and Play App Signing.
+- Supply production app icon, TV banner and store listing assets.
+- Build a release APK/AAB from the production configuration.
+- Validate installation, upgrade, deep links, device sign-in, offline behavior,
+  media playback/viewing, accessibility and role-specific navigation on
+  supported physical phones, tablets and TV devices.
+- Verify Play Console declarations, privacy disclosures and target-device
+  compatibility.
 
-## 7. Order and branches
+### Amazon Fire OS / Appstore
 
-1. `clients/01-flutter-time-capsule`: Time Capsule screens, responsive shell, ios + windows platforms, tests.
-2. `clients/02-tv`: device sign-in (server + Flutter + `/device/` web page), TV/leanback layout + focus, manifest + banner, one APK for Play and Amazon, PIN/auto-lock.
-3. `clients/03-roku`: Roku channel + lint/package script + non-required CI job (depends on 02's device sign-in).
-4. `clients/04-windows-msix`: MSIX config + manual-only Windows workflow.
+- Validate the Amazon build on Fire tablets and Fire TV hardware.
+- Confirm the selected Amazon build does not depend on unavailable Google Play
+  services; validate the actual distribution package and store requirements.
+- Supply Fire TV artwork, listing metadata and developer-account details.
+- Configure Amazon-specific push delivery only if/when that capability is
+  implemented and approved; do not treat the current in-app notification
+  behavior as ADM integration.
 
-Each branch keeps the 8 required checks green. No PRs, merges, pushes to main or force-pushes.
+### iOS / App Store
 
-## 8. What Mathew must provide
+- Run `flutter build ios` on a supported macOS/Xcode runner.
+- Configure Apple Developer team, bundle signing, provisioning profiles and
+  App Store Connect app record.
+- Validate URL-scheme callback, system-browser authentication, secure token
+  storage, camera/photo permissions where applicable, background/resume,
+  accessibility and iPad layouts on physical devices.
+- Produce and verify a signed release archive before submission.
 
-- **Apple:** Developer Program membership, team ID, App Store Connect app record, signing certificate and profiles.
-- **Google Play Console:** developer account, upload key / Play App Signing, store listing.
-- **Amazon Appstore:** developer account, Fire TV / Fire tablet listing, and ADM credentials if push is wanted.
-- **Roku:** developer account, channel listing, channel artwork.
-- **Windows:** a code-signing certificate (OV/EV; as the `WINDOWS_CERTIFICATE_PFX_BASE64` and `WINDOWS_CERTIFICATE_PASSWORD` secrets) or a Microsoft Store (Partner Center) account (its identity name, publisher and publisher display name as the `MSIX_STORE_*` repository variables).
-- **Art:** app icons (1024 px master; also the MSIX `logo_path`), an Android TV banner (320×180), Fire TV assets, Roku channel posters (HD 336×210 / FHD 540×405) and splash screens (1280×720 / 1920×1080) in `eduos/clients/roku/art/`.
-- **District config:** the `NATIVE_APP_REDIRECT_URIS` value for the store apps, and turning on device sign-in (`DEVICE_SIGN_IN_ENABLED`).
+### Windows / Microsoft Store or sideload
+
+- Run `.github/workflows/windows-msix.yml` on Windows and retain the build
+  logs and MSIX artifact as release evidence.
+- For sideload distribution, configure a trusted production certificate using
+  `WINDOWS_CERTIFICATE_PFX_BASE64` and
+  `WINDOWS_CERTIFICATE_PASSWORD`; the workflow's test certificate is for
+  development only.
+- For Store packaging, configure the three `MSIX_STORE_*` repository
+  variables from Partner Center and submit the package through the Store.
+- Add the approved production app icon and validate installer, upgrade,
+  uninstall, device-code sign-in, screen lock and accessibility on supported
+  Windows hardware.
+
+### Android TV / Google TV / Fire TV
+
+- Test D-pad focus order, visible focus, back behavior, remote activation,
+  text scaling, overscan/safe areas, screen lock and sign-out on each target
+  TV family.
+- Verify the leanback launcher/banner and store discoverability.
+- Confirm read-only enforcement on the server, including attempts to submit
+  unauthorized writes from a modified client.
+
+### Roku
+
+- Run the `roku-channel` CI job and retain the generated
+  `eduos-roku-channel` ZIP artifact.
+- Replace generated placeholder posters and splash images with approved
+  production artwork in `eduos/clients/roku/art/`.
+- Sideload and exercise setup, QR/code pairing, PIN lock, sign-out, capsule
+  views, history pagination and photo viewing on physical Roku hardware.
+- Validate API TLS, private signed-photo URLs, registry cleanup, remote
+  navigation and error/recovery states.
+- Complete Roku developer account, channel listing, content rating and
+  publishing requirements. The repository does not sign or publish the
+  channel automatically.
+
+## 4. District production configuration and privacy
+
+Before enabling device sign-in, configure the district's public origin and
+identity-provider settings, then explicitly enable
+`DEVICE_SIGN_IN_ENABLED=true`. Validate the approval page and rate limits
+with the district identity provider. Do not enable it merely because the
+feature is present in the code.
+
+Production release also depends on district-approved retention and legal-hold
+policies, private object storage, malware scanning and media processing,
+backup/restore testing, incident response procedures, privacy/legal review,
+and data-processing agreements. These are deployment and governance gates,
+not things that a green CI run can certify.
+
+## 5. Current owner-supplied inputs
+
+The following external inputs are still needed for the relevant store releases:
+
+- **Apple:** Developer Program membership, team identifier, App Store Connect
+  record, signing certificate and provisioning profiles.
+- **Google Play:** developer account, upload key / Play App Signing and store
+  listing.
+- **Amazon:** developer account, Fire tablet/TV listing and approved artwork.
+- **Roku:** developer account, channel listing and production artwork.
+- **Windows:** production code-signing certificate or Partner Center identity
+  values.
+- **Brand assets:** approved app icons, Android TV banner, Fire TV assets,
+  Roku channel posters and splash screens.
+- **District IT:** production public origin, identity-provider redirect
+  configuration and explicit device-sign-in approval.
+
+## 6. Audit conclusion
+
+The repository contains client implementations for Android, iOS, Windows,
+Android/Google TV, Amazon Fire devices and Roku. The degree of automated and
+physical validation differs by platform. Required CI currently validates
+Flutter shared code and Android debug packaging; Roku packaging is automated
+but optional; native iOS and Windows builds and all physical TV/Roku
+certification remain release gates.
+
+Do not describe a platform as store-ready or production-certified until its
+native build, signing, device tests, privacy review and store submission
+evidence are recorded.
