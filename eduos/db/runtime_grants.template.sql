@@ -747,3 +747,10 @@ GRANT EXECUTE ON FUNCTION eduos_history_student_media_bytes(uuid, uuid), eduos_h
 GRANT EXECUTE ON FUNCTION eduos_capsule_photo_begin(uuid, uuid, text, text, bigint, text, text, text),
   eduos_capsule_photo_set(uuid, text, bigint, text, text, int, int), eduos_capsule_photos(uuid), eduos_capsule_photo_get(uuid),
   eduos_capsule_photos_release(uuid) TO eduos_app;
+
+-- TC-06a (db/129): history transfers. The records office reads them; every
+-- change goes through these functions.
+GRANT SELECT ON history_transfers TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_records_office_for(uuid), eduos_history_transfer_start(uuid, text, text, text, boolean), eduos_history_transfer_family_decider(uuid),
+  eduos_history_transfer_family_pending(), eduos_history_transfer_family_decide(uuid, boolean), eduos_history_transfer_cancel(uuid, text),
+  eduos_history_transfer_contents(uuid), eduos_history_transfer_downloaded(uuid, text) TO eduos_app;

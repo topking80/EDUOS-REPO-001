@@ -1356,6 +1356,7 @@ VIEWS.portfolio = async () => {
     first.items.length ? list : empty(filtered ? "Nothing matches these filters." : "Nothing in the history yet."),
     cursor ? more : null,
     historyDownloadCard(first.student.id, role),
+    ["parent", "pupil"].includes(role) ? await familyTransferCard(first.student.id) : null,
     await studentSharingCard(first.student.id)];
 };
 // ---------------- Time Capsules ----------------
@@ -4613,6 +4614,54 @@ function historyDownloadCard(studentId, role) {
     h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: () => get("html") }, "Web page (to read or print)"),
       h("button", { class: "btn small", type: "button", onclick: () => get("json") }, "Data file (JSON)")));
 }
+// ---- TC-06: sending a student's history to another district ----------------
+const TRANSFER_BASIS = { enrollment_request: "The new district asked (enrollment)", records_request: "A records request", family_request: "The family asked", other: "Other" };
+const TRANSFER_STATUS = { awaiting_family: "Waiting for the family", ready: "Ready to send", cancelled: "Cancelled" };
+async function downloadFile(url, fallback) {
+  const r = await fetch(url, { credentials: "same-origin" });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw Object.assign(new Error(e.error || "failed"), { code: e.error }); }
+  const name = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "")?.[1] || fallback;
+  const href = URL.createObjectURL(await r.blob());
+  const a = h("a", { href, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(href), 10_000);
+}
+async function transferCard(student) {
+  const d = (await safe(api.get(`/api/students/${student.id}/history-transfers`)))?.data;
+  if (!d) return null;
+  const reload = () => go("historyprivacy", { push: false });
+  const to = h("input", { id: "tr-to", maxlength: 200, placeholder: "e.g. Lakeside Unified School District" });
+  const basis = h("select", { id: "tr-basis" }, Object.entries(TRANSFER_BASIS).map(([k, t]) => h("option", { value: k }, t)));
+  const note = h("input", { id: "tr-note", maxlength: 500, placeholder: "e.g. Records request from Lakeside dated Nov 20" });
+  const fam = h("input", { id: "tr-fam", type: "checkbox" });
+  return h("section", { class: "card", "aria-label": "Transfer to another district" }, h("h3", {}, "Transfer to another district"),
+    h("p", { class: "small muted" }, "Makes a signed file of this student's official records and teacher items (and family memories and portfolio, if the family agrees) for you to send through your usual records channel. Private notes and drafts never go. Nothing is sent automatically."),
+    !d.signingReady ? h("p", { class: "small" }, "District IT needs to set HISTORY_TRANSFER_SIGNING_SECRET before transfers can be made.")
+      : h("p", { class: "small" }, `This district's signing fingerprint: `, h("code", {}, d.keyFingerprint), ". Give it to the receiving district so they can confirm the file came from you."),
+    d.transfers.length ? h("ul", { class: "list" }, d.transfers.map(t => h("li", {},
+      h("div", { class: "row wrap" }, h("b", { class: "grow" }, t.receivingDistrict), chip(t.status === "ready" ? "present" : t.status === "cancelled" ? "absent" : "expected", TRANSFER_STATUS[t.status])),
+      h("p", { class: "small muted" }, `${TRANSFER_BASIS[t.basis]}: ${t.note} · by ${t.requestedBy} · ${fmtDay(t.createdAt)}${t.includeFamily ? ` · family items: ${t.familyDecision === "approved" ? "agreed" : t.familyDecision === "declined" ? "declined (records only)" : "waiting"}` : ""}${t.items !== null ? ` · ${t.items} items` : ""}${t.downloads ? ` · downloaded ${t.downloads}×` : ""}`),
+      t.status === "ready" ? h("div", { class: "btns" },
+        h("button", { class: "btn small", type: "button", "aria-label": `Download transfer file: ${t.receivingDistrict}`, onclick: async () => {
+          try { await downloadFile(`/api/history-transfers/${t.id}/package`, "history-transfer.json"); toast("Downloaded. Send it through your records channel."); reload(); } catch { toast("Couldn't make the file."); } } }, "Download transfer file"),
+        h("button", { class: "btn small", type: "button", "aria-label": `Cancel transfer: ${t.receivingDistrict}`, onclick: async () => {
+          const n = await ask({ title: "Cancel this transfer?", label: "Why", confirm: "Cancel transfer" }); if (!n) return;
+          try { await api.post(`/api/history-transfers/${t.id}/cancel`, { note: n }); toast("Cancelled."); reload(); } catch { toast("Couldn't cancel it."); } } }, "Cancel")) : null))) : null,
+    d.signingReady ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        try { await api.post(`/api/students/${student.id}/history-transfers`, { receivingDistrict: to.value.trim(), basis: basis.value, note: note.value.trim(), includeFamilyItems: fam.checked });
+          toast(fam.checked ? "Started. The family has been asked about their items." : "Ready to download."); reload(); }
+        catch { toast("Fill in the receiving district and the basis (at least 5 characters)."); } } },
+      h("label", { for: "tr-to" }, "Receiving district"), to, h("label", { for: "tr-basis" }, "Basis"), basis, h("label", { for: "tr-note" }, "Details of the request"), note,
+      h("label", { class: "check" }, fam, " Ask the family to include family memories and the student's portfolio"),
+      h("button", { class: "btn", type: "submit" }, "Start transfer")) : null);
+}
+async function familyTransferCard(studentId) {
+  const list = ((await safe(api.get("/api/family/history-transfers")))?.data || []).filter(t => t.studentId === studentId);
+  if (!list.length) return null;
+  return h("section", { class: "card", "aria-label": "Records transfer" }, h("h3", {}, "A records transfer needs your decision"),
+    list.map(t => h("div", {}, h("p", {}, `${t.school} is sending ${t.studentName}'s school records to ${t.receivingDistrict} (${TRANSFER_BASIS[t.basis].toLowerCase()}: ${t.note}). Should family memories and ${first(t.studentName)}'s own portfolio go too? Private notes never go.`),
+      h("div", { class: "btns" }, ["approve", "decline"].map(d => h("button", { class: d === "approve" ? "btn primary small" : "btn small", type: "button", onclick: async () => {
+        try { await api.post(`/api/family/history-transfers/${t.id}`, { decision: d }); toast(d === "approve" ? "They'll go too." : "Only school records will go."); go(state.tab, { push: false }); } catch { toast("Couldn't save your answer."); } } },
+        d === "approve" ? "Include them" : "School records only"))))));
+}
 // ---- TC-05: history privacy controls --------------------------------------
 const CLASS_TEXT = { family_memory: "Family memories", student_portfolio: "My portfolio", teacher_artifact: "Teachers' items", official_record: "Official records" };
 const ACCESS_TEXT = { guardian: "guardian", student: "student", teacher: "teacher", school_lead: "school leader", district: "district office", grant: "shared by the student", emergency: "emergency access" };
@@ -4667,7 +4716,7 @@ VIEWS.historyprivacy = async () => {
       d.grants.length ? h("p", { class: "small" }, `Shared: ${d.grants.filter(g => !g.revoked).map(g => `${g.grantee} (${g.classifications.map(c => CLASS_TEXT[c]).join(", ")})`).join("; ") || "nothing now"}`) : null),
     d.emergency.length ? h("section", { class: "card", "aria-label": "Emergency access" }, h("h3", {}, "Emergency access"),
       h("ul", { class: "list small" }, d.emergency.map(a => h("li", {}, `${a.person} (${a.role}) · ${new Date(a.openedAt).toLocaleString()} · ${a.reason}${a.reviewed ? " · reviewed" : " · not reviewed yet"}`)))) : null,
-    accessLogCard(log)];
+    await transferCard(d.student), accessLogCard(log)];
 };
 function accessLogCard(log) {
   return h("section", { class: "card", "aria-label": "Who looked" }, h("h3", {}, "Who looked"),
