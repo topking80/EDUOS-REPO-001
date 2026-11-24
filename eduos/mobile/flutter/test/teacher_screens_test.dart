@@ -341,9 +341,12 @@ void main() {
   testWidgets('school day: teacher sees classroom, riders, pickup and duty connections', (tester) async {
     final fake = FakeServer({
       'GET /api/rooms': (_) => {'data': [
-        {'id': 'room-1', 'name': 'Room 101', 'kind': 'classroom', 'building': 'Main', 'devices': [{'id': 'display-1'}]},
         {'id': 'media-1', 'name': 'Library', 'kind': 'media_center', 'building': 'Main', 'devices': []},
       ]},
+      'GET /api/my/rooms': (_) => {'data': [
+        {'id': 'room-1', 'name': 'Room 101', 'now': true, 'slots': [{'starts': '08:00', 'ends': '09:00'}], 'pairing': null, 'devices': [{'id': 'display-1', 'name': 'Front board', 'capabilities': ['show']}]},
+      ]},
+      'POST /api/rooms/room-1/pair': (_) => {'data': {'id': 'pair-1'}},
       'GET /api/arrival/today': (_) => {'data': [
         {'id': 'handoff-1', 'display_name': 'Ada Lovelace', 'grade_level': '4', 'method': 'bus', 'status': 'pending', 'initiated_at': now},
         {'id': 'handoff-2', 'display_name': 'Ben Ortiz', 'grade_level': '4', 'method': 'car_rider', 'status': 'received', 'initiated_at': now},
@@ -374,6 +377,13 @@ void main() {
     expect(find.text('Car rider dismissal'), findsOneWidget);
     expect(find.text('Library and lunchroom duties'), findsOneWidget);
     expect(find.text('Lunchroom duty'), findsWidgets);
+    await tester.tap(find.text('Connect'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Classroom code'), '123456');
+    await tester.tap(find.text('Connect').last);
+    await tester.pumpAndSettle();
+    final pair = fake.sent('POST', '/api/rooms/room-1/pair').single;
+    expect(jsonDecode(pair.body), {'code': '123456', 'controllerName': 'Teacher mobile app'});
   });
 
 }
