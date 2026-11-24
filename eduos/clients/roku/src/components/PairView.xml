@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Sign in with a code (RFC 8628 device flow): the TV shows a code, the
+     person approves it on their phone or computer, the TV polls for the session. -->
+<component name="PairView" extends="Stage">
+  <script type="text/brightscript" uri="pkg:/components/shared/util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/shared/api.brs" />
+  <script type="text/brightscript" uri="pkg:/components/PairView.brs" />
+  <children>
+    <Label translation="[160,120]" width="1100" font="font:LargeBoldSystemFont" color="0xFFFFFFFF" text="Sign in to EduOS" />
+    <Label id="step1" translation="[160,220]" width="1050" wrap="true" font="font:MediumSystemFont" color="0xDDE3EEFF"
+      text="On your phone or computer, scan the code or go to:" />
+    <Label id="url" translation="[160,300]" width="1050" wrap="true" font="font:MediumBoldSystemFont" color="0xFCA311FF" text="" />
+    <Label id="step2" translation="[160,400]" width="1050" font="font:MediumSystemFont" color="0xDDE3EEFF"
+      text="and enter this code:" />
+    <Label id="code" translation="[160,460]" width="1050" font="font:LargeBoldSystemFont" color="0xFFFFFFFF" text="" />
+    <Label id="status" translation="[160,600]" width="1050" wrap="true" font="font:MediumSystemFont" color="0xDDE3EEFF" text="" />
+    <Label translation="[160,720]" width="1050" wrap="true" font="font:SmallSystemFont" color="0xB8C1D1FF"
+      text="This TV gets a look-only sign-in: it can show Time Capsules and history, but can't change anything. You can sign it out from EduOS on your phone or computer at any time." />
+    <ButtonGroup id="buttons" translation="[160,860]" minWidth="600" layoutDirection="horiz" itemSpacings="[30]" />
+    <QrCode id="qr" translation="[1300,220]" size="460" />
+    <Timer id="poll" repeat="false" />
+  </children>
+</component>
