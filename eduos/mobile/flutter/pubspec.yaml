@@ -22,8 +22,28 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  msix: 3.18.0
 
 flutter:
   uses-material-design: true
   assets:
     - assets/branding/
+
+# 37.8 (clients/04): Windows MSIX package (`dart run msix:create`, run by the
+# manual windows-msix workflow). These are the sideload defaults; a Microsoft
+# Store build replaces identity_name and publisher with the values Partner
+# Center gives the app (the workflow takes them from repository variables).
+# The app icon goes in logo_path once there is one (400 x 400 px or larger).
+msix_config:
+  display_name: EduOS
+  publisher_display_name: EduOS
+  identity_name: org.eduos.app
+  msix_version: 37.8.0.0
+  description: Time Capsules, school history and family school life from your district's EduOS.
+  capabilities: internetClient
+  languages: en-us
+  architecture: x64
+  build_windows: false
+  install_certificate: false
+  output_path: build/msix
+  output_name: eduos-windows
