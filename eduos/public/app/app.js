@@ -2230,7 +2230,10 @@ function weatherPromptCard() {
           `Start ${w.suggestedKind === "hold" ? "hold" : "shelter"}: ${w.hazardLabel}`),
         h("button", { class: "btn small", type: "button", "aria-label": `Dismiss: ${w.event}, ${w.school}`, onclick: async () => {
           const note = await ask({ title: `Dismiss the ${w.event}?`, label: "Why (e.g. outside our area, already sheltering)", confirm: "Dismiss" }); if (!note) return;
-          try { await api.post(`/api/safety/weather/${w.id}/dismiss`, { note }); state.weather = list.filter(x => x.id !== w.id); toast("Dismissed."); go(state.tab, { push: false }); } catch { toast("Couldn't dismiss it."); } } }, "Dismiss"))))),
+          try { await api.post(`/api/safety/weather/${w.id}/dismiss`, { note }); state.weather = list.filter(x => x.id !== w.id); toast("Dismissed."); go(state.tab, { push: false }); }
+          catch (e) { const gone = e?.status === 409 || e?.status === 410; if (gone) state.weather = list.filter(x => x.id !== w.id);
+            toast(e?.status === 409 ? "Another leader already decided this warning." : e?.status === 410 ? "This warning has ended or expired." : "Couldn't dismiss it.");
+            if (gone) go(state.tab, { push: false }); } } }, "Dismiss"))))),
     h("p", { class: "small muted" }, "From api.weather.gov. EduOS never starts an alert on its own: you start it (with the usual confirm) or dismiss it."));
 }
 async function weatherSettingsCard() {
