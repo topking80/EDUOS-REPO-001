@@ -237,7 +237,17 @@ jobs:
         run: flutter test --reporter expanded
       - name: Compile Android debug application
         working-directory: eduos/mobile/flutter
-        run: flutter build apk --debug
+        # Maven Central sometimes answers Gradle's dependency downloads with
+        # HTTP 429 (Too Many Requests). Retry the build with a back-off rather
+        # than failing the required check on a rate limit; real compile errors
+        # still fail after the last attempt.
+        run: |
+          for attempt in 1 2 3; do
+            flutter build apk --debug && exit 0
+            echo "::warning::flutter build apk failed (attempt $attempt of 3); retrying after back-off"
+            sleep $((attempt * 45))
+          done
+          exit 1
       - name: Upload debug APK for device testing
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
