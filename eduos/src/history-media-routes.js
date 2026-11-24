@@ -78,7 +78,8 @@ export function registerHistoryMediaRoutes(app, providers = historyMediaProvider
     const key = typeof rawKey === "string" ? rawKey : null;
     if (rawKey !== undefined && key === null) return res.status(400).json({ error: "invalid_idempotency_key" });
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_entry_id" });
-    if (!HISTORY_IMAGE_TYPES[mime] || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(415).json({ error: "unsupported_media_type", types: Object.keys(HISTORY_IMAGE_TYPES) });
+    const photo = Buffer.isBuffer(req.body) ? Buffer.from(req.body) : null;
+    if (!HISTORY_IMAGE_TYPES[mime] || !photo || !photo.length) return res.status(415).json({ error: "unsupported_media_type", types: Object.keys(HISTORY_IMAGE_TYPES) });
     if (caption.length > 500 || alt.length < 3 || alt.length > 300) return res.status(400).json({ error: "describe_the_photo", hint: "alt text: 3 to 300 characters; caption: up to 500" });
     if (key !== null && !IDEMPOTENCY_RE.test(key)) return res.status(400).json({ error: "invalid_idempotency_key" });
     const asset = crypto.randomUUID();
@@ -86,7 +87,7 @@ export function registerHistoryMediaRoutes(app, providers = historyMediaProvider
       // 1. Reserve it within the district's limits (and the student's total).
       const begun = await withTenantTransaction(req.actor, async c => {
         const r = (await one(c, `SELECT eduos_history_media_begin($1,$2,$3,$4,$5,$6,$7,$8) AS out`,
-          [req.params.id, asset, `history/${req.actor.districtId}/pending/${asset}`, mime, req.body.length, caption, alt, key])).out;
+          [req.params.id, asset, `history/${req.actor.districtId}/pending/${asset}`, mime, photo.length, caption, alt, key])).out;
         if (r.error) throw new HttpError(BEGIN_ERRORS[r.error] || 400, r.error, r);
         return r;
       });
@@ -94,14 +95,14 @@ export function registerHistoryMediaRoutes(app, providers = historyMediaProvider
       const record = async (scan, processing, extra = {}) => withTenantTransaction(req.actor, c =>
         one(c, `SELECT eduos_history_media_set($1,$2,$3,$4,$5,$6,$7) AS ok`, [asset, extra.key ?? null, extra.bytes ?? null, scan, processing, extra.width ?? null, extra.height ?? null]));
       // 2. Scan what arrived. 3. Decode, re-encode, scan the result.
-      const first = await scanner.scan(req.body);
+      const first = await scanner.scan(photo);
       if (first.verdict !== "clean") {
         await record("blocked", "failed");
         await withTenantTransaction(req.actor, c => audit(c, req, "blocked", "history_photo", asset, first.verdict === "infected" ? `infected:${first.signature}` : `scan_error:${first.reason}`));
         return res.status(422).json({ error: first.verdict === "infected" ? "photo_failed_security_scan" : "security_scan_unavailable" });
       }
       let out;
-      try { out = await processHistoryImage(req.body, mime); }
+      try { out = await processHistoryImage(photo, mime); }
       catch (e) { await record("clean", "failed"); return res.status(e.status || 422).json({ error: e.message || "image_processing_failed" }); }
       const second = await scanner.scan(out.buffer);
       if (second.verdict !== "clean") { await record("blocked", "failed"); return res.status(422).json({ error: "photo_failed_security_scan" }); }
