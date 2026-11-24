@@ -747,3 +747,14 @@ GRANT EXECUTE ON FUNCTION eduos_history_student_media_bytes(uuid, uuid), eduos_h
 GRANT EXECUTE ON FUNCTION eduos_capsule_photo_begin(uuid, uuid, text, text, bigint, text, text, text),
   eduos_capsule_photo_set(uuid, text, bigint, text, text, int, int), eduos_capsule_photos(uuid), eduos_capsule_photo_get(uuid),
   eduos_capsule_photos_release(uuid) TO eduos_app;
+
+-- TC-08 (db/131): preservation. Policies are edited by the superintendent;
+-- holds, events and media checks change only through these functions.
+GRANT SELECT, INSERT ON district_history_preservation_policies TO eduos_app;
+GRANT UPDATE (verify_every_days, archive_after_days, capacity_alert_percent, records_schedule_ref, set_by, set_at) ON district_history_preservation_policies TO eduos_app;
+REVOKE DELETE, TRUNCATE ON district_history_preservation_policies FROM eduos_app;
+GRANT SELECT ON history_legal_holds, history_preservation_events TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON history_legal_holds, history_preservation_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_history_on_hold(uuid, uuid), eduos_history_hold_place(uuid, text, text), eduos_history_hold_release(uuid, text),
+  eduos_history_media_checksum(uuid, text), eduos_history_preservation_due(integer), eduos_history_preservation_record(uuid, text, text, text),
+  eduos_history_capacity_report() TO eduos_app;
