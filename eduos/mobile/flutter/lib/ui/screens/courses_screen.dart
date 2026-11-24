@@ -105,7 +105,7 @@ class CourseScreen extends StatelessWidget {
             if (c.assignments.isEmpty) const EmptyState('Nothing assigned yet.'),
             for (final a in c.assignments) AssignmentTile(a, onReturn: reload),
           ]),
-          if (c.canManage && AppScope.of(context).me?.role != 'superintendent') AccommodationsCard(courseId: c.id),
+          if (c.canManage) AccommodationsCard(courseId: c.id),
         ]),
       ),
     );

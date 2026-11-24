@@ -134,6 +134,30 @@ class _AccommodationRow extends StatefulWidget {
 class _AccommodationRowState extends State<_AccommodationRow> {
   late int _pct = const [0, 25, 50, 100].contains(integer(widget.a['extra_time_pct'])) ? integer(widget.a['extra_time_pct']) : 0;
   late bool _readAloud = boolean(widget.a['read_aloud']);
+  late int _savedPct = _pct;
+  late bool _savedReadAloud = _readAloud;
+  bool _saving = false;
+
+  bool get _dirty => _pct != _savedPct || _readAloud != _savedReadAloud;
+
+  Future<void> _save(String name) async {
+    if (_saving || !_dirty) return;
+    setState(() => _saving = true);
+    try {
+      await AppScope.read(context).api.put("/api/learning/accommodations/${widget.a['student_id']}", {'extraTimePct': _pct, 'readAloud': _readAloud});
+      if (!mounted) return;
+      setState(() {
+        _savedPct = _pct;
+        _savedReadAloud = _readAloud;
+        _saving = false;
+      });
+      toast(context, 'Saved for ${firstName(name)}');
+    } on ApiException {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      toast(context, 'Couldn\'t save. Your changes are still here; try again.');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -147,26 +171,20 @@ class _AccommodationRowState extends State<_AccommodationRow> {
             value: _pct,
             decoration: InputDecoration(labelText: 'Extra time for ${firstName(name)}'),
             items: [for (final v in const [0, 25, 50, 100]) DropdownMenuItem(value: v, child: Text(v == 0 ? 'Standard time' : '+$v% time'))],
-            onChanged: (v) => setState(() => _pct = v ?? 0),
+            onChanged: _saving ? null : (v) => setState(() => _pct = v ?? 0),
           ),
         ),
-        Checkbox(value: _readAloud, onChanged: (v) => setState(() => _readAloud = v ?? false), semanticLabel: 'Read-aloud for $name'),
+        Checkbox(value: _readAloud, onChanged: _saving ? null : (v) => setState(() => _readAloud = v ?? false), semanticLabel: 'Read-aloud for $name'),
         const Text('Read-aloud'),
       ]),
-      Align(
-        alignment: Alignment.centerRight,
-        child: TextButton(
-          onPressed: () async {
-            try {
-              await AppScope.read(context).api.put('/api/learning/accommodations/${widget.a['student_id']}', {'extraTimePct': _pct, 'readAloud': _readAloud});
-              if (context.mounted) toast(context, 'Saved for ${firstName(name)}');
-            } on ApiException {
-              if (context.mounted) toast(context, 'Couldn\'t save.');
-            }
-          },
-          child: Text('Save', semanticsLabel: 'Save accommodations for $name'),
+      Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+        Text(_dirty ? 'Unsaved changes' : 'Saved', style: const TextStyle(fontSize: 12)),
+        const SizedBox(width: 12),
+        TextButton(
+          onPressed: _saving || !_dirty ? null : () => _save(name),
+          child: Text(_saving ? 'Saving…' : 'Save', semanticsLabel: 'Save accommodations for $name'),
         ),
-      ),
+      ]),
     ]);
   }
 }
