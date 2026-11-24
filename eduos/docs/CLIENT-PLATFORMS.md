@@ -118,7 +118,7 @@ Requested by Mathew (Nov 23, 2026): "Mobile screens should be extensive and incl
 - Read-only: Roku sessions are read-only server-side.
 - Photos: the Task node does an authorized request to `/api/history/photos/:id` without following redirects (`roUrlTransfer` `EnableFreshConnection`, `SetRedirect`…), then the Poster loads the signed URL.
 - Token storage: `roRegistrySection`, cleared on sign-out.
-- **Tooling:** `package.json` in `eduos/clients/roku` with `brighterscript` (`bsc`) + `@rokucommunity/bslint`, and `npm run lint` / `npm run build` (makes `out/eduos-roku.zip`, git-ignored). A **non-required** CI job `roku-channel` (ubuntu) runs lint + package. The 8 required checks are unchanged.
+- **Tooling:** `package.json` in `eduos/clients/roku` with `brighterscript` (`bsc`) + `@rokucommunity/bslint`, and its `lint` and `build` package scripts (`build` makes `out/eduos-roku.zip`, git-ignored). A **non-required** CI job `roku-channel` (ubuntu) runs lint + package. The 8 required checks are unchanged.
 - Publishing needs a Roku developer account, a channel listing and artwork (focus/side posters, splash).
 
 ## 7. Order and branches
