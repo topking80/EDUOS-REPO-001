@@ -26,7 +26,7 @@
   new id and references the message it replaces) was recorded as a brand-new
   alert: leaders were alerted twice, and a decision on the original was left on
   an ended row. The parser comment said updates were skipped; they weren't.
-  Migration `129_weather_alert_updates.sql` replaces `eduos_weather_record`:
+  Migration `130_weather_alert_updates.sql` replaces `eduos_weather_record`:
   - every authoritative field (event, level, hazard, severity, headline, area,
     instruction, onset, expires) is refreshed whenever an alert is seen;
   - an `Update` is folded into the alert it references (same alert, new NWS id),
@@ -63,7 +63,8 @@
 
 ## Migrations
 
-- `129_weather_alert_updates.sql` (`CREATE OR REPLACE` of `eduos_weather_record`,
+- `130_weather_alert_updates.sql` (`CREATE OR REPLACE` of `eduos_weather_record`,
   plus the internal helper `eduos_weather_severity_rank`). No table changes, no new
-  grants. Numbered after main's latest (128); other open branches that add a
-  migration should take the next free number when they rebase.
+  grants. Numbered 130 because main's latest is 128 and open PR #146 (TC-06a,
+  Time Capsule transfer packages) already uses 129. Later branches should take the
+  next free number when they rebase.

@@ -17,7 +17,7 @@ const time = v => { const t = Date.parse(v); return Number.isFinite(t) ? new Dat
 // earlier message, under a NEW id, and lists the messages it replaces in
 // properties.references; "Cancel" withdraws the messages it references.
 // Updates are kept: they carry the current headline, area, severity and
-// instructions, and eduos_weather_record (db/129) folds each one into the alert
+// instructions, and eduos_weather_record (db/130) folds each one into the alert
 // it replaces. Cancels are kept as markers so the alerts they name end.
 // Test and Exercise messages are skipped.
 const MESSAGE_TYPES = new Set(["Alert", "Update", "Cancel"]);
