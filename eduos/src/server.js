@@ -1,12 +1,13 @@
 import express from "express";
 import helmet from "helmet";
 import compression from "compression";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { config } from "./config.js";
+import { parse as parseCookies } from "./cookies.js";
 import { pool, withTenantTransaction, assertSafeRuntimeRole, assertSchemaReady } from "./db.js";
 import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership, sessionIsLive } from "./auth.js";
 import { requirePermission, requireSchoolScope, canPerform, isGrantable, isDistrictRole } from "./policy.js";
@@ -113,6 +114,22 @@ const edenJson = express.json({ limit: "16mb", strict: true, verify: (req, _res,
 // TEACH-06: a package file (up to 12 MB) is parsed by its own route, after the session is checked.
 app.use((req, res, next) => req.path.startsWith("/api/eden/v1/") ? edenJson(req, res, next) : BULK_PATHS.has(req.path) || STORAGE_FILE_PATHS.has(req.path) ? next() : smallJson(req, res, next));
 app.use((req,res,next)=>{ req.requestId=crypto.randomUUID(); res.setHeader("X-Request-Id",req.requestId); next(); });
+
+// A ceiling on every API and sign-in request, before any route: per signed-in
+// session or device key (so a school behind one NAT address doesn't share
+// one budget), plus a much higher one per address (so made-up credentials
+// can't dodge it). Generous (API_RATE_LIMIT_PER_MINUTE, default 1200, and
+// 10x that per address): it stops runaway clients and scripted abuse; routes
+// keep their own, tighter limits on top.
+const apiCredential=req=>{
+  const auth=String(req.headers.authorization||"");
+  if(/^Bearer\s+\S{20,}/i.test(auth))return auth.replace(/^Bearer\s+/i,"");
+  return parseCookies(req.headers.cookie||"")[config.cookieName]||null;
+};
+const apiLimiter=rateLimit({windowMs:60_000,limit:config.apiRateLimitPerMinute,standardHeaders:true,legacyHeaders:false,
+  keyGenerator:req=>{const c=apiCredential(req);return c?`cred:${crypto.createHash("sha256").update(c).digest("hex")}`:`ip:${ipKeyGenerator(req.ip)}`;}});
+const apiAddressLimiter=rateLimit({windowMs:60_000,limit:config.apiRateLimitPerMinute*10,standardHeaders:false,legacyHeaders:false,keyGenerator:req=>`addr:${ipKeyGenerator(req.ip)}`});
+app.use(["/api","/auth"],apiAddressLimiter,apiLimiter);
 
 // 32.1.0: configurable. 30 per 15 minutes per IP locked out a whole school
 // behind one NAT address at the start of the day (login + callback = 2 hits).

@@ -127,6 +127,7 @@ export const config = {
   integrationsKey: process.env.INTEGRATIONS_KEY || "",
   // Global operational kill switch for scheduled roster jobs; manual sync remains available.
   sisSyncDispatchEnabled: process.env.SIS_SYNC_DISPATCH_ENABLED !== "false",
+  apiRateLimitPerMinute: Number(process.env.API_RATE_LIMIT_PER_MINUTE ?? 1200),
   // Bounded in-memory PowerSchool roster ceiling; larger districts need staged ingestion.
   powerschoolMaxStudents: Number(process.env.POWERSCHOOL_MAX_STUDENTS || 200_000),
   integrationsAllowedHosts: (process.env.INTEGRATIONS_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean),
@@ -366,6 +367,7 @@ if (config.webhookPreviousSigningKey) {
   if (config.webhookPreviousSigningKey === config.webhookSigningKey) throw new Error("WEBHOOK_SIGNING_KEY_PREVIOUS must differ from WEBHOOK_SIGNING_KEY");
 }
 intIn("WEBHOOK_DISPATCH_INTERVAL_SECONDS", config.webhookDispatchIntervalSeconds, 0, 3600);
+intIn("API_RATE_LIMIT_PER_MINUTE", config.apiRateLimitPerMinute, 60, 100000);
 if (config.nodeEnv === "production" && config.webhookSigningKey && !config.webhookAllowedHosts.length && !config.webhookAllowAnyPublicHost) {
   throw new Error("Webhooks are on in production without WEBHOOK_ALLOWED_HOSTS: list the receivers' domains, or set WEBHOOK_ALLOW_ANY_PUBLIC_HOST=true to allow any public HTTPS receiver");
 }
