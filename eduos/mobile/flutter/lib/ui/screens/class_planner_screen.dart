@@ -107,7 +107,7 @@ class _ClassPlannerScreenState extends State<ClassPlannerScreen> {
         key: _loaderKey,
         load: _load,
         builder: (context, courses, reload) {
-          final selected = courses.where((c) => str(c['course_id']) == _courseId).firstOrNull;
+          Json? selected;\n          for (final course in courses) { if (str(course['course_id']) == _courseId) { selected = course; break; } }
           return ListView(padding: const EdgeInsets.all(16), children: [
             SectionCard(children: [
               Row(children: [
@@ -167,7 +167,7 @@ class _ClassPlannerScreenState extends State<ClassPlannerScreen> {
                               label: const Text('Mark ready'),
                             ),
                         ]),
-                        if (p['updatedAt'] != null) Text('Last saved ${ago(str(p['updatedAt']))}', style: Theme.of(context).textTheme.bodySmall),
+                        if (p['updatedAt'] != null) Text('Last saved ${ago(DateTime.tryParse(str(p['updatedAt'])))}', style: Theme.of(context).textTheme.bodySmall),
                       ]);
                     },
                   ),
