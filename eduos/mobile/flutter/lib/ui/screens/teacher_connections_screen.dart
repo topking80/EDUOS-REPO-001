@@ -7,8 +7,8 @@ import '../widgets.dart';
 import 'messages_screen.dart';
 
 class _TeacherDay {
-  const _TeacherDay({required this.rooms, required this.arrivals, required this.pickup, required this.workspace, required this.checkins});
-  final List<Json> rooms, arrivals, checkins;
+  const _TeacherDay({required this.rooms, required this.arrivals, required this.pickup, required this.workspace, required this.checkins, required this.riders, required this.shifts});
+  final List<Json> rooms, arrivals, checkins, riders, shifts;
   final Json pickup, workspace;
 }
 
@@ -42,11 +42,13 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
 
   Future<_TeacherDay> _loadDay() async {
     final r = await Future.wait([
-      _optional('/api/rooms?kind=classroom'),
+      _optional('/api/rooms'),
       _optional('/api/arrival/today'),
       _optional('/api/pickup/queue'),
       _optional('/api/staff-workspace'),
       _optional('/api/my/checkins'),
+      _optional('/api/transport/today'),
+      _optional('/api/staff-management'),
     ]);
     return _TeacherDay(
       rooms: objs(r[0]?['data']),
@@ -54,6 +56,8 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
       pickup: obj(r[2]?['data']),
       workspace: obj(r[3]?['data']),
       checkins: objs(r[4]?['data']),
+      riders: objs(obj(r[5]?['data'])['riders']),
+      shifts: objs(obj(r[6]?['data'])['shifts']),
     );
   }
 
@@ -111,7 +115,7 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
         ),
       );
     } on ApiException catch (e) {
-      if (mounted) toast(context, e.isNotFound ? 'This room is not assigned to your timetable.' : 'Could not load the classroom roll.');
+      if (mounted) toast(context, e.status == 404 ? 'This room is not assigned to your timetable.' : 'Could not load the classroom roll.');
     }
   }
 
@@ -202,8 +206,8 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
     final waiting = objs(d.pickup['waiting']);
     return ListView(padding: const EdgeInsets.all(16), children: [
       SectionCard(title: 'Classroom connections', children: [
-        const Text('Your school rooms, connected classroom devices and authorized class rolls.'),
-        if (d.rooms.isEmpty) const EmptyState('No classrooms are listed for your school.'),
+        const Text('Your school classrooms and media center, connected devices and authorized class rolls.'),
+        if (d.rooms.isEmpty) const EmptyState('No classrooms or media centers are listed for your school.'),
         for (final room in d.rooms)
           ListTile(
             contentPadding: EdgeInsets.zero,
@@ -225,10 +229,10 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
         for (final h in car) _arrivalTile(h),
       ]),
       SectionCard(title: 'Car rider dismissal', children: [
-        Text('${waiting.length} student release(s) waiting at the school pick-up point.'),
+        Text('${waiting.length} student release(s) waiting at the school pick-up point.'),\n        for (final rider in waiting.take(12))\n          ListTile(dense: true, contentPadding: EdgeInsets.zero, title: Text(str(rider['name'])), subtitle: Text('${str(rider['grade'])} · awaiting authorized release'), trailing: const StatusChip('expected', text: 'Waiting')),
         const Notice('This is the school pick-up duty queue. Pass verification, photo-ID checks, custody safeguards and release authorization remain in the dedicated pick-up workflow.'),
       ]),
-      SectionCard(title: 'Library and lunchroom duties', children: [
+      SectionCard(title: 'Library and lunchroom duties', children: [\n        for (final shift in d.shifts.where((x) => ['library', 'meal_service', 'transport'].contains(str(x['department']))))\n          ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.schedule_outlined), title: Text(str(shift['assignment'])), subtitle: Text('${str(shift['department']).replaceAll('_', ' ')} · ${str(shift['shift_date'])} · ${str(shift['starts_at'])}–${str(shift['ends_at'])}')),
         if (checklists.isEmpty && tasks.isEmpty) const EmptyState('No shared duty checklists or tasks are assigned right now.'),
         for (final item in checklists.where((x) => ['library', 'meal_service', 'transport', 'general'].contains(str(x['domain']))))
           CheckboxListTile(
