@@ -107,7 +107,13 @@ class _ClassPlannerScreenState extends State<ClassPlannerScreen> {
         key: _loaderKey,
         load: _load,
         builder: (context, courses, reload) {
-          Json? selected;\n          for (final course in courses) { if (str(course['course_id']) == _courseId) { selected = course; break; } }
+          Json? selected;
+          for (final course in courses) {
+            if (str(course['course_id']) == _courseId) {
+              selected = course;
+              break;
+            }
+          }
           return ListView(padding: const EdgeInsets.all(16), children: [
             SectionCard(children: [
               Row(children: [
