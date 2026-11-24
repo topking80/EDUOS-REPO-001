@@ -7,8 +7,8 @@ import '../widgets.dart';
 import 'messages_screen.dart';
 
 class _TeacherDay {
-  const _TeacherDay({required this.rooms, required this.arrivals, required this.pickup, required this.workspace, required this.checkins, required this.riders, required this.shifts});
-  final List<Json> rooms, arrivals, checkins, riders, shifts;
+  const _TeacherDay({required this.rooms, required this.mediaRooms, required this.arrivals, required this.pickup, required this.workspace, required this.checkins, required this.riders, required this.shifts});
+  final List<Json> rooms, mediaRooms, arrivals, checkins, riders, shifts;
   final Json pickup, workspace;
 }
 
@@ -42,7 +42,8 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
 
   Future<_TeacherDay> _loadDay() async {
     final r = await Future.wait([
-      _optional('/api/rooms?schoolId=${AppScope.read(context).me?.schoolId}'),
+      _optional('/api/my/rooms'),
+      _optional('/api/rooms?kind=media_center&schoolId=${AppScope.read(context).me?.schoolId}'),
       _optional('/api/arrival/today'),
       _optional('/api/pickup/queue'),
       _optional('/api/staff-workspace'),
@@ -52,12 +53,13 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
     ]);
     return _TeacherDay(
       rooms: objs(r[0]?['data']),
-      arrivals: objs(r[1]?['data']),
-      pickup: obj(r[2]?['data']),
-      workspace: obj(r[3]?['data']),
-      checkins: objs(r[4]?['data']),
-      riders: objs(obj(r[5]?['data'])['riders']),
-      shifts: objs(obj(r[6]?['data'])['shifts']),
+      mediaRooms: objs(r[1]?['data']),
+      arrivals: objs(r[2]?['data']),
+      pickup: obj(r[3]?['data']),
+      workspace: obj(r[4]?['data']),
+      checkins: objs(r[5]?['data']),
+      riders: objs(obj(r[6]?['data'])['riders']),
+      shifts: objs(obj(r[7]?['data'])['shifts']),
     );
   }
 
@@ -79,6 +81,60 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
       _refreshDay();
     } on ApiException catch (e) {
       if (mounted) toast(context, e.error == 'independent_receipt_required' ? 'A different staff member must confirm this handoff.' : 'Could not confirm the handoff.');
+    }
+  }
+
+  Future<void> _pair(Json room) async {
+    final code = TextEditingController();
+    final controller = TextEditingController(text: 'Teacher mobile app');
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Connect to ${str(room['name'])}'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Enter the six-digit code currently displayed by the classroom device.'),
+            TextField(controller: code, keyboardType: TextInputType.number, maxLength: 6, decoration: const InputDecoration(labelText: 'Classroom code')),
+            TextField(controller: controller, maxLength: 60, decoration: const InputDecoration(labelText: 'This device name')),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(context, code.text.trim().length == 6 && controller.text.trim().isNotEmpty), child: const Text('Connect')),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+      await AppScope.read(context).api.post('/api/rooms/${room['id']}/pair', {'code': code.text.trim(), 'controllerName': controller.text.trim()});
+      if (!mounted) return;
+      toast(context, 'Connected to ${str(room['name'])}.');
+      _refreshDay();
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.error == 'wrong_code' ? 'That classroom code is incorrect or expired.' : 'Could not connect to this classroom.');
+    } finally {
+      code.dispose();
+      controller.dispose();
+    }
+  }
+
+  Future<void> _endPairing(Json room) async {
+    final pairing = obj(room['pairing']);
+    try {
+      await AppScope.read(context).api.post('/api/pairings/${pairing['id']}/end', {});
+      if (!mounted) return;
+      toast(context, 'Classroom connection ended.');
+      _refreshDay();
+    } on ApiException {
+      if (mounted) toast(context, 'Could not end the classroom connection.');
+    }
+  }
+
+  Future<void> _showOnDevice(Json device) async {
+    try {
+      await AppScope.read(context).api.post('/api/devices/${device['id']}/commands', {'capability': 'show', 'args': {}});
+      if (!mounted) return;
+      toast(context, 'Classroom display command sent.');
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.error == 'paused_for_safety' ? 'Classroom controls are paused during a safety alert.' : 'Pair your teacher device with this room before sharing.');
     }
   }
 
@@ -207,16 +263,31 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
     return ListView(padding: const EdgeInsets.all(16), children: [
       SectionCard(title: 'Classroom connections', children: [
         const Text('Your school classrooms and media center, connected devices and authorized class rolls.'),
-        if (d.rooms.isEmpty) const EmptyState('No classrooms or media centers are listed for your school.'),
-        for (final room in d.rooms.where((x) => ['classroom', 'media_center'].contains(str(x['kind']))))
+        if (d.rooms.isEmpty) const EmptyState('No classrooms are assigned to your timetable.'),
+        for (final room in d.rooms) ...[
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: Icon(str(room['kind']) == 'media_center' ? Icons.local_library_outlined : Icons.meeting_room_outlined),
+            leading: const Icon(Icons.meeting_room_outlined),
             title: Text(str(room['name'])),
-            subtitle: Text('${str(room['building'])} · ${objs(room['devices']).length} connected devices'),
-            trailing: str(room['kind']) == 'media_center' ? const StatusChip('present', text: 'Library') : const Icon(Icons.chevron_right),
-            onTap: str(room['kind']) == 'media_center' ? null : () => _openRoll(room),
+            subtitle: Text('${objs(room['slots']).map((s) => '${str(s['starts'])}–${str(s['ends'])}').join(', ')} · ${objs(room['devices']).length} connected devices'),
+            trailing: room['pairing'] == null
+                ? OutlinedButton(onPressed: () => _pair(room), child: const Text('Connect'))
+                : TextButton(onPressed: () => _endPairing(room), child: const Text('Disconnect')),
+            onTap: () => _openRoll(room),
           ),
+          if (room['pairing'] != null) Padding(
+            padding: const EdgeInsets.only(left: 12, bottom: 8),
+            child: Text('Connected as ${str(obj(room['pairing'])['controller'])}', style: Theme.of(context).textTheme.bodySmall),
+          ),
+          for (final device in objs(room['devices']).where((d) => objs(room['devices']).isNotEmpty && (d['capabilities'] as List? ?? const []).contains('show')))
+            Align(alignment: Alignment.centerLeft, child: TextButton.icon(onPressed: room['pairing'] == null ? null : () => _showOnDevice(device), icon: const Icon(Icons.cast), label: Text('Share to ${str(device['name'])}'))),
+        ],
+        if (d.mediaRooms.isNotEmpty) ...[
+          const Divider(),
+          const Text('Library / media center', style: TextStyle(fontWeight: FontWeight.w600)),
+          for (final room in d.mediaRooms)
+            ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.local_library_outlined), title: Text(str(room['name'])), subtitle: Text('${objs(room['devices']).length} connected devices')),
+        ],
         if (d.checkins.isNotEmpty) Text('Your room check-ins today: ${d.checkins.map((x) => str(x['room'])).where((x) => x.isNotEmpty).join(', ')}'),
       ]),
       SectionCard(title: 'Bus riders and handoffs', children: [
