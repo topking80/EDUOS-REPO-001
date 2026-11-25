@@ -815,3 +815,10 @@ GRANT EXECUTE ON FUNCTION eduos_preservation_fund_collection_open(uuid), eduos_p
   eduos_preservation_fund_request(uuid, uuid, text, text, text, text, integer), eduos_preservation_fund_vote(uuid, text, boolean, text),
   eduos_preservation_fund_pay(uuid, text), eduos_preservation_fund_close(uuid, text), eduos_preservation_fund_summary(),
   eduos_preservation_fund_seat(uuid), eduos_preservation_fund_grade_card_footnote() TO eduos_app;
+
+-- Clubs & sports operations (152): activity attendance is re-markable by the
+-- activity's staff; physical clearances are append-only (dates only).
+GRANT SELECT, INSERT ON activity_event_attendance, student_physical_clearances TO eduos_app;
+GRANT UPDATE (status, marked_by, marked_at) ON activity_event_attendance TO eduos_app;
+REVOKE DELETE, TRUNCATE ON activity_event_attendance, student_physical_clearances FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_can_read_physical(uuid, uuid) TO eduos_app;

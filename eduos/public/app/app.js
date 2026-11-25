@@ -633,6 +633,64 @@ function eligibilityPanel(activity) {
   return h("section", { class: "card" }, h("h3", {}, `Eligibility · ${activity.title}`), box);
 }
 
+// Clubs & sports operations (db/152): attendance at recent meetings, practices
+// and games, and physical clearance dates (no medical details) for a team.
+const ATT_LABEL = { present: "Present", late: "Late", excused: "Excused", absent: "Absent" };
+function attendancePanel(activity) {
+  const box = h("div", { class: "stack" }, h("p", { class: "muted small" }, "Loading events…"));
+  const openEvent = async ev => {
+    try {
+      const d = (await api.get(`/api/events/${ev.id}/attendance`)).data || {};
+      const picks = new Map();
+      const rowsEl = actList(d.students).map(st => {
+        const sel = h("select", { "aria-label": `Attendance: ${st.name}` }, h("option", { value: "" }, "Not marked"),
+          Object.entries(ATT_LABEL).map(([v, t]) => h("option", { value: v, selected: st.status === v }, t)));
+        picks.set(st.studentId, sel);
+        return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, st.name), h("span", { class: "small muted" }, ` · grade ${st.grade}`)), sel);
+      });
+      const save = async () => {
+        const marks = [...picks].filter(([, sel]) => sel.value).map(([studentId, sel]) => ({ studentId, status: sel.value }));
+        if (!marks.length) return toast("Mark at least one learner.");
+        try { await api.put(`/api/events/${ev.id}/attendance`, { marks }); toast("Attendance saved."); openEvent(ev); }
+        catch (e) { toast(e?.body?.error === "event_not_started" ? "Attendance opens when the event starts." : "Couldn't save attendance."); }
+      };
+      box.replaceChildren(h("h4", {}, `${ev.title} · ${new Date(ev.starts_at).toLocaleString()}`),
+        h("p", { class: "small muted" }, `${d.unmarked ?? 0} not marked yet`),
+        rowsEl.length ? h("ul", { class: "list" }, rowsEl) : h("p", { class: "muted" }, "No one is on this activity yet."),
+        h("div", { class: "btns" }, h("button", { class: "btn primary", type: "button", onclick: save }, "Save attendance"), h("button", { class: "btn", type: "button", onclick: load }, "Back")));
+    } catch { box.replaceChildren(h("p", { class: "muted small" }, "Attendance is taken by this activity's staff.")); }
+  };
+  const load = () => api.get("/api/events").then(r => {
+    const now = Date.now();
+    const evs = actList(r.data).filter(e => e.activity_id === activity.id && e.status !== "cancelled" && new Date(e.starts_at).getTime() <= now + 3600e3 && new Date(e.starts_at).getTime() >= now - 30 * 864e5).reverse();
+    box.replaceChildren(evs.length ? h("ul", { class: "list" }, evs.map(ev => h("li", { class: "row" }, h("span", { class: "grow" }, `${ev.title} · ${new Date(ev.starts_at).toLocaleDateString()}`),
+      h("button", { class: "btn small", type: "button", "aria-label": `Take attendance: ${ev.title}`, onclick: () => openEvent(ev) }, "Take attendance"))))
+      : h("p", { class: "muted small" }, "No events in the last 30 days."));
+  }).catch(() => box.replaceChildren(h("p", { class: "muted small" }, "Couldn't load events.")));
+  load();
+  return h("section", { class: "card" }, h("h3", {}, `Attendance · ${activity.title}`), box);
+}
+const PHYS_TEXT = { cleared: ["present", "Physical on file"], expiring: ["expected", "Physical expiring"], expired: ["absent", "Physical expired"], missing: ["absent", "No physical on file"] };
+function physicalsPanel(activity, canRecord) {
+  const box = h("div", { class: "stack" }, h("p", { class: "muted small" }, "Loading physicals…"));
+  const load = () => api.get(`/api/activities/${activity.id}/physicals`).then(r => {
+    const d = r.data || {}, sm = d.summary || {};
+    box.replaceChildren(
+      h("p", { class: "small muted" }, `${sm.cleared ?? 0} on file · ${sm.expiring ?? 0} expiring in 30 days · ${sm.expired ?? 0} expired · ${sm.missing ?? 0} missing. Dates only; no medical details are kept.`),
+      actList(d.students).length ? h("ul", { class: "list" }, actList(d.students).map(st => {
+        const cleared = h("input", { type: "date", "aria-label": `Cleared on: ${st.name}` }), expires = h("input", { type: "date", "aria-label": `Expires on: ${st.name}` });
+        const record = async () => {
+          try { await api.post(`/api/students/${st.studentId}/physical-clearance`, { clearedOn: cleared.value, expiresOn: expires.value }); toast("Physical dates recorded."); load(); }
+          catch { toast("Check the dates: cleared on must be today or earlier and before the expiry."); }
+        };
+        return h("li", { class: "stack" }, h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, st.name), st.expiresOn ? h("span", { class: "small muted" }, ` · expires ${st.expiresOn}`) : null), chip(...PHYS_TEXT[st.status])),
+          canRecord ? h("div", { class: "row wrap" }, cleared, expires, h("button", { class: "btn small", type: "button", onclick: record }, "Record")) : null);
+      })) : h("p", { class: "muted" }, "No one is on the active roster yet."));
+  }).catch(() => box.replaceChildren(h("p", { class: "muted small" }, "Physicals are visible to the coach, the athletic director and school leaders.")));
+  load();
+  return h("section", { class: "card" }, h("h3", {}, `Physicals · ${activity.title}`), box);
+}
+
 function staffSlipsPanel(activity) {
   const box = h("div", { class: "stack" }, h("p", { class: "muted small" }, "Loading permission slips…"));
   const load = () => api.get(`/api/activities/${activity.id}/permission-slips`).then(r => {
@@ -821,7 +879,9 @@ VIEWS.teams = async () => {
       t.results.length ? [h("h3", {}, "Recent results"), h("ul", { class: "list" }, t.results.map(x => h("li", { class: "small" }, `${x.title}: vs ${x.opponent} ${x.home_score}–${x.away_score}${x.status === "draft" ? " (waiting for approval)" : ""}`)))] : null,
       h("div", { class: "btns" },
         t.kind === "sport" ? h("button", { class: "btn", type: "button", "aria-label": `Eligibility: ${t.title}`, onclick: e => e.target.closest("section").append(eligibilityPanel({ id: t.id, title: t.title, kind: t.kind })) }, "Eligibility") : null,
-        h("button", { class: "btn", type: "button", "aria-label": `Permission slips: ${t.title}`, onclick: e => e.target.closest("section").append(staffSlipsPanel({ id: t.id, title: t.title, kind: t.kind })) }, "Permission slips")),
+        h("button", { class: "btn", type: "button", "aria-label": `Permission slips: ${t.title}`, onclick: e => e.target.closest("section").append(staffSlipsPanel({ id: t.id, title: t.title, kind: t.kind })) }, "Permission slips"),
+        h("button", { class: "btn", type: "button", "aria-label": `Attendance: ${t.title}`, onclick: e => e.target.closest("section").append(attendancePanel({ id: t.id, title: t.title, kind: t.kind })) }, "Attendance"),
+        t.kind === "sport" ? h("button", { class: "btn", type: "button", "aria-label": `Physicals: ${t.title}`, onclick: e => e.target.closest("section").append(physicalsPanel({ id: t.id, title: t.title, kind: t.kind }, false)) }, "Physicals") : null),
       t.kind === "sport" ? h("p", { class: "small muted" }, "Eligibility is worked out now from the district's rules and isn't stored. Only you and the athletic director see it.") : null))];
 };
 async function activitiesLiveView() {
@@ -837,7 +897,8 @@ async function activitiesLiveView() {
   const canSeeEligibility = a => a.kind === "sport" && (coachOf.has(a.id) || my.athleticDirector);
   const canRunSlips = a => role === "principal" || role === "superintendent" || coachOf.has(a.id) || (my.athleticDirector && a.kind === "sport");
   const detail = h("div", { class: "stack", id: "activity-detail" });
-  const open = (a, what) => detail.replaceChildren(what === "eligibility" ? eligibilityPanel(a) : staffSlipsPanel(a));
+  const canRecordPhysicals = role === "principal" || role === "superintendent" || Boolean(my.athleticDirector);
+  const open = (a, what) => detail.replaceChildren(what === "eligibility" ? eligibilityPanel(a) : what === "attendance" ? attendancePanel(a) : what === "physicals" ? physicalsPanel(a, canRecordPhysicals) : staffSlipsPanel(a));
   const card = a => h("article", { class: "card", "aria-label": a.title },
     h("div", { class: "row" }, h("span", { class: "grow" }, h("span", { class: "small muted" }, a.kind === "sport" ? "SPORT" : "CLUB"), h("h3", {}, a.title)), h("span", { "aria-hidden": "true" }, a.kind === "sport" ? "🏅" : "🎨")),
     a.description ? h("p", { class: "muted small" }, a.description) : null,
@@ -846,6 +907,8 @@ async function activitiesLiveView() {
     role === "pupil" && a.status === "published" ? h("button", { class: "btn block", type: "button", onclick: async () => { try { await api.post(`/api/activities/${a.id}/join`); toast("You've joined. Staff confirm the roster."); } catch (e) { actErr(e, "Could not join."); } } }, "Join") : null,
     canSeeEligibility(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "eligibility") }, "Eligibility") : null,
     staff && canRunSlips(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "slips") }, "Permission slips") : null,
+    staff && canRunSlips(a) ? h("button", { class: "btn block", type: "button", "aria-label": `Attendance: ${a.title}`, onclick: () => open(a, "attendance") }, "Attendance") : null,
+    staff && a.kind === "sport" && (canRunSlips(a) || canRecordPhysicals) ? h("button", { class: "btn block", type: "button", "aria-label": `Physicals: ${a.title}`, onclick: () => open(a, "physicals") }, "Physicals") : null,
     ["principal", "superintendent"].includes(role) ? h("button", { class: "btn block", type: "button", "aria-label": `${a.kind === "sport" ? "Coaches" : "Advisors"}: ${a.title}`, onclick: () => manageCoaches(a) }, a.kind === "sport" ? "Coaches" : "Advisors") : null,
     a.kind === "sport" ? h("button", { class: "btn block", type: "button", "aria-label": `MaxPreps & Hudl: ${a.title}`,
       onclick: () => sportsShareDialog(a, role === "principal" || role === "vice_principal" || coachOf.has(a.id)) }, "MaxPreps & Hudl") : null);
@@ -968,6 +1031,14 @@ VIEWS.dashboard = async () => {
         chip(r.paired ? "present" : (r.now ? "current" : "expected"), r.paired ? "Connected" : (r.now ? "Now" : "Not paired"))))) : empty("No classrooms assigned to your timetable.")),
       h("div", { class: "btns" },
         h("button", { class: "btn", type: "button", onclick: () => go("classes") }, icon("grid"), "Room controls & register"))),
+
+    (d.activities?.items || []).length ? h("section", { class: "card", "aria-label": "My clubs and teams" },
+      h("h2", {}, "My clubs and teams"),
+      h("div", { class: "stats" }, stat(d.activities.count ?? 0, "clubs & teams"), stat(d.activities.attendanceDue ?? 0, "attendance due", true)),
+      h("ul", { class: "list" }, d.activities.items.map(x => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, x.title), h("p", { class: "small muted" }, `${x.role === "coach" ? "Coach" : "Advisor"}${x.nextEvent ? ` · next: ${x.nextEvent.title}, ${new Date(x.nextEvent.startsAt).toLocaleString()}` : ""}`)),
+        chip(x.attendanceDue ? "expected" : "present", x.attendanceDue ? `${x.attendanceDue} to mark` : "Up to date")))),
+      h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => go("activities") }, icon("trophy"), "Clubs & Sports"))) : null,
 
     h("section", { class: "card", "aria-label": "Transportation and duties" },
       h("h2", {}, "Transportation and school-day duties"),

@@ -132,6 +132,18 @@ export function registerTeacherDashboardRoutes(app) {
             FROM school_events
             WHERE district_id=$1 AND school_id=$2 AND status='published' AND ends_at>=now() AND starts_at<=now() + interval '14 days'
             ORDER BY starts_at LIMIT 5`, [a.districtId, a.schoolId]);
+        // Clubs & sports I advise or coach (db/051, 105, 152): next event and
+        // recent events (last 14 days) that still have nobody marked.
+        const myActivities = await rows(client, `SELECT a.id,a.kind,a.title,st.staff_role,
+              (SELECT row_to_json(n) FROM (SELECT e.id,e.title,e.starts_at,e.venue FROM school_events e
+                 WHERE e.district_id=a.district_id AND e.activity_id=a.id AND e.status='published' AND e.ends_at>=now()
+                 ORDER BY e.starts_at LIMIT 1) n) AS next_event,
+              (SELECT count(*)::int FROM school_events e WHERE e.district_id=a.district_id AND e.activity_id=a.id
+                 AND e.status IN ('published','completed') AND e.starts_at<now() AND e.starts_at>=now() - interval '14 days'
+                 AND NOT EXISTS(SELECT 1 FROM activity_event_attendance x WHERE x.district_id=e.district_id AND x.event_id=e.id)) AS attendance_due
+            FROM activity_staff st JOIN school_activities a ON a.id=st.activity_id AND a.district_id=st.district_id
+            WHERE st.district_id=$1 AND st.user_id=$2 AND st.ended_at IS NULL AND a.status<>'archived'
+            ORDER BY a.kind,a.title LIMIT 20`, [a.districtId, a.userId]);
         const unreadMessagesRow = await one(client, `SELECT count(*)::int AS n
             FROM comms_messages m
             JOIN comms_participants me ON me.thread_id=m.thread_id AND me.user_id=$1 AND me.left_at IS NULL
@@ -310,6 +322,18 @@ export function registerTeacherDashboardRoutes(app) {
             scheduleToday,
             upcomingShifts: shifts.slice(0, 5),
             upcomingEvents
+          },
+          activities: {
+            count: myActivities.length,
+            attendanceDue: myActivities.reduce((n, x) => n + x.attendance_due, 0),
+            items: myActivities.map(x => ({
+              id: x.id,
+              kind: x.kind,
+              title: x.title,
+              role: x.staff_role,
+              attendanceDue: x.attendance_due,
+              nextEvent: x.next_event ? { id: x.next_event.id, title: x.next_event.title, startsAt: x.next_event.starts_at, venue: x.next_event.venue } : null
+            }))
           },
           classroom: {
             assignedRooms: rooms.length,
