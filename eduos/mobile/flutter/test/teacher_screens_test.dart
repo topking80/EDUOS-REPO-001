@@ -99,6 +99,81 @@ void main() {
     expect(tabs.first.native, isTrue);
   });
 
+  testWidgets('dashboard loads teacher operations and renders its key metrics', (tester) async {
+    final fake = FakeServer({
+      'GET /api/home': (_) => {'data': {
+        'school_name': 'Maple Elementary',
+        'students': 23,
+        'to_grade': 4,
+        'open_assignments': 5,
+        'draft_assignments': 2,
+        'my_open_cases': 1,
+        'absences_7d': 3,
+      }},
+      'GET /api/learning/courses': (_) => {'data': {'courses': [
+        {'id': course, 'title': 'Grade 4 Math'},
+      ]}},
+      'GET /api/my/rooms': (_) => {'data': [
+        {'id': 'room-1', 'name': 'Room 4', 'pairing': {'id': 'pair-1'}},
+        {'id': 'room-2', 'name': 'Room 5', 'pairing': null},
+      ]},
+      'GET /api/staff-workspace': (_) => {'data': {
+        'tasks': [
+          {'id': 'task-1', 'status': 'open'},
+          {'id': 'task-2', 'status': 'completed'},
+        ],
+        'checklists': [
+          {'id': 'check-1', 'completed_at': null},
+          {'id': 'check-2', 'completed_at': now},
+        ],
+        'handoffs': [{'id': 'handoff-1'}, {'id': 'handoff-2'}],
+      }},
+      'GET /api/arrival/today': (_) => {'data': [
+        {'id': 'arrival-1', 'status': 'waiting'},
+        {'id': 'arrival-2', 'status': 'received'},
+      ]},
+      'GET /api/pickup/queue': (_) => {'data': {
+        'waiting': [{'id': 'pickup-1'}],
+      }},
+      'GET /api/transport/today': (_) => {'data': {
+        'riders': [{'id': 'rider-1'}, {'id': 'rider-2'}, {'id': 'rider-3'}],
+      }},
+    });
+
+    await launch(tester, fake);
+
+    expect(find.text('Good day'), findsOneWidget);
+    expect(find.text('Maple Elementary'), findsOneWidget);
+    expect(find.text('Your day at a glance'), findsOneWidget);
+    expect(find.text('Classroom operations'), findsOneWidget);
+    expect(find.text('Teaching and grading'), findsOneWidget);
+    expect(find.text('School-day coordination'), findsOneWidget);
+    expect(find.text('Staff work queue'), findsOneWidget);
+    expect(find.text('Stay connected'), findsOneWidget);
+    expect(find.text('Learners'), findsOneWidget);
+    expect(find.text('To grade'), findsWidgets);
+    expect(find.text('Assigned rooms'), findsOneWidget);
+    expect(find.text('Connected rooms'), findsOneWidget);
+    expect(find.text('Bus riders'), findsOneWidget);
+    expect(find.text('Open tasks'), findsOneWidget);
+    expect(find.text('Checklist items'), findsOneWidget);
+    expect(find.text('Staff handoffs'), findsOneWidget);
+    expect(find.text('1 student support case(s) need follow-up.'), findsOneWidget);
+    expect(find.text('3 absence event(s) across your roster in the last seven days.'), findsOneWidget);
+
+    for (final path in [
+      '/api/home',
+      '/api/learning/courses',
+      '/api/my/rooms',
+      '/api/staff-workspace',
+      '/api/arrival/today',
+      '/api/pickup/queue',
+      '/api/transport/today',
+    ]) {
+      expect(fake.sent('GET', path), hasLength(1), reason: 'dashboard must load $path');
+    }
+  });
+
   testWidgets('grading: review a quiz\'s open answer, grade with a rubric, and score a hand-in', (tester) async {
     final fake = FakeServer({
       'GET /api/assignments': (_) => {'data': [{'id': 'hw1', 'title': 'Reading log', 'status': 'published', 'submission_count': 1}]},
