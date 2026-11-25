@@ -989,6 +989,7 @@ VIEWS.dashboard = async () => {
       h("h2", {}, "Today\u2019s schedule and classes"),
       ov.myOpenCases ? h("p", { class: "small" }, `${ov.myOpenCases} student support case(s) need follow-up.`) : null,
       ov.absences7d ? h("p", { class: "small muted" }, `${ov.absences7d} absence event(s) on your roster in the last 7 days.`) : null,
+      ov.bellSchedule?.periods?.length ? h("p", { class: "small muted" }, `Bell: ${ov.bellSchedule.name} (${ov.bellSchedule.periods.map(p => `${p.label} ${p.starts}`).slice(0, 4).join(" · ")}${ov.bellSchedule.periods.length > 4 ? " …" : ""})`) : null,
       (ov.scheduleToday || []).length ? h("ul", { class: "list" }, ov.scheduleToday.map(s => h("li", { class: "row wrap" },
         h("div", { class: "grow" }, h("h3", {}, `${s.starts}–${s.ends} · ${s.label}`), h("p", { class: "small muted" }, s.room)),
         chip(s.now ? "current" : "present", s.now ? "In progress" : "Scheduled")))) : empty("No timetabled periods scheduled for today."),
@@ -1235,6 +1236,7 @@ VIEWS.classes = async () => {
     await remoteLessonsCard(),
     await scanCard(),
     await todayCard(),
+    await bellScheduleCard(false),
     h("section", { class: "card", "aria-label": "Bus riders" }, h("h2", {}, "Bus riders on my roster"),
       riders.length ? h("ul", { class: "list" }, riders.map(k => h("li", { class: "row" }, h("span", { class: "grow" }, `${k.display_name} · ${k.bus_label} ${k.direction.toUpperCase()}`), chip(k.status)))) : empty("None of your learners ride today.")),
     h("button", { class: "btn block", type: "button", onclick: () => go("pickup") }, icon("car"), "Pick-up duty: check passes"),
@@ -2176,7 +2178,8 @@ VIEWS.overview = async () => {
       h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => go("approvals") }, icon("check"), "Approvals"),
         h("button", { class: "btn", type: "button", onclick: () => go("edal") }, icon("ledger"), "Records ledger"),
         h("button", { class: "btn", type: "button", onclick: () => go("courses") }, icon("book"), "Courses"))),
-    role === "principal" && !hosted?.hosted ? h("section", { class: "card", "aria-label": "School announcement" }, h("h2", {}, "Announce to the school"), announceForm("school")) : null,
+    ["principal", "vice_principal"].includes(role) && state.me.schoolId ? await bellScheduleCard(true) : null,
+        role === "principal" && !hosted?.hosted ? h("section", { class: "card", "aria-label": "School announcement" }, h("h2", {}, "Announce to the school"), announceForm("school")) : null,
     h("section", { class: "card", "aria-label": "Announcements" }, h("h2", {}, "Announcements"), announcementsCard(news?.data, { limit: 3 }))
   ];
 };
@@ -3159,6 +3162,102 @@ const SCORE_STATUS = { pending: "waiting for you", recorded: "in the gradebook",
 const TOOL_ERRORS = { no_seats_available: "All seats for this tool are in use.", lti_approval_required: "This tool is waiting for district approval.",
   app_not_available: "This tool isn't available for your account.", content_not_available: "That activity isn't available any more.",
   deep_linking_not_registered: "This tool can't add content to assignments.", assignment_not_manageable: "You can't change this assignment." };
+// Classrooms operations (db/153): school bell schedules & course seating charts.
+const BELL_DAY_LABEL = { regular: "Regular day", early_release: "Early release", late_start: "Late start", assembly: "Assembly", custom: "Custom" };
+const PERIOD_KIND_LABEL = { instruction: "Class", homeroom: "Homeroom", lunch: "Lunch", passing: "Passing", assembly: "Assembly" };
+async function bellScheduleCard(canEdit) {
+  const res = await safe(api.get("/api/schools/bell-schedules"));
+  const d = res?.data || {};
+  const list = Array.isArray(d.schedules) ? d.schedules : [];
+  const active = d.todaySchedule || list[0] || null;
+  const box = h("section", { class: "card", "aria-label": "Bell schedule" }, h("h2", {}, "Bell schedule"));
+  const render = () => {
+    const kids = [];
+    if (active) {
+      kids.push(h("p", { class: "small muted" }, `${active.name} · ${BELL_DAY_LABEL[active.dayType] || active.dayType}${active.isDefault ? " (default)" : ""}`));
+      kids.push(h("ul", { class: "list" }, (active.periods || []).map(p => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, `${p.starts}–${p.ends} · ${p.label}`),
+        h("span", { class: "small muted" }, PERIOD_KIND_LABEL[p.kind] || p.kind)))));
+    } else {
+      kids.push(empty("No bell schedule set for this school yet."));
+    }
+    if (canEdit) {
+      const nameIn = h("input", { type: "text", placeholder: "Schedule name (e.g. Regular Day)", value: active?.name || "Regular Day", "aria-label": "Bell schedule name" });
+      const typeSel = h("select", { "aria-label": "Day type" }, Object.entries(BELL_DAY_LABEL).map(([v, t]) => h("option", { value: v, selected: (active?.dayType || "regular") === v }, t)));
+      const defChk = h("input", { type: "checkbox", id: "bell-def", checked: active ? active.isDefault : true });
+      const lines = (active?.periods || [{ label: "Period 1", kind: "instruction", starts: "08:00", ends: "08:50" }]).map(p => `${p.starts}-${p.ends} | ${p.label} | ${p.kind}`).join("\n");
+      const text = h("textarea", { rows: 4, "aria-label": "Periods (HH:MM-HH:MM | Label | kind)" }); text.value = lines;
+      const save = async () => {
+        const periods = text.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => {
+          const [times, label, kind = "instruction"] = l.split("|").map(x => x.trim());
+          const [starts, ends] = (times || "").split("-").map(x => x.trim());
+          return { starts, ends, label, kind };
+        });
+        try {
+          await api.post("/api/schools/bell-schedules", { id: active?.id || undefined, name: nameIn.value, dayType: typeSel.value, isDefault: defChk.checked, periods });
+          toast("Bell schedule saved."); go(state.tab, { push: false });
+        } catch { toast("Check period times (HH:MM-HH:MM | Label | kind) and make sure periods don't overlap."); }
+      };
+      kids.push(h("details", {}, h("summary", {}, active ? "Edit bell schedule" : "Set bell schedule"),
+        h("div", { class: "stack" }, nameIn, typeSel, h("label", { class: "inline", for: defChk.id }, defChk, " Default schedule"),
+          h("p", { class: "small muted" }, "One period per line: 08:00-08:50 | Period 1 | instruction"), text,
+          h("button", { class: "btn primary", type: "button", onclick: save }, "Save bell schedule"))));
+    }
+    box.replaceChildren(h("h2", {}, "Bell schedule"), ...kids);
+  };
+  render();
+  return box;
+}
+function seatingChartPanel(courseId) {
+  const box = h("div", { class: "stack" }, h("p", { class: "small muted" }, "Loading seating chart…"));
+  const load = () => api.get(`/api/learning/courses/${courseId}/seating`).then(r => {
+    const d = r.data || {}, ch = d.chart || { rowsCount: 5, colsCount: 6 };
+    if (!d.canManage) {
+      const mine = d.assignments || [];
+      box.replaceChildren(mine.length
+        ? h("ul", { class: "list" }, mine.map(a => h("li", {}, h("b", {}, a.name), h("p", { class: "small muted" }, `Row ${a.row}, seat ${a.col}${a.label ? ` · ${a.label}` : ""}${ch.roomName ? ` · ${ch.roomName}` : ""}`))))
+        : h("p", { class: "small muted" }, "The teacher has shared this chart, but no seat is assigned yet."));
+      return;
+    }
+    const byStudent = new Map((d.assignments || []).map(a => [a.studentId, a]));
+    const roomSel = h("select", { "aria-label": "Classroom room" }, h("option", { value: "" }, "No room linked"),
+      (d.rooms || []).map(rm => h("option", { value: rm.id, selected: ch.roomId === rm.id }, rm.name)));
+    const rowsIn = h("input", { type: "number", min: 1, max: 20, value: String(ch.rowsCount || 5), "aria-label": "Rows" });
+    const colsIn = h("input", { type: "number", min: 1, max: 20, value: String(ch.colsCount || 6), "aria-label": "Columns" });
+    const shareChk = h("input", { type: "checkbox", id: `seat-share-${courseId}`, checked: Boolean(d.shareWithFamilies || ch.shareWithFamilies) });
+    const inputs = new Map();
+    const list = (d.students || []).map(st => {
+      const cur = byStudent.get(st.studentId);
+      const rIn = h("input", { type: "number", min: 1, max: 20, placeholder: "Row", value: cur ? String(cur.row) : "", "aria-label": `Row for ${st.name}` });
+      const cIn = h("input", { type: "number", min: 1, max: 20, placeholder: "Seat", value: cur ? String(cur.col) : "", "aria-label": `Seat for ${st.name}` });
+      const lIn = h("input", { type: "text", maxlength: 40, placeholder: "Note (e.g. Front)", value: cur?.label || "", "aria-label": `Label for ${st.name}` });
+      inputs.set(st.studentId, { rIn, cIn, lIn });
+      return h("li", { class: "stack" }, h("span", {}, h("b", {}, st.name), h("span", { class: "small muted" }, ` · grade ${st.grade}`)),
+        h("div", { class: "row wrap" }, rIn, cIn, lIn));
+    });
+    const save = async () => {
+      const assignments = [];
+      for (const [studentId, { rIn, cIn, lIn }] of inputs) {
+        if (!rIn.value && !cIn.value) continue;
+        assignments.push({ studentId, row: Number(rIn.value), col: Number(cIn.value), label: lIn.value });
+      }
+      try {
+        await api.req("PUT", `/api/learning/courses/${courseId}/seating`, { roomId: roomSel.value || null, rowsCount: Number(rowsIn.value), colsCount: Number(colsIn.value), shareWithFamilies: shareChk.checked, assignments });
+        toast(shareChk.checked ? "Seating chart saved. Families can see their own seat." : "Seating chart saved. Families cannot see seats.");
+        load();
+      } catch { toast("Check row/seat numbers: each learner needs a unique seat inside the grid."); }
+    };
+    box.replaceChildren(
+      h("p", { class: "small muted" }, `${(d.assignments || []).length} of ${(d.students || []).length} enrolled learners seated.`),
+      h("label", { class: "inline", for: shareChk.id }, shareChk, " Let each student and their family see their own seat"),
+      h("div", { class: "row wrap" }, roomSel, rowsIn, colsIn),
+      list.length ? h("ul", { class: "list" }, list) : h("p", { class: "muted small" }, "No enrolled learners in this course yet."),
+      h("button", { class: "btn primary", type: "button", onclick: save }, "Save seating chart"));
+  }).catch(() => box.replaceChildren(h("p", { class: "small muted" }, "This seating chart isn't shared with families.")));
+  load();
+  return h("section", { class: "card", "aria-label": "Seating chart" }, h("h2", {}, "Seating chart"), box);
+}
+
 VIEWS.course = async () => {
   if (!state.courseId) return VIEWS.courses();
   const c = (await api.get(`/api/learning/courses/${state.courseId}${learnerQuery()}`)).data;
@@ -3245,7 +3344,8 @@ VIEWS.course = async () => {
       a.mine ? chip(a.mine.missing ? "absent" : a.mine.status === "graded" ? "present" : "not_started", a.mine.missing ? "Missing" : a.mine.status === "graded" ? `${a.mine.earned}/${a.points}` : statusText[a.mine.status]) : null),
       a.kind === "quiz" || state.me.role !== "teacher" ? h("button", { class: `btn${a.kind === "quiz" && state.me.role === "pupil" ? " primary" : ""}`, type: "button", "aria-label": `${a.kind === "quiz" ? "Open quiz" : "Details"}: ${a.title}`, onclick: () => openView("quiz", { assignmentId: a.id }) }, a.kind === "quiz" ? "Open quiz" : "Details") : null,
       toolsFor(a)))) : empty("Nothing assigned yet.")));
-  if (c.canManage && state.me.role !== "superintendent") {
+  if ((c.canManage && state.me.role !== "superintendent") || ["parent", "pupil"].includes(state.me.role)) {
+    out.push(seatingChartPanel(c.id));
     const acc = await safe(api.get(`/api/learning/accommodations?courseId=${c.id}`));
     if (acc) out.push(h("section", { class: "card", "aria-label": "Accommodations" }, h("h2", {}, "Accommodations"),
       h("p", { class: "small muted" }, "Extra time stretches quiz timers; read-aloud adds a button that uses the device's own voice."),
