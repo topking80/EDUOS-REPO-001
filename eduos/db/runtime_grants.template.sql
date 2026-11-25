@@ -829,3 +829,4 @@ GRANT SELECT, INSERT, UPDATE ON school_bell_schedules, course_seating_charts TO 
 GRANT SELECT, INSERT, UPDATE, DELETE ON school_bell_periods, course_seat_assignments TO eduos_app;
 REVOKE DELETE, TRUNCATE ON school_bell_schedules, course_seating_charts FROM eduos_app;
 REVOKE TRUNCATE ON school_bell_periods, course_seat_assignments FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_can_manage_bell_schedule(uuid), eduos_can_read_seating_chart(uuid), eduos_can_read_seat(uuid, uuid) TO eduos_app;

@@ -53,5 +53,6 @@ export function parseSeatingChart(body) {
     seenSeats.add(seatKey);
     assignments.push({ studentId: x.studentId, row, col, label });
   }
-  return { roomId: b.roomId || null, rowsCount, colsCount, assignments };
+  if (b.shareWithFamilies != null && typeof b.shareWithFamilies !== "boolean") return null;
+  return { roomId: b.roomId || null, rowsCount, colsCount, shareWithFamilies: b.shareWithFamilies === true, assignments };
 }

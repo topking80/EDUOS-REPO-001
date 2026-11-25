@@ -49,6 +49,7 @@ CREATE TABLE course_seating_charts (
   room_id uuid,
   rows_count smallint NOT NULL DEFAULT 5 CHECK (rows_count BETWEEN 1 AND 20),
   cols_count smallint NOT NULL DEFAULT 6 CHECK (cols_count BETWEEN 1 AND 20),
+  share_with_families boolean NOT NULL DEFAULT false,
   updated_by uuid NOT NULL REFERENCES users(id),
   updated_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id) ON DELETE CASCADE,
@@ -133,26 +134,58 @@ DO $$ DECLARE t text; BEGIN
  END LOOP;
 END $$;
 
+-- Vice principals may write bell schedules for their own school (t49u).
+-- Do not widen eduos_is_school_lead, which is used across other features.
+CREATE FUNCTION eduos_can_manage_bell_schedule(p_school uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT eduos_is_school_lead(p_school)
+      OR (eduos_ctx_role()='vice_principal' AND p_school=eduos_ctx_school())
+$$;
+REVOKE ALL ON FUNCTION eduos_can_manage_bell_schedule(uuid) FROM PUBLIC;
+
+-- A family reads a chart only when the teacher/admin has turned sharing on
+-- and they are linked to an enrolled learner in that course.
+CREATE FUNCTION eduos_can_read_seating_chart(p_course uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT eduos_can_manage_course(p_course)
+      OR EXISTS (
+        SELECT 1 FROM course_seating_charts ch
+        JOIN course_enrollments e ON e.course_id=ch.course_id AND e.district_id=ch.district_id AND e.status='active'
+        WHERE ch.course_id=p_course AND ch.district_id=eduos_ctx_district() AND ch.share_with_families
+          AND eduos_is_linked_student(e.student_id))
+$$;
+REVOKE ALL ON FUNCTION eduos_can_read_seating_chart(uuid) FROM PUBLIC;
+
+-- A family sees only their own learner's seat, and only when sharing is on.
+CREATE FUNCTION eduos_can_read_seat(p_course uuid, p_student uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT eduos_can_manage_course(p_course)
+      OR (eduos_is_linked_student(p_student)
+          AND EXISTS (SELECT 1 FROM course_seating_charts ch
+                      WHERE ch.course_id=p_course AND ch.district_id=eduos_ctx_district() AND ch.share_with_families))
+$$;
+REVOKE ALL ON FUNCTION eduos_can_read_seat(uuid, uuid) FROM PUBLIC;
+
 CREATE POLICY bell_schedule_write ON school_bell_schedules AS RESTRICTIVE FOR INSERT
-  WITH CHECK (eduos_is_table_owner() OR eduos_is_school_lead(school_id));
+  WITH CHECK (eduos_is_table_owner() OR eduos_can_manage_bell_schedule(school_id));
 CREATE POLICY bell_schedule_update ON school_bell_schedules AS RESTRICTIVE FOR UPDATE
-  USING (eduos_is_table_owner() OR eduos_is_school_lead(school_id));
+  USING (eduos_is_table_owner() OR eduos_can_manage_bell_schedule(school_id));
 CREATE POLICY bell_period_write ON school_bell_periods AS RESTRICTIVE FOR INSERT
-  WITH CHECK (eduos_is_table_owner() OR eduos_is_school_lead(school_id));
+  WITH CHECK (eduos_is_table_owner() OR eduos_can_manage_bell_schedule(school_id));
 CREATE POLICY bell_period_update ON school_bell_periods AS RESTRICTIVE FOR UPDATE
-  USING (eduos_is_table_owner() OR eduos_is_school_lead(school_id));
+  USING (eduos_is_table_owner() OR eduos_can_manage_bell_schedule(school_id));
 CREATE POLICY bell_period_delete ON school_bell_periods AS RESTRICTIVE FOR DELETE
-  USING (eduos_is_table_owner() OR eduos_is_school_lead(school_id));
+  USING (eduos_is_table_owner() OR eduos_can_manage_bell_schedule(school_id));
 
 CREATE POLICY seating_chart_read ON course_seating_charts AS RESTRICTIVE FOR SELECT
-  USING (eduos_is_table_owner() OR eduos_can_manage_course(course_id));
+  USING (eduos_is_table_owner() OR eduos_can_read_seating_chart(course_id));
 CREATE POLICY seating_chart_write ON course_seating_charts AS RESTRICTIVE FOR INSERT
   WITH CHECK (eduos_is_table_owner() OR eduos_can_manage_course(course_id));
 CREATE POLICY seating_chart_update ON course_seating_charts AS RESTRICTIVE FOR UPDATE
   USING (eduos_is_table_owner() OR eduos_can_manage_course(course_id));
 
 CREATE POLICY seat_read ON course_seat_assignments AS RESTRICTIVE FOR SELECT
-  USING (eduos_is_table_owner() OR eduos_can_manage_course(course_id));
+  USING (eduos_is_table_owner() OR eduos_can_read_seat(course_id, student_id));
 CREATE POLICY seat_write ON course_seat_assignments AS RESTRICTIVE FOR INSERT
   WITH CHECK (eduos_is_table_owner() OR eduos_can_manage_course(course_id));
 CREATE POLICY seat_update ON course_seat_assignments AS RESTRICTIVE FOR UPDATE
