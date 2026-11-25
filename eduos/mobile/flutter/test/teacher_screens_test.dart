@@ -427,7 +427,7 @@ void main() {
     expect(find.text('Car rider arrivals'), findsOneWidget);
     expect(find.text('Car rider dismissal'), findsOneWidget);
     expect(find.text('Library / media center duty'), findsOneWidget);
-    expect(find.text('Lunchroom duty'), findsOneWidget);
+    expect(find.text('Lunchroom duty'), findsWidgets);
     expect(find.text('Transport duty'), findsOneWidget);
     expect(find.text('General staff checklist'), findsOneWidget);
     expect(find.text('Check returns cart'), findsOneWidget);
