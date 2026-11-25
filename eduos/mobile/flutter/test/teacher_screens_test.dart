@@ -185,9 +185,15 @@ void main() {
           'absences7d': 1,
           'myOpenCases': 2,
           'coursesCount': 1,
-          'courses': [{'id': course, 'title': 'Grade 4 Math', 'students': 24}],
+          'courses': [{'id': course, 'title': 'Grade 4 Math', 'students': 24, 'seatedCount': 18}],
           'scheduleToday': [{'slotId': 'tt1', 'roomId': 'room-1', 'room': 'Room 101', 'starts': '08:00', 'ends': '09:00', 'label': 'Math Block', 'now': true}],
           'upcomingEvents': [{'id': 'ev1', 'title': 'Winter Concert', 'venue': 'Auditorium'}],
+          'bellSchedule': {'id': 'bell1', 'name': 'Regular Day', 'dayType': 'regular', 'periods': [{'label': 'Period 1', 'kind': 'instruction', 'starts': '08:00', 'ends': '08:50'}]},
+        },
+        'activities': {
+          'count': 1,
+          'attendanceDue': 1,
+          'items': [{'id': 'act1', 'kind': 'sport', 'title': 'Falcons Soccer', 'role': 'coach', 'attendanceDue': 1, 'nextEvent': {'id': 'ge1', 'title': 'Home game'}}],
         },
         'classroom': {'assignedRooms': 1, 'connectedRooms': 1, 'checkinsToday': 1, 'rooms': []},
         'transportation': {'busRidersCount': 4, 'arrivalsPending': 1, 'pickupWaitingCount': 3, 'pendingArrivals': [
@@ -244,6 +250,11 @@ void main() {
     expect(find.text('Attendance marked today: 20/24'), findsOneWidget);
     expect(find.text("Today's schedule"), findsOneWidget);
     expect(find.text('08:00–09:00 · Math Block'), findsOneWidget);
+    expect(find.text('Bell: Regular Day'), findsOneWidget);
+    expect(find.text('08:00–08:50 · Period 1'), findsOneWidget);
+    expect(find.text('24 learner(s) · 18 seated'), findsOneWidget);
+    expect(find.text('My clubs and teams'), findsOneWidget);
+    expect(find.text('Falcons Soccer'), findsOneWidget);
     expect(find.text('Winter Concert'), findsOneWidget);
     expect(find.text('Library / media center'), findsOneWidget);
     expect(find.text('Grade submitted work'), findsOneWidget);
