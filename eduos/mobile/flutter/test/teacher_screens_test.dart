@@ -5,6 +5,7 @@ import 'package:eduos_mobile_branding/core/key_value_store.dart';
 import 'package:eduos_mobile_branding/core/format.dart';
 import 'package:eduos_mobile_branding/core/session.dart';
 import 'package:eduos_mobile_branding/main.dart';
+import 'package:eduos_mobile_branding/app/role_tabs.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -91,6 +92,13 @@ Future<void> openTab(WidgetTester tester, String label) async {
 }
 
 void main() {
+  test('teacher dashboard is the first home destination', () {
+    final tabs = tabsFor('teacher');
+    expect(tabs.first.id, 'dashboard');
+    expect(tabs.first.label, 'Dashboard');
+    expect(tabs.first.native, isTrue);
+  });
+
   testWidgets('grading: review a quiz\'s open answer, grade with a rubric, and score a hand-in', (tester) async {
     final fake = FakeServer({
       'GET /api/assignments': (_) => {'data': [{'id': 'hw1', 'title': 'Reading log', 'status': 'published', 'submission_count': 1}]},
