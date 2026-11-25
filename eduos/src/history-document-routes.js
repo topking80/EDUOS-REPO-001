@@ -35,7 +35,7 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
     keyGenerator: req => `hd:${req.actor?.userId}` });
   const raw = express.raw({ type: "text/plain", limit: "5mb" });
 
-  app.put("/api/history/document-policy", limiter, requireSession, requireCsrf, async (req, res, next) => {
+  app.put("/api/history/document-policy", requireSession, limiter, requireCsrf, async (req, res, next) => {
     if (req.actor.role !== "superintendent") return res.status(403).json({ error: "superintendent_only" });
     const b = req.body || {};
     const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
@@ -64,7 +64,7 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
   });
 
   app.post("/api/family/children/:studentId/history-contributions/:contributionId/documents",
-    limiter, requireSession, requireCsrf, raw, async (req,res,next) => {
+    requireSession, limiter, requireCsrf, raw, async (req,res,next) => {
       if (!ready) return res.status(503).json({ error: "media_storage_not_configured" });
       if (!validId(req.params.studentId) || !validId(req.params.contributionId))
         return res.status(400).json({ error: "invalid_contribution_id" });
