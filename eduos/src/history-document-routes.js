@@ -108,6 +108,10 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
           await storage.remove(storageKey).catch(()=>{});
           return res.status(409).json({ error: "contribution_no_longer_pending" });
         }
+        // TC-08 preservation verification uses the same SHA-256 registry for documents.
+        await withTenantTransaction(req.actor,c=>c.query(
+          `SELECT eduos_history_media_checksum($1,$2)`,
+          [asset,crypto.createHash("sha256").update(req.body).digest("hex")]));
         await withTenantTransaction(req.actor,c=>audit(c,req,"add","history_document",asset,
           `contribution=${req.params.contributionId};bytes=${req.body.length}`));
         res.setHeader("Cache-Control","no-store");
