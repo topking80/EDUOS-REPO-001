@@ -821,7 +821,7 @@ GRANT EXECUTE ON FUNCTION eduos_preservation_fund_collection_open(uuid), eduos_p
 GRANT SELECT, INSERT ON activity_event_attendance, student_physical_clearances TO eduos_app;
 GRANT UPDATE (status, marked_by, marked_at) ON activity_event_attendance TO eduos_app;
 REVOKE DELETE, TRUNCATE ON activity_event_attendance, student_physical_clearances FROM eduos_app;
-GRANT EXECUTE ON FUNCTION eduos_can_read_physical(uuid, uuid) TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_can_record_physical(uuid), eduos_can_read_physical(uuid, uuid), eduos_guardian_of_member(uuid) TO eduos_app;
 
 -- Classrooms operations (153): bell schedules (school lead writes, school reads)
 -- and course seating charts (managed by course teacher / school lead).
