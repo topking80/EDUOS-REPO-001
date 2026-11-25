@@ -110,13 +110,15 @@ BEGIN
     THEN RETURN jsonb_build_object('error','document_too_large','maxBytes',pol.max_document_bytes); END IF;
   IF p_file_name !~ '^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}\.txt$'
     THEN RETURN jsonb_build_object('error','invalid_document_name'); END IF;
+  -- Serialize per-student reservations before both count and byte checks so
+  -- concurrent uploads cannot exceed either district-controlled limit.
+  PERFORM pg_advisory_xact_lock(hashtextextended('history-media:'||c.student_id::text,0));
   SELECT count(*) INTO n FROM student_history_contribution_documents d
     JOIN private_media_objects o ON o.asset_id=d.asset_id
    WHERE d.district_id=c.district_id AND d.contribution_id=c.id
      AND o.scan_status <> 'blocked' AND o.processing_status <> 'failed';
   IF n >= pol.max_documents_per_contribution
     THEN RETURN jsonb_build_object('error','too_many_documents','max',pol.max_documents_per_contribution); END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended('history-media:'||c.student_id::text,0));
   used := eduos_history_student_media_bytes(c.district_id,c.student_id);
   IF used+p_bytes > pol.max_bytes_per_student
     THEN RETURN jsonb_build_object('error','student_storage_full','usedBytes',used,'maxBytes',pol.max_bytes_per_student); END IF;
