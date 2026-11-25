@@ -80,6 +80,10 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
         decodeText(req.body);
         const asset = crypto.randomUUID();
         const begun = await withTenantTransaction(req.actor, async c => {
+          const matches = await one(c,`SELECT 1 FROM student_history_contributions
+            WHERE id=$1 AND student_id=$2 AND district_id=$3`,
+            [req.params.contributionId,req.params.studentId,req.actor.districtId]);
+          if (!matches) throw new HttpError(404,"contribution_not_found");
           const out = (await one(c,`SELECT eduos_history_contribution_document_begin($1,$2,$3,$4,$5,$6) AS out`,
             [req.params.contributionId,asset,`history/${req.actor.districtId}/pending/${asset}.txt`,req.body.length,fileName,key || null])).out;
           if (out.error) throw new HttpError(BEGIN_ERRORS[out.error] || 400,out.error,out);
