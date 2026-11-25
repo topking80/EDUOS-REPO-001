@@ -146,7 +146,7 @@ END $$;
 
 CREATE FUNCTION eduos_history_contribution_documents(p_contributions uuid[])
 RETURNS TABLE(contribution_id uuid,asset_id uuid,file_name text,byte_size bigint)
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $doc$
   SELECT d.contribution_id,d.asset_id,d.file_name,o.byte_size
     FROM student_history_contribution_documents d
     JOIN private_media_objects o ON o.asset_id=d.asset_id AND o.district_id=d.district_id
@@ -158,7 +158,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $
        OR (c.status='approved' AND c.history_entry_id IS NOT NULL
            AND eduos_history_entry_access(c.history_entry_id,'read')))
    ORDER BY d.contribution_id,d.created_at
-$;
+$doc$;
 
 REVOKE ALL ON FUNCTION eduos_history_contribution_documents(uuid[]),
   eduos_history_contribution_document_begin(uuid,uuid,text,bigint,text,text),
