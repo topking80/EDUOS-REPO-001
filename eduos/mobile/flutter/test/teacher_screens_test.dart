@@ -401,8 +401,11 @@ void main() {
       ]},
       'GET /api/pickup/queue': (_) => {'data': {'waiting': [{'name': 'Ada Lovelace', 'grade': '4'}], 'released': [], 'blocked': 0, 'denied': 0}},
       'GET /api/staff-workspace': (_) => {'data': {
-        'tasks': [],
-        'checklists': [{'id': 'list-1', 'title': 'Lunchroom duty', 'domain': 'meal_service', 'item_id': 'item-1', 'label': 'Set up tables', 'completed_at': null}],
+        'tasks': [{'id': 'task-library', 'domain': 'library', 'summary': 'Prepare reading stations', 'status': 'open'}],
+        'checklists': [
+          {'id': 'list-1', 'title': 'Lunchroom duty', 'domain': 'meal_service', 'item_id': 'item-1', 'label': 'Set up tables', 'completed_at': null},
+          {'id': 'list-2', 'title': 'Library opening', 'domain': 'library', 'item_id': 'item-2', 'label': 'Check returns cart', 'completed_at': null},
+        ],
         'handoffs': [],
         'announcements': [],
       }},
@@ -423,8 +426,13 @@ void main() {
     expect(find.text('Ada Lovelace'), findsWidgets);
     expect(find.text('Car rider arrivals'), findsOneWidget);
     expect(find.text('Car rider dismissal'), findsOneWidget);
-    expect(find.text('Library and lunchroom duties'), findsOneWidget);
-    expect(find.text('Lunchroom duty'), findsWidgets);
+    expect(find.text('Library / media center duty'), findsOneWidget);
+    expect(find.text('Lunchroom duty'), findsOneWidget);
+    expect(find.text('Transport duty'), findsOneWidget);
+    expect(find.text('General staff checklist'), findsOneWidget);
+    expect(find.text('Check returns cart'), findsOneWidget);
+    expect(find.text('Prepare reading stations'), findsOneWidget);
+    expect(find.text('Set up tables'), findsOneWidget);
     await tester.tap(find.text('Connect'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Classroom code'), '123456');
