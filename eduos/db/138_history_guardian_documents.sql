@@ -49,9 +49,39 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
        SELECT asset_id FROM student_history_entry_attachments WHERE district_id = p_district AND student_id = p_student
        UNION SELECT asset_id FROM student_history_contribution_photos WHERE district_id = p_district AND student_id = p_student
        UNION SELECT asset_id FROM student_history_contribution_documents WHERE district_id = p_district AND student_id = p_student
+       UNION SELECT asset_id FROM student_time_capsule_photos WHERE district_id = p_district AND student_id = p_student
      )
 $$;
 REVOKE ALL ON FUNCTION eduos_history_student_media_bytes(uuid, uuid) FROM PUBLIC;
+
+
+-- The family dashboard's usage must include documents and capsule photos too.
+CREATE OR REPLACE FUNCTION eduos_history_family_storage(p_student uuid)
+RETURNS TABLE(used_bytes bigint, photos bigint, archived_photos bigint)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $family_storage$
+DECLARE s record;
+BEGIN
+  SELECT st.id, st.district_id INTO s FROM students st
+   WHERE st.id = p_student AND st.district_id = eduos_ctx_district();
+  IF NOT FOUND OR NOT (eduos_is_student_self(s.id) OR
+      (eduos_is_linked_guardian(s.id) AND NOT eduos_student_holds_rights(s.id))) THEN
+    RAISE EXCEPTION 'student_not_found' USING ERRCODE = 'P0002';
+  END IF;
+  RETURN QUERY
+  WITH links AS (
+    SELECT asset_id FROM student_history_entry_attachments WHERE district_id=s.district_id AND student_id=s.id
+    UNION SELECT asset_id FROM student_history_contribution_photos WHERE district_id=s.district_id AND student_id=s.id
+    UNION SELECT asset_id FROM student_history_contribution_documents WHERE district_id=s.district_id AND student_id=s.id
+    UNION SELECT asset_id FROM student_time_capsule_photos WHERE district_id=s.district_id AND student_id=s.id
+  )
+  SELECT coalesce(sum(o.byte_size),0)::bigint,
+         count(*) FILTER (WHERE o.media_kind='image')::bigint,
+         count(*) FILTER (WHERE o.media_kind='image' AND o.storage_tier='archive')::bigint
+    FROM links l JOIN private_media_objects o ON o.asset_id=l.asset_id AND o.district_id=s.district_id
+   WHERE o.purpose='history' AND o.scan_status<>'blocked' AND o.processing_status<>'failed';
+END
+$family_storage$;
+REVOKE ALL ON FUNCTION eduos_history_family_storage(uuid) FROM PUBLIC;
 
 CREATE FUNCTION eduos_history_contribution_document_begin(
   p_contribution uuid, p_asset uuid, p_storage_key text, p_bytes bigint,
