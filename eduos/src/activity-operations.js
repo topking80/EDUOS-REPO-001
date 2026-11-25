@@ -25,3 +25,22 @@ export function validMarks(marks) {
   return true;
 }
 
+
+export function gradeNumber(gradeLevel) {
+  if (gradeLevel == null) return null;
+  const t = String(gradeLevel).trim().toUpperCase();
+  if (!t) return null;
+  if (t === "K" || t === "PK" || t === "KG" || t === "PREK") return 0;
+  const m = /^(?:GRADE\s*)?(\d{1,2})(?:ST|ND|RD|TH)?$/.exec(t);
+  if (m) {
+    const n = Number(m[1]);
+    return n >= 0 && n <= 12 ? n : null;
+  }
+  return null;
+}
+
+// Club sign-up needs guardian approval until high school (grades below 9).
+export function requiresGuardianForClub(gradeLevel) {
+  const g = gradeNumber(gradeLevel);
+  return g === null || g < 9;
+}
