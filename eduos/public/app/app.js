@@ -877,6 +877,10 @@ VIEWS.dashboard = async () => {
   const wq = d.workQueue || {}, cn = d.connections || {}, al = d.alerts || {};
   const duties = Array.isArray(d.duties) ? d.duties : [];
   const webTarget = (t) => t;
+  const act = async (path, ok, fail, body = {}) => {
+    try { await api.post(path, body); toast(ok); go("dashboard", { push: false }); }
+    catch (e) { toast(e.body?.error === "independent_receipt_required" ? "A different staff member must confirm this handoff." : fail); }
+  };
   const safetyLive = (al.safetyIncidents || []).length;
   const alertCount = safetyLive + (Number(al.unreadNotifications) || 0) + (Number(al.urgentTasksCount) || 0) + (Number(al.pendingArrivalsCount) || 0);
 
@@ -904,8 +908,12 @@ VIEWS.dashboard = async () => {
         chip("absent", i.status)))) : null,
       (al.notifications || []).length ? h("ul", { class: "list" }, al.notifications.slice(0, 4).map(n => h("li", { class: "row wrap" },
         h("div", { class: "grow" }, h("h3", {}, n.title), n.body ? h("p", { class: "small muted" }, n.body) : null),
-        chip(n.read_at ? "present" : "expected", n.read_at ? "Read" : "New")))) : empty("No recent notifications."),
+        n.read_at ? chip("present", "Read") : h("button", { class: "btn small", type: "button", onclick: () => act("/api/notifications/read", "Notification marked read.", "Could not mark the notification read.", { ids: [n.id] }) }, "Mark read")))) : empty("No recent notifications."),
+      (tr.pendingArrivals || []).length ? [h("h3", {}, "Arrival handoffs"), h("ul", { class: "list" }, tr.pendingArrivals.slice(0, 5).map(row => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, row.displayName), h("p", { class: "small muted" }, [row.gradeLevel, row.method?.replaceAll("_", " "), row.status].filter(Boolean).join(" · "))),
+        h("button", { class: "btn primary small", type: "button", onclick: () => act(`/api/arrival/handoffs/${row.id}/receive`, "Student handoff confirmed. Record first attendance in Classes.", "Could not confirm the handoff.") }, "Confirm handoff"))))] : null,
       h("div", { class: "btns" },
+        al.unreadNotifications ? h("button", { class: "btn", type: "button", onclick: () => act("/api/notifications/read", "All notifications marked read.", "Could not mark notifications read.") }, "Mark all read") : null,
         h("button", { class: "btn", type: "button", onclick: () => go("alerts") }, icon("bell"), `Open alerts (${al.unreadNotifications ?? 0})`),
         h("button", { class: "btn", type: "button", onclick: () => go("safety") }, icon("shield"), "Safety status"))),
 
@@ -935,6 +943,9 @@ VIEWS.dashboard = async () => {
       (wq.items || []).length ? h("ul", { class: "list" }, wq.items.map(item => h("li", { class: "row wrap" },
         h("div", { class: "grow" }, h("h3", {}, item.title), h("p", { class: "small muted" }, item.detail)),
         h("button", { class: "btn small", type: "button", onclick: () => go(webTarget(item.target)) }, "Open")))) : empty("No pending work items right now."),
+      (wq.checklistItems || []).length ? [h("h3", {}, "Duty checklist items"), h("ul", { class: "list" }, wq.checklistItems.map(item => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, item.label), h("p", { class: "small muted" }, item.title)),
+        h("button", { class: "btn small", type: "button", onclick: () => act(`/api/staff-workspace/checklists/${item.itemId}/complete`, "Checklist item completed.", "Could not complete that checklist item.") }, "Complete"))))] : null,
       h("div", { class: "btns" },
         h("button", { class: "btn primary", type: "button", onclick: () => go("grading") }, icon("check"), "Grading"),
         h("button", { class: "btn", type: "button", onclick: () => go("courses") }, icon("book"), "Courses"),
@@ -970,6 +981,9 @@ VIEWS.dashboard = async () => {
     h("section", { class: "card", "aria-label": "Staff connections" },
       h("h2", {}, "Staff connections"),
       h("p", { class: "small muted" }, `${cn.unreadMessages ?? 0} unread message(s) · ${cn.pendingHandoffsCount ?? 0} pending staff handoff(s)`),
+      (cn.recentHandoffs || []).length ? h("ul", { class: "list" }, cn.recentHandoffs.map(row => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, row.summary), h("p", { class: "small muted" }, [row.domain?.replaceAll("_", " "), row.next_action].filter(Boolean).join(" · "))),
+        row.acknowledged_at ? chip("present", "Acknowledged") : h("button", { class: "btn small", type: "button", onclick: () => act(`/api/staff-workspace/handoffs/${row.id}/acknowledge`, "Handoff acknowledged.", "Could not acknowledge the handoff.") }, "Acknowledge")))) : null,
       (cn.staffAnnouncements || []).length ? h("ul", { class: "list" }, cn.staffAnnouncements.map(a => h("li", { class: "item" },
         h("h3", {}, a.title), h("p", { class: "small muted" }, a.body)))) : null,
       h("div", { class: "btns" },

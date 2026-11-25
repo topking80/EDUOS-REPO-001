@@ -41,3 +41,21 @@ test("teacher school-day web view reuses staff-workspace and arrival endpoints",
   assert.match(appJs, /Lunchroom duty/);
   assert.match(appJs, /Transport duty/);
 });
+
+test("teacher dashboard exposes inline notification, handoff, checklist, and arrival actions", () => {
+  assert.match(route, /pendingArrivals:\s*pendingArrivals/);
+  assert.match(route, /checklistItems:\s*incompleteChecklists/);
+  assert.match(appJs, /api\.post\("\/api\/notifications\/read"/);
+  assert.match(appJs, /\/api\/arrival\/handoffs\/\$\{row\.id\}\/receive/);
+  assert.match(appJs, /\/api\/staff-workspace\/checklists\/\$\{item\.itemId\}\/complete/);
+  assert.match(appJs, /\/api\/staff-workspace\/handoffs\/\$\{row\.id\}\/acknowledge/);
+  assert.match(appJs, /"Mark read"/);
+  assert.match(appJs, /"Confirm handoff"/);
+  assert.match(flutter, /\/api\/notifications\/read/);
+  assert.match(flutter, /\/api\/arrival\/handoffs\//);
+  assert.match(flutter, /\/api\/staff-workspace\/checklists\//);
+  assert.match(flutter, /\/api\/staff-workspace\/handoffs\//);
+  assert.match(flutter, /Mark read/);
+  assert.match(flutter, /Confirm handoff/);
+  assert.match(flutter, /Mark all read/);
+});

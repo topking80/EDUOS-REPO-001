@@ -304,7 +304,16 @@ export function registerTeacherDashboardRoutes(app) {
             arrivalsPending: pendingArrivals.length,
             busArrivalsPending: pendingArrivals.filter(x => x.method === "bus").length,
             carArrivalsPending: pendingArrivals.filter(x => x.method === "car_rider").length,
-            pickupWaitingCount: pickupQueue.waiting.length
+            pickupWaitingCount: pickupQueue.waiting.length,
+            pendingArrivals: pendingArrivals.slice(0, 8).map(x => ({
+              id: x.id,
+              studentId: x.student_id,
+              displayName: x.display_name,
+              gradeLevel: x.grade_level,
+              method: x.method,
+              status: x.status,
+              initiatedAt: x.initiated_at
+            }))
           },
           duties,
           workQueue: {
@@ -318,6 +327,13 @@ export function registerTeacherDashboardRoutes(app) {
             incompleteChecklists: incompleteChecklists.length,
             pendingHandoffs: unacknowledgedHandoffs.length,
             unplannedCourses: unplannedCourses.length,
+            checklistItems: incompleteChecklists.slice(0, 8).map(c => ({
+              itemId: c.item_id,
+              checklistId: c.id,
+              title: c.title,
+              label: c.label,
+              domain: c.domain
+            })),
             items: workItems
           },
           connections: {
