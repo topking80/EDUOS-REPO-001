@@ -174,6 +174,72 @@ void main() {
     }
   });
 
+  testWidgets('dashboard uses unified /api/teacher/dashboard payload when available', (tester) async {
+    final fake = FakeServer({
+      'GET /api/teacher/dashboard': (_) => {'data': {
+        'school': {'id': 's1', 'name': 'Maple Elementary', 'timezone': 'America/New_York'},
+        'date': '2026-11-25',
+        'overview': {
+          'students': 24,
+          'attendanceMarkedToday': 20,
+          'absences7d': 1,
+          'myOpenCases': 2,
+          'coursesCount': 1,
+          'courses': [{'id': course, 'title': 'Grade 4 Math', 'students': 24}],
+          'scheduleToday': [{'slotId': 'tt1', 'roomId': 'room-1', 'room': 'Room 101', 'starts': '08:00', 'ends': '09:00', 'label': 'Math Block', 'now': true}],
+          'upcomingEvents': [{'id': 'ev1', 'title': 'Winter Concert', 'venue': 'Auditorium'}],
+        },
+        'classroom': {'assignedRooms': 1, 'connectedRooms': 1, 'checkinsToday': 1, 'rooms': []},
+        'transportation': {'busRidersCount': 4, 'arrivalsPending': 2, 'pickupWaitingCount': 3},
+        'duties': [
+          {'domain': 'library', 'label': 'Library / media center', 'shiftsToday': 1, 'checklistsTotal': 2, 'checklistsCompleted': 1, 'openTasks': 1},
+          {'domain': 'meal_service', 'label': 'Lunchroom', 'shiftsToday': 0, 'checklistsTotal': 1, 'checklistsCompleted': 1, 'openTasks': 0},
+          {'domain': 'transport', 'label': 'Transport', 'shiftsToday': 0, 'checklistsTotal': 0, 'checklistsCompleted': 0, 'openTasks': 0},
+        ],
+        'workQueue': {
+          'toGrade': 5,
+          'quizzesToReview': 2,
+          'openAssignments': 6,
+          'draftAssignments': 1,
+          'tutoringFlagged': 1,
+          'historyDrafts': 2,
+          'openTasks': 3,
+          'incompleteChecklists': 2,
+          'pendingHandoffs': 1,
+          'items': [
+            {'kind': 'grading', 'title': 'Grade submitted work', 'detail': '5 submission(s) waiting', 'target': 'grading', 'priority': 'high'},
+          ],
+        },
+        'connections': {
+          'unreadMessages': 3,
+          'pendingHandoffsCount': 1,
+          'staffAnnouncements': [{'id': 'sa1', 'title': 'Morning huddle', 'body': 'Library at 7:45'}],
+        },
+        'alerts': {
+          'unreadNotifications': 2,
+          'notifications': [{'id': 'n1', 'kind': 'safety', 'title': 'Bus 12 delayed', 'body': 'Arriving at 8:10', 'read_at': null}],
+          'safetyIncidents': [],
+          'urgentTasksCount': 0,
+          'pendingArrivalsCount': 2,
+        },
+      }},
+    });
+
+    await launch(tester, fake);
+
+    expect(find.text('Alerts and safety'), findsOneWidget);
+    expect(find.text('Bus 12 delayed'), findsOneWidget);
+    expect(find.text('Attendance marked today: 20/24'), findsOneWidget);
+    expect(find.text("Today's schedule"), findsOneWidget);
+    expect(find.text('08:00–09:00 · Math Block'), findsOneWidget);
+    expect(find.text('Winter Concert'), findsOneWidget);
+    expect(find.text('Library / media center'), findsOneWidget);
+    expect(find.text('Grade submitted work'), findsOneWidget);
+    expect(find.text('3 unread conversation message(s)'), findsOneWidget);
+    expect(fake.sent('GET', '/api/teacher/dashboard'), hasLength(1));
+    expect(fake.sent('GET', '/api/home'), isEmpty);
+  });
+
   testWidgets('grading: review a quiz\'s open answer, grade with a rubric, and score a hand-in', (tester) async {
     final fake = FakeServer({
       'GET /api/assignments': (_) => {'data': [{'id': 'hw1', 'title': 'Reading log', 'status': 'published', 'submission_count': 1}]},

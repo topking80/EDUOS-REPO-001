@@ -136,7 +136,7 @@ function applyBranding(b) {
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
   pupil: [["home", "Home", "home"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
-  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
+  teacher: [["dashboard", "Dashboard", "home"], ["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["mediacenter", "Media center", "check"], ["messages", "Messages", "chat"]],
   // A vice principal gets this plus every principal tab (tabsFor).
@@ -184,7 +184,7 @@ const roleName = () => APP_NAME[isVP() ? "vice_principal" : state.me?.role] || s
 // tabs, then "More" for the rest. The desktop rail still lists every tab.
 const PHONE_TABS = {
   pupil: ["home", "courses", "christie", "library"],
-  teacher: ["classes", "grading", "courses", "messages"],
+  teacher: ["dashboard", "classes", "grading", "messages"],
   parent: ["children", "pickup", "messages", "alerts"],
   vice_principal: ["operations", "overview", "history", "messages"],
   principal: ["overview", "history", "messages", "alerts"],
@@ -871,6 +871,111 @@ async function activitiesLiveView() {
 VIEWS.activities = activitiesLiveView;
 
 // ---------------- teacher ----------------
+VIEWS.dashboard = async () => {
+  const d = (await api.get("/api/teacher/dashboard")).data || {};
+  const ov = d.overview || {}, cl = d.classroom || {}, tr = d.transportation || {};
+  const wq = d.workQueue || {}, cn = d.connections || {}, al = d.alerts || {};
+  const duties = Array.isArray(d.duties) ? d.duties : [];
+  const webTarget = (t) => t === "schoolday" ? "staffing" : t;
+  const safetyLive = (al.safetyIncidents || []).length;
+  const alertCount = safetyLive + (Number(al.unreadNotifications) || 0) + (Number(al.urgentTasksCount) || 0) + (Number(al.pendingArrivalsCount) || 0);
+
+  return [
+    h("section", { class: "card hero", "aria-label": "Teacher dashboard" },
+      h("p", { class: "muted small" }, `${d.school?.name || "Your school"} · ${d.date || ""}`),
+      h("h2", {}, "Teacher command dashboard"),
+      h("p", { class: "muted" }, "Daily overview, work queue, alerts, and shortcuts across your classes and school-day duties."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("dashboard", { push: false }) }, "Refresh"),
+        h("button", { class: "btn primary", type: "button", onclick: () => go("classes") }, icon("grid"), "Today in class"))),
+
+    h("div", { class: "stats" },
+      stat(ov.students ?? 0, "learners"),
+      stat(`${ov.attendanceMarkedToday ?? 0}/${ov.students ?? 0}`, "marked today"),
+      stat(wq.toGrade ?? 0, "to grade", true),
+      stat(tr.pickupWaitingCount ?? 0, "pick-up queue", true)),
+
+    h("section", { class: "card", "aria-label": "Alerts and safety" },
+      h("div", { class: "row" },
+        h("h2", { class: "grow" }, "Alerts and time-sensitive notices"),
+        chip(alertCount ? "absent" : "present", alertCount ? `${alertCount} active` : "Clear")),
+      safetyLive ? h("ul", { class: "list" }, al.safetyIncidents.map(i => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, `${i.kind.toUpperCase()}${i.is_drill ? " (drill)" : ""}`), h("p", { class: "small muted" }, i.instructions || `Status: ${i.status}`)),
+        chip("absent", i.status)))) : null,
+      (al.notifications || []).length ? h("ul", { class: "list" }, al.notifications.slice(0, 4).map(n => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, n.title), n.body ? h("p", { class: "small muted" }, n.body) : null),
+        chip(n.read_at ? "present" : "expected", n.read_at ? "Read" : "New")))) : empty("No recent notifications."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("alerts") }, icon("bell"), `Open alerts (${al.unreadNotifications ?? 0})`),
+        h("button", { class: "btn", type: "button", onclick: () => go("safety") }, icon("shield"), "Safety status"))),
+
+    h("section", { class: "card", "aria-label": "Daily overview" },
+      h("h2", {}, "Today\u2019s schedule and classes"),
+      ov.myOpenCases ? h("p", { class: "small" }, `${ov.myOpenCases} student support case(s) need follow-up.`) : null,
+      ov.absences7d ? h("p", { class: "small muted" }, `${ov.absences7d} absence event(s) on your roster in the last 7 days.`) : null,
+      (ov.scheduleToday || []).length ? h("ul", { class: "list" }, ov.scheduleToday.map(s => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, `${s.starts}–${s.ends} · ${s.label}`), h("p", { class: "small muted" }, s.room)),
+        chip(s.now ? "current" : "present", s.now ? "In progress" : "Scheduled")))) : empty("No timetabled periods scheduled for today."),
+      (ov.courses || []).length ? h("ul", { class: "list" }, ov.courses.map(c => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, c.title), h("p", { class: "small muted" }, `${c.students} learner(s) · ${c.planId ? (c.planStatus === "ready" ? "Lesson ready" : "Draft plan") : "No lesson plan today"}`)),
+        h("div", { class: "btns" },
+          h("button", { class: "btn small", type: "button", onclick: () => openView("plan", { planCourseId: c.id, planDate: d.date || localDate(), planEdit: null }) }, icon("calendar"), c.planId ? "Edit plan" : "Plan"),
+          c.planId && c.planBlocks ? h("button", { class: "btn small primary", type: "button", onclick: () => openView("present", { planCourseId: c.id, planDate: d.date || localDate(), presentAt: 0 }) }, icon("play"), "Present") : null)))) : empty("No active courses."),
+      (ov.upcomingEvents || []).length ? [h("h3", {}, "Upcoming school events"), h("ul", { class: "list" }, ov.upcomingEvents.map(e => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, `${e.title}${e.venue ? ` · ${e.venue}` : ""}`),
+        h("span", { class: "small muted" }, fmtDay(e.starts_at)))))] : null),
+
+    h("section", { class: "card", "aria-label": "Work queue" },
+      h("h2", {}, "Work queue"),
+      h("div", { class: "stats" },
+        stat(wq.toGrade ?? 0, "to grade", true),
+        stat(wq.quizzesToReview ?? 0, "quiz reviews", true),
+        stat(wq.tutoringFlagged ?? 0, "tutoring flags", true),
+        stat(wq.incompleteChecklists ?? 0, "checklist items", true)),
+      (wq.items || []).length ? h("ul", { class: "list" }, wq.items.map(item => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, item.title), h("p", { class: "small muted" }, item.detail)),
+        h("button", { class: "btn small", type: "button", onclick: () => go(webTarget(item.target)) }, "Open")))) : empty("No pending work items right now."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn primary", type: "button", onclick: () => go("grading") }, icon("check"), "Grading"),
+        h("button", { class: "btn", type: "button", onclick: () => go("courses") }, icon("book"), "Courses"),
+        h("button", { class: "btn", type: "button", onclick: () => go("copilot") }, icon("spark"), "Christie"),
+        h("button", { class: "btn", type: "button", onclick: () => go("contributions") }, icon("book"), "History items"))),
+
+    h("section", { class: "card", "aria-label": "Classroom operations" },
+      h("h2", {}, "Classroom operations"),
+      h("div", { class: "stats" },
+        stat(cl.assignedRooms ?? 0, "assigned rooms"),
+        stat(cl.connectedRooms ?? 0, "connected rooms"),
+        stat(cl.checkinsToday ?? 0, "check-ins today")),
+      (cl.rooms || []).length ? h("ul", { class: "list" }, cl.rooms.map(r => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, r.name), h("p", { class: "small muted" }, `${r.deviceCount} device(s)${r.paired ? ` · Connected as ${r.controller}` : ""}`)),
+        chip(r.paired ? "present" : (r.now ? "current" : "expected"), r.paired ? "Connected" : (r.now ? "Now" : "Not paired"))))) : empty("No classrooms assigned to your timetable."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("classes") }, icon("grid"), "Room controls & register"))),
+
+    h("section", { class: "card", "aria-label": "Transportation and duties" },
+      h("h2", {}, "Transportation and school-day duties"),
+      h("div", { class: "stats" },
+        stat(tr.busRidersCount ?? 0, "bus riders"),
+        stat(tr.arrivalsPending ?? 0, "arrivals pending", true),
+        stat(tr.pickupWaitingCount ?? 0, "waiting pick-up", true)),
+      duties.length ? h("ul", { class: "list" }, duties.map(duty => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, duty.label), h("p", { class: "small muted" }, `${duty.shiftsToday} shift(s) · ${duty.checklistsCompleted}/${duty.checklistsTotal} checklist · ${duty.openTasks} open task(s)`)),
+        chip(duty.openTasks ? "expected" : "present", duty.openTasks ? `${duty.openTasks} open` : "On track")))) : null,
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("pickup") }, icon("car"), "Pick-up duty"),
+        h("button", { class: "btn", type: "button", onclick: () => go("staffing") }, icon("people"), "Staffing & shifts"))),
+
+    h("section", { class: "card", "aria-label": "Staff connections" },
+      h("h2", {}, "Staff connections"),
+      h("p", { class: "small muted" }, `${cn.unreadMessages ?? 0} unread message(s) · ${cn.pendingHandoffsCount ?? 0} pending staff handoff(s)`),
+      (cn.staffAnnouncements || []).length ? h("ul", { class: "list" }, cn.staffAnnouncements.map(a => h("li", { class: "item" },
+        h("h3", {}, a.title), h("p", { class: "small muted" }, a.body)))) : null,
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("messages") }, icon("chat"), "Messages"),
+        h("button", { class: "btn", type: "button", onclick: () => go("network") }, icon("people"), "Colleagues & groups")))
+  ];
+};
 VIEWS.classes = async () => {
   const [home, copilot, bus, news, tutoring, classroom] = await Promise.all([safe(api.get("/api/home")), safe(api.get("/api/christie/copilot")), safe(api.get("/api/transport/today")), safe(api.get("/api/comms/announcements")), safe(api.get("/api/christie/review")), myClassroomCard()]);
   const d = home?.data || {};

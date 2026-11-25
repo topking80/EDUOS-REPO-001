@@ -29,6 +29,7 @@ import { registerMarketplaceRoutes } from "./marketplace-routes.js";
 import { registerCommerceRoutes, startCommerceReconcile } from "./commerce-routes.js";
 import { receiveCommerceWebhook, webhookHttpStatus } from "./commerce/webhook-intake.js";
 import { registerHomeRoutes } from "./home-routes.js";
+import { registerTeacherDashboardRoutes } from "./teacher-dashboard-routes.js";
 import { registerBrandingRoutes } from "./branding-routes.js";
 import { registerTransportRoutes } from "./transport-routes.js";
 import { registerChristieRoutes } from "./christie-routes.js";
@@ -2017,6 +2018,7 @@ app.post("/api/commerce/webhooks/:processor/:token",
   });
 registerCommerceRoutes(app); // 37.7.0 commerce, sandbox only
 registerHomeRoutes(app);
+registerTeacherDashboardRoutes(app);
 registerBrandingRoutes(app,{emitServerFlow});
 // 32.4.0: mobile role apps (transport, Christie tutor, Comms Hub).
 registerTransportRoutes(app);
