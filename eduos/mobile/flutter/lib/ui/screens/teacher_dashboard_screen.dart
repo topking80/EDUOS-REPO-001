@@ -73,7 +73,6 @@ class TeacherDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) => Loader<_TeacherDashboardData>(
         load: () => _load(context),
         builder: (context, data, reload) {
-          final app = AppScope.read(context);
           final tasks = objs(data.workspace['tasks']);
           final checklists = objs(data.workspace['checklists']);
           final handoffs = objs(data.workspace['handoffs']);
