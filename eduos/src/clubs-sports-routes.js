@@ -5,6 +5,7 @@ import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
 import { startTicketCheckout, replayTicketCheckout } from "./commerce/service.js";
 import { runAfterCommit } from "./commerce/phases.js";
+import { requiresGuardianForClub } from "./activity-operations.js";
 const DISTRICT = role => ["superintendent","it_admin"].includes(role);
 const LEAD = role => ["superintendent","principal"].includes(role);
 const wrap = fn => async (req,res,next) => { try { const data=await withTenantTransaction(req.actor,c=>fn(c,req)); res.setHeader("Cache-Control","no-store"); res.json({data}); } catch(e) { sendError(res,next,e); } };
@@ -34,11 +35,12 @@ const safeActivity=r=>({id:r.id,schoolId:r.school_id,kind:r.kind,title:r.title,d
 export function registerClubsSportsRoutes(app) {
  app.get("/api/activities",requireSession,wrap(async(c,req)=>{
   const a=req.actor;if(!["superintendent","it_admin","principal","teacher","parent","pupil"].includes(a.role))throw new HttpError(403,"activities_access_forbidden");
-  const data=await rows(c,`SELECT a.*,sc.name AS school_name,(SELECT count(*)::int FROM activity_memberships m WHERE m.activity_id=a.id AND m.status='active') AS member_count
+  const data=await rows(c,`SELECT a.*,sc.name AS school_name,(SELECT count(*)::int FROM activity_memberships m WHERE m.activity_id=a.id AND m.status='active') AS member_count,
+    (SELECT m.status FROM activity_memberships m WHERE m.activity_id=a.id AND m.district_id=a.district_id AND m.user_id=$4 LIMIT 1) AS my_status
    FROM school_activities a JOIN schools sc ON sc.id=a.school_id AND sc.district_id=a.district_id
    WHERE a.district_id=$1 AND ($2::uuid IS NULL OR a.school_id=$2) AND (a.status='published' OR $3) ORDER BY a.kind,a.title LIMIT 500`,
-   [a.districtId,DISTRICT(a.role)?null:a.schoolId,LEAD(a.role)||a.role==="teacher"]);
-  return data.map(r=>({...safeActivity(r),schoolName:r.school_name,memberCount:r.member_count}));
+   [a.districtId,DISTRICT(a.role)?null:a.schoolId,LEAD(a.role)||a.role==="teacher",a.userId]);
+  return data.map(r=>({...safeActivity(r),schoolName:r.school_name,memberCount:r.member_count,myStatus:r.my_status||null}));
  }));
  app.post("/api/activities",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,b=req.body||{};if(!LEAD(a.role))return res.status(403).json({error:"activity_creation_requires_school_lead"});
@@ -119,9 +121,15 @@ export function registerClubsSportsRoutes(app) {
    const activity=await scopedActivity(c,a,req.params.id);if(!activity||activity.status!=="published")throw new HttpError(404,"activity_not_found");
    const grade=await requirePupilLink(c,a,activity.school_id);
    if(activity.grade_min!==null||activity.grade_max!==null){const g=Number(grade.grade_level);if(!Number.isFinite(g)||(activity.grade_min!==null&&g<activity.grade_min)||(activity.grade_max!==null&&g>activity.grade_max))throw new HttpError(403,"grade_eligibility_not_met");}
-   const r=await one(c,`INSERT INTO activity_memberships(district_id,school_id,activity_id,user_id,status) VALUES($1,$2,$3,$4,'active')
-    ON CONFLICT(district_id,activity_id,user_id) DO UPDATE SET status='active',joined_at=now() RETURNING id,status,joined_at`,[a.districtId,activity.school_id,activity.id,a.userId]);
-   await audit(c,req,"join","activity_membership",r.id,`activity=${activity.id}`);return r;
+   const needsConsent = activity.kind === "club" && requiresGuardianForClub(grade.grade_level);
+   const nextStatus = needsConsent ? "pending" : "active";
+   const r=await one(c,`INSERT INTO activity_memberships(district_id,school_id,activity_id,user_id,status) VALUES($1,$2,$3,$4,$5)
+    ON CONFLICT(district_id,activity_id,user_id) DO UPDATE SET
+      status=CASE WHEN activity_memberships.status='active' THEN 'active' ELSE EXCLUDED.status END,
+      joined_at=now(),
+      reviewed_by=CASE WHEN activity_memberships.status='active' THEN activity_memberships.reviewed_by ELSE NULL END
+    RETURNING id,status,joined_at`,[a.districtId,activity.school_id,activity.id,a.userId,nextStatus]);
+   await audit(c,req,"join","activity_membership",r.id,`activity=${activity.id};status=${r.status}`);return r;
   });res.status(201).json({data});}catch(e){sendError(res,next,e)}
  });
  app.get("/api/activities/:id/roster",requireSession,wrap(async(c,req)=>{
