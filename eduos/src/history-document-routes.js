@@ -99,7 +99,11 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
         const storageKey = `history/${req.actor.districtId}/${begun.studentId}/${asset}.txt`;
         try { await storage.put(storageKey,req.body,"text/plain; charset=utf-8"); }
         catch(e) { await record("clean","failed"); throw e; }
-        await record("clean","processed",{key:storageKey,bytes:req.body.length});
+        const saved = await record("clean","processed",{key:storageKey,bytes:req.body.length});
+        if (!saved?.ok) {
+          await storage.remove(storageKey).catch(()=>{});
+          return res.status(409).json({ error: "contribution_no_longer_pending" });
+        }
         await withTenantTransaction(req.actor,c=>audit(c,req,"add","history_document",asset,
           `contribution=${req.params.contributionId};bytes=${req.body.length}`));
         res.setHeader("Cache-Control","no-store");
