@@ -2178,7 +2178,7 @@ VIEWS.overview = async () => {
       h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => go("approvals") }, icon("check"), "Approvals"),
         h("button", { class: "btn", type: "button", onclick: () => go("edal") }, icon("ledger"), "Records ledger"),
         h("button", { class: "btn", type: "button", onclick: () => go("courses") }, icon("book"), "Courses"))),
-    role === "principal" && state.me.schoolId ? await bellScheduleCard(true) : null,
+    ["principal", "vice_principal"].includes(role) && state.me.schoolId ? await bellScheduleCard(true) : null,
         role === "principal" && !hosted?.hosted ? h("section", { class: "card", "aria-label": "School announcement" }, h("h2", {}, "Announce to the school"), announceForm("school")) : null,
     h("section", { class: "card", "aria-label": "Announcements" }, h("h2", {}, "Announcements"), announcementsCard(news?.data, { limit: 3 }))
   ];
@@ -3212,11 +3212,19 @@ function seatingChartPanel(courseId) {
   const box = h("div", { class: "stack" }, h("p", { class: "small muted" }, "Loading seating chart…"));
   const load = () => api.get(`/api/learning/courses/${courseId}/seating`).then(r => {
     const d = r.data || {}, ch = d.chart || { rowsCount: 5, colsCount: 6 };
+    if (!d.canManage) {
+      const mine = d.assignments || [];
+      box.replaceChildren(mine.length
+        ? h("ul", { class: "list" }, mine.map(a => h("li", {}, h("b", {}, a.name), h("p", { class: "small muted" }, `Row ${a.row}, seat ${a.col}${a.label ? ` · ${a.label}` : ""}${ch.roomName ? ` · ${ch.roomName}` : ""}`))))
+        : h("p", { class: "small muted" }, "The teacher has shared this chart, but no seat is assigned yet."));
+      return;
+    }
     const byStudent = new Map((d.assignments || []).map(a => [a.studentId, a]));
     const roomSel = h("select", { "aria-label": "Classroom room" }, h("option", { value: "" }, "No room linked"),
       (d.rooms || []).map(rm => h("option", { value: rm.id, selected: ch.roomId === rm.id }, rm.name)));
     const rowsIn = h("input", { type: "number", min: 1, max: 20, value: String(ch.rowsCount || 5), "aria-label": "Rows" });
     const colsIn = h("input", { type: "number", min: 1, max: 20, value: String(ch.colsCount || 6), "aria-label": "Columns" });
+    const shareChk = h("input", { type: "checkbox", id: `seat-share-${courseId}`, checked: Boolean(d.shareWithFamilies || ch.shareWithFamilies) });
     const inputs = new Map();
     const list = (d.students || []).map(st => {
       const cur = byStudent.get(st.studentId);
@@ -3234,16 +3242,18 @@ function seatingChartPanel(courseId) {
         assignments.push({ studentId, row: Number(rIn.value), col: Number(cIn.value), label: lIn.value });
       }
       try {
-        await api.req("PUT", `/api/learning/courses/${courseId}/seating`, { roomId: roomSel.value || null, rowsCount: Number(rowsIn.value), colsCount: Number(colsIn.value), assignments });
-        toast("Seating chart saved."); load();
+        await api.req("PUT", `/api/learning/courses/${courseId}/seating`, { roomId: roomSel.value || null, rowsCount: Number(rowsIn.value), colsCount: Number(colsIn.value), shareWithFamilies: shareChk.checked, assignments });
+        toast(shareChk.checked ? "Seating chart saved. Families can see their own seat." : "Seating chart saved. Families cannot see seats.");
+        load();
       } catch { toast("Check row/seat numbers: each learner needs a unique seat inside the grid."); }
     };
     box.replaceChildren(
-      h("p", { class: "small muted" }, `${(d.assignments || []).length} of ${(d.students || []).length} enrolled learners seated. Visible to you and school leads only.`),
+      h("p", { class: "small muted" }, `${(d.assignments || []).length} of ${(d.students || []).length} enrolled learners seated.`),
+      h("label", { class: "inline", for: shareChk.id }, shareChk, " Let each student and their family see their own seat"),
       h("div", { class: "row wrap" }, roomSel, rowsIn, colsIn),
       list.length ? h("ul", { class: "list" }, list) : h("p", { class: "muted small" }, "No enrolled learners in this course yet."),
-      list.length ? h("button", { class: "btn primary", type: "button", onclick: save }, "Save seating chart") : null);
-  }).catch(() => box.replaceChildren(h("p", { class: "small muted" }, "Couldn't load seating chart.")));
+      h("button", { class: "btn primary", type: "button", onclick: save }, "Save seating chart"));
+  }).catch(() => box.replaceChildren(h("p", { class: "small muted" }, "This seating chart isn't shared with families.")));
   load();
   return h("section", { class: "card", "aria-label": "Seating chart" }, h("h2", {}, "Seating chart"), box);
 }
@@ -3334,7 +3344,7 @@ VIEWS.course = async () => {
       a.mine ? chip(a.mine.missing ? "absent" : a.mine.status === "graded" ? "present" : "not_started", a.mine.missing ? "Missing" : a.mine.status === "graded" ? `${a.mine.earned}/${a.points}` : statusText[a.mine.status]) : null),
       a.kind === "quiz" || state.me.role !== "teacher" ? h("button", { class: `btn${a.kind === "quiz" && state.me.role === "pupil" ? " primary" : ""}`, type: "button", "aria-label": `${a.kind === "quiz" ? "Open quiz" : "Details"}: ${a.title}`, onclick: () => openView("quiz", { assignmentId: a.id }) }, a.kind === "quiz" ? "Open quiz" : "Details") : null,
       toolsFor(a)))) : empty("Nothing assigned yet.")));
-  if (c.canManage && state.me.role !== "superintendent") {
+  if ((c.canManage && state.me.role !== "superintendent") || ["parent", "pupil"].includes(state.me.role)) {
     out.push(seatingChartPanel(c.id));
     const acc = await safe(api.get(`/api/learning/accommodations?courseId=${c.id}`));
     if (acc) out.push(h("section", { class: "card", "aria-label": "Accommodations" }, h("h2", {}, "Accommodations"),
