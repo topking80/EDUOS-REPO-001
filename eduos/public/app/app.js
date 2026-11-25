@@ -6205,19 +6205,36 @@ VIEWS.tickets = async () => {
       area.scrollIntoView?.({ behavior: "smooth" });
     } catch (e) { cmErr(e, "Couldn't get tickets."); }
   };
+  const KIND_LBL = { sport: "Sports", play: "Play", concert: "Concert", assembly: "Assembly", ceremony: "Ceremony", club_showcase: "Club showcase", other: "Live event" };
+  const PASS_LBL = { admission: "Admission", stream_pass: "Livestream pass", season_stream_pass: "Season stream pass" };
+  const watchStream = async ev => {
+    try {
+      const r = (await api.post(`/api/events/${ev.id}/stream/access`, {})).data;
+      area.replaceChildren(h("section", { class: "card", "aria-label": "Livestream access" },
+        h("h3", {}, `${ev.title} — Livestream`),
+        h("p", { class: "small" }, r.mediaPolicy?.unconsentedExcludedOrBlurred ? "Media consent enforced: students without consent are excluded or blurred." : "Access verified."),
+        h("p", { class: "code small" }, `Token expires ${fmtTime(r.expiresAt)}`)));
+    } catch (e) {
+      const msg = { stream_live_kill_switch_off: "Livestream is turned off right now.", stream_pass_required: "A paid stream pass or season pass is required.", media_consent_masking_required: "Stream paused until unconsented students are masked." }[e?.body?.error];
+      toast(msg || "Stream unavailable.");
+    }
+  };
   const typeRow = (ev, t) => {
     const paid = t.priceCents > 0, max = Math.min(10, t.available);
     const qty = h("select", { "aria-label": `How many ${t.name} tickets` }, Array.from({ length: Math.max(max, 1) }, (_, i) => h("option", { value: i + 1 }, String(i + 1))));
     const blocked = t.available < 1 ? "Sold out" : paid && !parent ? "Ask a parent or guardian to buy this." : paid && !s?.enabled ? "Paid tickets are off" : null;
+    const passTag = PASS_LBL[t.passKind] || "Admission";
     return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, t.name), " · ", paid ? money(t.priceCents, t.currency) : "Free",
-      h("span", { class: "small muted" }, ` · ${t.available} left`)),
+      h("span", { class: "small muted" }, ` · ${passTag}${t.streamSeasonTitle ? ` (${t.streamSeasonTitle})` : ""} · ${t.available} left`)),
       blocked ? h("span", { class: "small muted" }, blocked) : [qty, h("button", { class: "btn primary", type: "button", onclick: () => buy(ev, t, Number(qty.value)) }, paid ? "Buy" : "Get")]);
   };
   const events = shop?.data?.events || [];
   return [back("activities", "Clubs & Sports"), h("h2", {}, "Tickets"), cmBanner(s),
     !parent ? h("p", { class: "small muted" }, "Students can get free tickets. A parent or guardian buys paid ones.") : null,
     pick,
-    events.length ? events.map(ev => h("section", { class: "card", "aria-label": ev.title }, h("h3", {}, ev.title),
+    events.length ? events.map(ev => h("section", { class: "card", "aria-label": ev.title },
+      h("div", { class: "row wrap" }, h("h3", { class: "grow" }, ev.title), chip("expected", KIND_LBL[ev.eventKind] || "Live event"),
+        ev.hasStream ? h("button", { class: "btn small", type: "button", onclick: () => watchStream(ev) }, ev.streamAccessMode === "paid_pass" ? "Watch paid stream" : "Watch stream") : null),
       h("p", { class: "small muted" }, `${fmtDay(ev.startsAt)} ${fmtTime(ev.startsAt)}${ev.venue ? ` · ${ev.venue}` : ""} · ${ev.school}`),
       h("ul", { class: "list" }, ev.ticketTypes.map(t => typeRow(ev, t))))) : h("section", { class: "card" }, empty("No tickets on sale right now.")),
     area,
@@ -6250,8 +6267,9 @@ VIEWS.receipt = async () => {
 // Leaders: settings (superintendent), revenue, refunds, gate check-in, ticket types, marketplace.
 VIEWS.commerce = async () => {
   const supt = state.me.role === "superintendent";
-  const [st, rep, evs, mkt] = await Promise.all([api.get("/api/commerce/status"), safe(api.get("/api/commerce/report")), safe(api.get("/api/events"), { data: [] }),
-    supt ? safe(api.get("/api/commerce/marketplace")) : null]);
+  const [st, rep, evs, seasons, mkt] = await Promise.all([api.get("/api/commerce/status"), safe(api.get("/api/commerce/report")), safe(api.get("/api/events"), { data: [] }),
+    safe(api.get("/api/stream-seasons"), { data: [] }), supt ? safe(api.get("/api/commerce/marketplace")) : null]);
+  const seasonList = seasons?.data || [];
   const s = st.data, set = s.settings, report = rep?.data, reload = () => go("commerce", { push: false });
   const upcoming = (evs?.data || []).filter(e => new Date(e.ends_at || e.starts_at) >= new Date());
   const evPick = id => h("select", { id, "aria-label": "Event" }, upcoming.map(e => h("option", { value: e.id }, `${e.title} · ${fmtDay(e.starts_at)}`)));
@@ -6315,18 +6333,67 @@ VIEWS.commerce = async () => {
       } }, h("label", { for: "cm-gate-ev" }, "Event"), ev, h("label", { for: "cm-code" }, "Ticket code (scan or type)"), code,
         h("button", { class: "btn primary", type: "submit" }, "Check in"), res)));
     const ev2 = evPick("cm-tt-ev"), name = h("input", { id: "cm-tt-name", required: true, maxlength: 80, value: "General admission" }),
+      pk = h("select", { id: "cm-tt-pk" },
+        h("option", { value: "admission" }, "Admission ticket"),
+        h("option", { value: "stream_pass" }, "Per-event livestream pass"),
+        h("option", { value: "season_stream_pass" }, "Season livestream pass")),
+      ssPick = h("select", { id: "cm-tt-ss" }, h("option", { value: "" }, "No season"), seasonList.map(x => h("option", { value: x.id }, `${x.title} (${x.school_year})`))),
       price = h("input", { id: "cm-tt-price", type: "number", min: 0, step: "0.01", value: "0" }), cap = h("input", { id: "cm-tt-cap", type: "number", min: 1, step: "1", value: "100" }),
       open = h("input", { id: "cm-tt-open", type: "checkbox", class: "check", checked: true });
-    out.push(h("section", { class: "card", "aria-label": "Add tickets" }, h("h2", {}, "Add tickets to an event"),
+    out.push(h("section", { class: "card", "aria-label": "Add tickets" }, h("h2", {}, "Add tickets or stream passes"),
       h("form", { class: "stack", onsubmit: async e => {
         e.preventDefault();
-        try { await api.post(`/api/events/${ev2.value}/ticket-types`, { name: name.value, priceCents: Math.round(Number(price.value) * 100), capacity: Number(cap.value), salesOpen: open.checked });
+        try { await api.post(`/api/events/${ev2.value}/ticket-types`, { name: name.value, passKind: pk.value,
+          streamSeasonId: pk.value === "season_stream_pass" ? (ssPick.value || undefined) : undefined,
+          priceCents: Math.round(Number(price.value) * 100), capacity: Number(cap.value), salesOpen: open.checked });
           toast("Tickets added"); reload(); } catch (err) { cmErr(err, "Couldn't add tickets."); }
-      } }, h("label", { for: "cm-tt-ev" }, "Event"), ev2, h("label", { for: "cm-tt-name" }, "Ticket name"), name, h("label", { for: "cm-tt-price" }, "Price ($, 0 for free)"), price,
+      } }, h("label", { for: "cm-tt-ev" }, "Event"), ev2, h("label", { for: "cm-tt-name" }, "Ticket or pass name"), name,
+        h("label", { for: "cm-tt-pk" }, "Pass type"), pk, h("label", { for: "cm-tt-ss" }, "Stream season (for season passes)"), ssPick,
+        h("label", { for: "cm-tt-price" }, "Price ($, 0 for free)"), price,
         h("label", { for: "cm-tt-cap" }, "How many"), cap, h("label", { class: "row" }, open, h("span", {}, "On sale now")),
         h("p", { class: "small muted" }, s.enabled ? `Families pay with ${(s.methods || []).map(m => m.label).join(", ")}. Students can only get free tickets.` : "Paid tickets can't be sold until commerce is on; free tickets work now."),
         h("button", { class: "btn primary", type: "submit" }, "Add tickets"))));
+
+    const ev3 = evPick("cm-st-ev"), stAud = h("select", { id: "cm-st-aud" },
+      h("option", { value: "ticket_holders" }, "Ticket / pass holders"), h("option", { value: "school" }, "School"), h("option", { value: "district" }, "District")),
+      stMode = h("select", { id: "cm-st-mode" }, h("option", { value: "paid_pass" }, "Paid pass required"), h("option", { value: "free" }, "Free")),
+      stSs = h("select", { id: "cm-st-ss" }, h("option", { value: "" }, "No season pass"), seasonList.map(x => h("option", { value: x.id }, `${x.title} (${x.school_year})`))),
+      stLive = h("input", { id: "cm-st-live", type: "checkbox", class: "check", checked: false }),
+      stMask = h("input", { id: "cm-st-mask", type: "checkbox", class: "check", checked: false }),
+      stSec = h("input", { id: "cm-st-sec", type: "password", autocomplete: "new-password", placeholder: "Optional write-only stream key" });
+    out.push(h("section", { class: "card", "aria-label": "Livestream paywall" }, h("h2", {}, "Livestream paywall & consent"),
+      h("form", { class: "stack", onsubmit: async e => {
+        e.preventDefault();
+        try { await api.put(`/api/events/${ev3.value}/stream`, { audience: stAud.value, accessMode: stMode.value,
+          streamSeasonId: stSs.value || null, liveEnabled: stLive.checked, mediaConsentRequired: true,
+          unconsentedMinorsMasked: stMask.checked, streamSecret: stSec.value || undefined });
+          toast("Livestream settings saved"); reload(); } catch (err) { cmErr(err, "Couldn't save stream settings."); }
+      } }, h("label", { for: "cm-st-ev" }, "Event"), ev3, h("label", { for: "cm-st-mode" }, "Access"), stMode,
+        h("label", { for: "cm-st-aud" }, "Audience"), stAud, h("label", { for: "cm-st-ss" }, "Season pass link"), stSs,
+        h("label", { class: "row" }, stLive, h("span", {}, "Live stream enabled (kill switch, off by default)")),
+        h("label", { class: "row" }, stMask, h("span", {}, "Unconsented minors excluded or blurred on stream")),
+        h("label", { for: "cm-st-sec" }, "Stream secret (write-only)"), stSec,
+        h("button", { class: "btn primary", type: "submit" }, "Save livestream"))));
   }
+
+  // Create standalone live event (play, concert, assembly, ceremony, etc.) + stream season.
+  const evKind = h("select", { id: "cm-ev-kind" },
+    [["play", "Play"], ["concert", "Concert"], ["assembly", "Assembly"], ["ceremony", "Ceremony"], ["club_showcase", "Club showcase"], ["sport", "Sport"], ["other", "Other"]]
+      .map(([v, lbl]) => h("option", { value: v }, lbl))),
+    evTitle = h("input", { id: "cm-ev-title", required: true, maxlength: 180, placeholder: "Spring Musical" }),
+    evVenue = h("input", { id: "cm-ev-venue", maxlength: 300, placeholder: "Main Auditorium" }),
+    evStart = h("input", { id: "cm-ev-start", type: "datetime-local", required: true }),
+    evEnd = h("input", { id: "cm-ev-end", type: "datetime-local", required: true });
+  out.push(h("section", { class: "card", "aria-label": "Create live event" }, h("h2", {}, "Create live event"),
+    h("form", { class: "stack", onsubmit: async e => {
+      e.preventDefault();
+      try { await api.post("/api/events", { eventKind: evKind.value, title: evTitle.value, venue: evVenue.value,
+        startsAt: new Date(evStart.value).toISOString(), endsAt: new Date(evEnd.value).toISOString(), publish: true });
+        toast("Live event published"); reload(); } catch (err) { cmErr(err, "Couldn't create event."); }
+    } }, h("label", { for: "cm-ev-kind" }, "Event type"), evKind, h("label", { for: "cm-ev-title" }, "Title"), evTitle,
+      h("label", { for: "cm-ev-venue" }, "Venue"), evVenue, h("label", { for: "cm-ev-start" }, "Starts"), evStart,
+      h("label", { for: "cm-ev-end" }, "Ends"), evEnd,
+      h("button", { class: "btn primary", type: "submit" }, "Publish event"))));
 
   if (supt && mkt?.data) {
     const area = h("div", { class: "stack" }), mpick = s.enabled ? methodPick(s, "mk-method") : null;

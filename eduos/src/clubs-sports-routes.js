@@ -6,6 +6,7 @@ import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./ro
 import { startTicketCheckout, replayTicketCheckout } from "./commerce/service.js";
 import { runAfterCommit } from "./commerce/phases.js";
 import { requiresGuardianForClub } from "./activity-operations.js";
+import { EVENT_KINDS, PASS_KINDS } from "./event-streaming.js";
 const DISTRICT = role => ["superintendent","it_admin"].includes(role);
 const LEAD = role => ["superintendent","principal"].includes(role);
 const wrap = fn => async (req,res,next) => { try { const data=await withTenantTransaction(req.actor,c=>fn(c,req)); res.setHeader("Cache-Control","no-store"); res.json({data}); } catch(e) { sendError(res,next,e); } };
@@ -196,28 +197,36 @@ export function registerClubsSportsRoutes(app) {
  });
  app.get("/api/events",requireSession,wrap(async(c,req)=>{
   const a=req.actor;if(!["superintendent","it_admin","principal","teacher","parent","pupil"].includes(a.role))throw new HttpError(403,"events_access_forbidden");
-  return rows(c,`SELECT e.id,e.school_id,e.activity_id,e.title,e.description,e.starts_at,e.ends_at,e.venue,e.status,sc.name AS school_name
+  const kind=req.query.kind&&EVENT_KINDS.includes(req.query.kind)?req.query.kind:null;
+  return rows(c,`SELECT e.id,e.school_id,e.activity_id,e.event_kind,e.title,e.description,e.starts_at,e.ends_at,e.venue,e.status,sc.name AS school_name,
+    (SELECT s.access_mode FROM event_streams s WHERE s.event_id=e.id AND s.district_id=e.district_id ORDER BY s.created_at DESC LIMIT 1) AS stream_access_mode,
+    (SELECT s.live_enabled FROM event_streams s WHERE s.event_id=e.id AND s.district_id=e.district_id ORDER BY s.created_at DESC LIMIT 1) AS stream_live_enabled
    FROM school_events e JOIN schools sc ON sc.id=e.school_id AND sc.district_id=e.district_id
-   WHERE e.district_id=$1 AND ($2::uuid IS NULL OR e.school_id=$2) AND (e.status='published' OR $3) ORDER BY e.starts_at LIMIT 500`,
-   [a.districtId,DISTRICT(a.role)?null:a.schoolId,LEAD(a.role)||a.role==="teacher"]);
+   WHERE e.district_id=$1 AND ($2::uuid IS NULL OR e.school_id=$2) AND (e.status='published' OR $3) AND ($4::text IS NULL OR e.event_kind=$4) ORDER BY e.starts_at LIMIT 500`,
+   [a.districtId,DISTRICT(a.role)?null:a.schoolId,LEAD(a.role)||a.role==="teacher",kind]);
  }));
  app.post("/api/activities/:id/events",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,b=req.body||{};if(!validId(req.params.id)||!cleanText(b.title,180,2)||!Number.isFinite(Date.parse(b.startsAt))||!Number.isFinite(Date.parse(b.endsAt))||Date.parse(b.endsAt)<=Date.parse(b.startsAt)||!cleanText(b.venue||"",300,0))return res.status(400).json({error:"invalid_event"});
   try{const data=await withTenantTransaction(a,async c=>{
    const activity=await requireActivityManager(c,a,req.params.id);if(!LEAD(a.role)&&activity.status!=="published")throw new HttpError(403,"principal_approval_required");
-   const r=await one(c,`INSERT INTO school_events(district_id,school_id,activity_id,title,description,starts_at,ends_at,venue,status,created_by)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[a.districtId,activity.school_id,activity.id,b.title.trim(),String(b.description||"").slice(0,4000),new Date(b.startsAt).toISOString(),new Date(b.endsAt).toISOString(),(b.venue||"").trim(),LEAD(a.role)&&b.publish===true?"published":"draft",a.userId]);
+   const kind = b.eventKind && EVENT_KINDS.includes(b.eventKind) ? b.eventKind : (activity.kind === "club" ? "club_showcase" : "sport");
+   const r=await one(c,`INSERT INTO school_events(district_id,school_id,activity_id,event_kind,title,description,starts_at,ends_at,venue,status,created_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[a.districtId,activity.school_id,activity.id,kind,b.title.trim(),String(b.description||"").slice(0,4000),new Date(b.startsAt).toISOString(),new Date(b.endsAt).toISOString(),(b.venue||"").trim(),LEAD(a.role)&&b.publish===true?"published":"draft",a.userId]);
    await audit(c,req,"create","school_event",r.id,`activity=${activity.id};status=${r.status}`);return r;
   });res.status(201).json({data});}catch(e){sendError(res,next,e)}
  });
  app.post("/api/events/:id/ticket-types",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,b=req.body||{};if(!LEAD(a.role))return res.status(403).json({error:"school_lead_required"});
+  const passKind=b.passKind||"admission";
+  if(!PASS_KINDS.includes(passKind)||(passKind==="season_stream_pass"&&!validId(b.streamSeasonId))||(passKind!=="season_stream_pass"&&b.streamSeasonId))return res.status(400).json({error:"invalid_pass_kind"});
   if(!validId(req.params.id)||!cleanText(b.name,80,2)||!Number.isInteger(b.capacity)||b.capacity<1||b.capacity>1000000||!Number.isInteger(b.priceCents??0)||(b.priceCents??0)<0||(b.priceCents??0)>1000000||typeof (b.currency||"USD")!=="string"||!(b.currency||"USD").match(/^[A-Z]{3}$/))return res.status(400).json({error:"invalid_ticket_type"});
   try{const data=await withTenantTransaction(a,async c=>{
    const event=await one(c,"SELECT * FROM school_events WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3) FOR UPDATE",[req.params.id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);if(!event)throw new HttpError(404,"event_not_found");
-   const r=await one(c,`INSERT INTO event_ticket_types(district_id,school_id,event_id,name,price_cents,currency,capacity,sales_open)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,event_id,name,price_cents,currency,capacity,sold_count,sales_open`,[a.districtId,event.school_id,event.id,b.name.trim(),b.priceCents??0,b.currency||"USD",b.capacity,b.salesOpen===true]);
-   await audit(c,req,"create","event_ticket_type",r.id,`event=${event.id};capacity=${r.capacity}`);return r;
+   if(b.streamSeasonId){const ss=await one(c,"SELECT id FROM school_stream_seasons WHERE id=$1 AND district_id=$2 AND school_id=$3",[b.streamSeasonId,a.districtId,event.school_id]);if(!ss)throw new HttpError(404,"stream_season_not_found");}
+   const r=await one(c,`INSERT INTO event_ticket_types(district_id,school_id,event_id,name,price_cents,currency,capacity,sales_open,pass_kind,stream_season_id)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,event_id,name,price_cents,currency,capacity,sold_count,sales_open,pass_kind,stream_season_id`,
+    [a.districtId,event.school_id,event.id,b.name.trim(),b.priceCents??0,b.currency||"USD",b.capacity,b.salesOpen===true,passKind,b.streamSeasonId||null]);
+   await audit(c,req,"create","event_ticket_type",r.id,`event=${event.id};capacity=${r.capacity};pass=${passKind}`);return r;
   });res.status(201).json({data});}catch(e){sendError(res,next,e)}
  });
  app.post("/api/events/:id/tickets",requireSession,requireCsrf,async(req,res,next)=>{
@@ -290,12 +299,13 @@ export function registerClubsSportsRoutes(app) {
  }));
  app.post("/api/events/:id/check-in",requireSession,requireCsrf,async(req,res,next)=>{
   const a=req.actor,code=req.body?.ticketCode;
-  if(!LEAD(a.role)&&!["teacher","coach"].includes(a.role))return res.status(403).json({error:"event_checkin_staff_required"});
+  if(!LEAD(a.role)&&!["vice_principal","teacher","coach"].includes(a.role))return res.status(403).json({error:"event_checkin_staff_required"});
   if(!validId(req.params.id)||typeof code!=="string"||code.length<20||code.length>128)return res.status(400).json({error:"invalid_ticket_checkin"});
   try{const data=await withTenantTransaction(a,async c=>{
    const event=await one(c,"SELECT id,school_id,activity_id FROM school_events WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3)",[req.params.id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);
    if(!event)throw new HttpError(404,"event_not_found");
-   if(["teacher","coach"].includes(a.role)&&(!event.activity_id||!await one(c,"SELECT id FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id=$4 AND ended_at IS NULL",[a.districtId,event.school_id,event.activity_id,a.userId])))throw new HttpError(403,"event_assignment_required");
+   if(["teacher","coach"].includes(a.role)&&event.activity_id&&!await one(c,"SELECT id FROM activity_staff WHERE district_id=$1 AND school_id=$2 AND activity_id=$3 AND user_id=$4 AND ended_at IS NULL",[a.districtId,event.school_id,event.activity_id,a.userId]))throw new HttpError(403,"event_assignment_required");
+   if(a.role==="coach"&&!event.activity_id)throw new HttpError(403,"event_assignment_required");
    const hash=createHash("sha256").update(code).digest("hex");
    const ticket=await one(c,"SELECT id,status,order_id FROM event_tickets WHERE district_id=$1 AND event_id=$2 AND ticket_code_hash=$3 FOR UPDATE",[a.districtId,event.id,hash]);
    if(!ticket)throw new HttpError(404,"ticket_not_found");
@@ -322,22 +332,27 @@ export function registerClubsSportsRoutes(app) {
   if(!validId(req.params.id))throw new HttpError(400,"invalid_event_id");const a=req.actor;
   if(!["superintendent","it_admin","principal","teacher","parent","pupil"].includes(a.role))
    throw new HttpError(403,"stream_schedule_access_forbidden");
-  const r=await one(c,`SELECT s.id,s.event_id,s.school_id,s.status,s.audience,s.starts_at,s.ends_at,s.recording_allowed,s.provider
+  const r=await one(c,`SELECT s.id,s.event_id,s.school_id,s.status,s.audience,s.access_mode,s.live_enabled,s.stream_season_id,
+    s.media_consent_required,s.unconsented_minors_masked,s.starts_at,s.ends_at,s.recording_allowed,s.provider
    FROM event_streams s JOIN school_events e ON e.id=s.event_id AND e.district_id=s.district_id
    WHERE s.event_id=$1 AND s.district_id=$2 AND (s.school_id=$3 OR $4) AND e.status='published'
    ORDER BY s.created_at DESC LIMIT 1`,
    [req.params.id,a.districtId,a.schoolId,DISTRICT(a.role)]);
   if(!r)return null;
   if(r.audience==="district"&&!DISTRICT(a.role))throw new HttpError(403,"district_stream_audience_required");
-  if(r.audience==="ticket_holders"){
-   const ticket=await one(c,`SELECT 1 FROM event_ticket_orders o JOIN event_tickets t
-     ON t.order_id=o.id AND t.district_id=o.district_id
-     WHERE o.district_id=$1 AND o.event_id=$2 AND o.buyer_user_id=$3
-       AND o.status IN ('complimentary','paid') AND t.status IN ('issued','checked_in') LIMIT 1`,
-     [a.districtId,r.event_id,a.userId]);
-   if(!ticket)throw new HttpError(403,"stream_ticket_holder_required");
+  if(r.audience==="ticket_holders"||r.access_mode==="paid_pass"){
+   const ticket=await one(c,`SELECT 1 FROM event_ticket_orders o
+     JOIN event_tickets t ON t.order_id=o.id AND t.district_id=o.district_id
+     JOIN event_ticket_types tt ON tt.id=o.ticket_type_id AND tt.district_id=o.district_id
+     WHERE o.district_id=$1 AND o.buyer_user_id=$2
+       AND o.status IN ('complimentary','paid') AND o.refund_pending=false AND t.status IN ('issued','checked_in')
+       AND (o.event_id=$3 OR ($4::uuid IS NOT NULL AND tt.pass_kind='season_stream_pass' AND tt.stream_season_id=$4)) LIMIT 1`,
+     [a.districtId,a.userId,r.event_id,r.stream_season_id||null]);
+   if(!ticket&&!LEAD(a.role))throw new HttpError(403,r.access_mode==="paid_pass"?"stream_pass_required":"stream_ticket_holder_required");
   }
-  return {...r,playbackEnabled:false,reason:"stream_provider_not_connected"};
+  return {...r,accessMode:r.access_mode,liveEnabled:Boolean(r.live_enabled),streamSeasonId:r.stream_season_id||null,
+   unconsentedMinorsMasked:Boolean(r.unconsented_minors_masked),
+   playbackEnabled:false,reason:r.live_enabled?"use_stream_access_endpoint":"stream_provider_not_connected"};
  }));
  // 37.8.0 media governance. Storage is deliberately not exposed by these APIs.
  app.get("/api/activities/:id/media",requireSession,wrap(async(c,req)=>{
