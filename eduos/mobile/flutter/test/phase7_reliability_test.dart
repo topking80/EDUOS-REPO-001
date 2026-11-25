@@ -28,6 +28,7 @@ import 'package:eduos_mobile_branding/ui/screens/staff_pickup_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/staffing_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/teacher_screens.dart';
 import 'package:eduos_mobile_branding/ui/screens/teacher_connections_screen.dart';
+import 'package:eduos_mobile_branding/ui/screens/teacher_dashboard_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/time_capsule/history_timeline_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/time_capsule/teacher_history_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/time_capsule/time_capsules_screen.dart';
@@ -44,6 +45,7 @@ Type expectedScreen(String role, String tab) => switch (tab) {
       'activities' => ClubsSportsScreen,
       'teams' => CoachTeamsScreen,
       'route' => DriverRouteScreen,
+      'dashboard' => TeacherDashboardScreen,
       'classes' => ClassRegisterScreen,
       'schoolday' when role == 'teacher' => TeacherConnectionsScreen,
       'library' when role == 'parent' || role == 'pupil' => FamilyLibraryScreen,
