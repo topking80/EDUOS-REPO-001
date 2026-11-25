@@ -2,14 +2,14 @@
 
 **Feature branch:** `feature/student-history-time-capsule`  
 **Target:** `main`  
-**Status:** Updated against merged PRs through 2026-11-23 (latest review includes PR #134). See the implementation status register below; a merged PR is not treated as full completion when its body explicitly leaves roadmap scope outstanding.
+**Status:** Reconciled against merged PRs through 2026-11-24, including TC-02 media PRs #142 and #143. See the implementation status register below; a merged PR is not treated as full completion when its body explicitly leaves roadmap scope outstanding.
 
 ## Implementation status register
 
 | Workstream | Status | Evidence and remaining scope |
 |---|---|---|
 | TC-01 — data model | **Complete** | #89 merged the mainline persistence foundation: history entries, revisions, attachments, capsule persistence, forced RLS and constrained grants. |
-| TC-02 — guardian contributions | **Partial** | #90 merged text-only moderated contributions. Multimedia uploads remain blocked pending production storage, malware scanning, image processing and authorization providers. |
+| TC-02 — guardian contributions | **Partial — text and family photos implemented** | #90 merged moderated text contributions. #142 added private S3-compatible photo storage, ClamAV scanning, image re-encoding/metadata stripping, short-lived authorized reads and district quotas; #143 added guardian photo uploads to pending family contributions, reviewer visibility, approval publication and withdrawal/rejection cleanup. Remaining: document uploads and video (safe transcoding), plus production provider configuration and district operational verification. |
 | TC-03 — teacher contributions | **Partial** | #93 merged school review and family approval, decision history and screens. Contributions are text-only; multimedia remains outstanding. |
 | TC-04 — portfolio/timeline | **Partial** | #94 merged the student/family portfolio, filters and pagination. Media previews and multimedia timeline remain outstanding. |
 | TC-05 — privacy and sharing | **Partial — substantially advanced** | #91 merged database-enforced relationship/audience privacy; #134 added custody restrictions, adult-student rights transitions, time-limited read-only guardian sharing grants, emergency access with review, access logs, and a documented threat model with unit/integration/browser checks. Safe export controls and any remaining roadmap privacy/release gates still need explicit verification before marking complete. |
@@ -21,9 +21,9 @@
 | TC-11 — family storage dashboard | **Partial — 37.8.0 branch `tc/11-family-storage-dashboard`** | Student and linked-guardian view (custody restrictions and a student holding their own rights respected) of the district's photo limit, real usage, items by status, the guardian's own contributions, capsules, the records schedule and the export link, with plain guidance. Says donations never change storage. Web only; donation history waits for TC-09/TC-10; Flutter screen not built. |
 | TC-12 — district preservation fund | **Partial — PR #154, branch `tc/12-preservation-fund-r2` (migration 137)** | Fund off by default; gifts closed (DB-enforced) until legal, finance and governance approvals are documented; district purpose, eligible categories (district-wide only, never student quota), allocation rules, governance and refund disclosures; restricted (school) and unrestricted sources; requests need 2+ approvals from others with no-conflict attestations; payment recorded by someone other than the requester to an append-only fund ledger; separate pauses; family totals only when published and above a donor threshold. Ledger/sandbox only. See `eduos/docs/PRESERVATION-FUND.md`. Payments need the school's principal plus two district administrators (3 approvals, all required, each with a no-conflict declaration); published totals appear as a footnote on student grade cards (aggregate, thresholded, district can turn off) |
 
-**Latest change since the prior review:** PR #134 (`TC-05: Time Capsule privacy controls`) merged on 2026-11-23. It closes major custody, adult-student transition, controlled-sharing, emergency-access, access-log and threat-model gaps. TC-05 remains partial until safe export and all remaining acceptance criteria are verified.
+**Latest changes:** PR #142 (MEDIA-01) and PR #143 (MEDIA-02) merged on 2026-11-24, adding private photo storage and guardian-contribution photo support. PR #141 added safe history export. These close earlier text-only/photo deferrals but do not complete TC-02: document uploads and video transcoding remain outstanding. TC-05 remains subject to district privacy/legal review.
 
-**Important validation boundary:** the PR history establishes merged code, not production readiness. The merged contribution PRs state that media providers are not configured; #96 lists its deferred lifecycle features. District policy, legal/records review, production storage/scanning setup and operational verification remain release gates.
+**Important validation boundary:** merged code is not proof of production readiness. Photo uploads remain disabled until each district configures private S3-compatible storage and ClamAV and a superintendent enables the district policy. Documents and video are not implemented; video requires a sanitizing transcode. District policy, legal/records review, production provider configuration and operational verification remain release gates.
 
 ## Product intent
 
