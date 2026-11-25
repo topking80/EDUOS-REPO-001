@@ -8,12 +8,23 @@ import { historyMedia } from "./history-media-routes.js";
 // MEDIA-02: each contribution's ready photos (for its guardian or the reviewer).
 async function withPhotos(client, list) {
   if (!list.length) return list;
-  const photos = (await client.query(`SELECT * FROM eduos_history_contribution_photos($1::uuid[])`, [list.map(c => c.id)])).rows;
-  return list.map(c => ({ ...c, photos: photos.filter(p => p.contribution_id === c.id).map(p => ({ id: p.asset_id, caption: p.caption, alt: p.alt_text, width: p.width, height: p.height })) }));
+  const ids = list.map(c => c.id);
+  const [photos, documents] = await Promise.all([
+    client.query(`SELECT * FROM eduos_history_contribution_photos($1::uuid[])`, [ids]),
+    client.query(`SELECT * FROM eduos_history_contribution_documents($1::uuid[])`, [ids])
+  ]);
+  return list.map(c => ({ ...c,
+    photos: photos.rows.filter(p => p.contribution_id === c.id).map(p => ({ id: p.asset_id, caption: p.caption, alt: p.alt_text, width: p.width, height: p.height })),
+    documents: documents.rows.filter(d => d.contribution_id === c.id).map(d => ({ id: d.asset_id, fileName: d.file_name, bytes: Number(d.byte_size), href: `/api/history/documents/${d.asset_id}` }))
+  }));
 }
 // A rejected or withdrawn contribution's photos stop counting and leave the bucket (best effort; a failure leaves an unreachable object).
 async function releasePhotos(client, contributionId) {
-  return (await client.query(`SELECT storage_key FROM eduos_history_contribution_photos_release($1)`, [contributionId])).rows.map(r => r.storage_key);
+  const [photos, documents] = await Promise.all([
+    client.query(`SELECT storage_key FROM eduos_history_contribution_photos_release($1)`, [contributionId]),
+    client.query(`SELECT storage_key FROM eduos_history_contribution_documents_release($1)`, [contributionId])
+  ]);
+  return [...photos.rows, ...documents.rows].map(r => r.storage_key);
 }
 function deleteReleased(keys) {
   const { storage } = historyMedia();
