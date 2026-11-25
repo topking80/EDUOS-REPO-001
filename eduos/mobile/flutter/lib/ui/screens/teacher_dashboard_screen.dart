@@ -71,6 +71,8 @@ class _TeacherDashboardData {
     required this.pendingArrivals,
     required this.checklistItems,
     required this.recentHandoffs,
+    required this.weatherPassOn,
+    required this.weatherAdvisories,
   });
 
   final String schoolName;
@@ -108,6 +110,8 @@ class _TeacherDashboardData {
   final List<Json> pendingArrivals;
   final List<Json> checklistItems;
   final List<Json> recentHandoffs;
+  final bool weatherPassOn;
+  final List<Json> weatherAdvisories;
 
   factory _TeacherDashboardData.fromDashboard(Json d) {
     final school = obj(d['school']);
@@ -153,6 +157,8 @@ class _TeacherDashboardData {
       pendingArrivals: objs(tr['pendingArrivals']),
       checklistItems: objs(wq['checklistItems']),
       recentHandoffs: objs(cn['recentHandoffs']),
+      weatherPassOn: al['weatherPassOn'] == true,
+      weatherAdvisories: al['weatherPassOn'] == true ? objs(al['weatherAdvisories']) : const [],
     );
   }
 }
@@ -241,6 +247,8 @@ class TeacherDashboardScreen extends StatelessWidget {
       pendingArrivals: arrivals.where((a) => !['received', 'completed', 'cancelled'].contains(str(a['status']).toLowerCase())).toList(),
       checklistItems: checklists.where((c) => c['completed_at'] == null).toList(),
       recentHandoffs: handoffs,
+      weatherPassOn: false,
+      weatherAdvisories: const [],
     );
   }
 
@@ -274,7 +282,7 @@ class TeacherDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) => Loader<_TeacherDashboardData>(
         load: () => _load(context),
         builder: (context, data, reload) {
-          final hasAlerts = data.safetyIncidents.isNotEmpty || data.unreadNotifications > 0 || data.waitingArrivals > 0;
+          final hasAlerts = data.safetyIncidents.isNotEmpty || data.unreadNotifications > 0 || data.waitingArrivals > 0 || data.weatherAdvisories.isNotEmpty;
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -290,6 +298,16 @@ class TeacherDashboardScreen extends StatelessWidget {
                 SectionCard(title: 'Alerts and safety', children: [
                   for (final inc in data.safetyIncidents)
                     Notice('${str(inc['kind']).toUpperCase()}${inc['is_drill'] == true ? ' (drill)' : ''}: ${str(inc['instructions'], str(inc['status']))}'),
+                  if (data.weatherAdvisories.isNotEmpty) const Text('Weather advisories', style: TextStyle(fontWeight: FontWeight.w600)),
+                  for (final w in data.weatherAdvisories)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.cloud_outlined),
+                      title: Text(str(w['event'])),
+                      subtitle: Text([str(w['headline']), str(w['instruction']), w['expires'] != null ? 'Until ${str(w['expires'])}' : ''].where((x) => x.isNotEmpty).join(' · ')),
+                      trailing: StatusChip(str(w['level']) == 'warning' ? 'absent' : 'expected', text: str(w['level'], 'advisory')),
+                    ),
                   if (data.waitingArrivals > 0 && data.pendingArrivals.isEmpty)
                     Notice('${data.waitingArrivals} arrival handoff(s) awaiting confirmation.'),
                   for (final n in data.notifications.take(3))

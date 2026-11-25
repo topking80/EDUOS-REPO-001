@@ -73,3 +73,21 @@ test("teacher dashboard and classes show a classroom roll and capability-filtere
   assert.match(appJs, /paused_for_safety/);
   assert.match(appJs, /myClassroomCard\(\)/);
 });
+
+test("teacher dashboard includes opted-in NWS weather advisories and a principal-controlled pass-on setting", () => {
+  const weather = readFileSync("src/weather-routes.js", "utf8");
+  const migration = readFileSync("db/151_school_weather_teacher_advisories.sql", "utf8");
+  assert.match(migration, /CREATE TABLE school_weather_share_settings/);
+  assert.match(migration, /pass_on boolean NOT NULL DEFAULT false/);
+  assert.match(migration, /eduos_teacher_weather_advisories/);
+  assert.match(weather, /\/api\/safety\/weather\/share/);
+  assert.match(weather, /weather_pass_on/);
+  assert.match(route, /eduos_teacher_weather_advisories/);
+  assert.match(route, /weatherPassOn/);
+  assert.match(route, /weatherAdvisories/);
+  assert.match(appJs, /Pass active weather advisories on to teachers/);
+  assert.match(appJs, /\/api\/safety\/weather\/share/);
+  assert.match(appJs, /"Weather advisories"/);
+  assert.match(flutter, /Weather advisories/);
+  assert.match(flutter, /weatherAdvisories/);
+});

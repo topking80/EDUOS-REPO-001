@@ -227,6 +227,10 @@ void main() {
           'safetyIncidents': [],
           'urgentTasksCount': 0,
           'pendingArrivalsCount': 2,
+          'weatherPassOn': true,
+          'weatherAdvisories': [
+            {'id': 'wx1', 'event': 'Winter Weather Advisory', 'level': 'advisory', 'headline': 'Snow expected this afternoon', 'expires': '2026-11-25T22:00:00-05:00'},
+          ],
         },
       }},
     });
@@ -234,6 +238,8 @@ void main() {
     await launch(tester, fake);
 
     expect(find.text('Alerts and safety'), findsOneWidget);
+    expect(find.text('Weather advisories'), findsOneWidget);
+    expect(find.text('Winter Weather Advisory'), findsOneWidget);
     expect(find.text('Bus 12 delayed'), findsOneWidget);
     expect(find.text('Attendance marked today: 20/24'), findsOneWidget);
     expect(find.text("Today's schedule"), findsOneWidget);

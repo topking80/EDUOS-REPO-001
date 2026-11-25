@@ -883,7 +883,8 @@ VIEWS.dashboard = async () => {
     catch (e) { toast(e.body?.error === "independent_receipt_required" ? "A different staff member must confirm this handoff." : fail); }
   };
   const safetyLive = (al.safetyIncidents || []).length;
-  const alertCount = safetyLive + (Number(al.unreadNotifications) || 0) + (Number(al.urgentTasksCount) || 0) + (Number(al.pendingArrivalsCount) || 0);
+  const weatherAdvisories = al.weatherPassOn ? (al.weatherAdvisories || []) : [];
+  const alertCount = safetyLive + (Number(al.unreadNotifications) || 0) + (Number(al.urgentTasksCount) || 0) + (Number(al.pendingArrivalsCount) || 0) + weatherAdvisories.length;
 
   return [
     h("section", { class: "card hero", "aria-label": "Teacher dashboard" },
@@ -907,6 +908,9 @@ VIEWS.dashboard = async () => {
       safetyLive ? h("ul", { class: "list" }, al.safetyIncidents.map(i => h("li", { class: "row wrap" },
         h("div", { class: "grow" }, h("h3", {}, `${i.kind.toUpperCase()}${i.is_drill ? " (drill)" : ""}`), h("p", { class: "small muted" }, i.instructions || `Status: ${i.status}`)),
         chip("absent", i.status)))) : null,
+      weatherAdvisories.length ? [h("h3", {}, "Weather advisories"), h("ul", { class: "list" }, weatherAdvisories.map(w => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, w.event), h("p", { class: "small muted" }, [w.headline, w.instruction, w.expires ? `Until ${timeText(w.expires)}` : null].filter(Boolean).join(" · "))),
+        chip(w.level === "warning" ? "absent" : "expected", w.level))))] : null,
       (al.notifications || []).length ? h("ul", { class: "list" }, al.notifications.slice(0, 4).map(n => h("li", { class: "row wrap" },
         h("div", { class: "grow" }, h("h3", {}, n.title), n.body ? h("p", { class: "small muted" }, n.body) : null),
         n.read_at ? chip("present", "Read") : h("button", { class: "btn small", type: "button", onclick: () => act("/api/notifications/read", "Notification marked read.", "Could not mark the notification read.", { ids: [n.id] }) }, "Mark read")))) : empty("No recent notifications."),
@@ -2780,7 +2784,11 @@ async function weatherSettingsCard() {
       return h("li", {}, h("b", {}, sc.name), h("div", { class: "row wrap" },
         h("div", {}, h("label", { for: `wx-lat-${sc.id}` }, "Latitude"), lat), h("div", {}, h("label", { for: `wx-lon-${sc.id}` }, "Longitude"), lon),
         h("button", { class: "btn small", type: "button", "aria-label": `Save location: ${sc.name}`, onclick: async () => {
-          try { await api.put("/api/safety/weather/points", { schoolId: sc.id, lat: Number(lat.value), lon: Number(lon.value) }); toast("Saved."); } catch { toast("Enter a latitude and longitude, e.g. 39.7392 and -104.9903."); } } }, "Save")));
+          try { await api.put("/api/safety/weather/points", { schoolId: sc.id, lat: Number(lat.value), lon: Number(lon.value) }); toast("Saved."); } catch { toast("Enter a latitude and longitude, e.g. 39.7392 and -104.9903."); } } }, "Save")),
+        d.canPassOn ? h("label", { class: "check" }, h("input", { type: "checkbox", checked: sc.passOn, onchange: async e => {
+          try { await api.put("/api/safety/weather/share", { schoolId: sc.id, passOn: e.target.checked }); toast(e.target.checked ? "Teachers will see active weather advisories." : "Teachers will not see weather advisories."); go(state.tab, { push: false }); }
+          catch { toast("Couldn't change it."); } } }), " Pass active weather advisories on to teachers")
+        : h("p", { class: "small muted" }, sc.passOn ? "This school passes active weather advisories on to teachers." : "This school does not pass weather advisories on to teachers."));
     })),
     info.length ? [h("h4", {}, "Watches and advisories"), h("ul", { class: "list small" }, info.map(a => h("li", {}, `${a.event}: ${a.school}${a.expires ? ` · until ${fmtTime(a.expires)}` : ""}${a.decision ? ` · ${a.decision} by ${a.decidedBy}` : ""}`)))] : null);
 }

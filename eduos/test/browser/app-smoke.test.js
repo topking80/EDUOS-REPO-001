@@ -271,7 +271,7 @@ function mockApi(role, pathname, failWebhookLoads = false) {
         checklistItems: [{ itemId: "cli1", checklistId: "cl1", title: "Morning Library Check", label: "Unlock media cart", domain: "library" }]
       },
       connections: { unreadMessages: 2, pendingHandoffsCount: 1, recentHandoffs: [{ id: "h1", domain: "library", summary: "Cart ready", next_action: "Shelve returns", acknowledged_at: null, created_at: now }], staffAnnouncements: [{ id: "sa1", title: "Staff briefing", body: "Meet at 8:00 AM", audience: "all_staff", created_at: now }], recentAnnouncements: [] },
-      alerts: { unreadNotifications: 1, notifications: [{ id: "n1", kind: "announcement", title: "Bus 12 delayed 5m", body: "Updated arrival time", created_at: now, read_at: null }], safetyIncidents: [], urgentTasksCount: 0, urgentTasks: [], pendingArrivalsCount: 1 }
+      alerts: { unreadNotifications: 1, notifications: [{ id: "n1", kind: "announcement", title: "Bus 12 delayed 5m", body: "Updated arrival time", created_at: now, read_at: null }], safetyIncidents: [], urgentTasksCount: 0, urgentTasks: [], pendingArrivalsCount: 1, weatherPassOn: true, weatherAdvisories: [{ id: "wx1", event: "Winter Weather Advisory", level: "advisory", headline: "Snow expected this afternoon", expires: now }] }
     } };
     // DEV-01: rooms and the classroom device registry.
     case "/api/rooms": return { data: [{ id: "rm1", schoolId: "s1", school: "Maple", name: "Room 101", building: "Main", capacity: 28, devices: [{ id: "dv1", kind: "display", name: "Front board" }] }] };
@@ -663,7 +663,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           if (!text.includes("CAPTURE-123") || !text.includes("evt-123")) failures.push(`${role} #/payments: webhook recovery records did not render`);
         }
         // TC-03: the teacher, reviewer and family screens show their items and actions.
-        const expect = { "teacher/dashboard": ["Teacher command dashboard", "Alerts and time-sensitive notices", "Today\u2019s schedule and classes", "Work queue", "Classroom operations", "Transportation and school-day duties", "Staff connections", "Mark read", "Confirm handoff", "Complete", "Acknowledge", "classroom roll", "2 of 3 checked in", "Pair this device to use live classroom controls."],
+        const expect = { "teacher/dashboard": ["Teacher command dashboard", "Alerts and time-sensitive notices", "Today\u2019s schedule and classes", "Work queue", "Classroom operations", "Transportation and school-day duties", "Staff connections", "Mark read", "Confirm handoff", "Complete", "Acknowledge", "classroom roll", "2 of 3 checked in", "Pair this device to use live classroom controls.", "Weather advisories", "Winter Weather Advisory"],
           "teacher/schoolday": ["School day", "Library / media center duty", "Transport duty", "Confirm handoff", "Staff handoffs", "All duties", "Leave a handoff"],
           "teacher/contributions": ["Volcano project", "Changes requested · Needs edits", "Save and resubmit", "In the student's history", "Add a photo", "Science fair"],
           "principal/history": ["Teacher contributions", "Science fair", "Ask for changes", "Reject"],

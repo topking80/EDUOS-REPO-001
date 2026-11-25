@@ -5,6 +5,7 @@ import { requireSession } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { canPerform } from "./policy.js";
 import { queueFrom } from "./pickup-routes.js";
+import { HAZARD_LABEL } from "./safety-model.js";
 import { groupTransportEvents } from "./transport-rider-events.js";
 import { HttpError, one, roleIn, rows, sendError } from "./role-app-util.js";
 
@@ -154,6 +155,25 @@ export function registerTeacherDashboardRoutes(app) {
         const unreadNotificationsRow = await one(client, `SELECT count(*)::int AS n
             FROM notification_outbox
             WHERE recipient_user_id=$1 AND channel='in_app' AND read_at IS NULL`, [a.userId]);
+        const weatherShare = await one(client, `SELECT pass_on FROM school_weather_share_settings WHERE school_id=$1`, [a.schoolId]);
+        const weatherPassOn = Boolean(weatherShare?.pass_on);
+        const weatherAdvisoryRows = weatherPassOn
+          ? await rows(client, `SELECT * FROM eduos_teacher_weather_advisories($1)`, [a.schoolId])
+          : [];
+        const weatherAdvisories = weatherAdvisoryRows.map(w => ({
+          id: w.id,
+          event: w.event,
+          level: w.level,
+          hazard: w.hazard,
+          hazardLabel: w.hazard ? HAZARD_LABEL[w.hazard] : null,
+          severity: w.severity,
+          headline: w.headline,
+          area: w.area,
+          instruction: w.instruction,
+          onset: w.onset,
+          expires: w.expires,
+          firstSeenAt: w.first_seen_at
+        }));
 
         // Hydrate classroom rooms and today's schedule.
         const roomIds = [...new Set(slots.map(s => s.room_id))];
@@ -349,7 +369,9 @@ export function registerTeacherDashboardRoutes(app) {
             safetyIncidents,
             urgentTasksCount: urgentTasks.length,
             urgentTasks: urgentTasks.slice(0, 5),
-            pendingArrivalsCount: pendingArrivals.length
+            pendingArrivalsCount: pendingArrivals.length,
+            weatherPassOn,
+            weatherAdvisories
           }
         };
       });
