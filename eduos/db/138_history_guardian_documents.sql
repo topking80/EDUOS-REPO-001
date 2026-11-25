@@ -17,14 +17,16 @@ CREATE TABLE student_history_contribution_documents (
   district_id uuid NOT NULL REFERENCES districts(id),
   school_id uuid NOT NULL,
   student_id uuid NOT NULL,
-  contribution_id uuid NOT NULL REFERENCES student_history_contributions(id),
+  contribution_id uuid NOT NULL,
   asset_id uuid NOT NULL UNIQUE,
   file_name text NOT NULL CHECK (file_name ~ '^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}\.txt$'),
   upload_key text CHECK (upload_key IS NULL OR upload_key ~ '^[A-Za-z0-9_-]{8,64}$'),
   uploaded_by uuid NOT NULL REFERENCES users(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
-  FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id)
+  FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
+  FOREIGN KEY (district_id, school_id, student_id, contribution_id)
+    REFERENCES student_history_contributions(district_id, school_id, student_id, id) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX student_history_contribution_documents_key
   ON student_history_contribution_documents(district_id, contribution_id, upload_key)
