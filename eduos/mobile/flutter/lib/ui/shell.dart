@@ -27,6 +27,7 @@ import 'screens/staff_pickup_screen.dart';
 import 'screens/staffing_screen.dart';
 import 'screens/teacher_screens.dart';
 import 'screens/teacher_connections_screen.dart';
+import 'screens/teacher_dashboard_screen.dart';
 import 'screens/safety_screen.dart';
 import 'screens/time_capsule/history_timeline_screen.dart';
 import 'screens/time_capsule/teacher_history_screen.dart';
@@ -84,6 +85,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       'children' => ChildrenScreen(onOpenArrival: () => _go('arrival')),
       'teams' => const CoachTeamsScreen(),
       'route' => const DriverRouteScreen(),
+      'dashboard' when role == 'teacher' => const TeacherDashboardScreen(),
       'classes' when role == 'teacher' => const ClassRegisterScreen(),
       'schoolday' when role == 'teacher' => const TeacherConnectionsScreen(),
       'library' when role == 'parent' => const FamilyLibraryScreen(),

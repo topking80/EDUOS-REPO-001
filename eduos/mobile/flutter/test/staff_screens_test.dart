@@ -176,6 +176,8 @@ void main() {
       ];
       final fake = FakeServer('teacher', teacherRoutes(marks));
       await launch(tester, fake);
+      await tester.tap(find.text('Classes'));
+      await tester.pumpAndSettle();
       expect(find.text('Today in class'), findsOneWidget);
       expect(find.text('1 of 2 marked'), findsOneWidget, reason: 'older marks don\'t count for today');
       await tester.tap(find.text('Mark the other 1 present'));
@@ -192,6 +194,8 @@ void main() {
     testWidgets('marks taken with no signal are kept on the phone and shown', (tester) async {
       final fake = FakeServer('teacher', teacherRoutes([]));
       final app = await launch(tester, fake);
+      await tester.tap(find.text('Classes'));
+      await tester.pumpAndSettle();
       fake.offlineWrites = true;
       await tester.tap(find.text('Absent').last);
       await tester.pumpAndSettle();

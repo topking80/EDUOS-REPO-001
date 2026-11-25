@@ -46,6 +46,7 @@ const roleTabs = <String, List<RoleTab>>{
     RoleTab('capsules', 'Time Capsules', Icons.hourglass_bottom, native: true),
   ],
   'teacher': [
+    RoleTab('dashboard', 'Dashboard', Icons.dashboard_outlined, native: true),
     RoleTab('classes', 'Classes', Icons.grid_view, native: true),
     RoleTab('schoolday', 'School day', Icons.hub_outlined, native: true),
     RoleTab('staffing', 'Staffing', Icons.groups_outlined, native: true),
