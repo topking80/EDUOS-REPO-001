@@ -222,6 +222,10 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     const familyDownload = await fetch(`${server.base}${memory.documents[0].href}`, { headers: { cookie: s.pa.cookie } });
     assert.equal(familyDownload.status, 200);
     assert.equal(Buffer.from(await familyDownload.arrayBuffer()).toString("utf8"), "A story preserved.");
+    const exportResponse = await fetch(`${server.base}/api/history/export?format=json&studentId=${ID.alice}`, { headers: { cookie: s.pa.cookie } });
+    assert.equal(exportResponse.status, 200);
+    const exportDoc = await exportResponse.json();
+    assert.equal(exportDoc.items.find(i => i.title === "Grandparent story").documents[0].fileName, "story.txt");
 
     ok(await as("supt1")("PUT", "/api/history/document-policy", {
       documentsEnabled: false, maxDocumentBytes: 10240, maxDocumentsPerContribution: 2
