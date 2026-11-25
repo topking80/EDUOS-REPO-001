@@ -33,6 +33,13 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     return { status: r.status, body: await r.json() };
   };
   const photo = async (who, id) => fetch(`${server.base}/api/history/photos/${id}`, { headers: { cookie: s[who].cookie }, redirect: "manual" });
+  const uploadDocument = async (who, studentId, contributionId, body, name = "family-note.txt", key) => {
+    const csrf = (await as(who)("GET", "/api/csrf")).body.csrfToken;
+    const url = `${server.base}/api/family/children/${studentId}/history-contributions/${contributionId}/documents?name=${encodeURIComponent(name)}`;
+    const r = await fetch(url, { method: "POST", body, headers: { cookie: s[who].cookie,
+      "content-type": "text/plain; charset=utf-8", "x-csrf-token": csrf, ...(key ? { "idempotency-key": key } : {}) } });
+    return { status: r.status, body: await r.json() };
+  };
 
   before(async () => {
     // A private S3-compatible bucket that verifies SigV4 on every request.
@@ -152,5 +159,41 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     assert.equal((await upload("t1", other.id, png, "image/png")).body.error, "security_scan_unavailable");
     clamUp = true;
     assert.equal(ok(await as("t1")("GET", "/api/teacher/history-items")).find(i => i.id === other.id).photos.length, 0);
+  });
+
+  it("guardian text documents are district-controlled, scanned, private attachments and released on rejection", async () => {
+    ok(await as("supt1")("PUT", "/api/history/document-policy", {
+      documentsEnabled: true, maxDocumentBytes: 10240, maxDocumentsPerContribution: 2
+    }));
+    const contribution = ok(await as("pa")("POST", `/api/family/children/${ID.alice}/history-contributions`, {
+      title: "Family letter", body: "A note for the portfolio.", occurredAt: "2026-10-21T15:00:00Z"
+    }), 201);
+    const text = Buffer.from("A family memory.\nWritten in UTF-8.\n", "utf8");
+    const uploaded = await uploadDocument("pa", ID.alice, contribution.id, text, "family-letter.txt", "doc-retry-0001");
+    assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
+    const asset = uploaded.body.data.assetId;
+    const again = await uploadDocument("pa", ID.alice, contribution.id, text, "family-letter.txt", "doc-retry-0001");
+    assert.equal(again.status, 200); assert.equal(again.body.data.assetId, asset, "idempotent retry");
+    const familyList = ok(await as("pa")("GET", `/api/family/children/${ID.alice}/history-contributions`));
+    assert.equal(familyList.find(c => c.id === contribution.id).documents[0].id, asset);
+    const reviewerList = ok(await as("p1")("GET", "/api/history-contributions"));
+    assert.equal(reviewerList.find(c => c.id === contribution.id).documents[0].fileName, "family-letter.txt");
+    assert.equal((await fetch(`${server.base}/api/history/documents/${asset}`, { headers: { cookie: s.pb.cookie } })).status, 404);
+    const download = await fetch(`${server.base}/api/history/documents/${asset}`, { headers: { cookie: s.pa.cookie } });
+    assert.equal(download.status, 200);
+    assert.equal(download.headers.get("content-type"), "text/plain; charset=utf-8");
+    assert.match(download.headers.get("content-disposition"), /attachment; filename="family-letter.txt"/);
+    assert.equal(download.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(Buffer.from(await download.arrayBuffer()).toString("utf8"), text.toString("utf8"));
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from([0xff,0xfe]), "bad.txt")).body.error, "invalid_utf8_text");
+    const eicar = Buffer.from("X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*");
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, eicar, "infected.txt")).body.error, "document_failed_security_scan");
+    const rejected = ok(await as("p1")("PATCH", `/api/students/${ID.alice}/history-contributions/${contribution.id}`, { decision: "reject", note: "Not for publication" }));
+    assert.equal(rejected.status, "rejected");
+    assert.equal(objects.has(`/${S3.bucket}/history/${ID.d1}/${ID.alice}/${asset}.txt`), false, "rejected document object is deleted");
+    assert.equal((await fetch(`${server.base}/api/history/documents/${asset}`, { headers: { cookie: s.pa.cookie } })).status, 404);
+    ok(await as("supt1")("PUT", "/api/history/document-policy", {
+      documentsEnabled: false, maxDocumentBytes: 10240, maxDocumentsPerContribution: 2
+    }));
   });
 });
