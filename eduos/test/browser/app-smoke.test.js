@@ -179,13 +179,31 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/attendance": return { data: [{ id: "e1", event_date: today(), status: "absent", display_name: "Bob B" }] };
     case "/api/attendance/day": return { data: { date: today(), counts: { present: 3, absent: 1, tardy: 0, excused: 0 }, exceptions: [{ student_id: "s1", status: "absent", display_name: "Bob B" }] } };
     case "/api/school-operations/command-center": return { data: { summary: [], work: [{ id: "w1", domain: "facilities", kind: "repair", status: "open", priority: "high", summary: "Gym door", escalation_level: 0, created_at: now }] } };
-    case "/api/staff-management": return { data: { absences: [], shifts: [], coverage: [], staffing: [] } };
-    case "/api/transport/today": return { data: { routes: [], riders: [] } };
+    case "/api/staff-workspace": return { data: {
+      tasks: role === "teacher" ? [{ id: "tk1", domain: "library", kind: "follow_up", status: "open", priority: "high", summary: "Reshelve overnight returns", due_at: null, assigned_to: "u1" }] : [],
+      checklists: role === "teacher" ? [
+        { id: "cl1", title: "Morning Library Check", domain: "library", cadence: "daily", item_id: "cli1", label: "Unlock media cart", position: 0, completed_at: null },
+        { id: "cl2", title: "Transport sweep", domain: "transport", cadence: "daily", item_id: "cli2", label: "Confirm bus 12 arrival board", position: 0, completed_at: null }
+      ] : [],
+      handoffs: role === "teacher" ? [{ id: "sh1", domain: "library", summary: "Cart ready", next_action: "Shelve returns", from_user_id: "u8", to_user_id: "u1", acknowledged_at: null, created_at: now }] : [],
+      announcements: []
+    } };
+    case "/api/arrival/today": return { data: role === "teacher" ? [
+      { id: "ah1", student_id: "c1", display_name: "Alice A", grade_level: "3", method: "bus", status: "pending", initiated_at: now }
+    ] : [] };
+    case "/api/staff-management": return { data: { absences: [], shifts: role === "teacher" ? [
+      { id: "shift1", staff_user_id: "u1", display_name: "Smoke Test", shift_date: today(), starts_at: "08:00", ends_at: "09:00", department: "library", assignment: "Morning library check-in", status: "scheduled" }
+    ] : [], coverage: [], staffing: [] } };
+    case "/api/transport/today": return { data: { routes: [], riders: role === "teacher" ? [
+      { display_name: "Alice A", bus_label: "Bus 12", route_name: "North", direction: "am", stop_name: "Oak St", status: "boarded" }
+    ] : [] } };
     case "/api/christie/path": return { data: { learner: { grade: "4" }, skills: [], activeSessionId: null } };
     case "/api/christie/copilot": return { data: { suggestions: [], note: "", bySkill: [] } };
     case "/api/learning/courses": return { data: { courses: [] } };
     case "/api/pickup/family": return { data: { children: [] } };
-    case "/api/pickup/queue": return { data: { incident: null, waiting: [], released: [], blocked: 0, denied: 0, earlyDismissals: [] } };
+    case "/api/pickup/queue": return { data: { incident: null, waiting: role === "teacher" ? [
+      { name: "Bob B", grade: "3" }
+    ] : [], released: [], blocked: 0, denied: 0, earlyDismissals: [] } };
     case "/api/learning/review": return { data: { attempts: [] } };
     case "/api/learning/progress": return { data: { children: [] } };
     case "/api/notifications": return { data: { unread: 0, items: [] } };
@@ -228,6 +246,32 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       body: { summary: "Possession day", items: [{ kind: "drill", title: "Rondo 5v2", minutes: 10, description: "Keep-away", equipment: "8 cones" }, { kind: "play", title: "Corner: near post", minutes: 5, description: "", equipment: "" }] } } };
     case "/api/coaching/library": return { data: [{ id: "sm9", kind: "playbook", title: "Set pieces", sport: "Soccer", level: "Var", summary: "Corners and free kicks", version: 1, updated_at: now, author: "Teacher Two", school: "Oak Middle", mine: false, copies: 4,
       body: { summary: null, items: [{ kind: "play", title: "Near-post corner", minutes: null, description: "Runner to the near post", equipment: "" }] } }] };
+    // Teacher Dashboard (Phase 1): unified command center summary.
+    case "/api/teacher/dashboard": return { data: {
+      school: { id: "s1", name: "Maple", timezone: "America/New_York" },
+      date: "2026-11-25",
+      overview: {
+        students: 20, attendanceMarkedToday: 18, absences7d: 2, myOpenCases: 1, coursesCount: 1,
+        courses: [{ id: "co1", title: "Grade 4 Math", subject: "Math", gradeLevel: "4", students: 20, toReview: 1, toGrade: 2, planId: "cp1", planStatus: "ready", planTitle: "Fractions", planBlocks: 3 }],
+        scheduleToday: [{ slotId: "tt1", roomId: "rm1", room: "Room 101", starts: "08:00", ends: "09:00", label: "Math 3", courseId: "co1", course: "Grade 4 Math", now: true }],
+        upcomingShifts: [{ id: "sh1", shift_date: "2026-11-25", starts_at: now, ends_at: now, department: "library", assignment: "Morning library check-in", status: "scheduled" }],
+        upcomingEvents: [{ id: "ev1", title: "Science Showcase", starts_at: new Date(Date.now() + 864e5).toISOString(), ends_at: new Date(Date.now() + 900e5).toISOString(), venue: "Gym", status: "published" }]
+      },
+      classroom: { assignedRooms: 1, connectedRooms: 1, checkinsToday: 1, rooms: [{ id: "rm1", name: "Room 101", kind: "classroom", now: true, deviceCount: 2, paired: true, controller: "My phone" }] },
+      transportation: { busRidersCount: 1, busRiders: [{ studentId: "c1", displayName: "Alice A", busLabel: "Bus 12", routeName: "North", direction: "am", stopName: "Oak St", status: "boarded" }], arrivalsTotal: 1, arrivalsPending: 1, busArrivalsPending: 1, carArrivalsPending: 0, pickupWaitingCount: 1 },
+      duties: [
+        { domain: "library", label: "Library / media center", shiftsToday: 1, checklistsTotal: 2, checklistsCompleted: 1, openTasks: 1 },
+        { domain: "meal_service", label: "Lunchroom", shiftsToday: 0, checklistsTotal: 1, checklistsCompleted: 1, openTasks: 0 },
+        { domain: "transport", label: "Transport", shiftsToday: 0, checklistsTotal: 1, checklistsCompleted: 0, openTasks: 1 },
+        { domain: "general", label: "General staff", shiftsToday: 0, checklistsTotal: 1, checklistsCompleted: 0, openTasks: 0 }
+      ],
+      workQueue: {
+        toGrade: 2, quizzesToReview: 1, openAssignments: 3, draftAssignments: 1, tutoringFlagged: 1, historyDrafts: 1, openTasks: 2, incompleteChecklists: 3, pendingHandoffs: 1, unplannedCourses: 0,
+        items: [{ kind: "grading", title: "Grade submitted work", detail: "2 submission(s) waiting", count: 2, target: "grading", priority: "high" }]
+      },
+      connections: { unreadMessages: 2, pendingHandoffsCount: 1, recentHandoffs: [{ id: "h1", domain: "library", summary: "Cart ready", next_action: "Shelve returns", acknowledged_at: null, created_at: now }], staffAnnouncements: [{ id: "sa1", title: "Staff briefing", body: "Meet at 8:00 AM", audience: "all_staff", created_at: now }], recentAnnouncements: [] },
+      alerts: { unreadNotifications: 1, notifications: [{ id: "n1", kind: "announcement", title: "Bus 12 delayed 5m", body: "Updated arrival time", created_at: now, read_at: null }], safetyIncidents: [], urgentTasksCount: 0, urgentTasks: [], pendingArrivalsCount: 1 }
+    } };
     // DEV-01: rooms and the classroom device registry.
     case "/api/rooms": return { data: [{ id: "rm1", schoolId: "s1", school: "Maple", name: "Room 101", building: "Main", capacity: 28, devices: [{ id: "dv1", kind: "display", name: "Front board" }] }] };
     case "/api/devices": return { data: [
@@ -618,7 +662,9 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           if (!text.includes("CAPTURE-123") || !text.includes("evt-123")) failures.push(`${role} #/payments: webhook recovery records did not render`);
         }
         // TC-03: the teacher, reviewer and family screens show their items and actions.
-        const expect = { "teacher/contributions": ["Volcano project", "Changes requested · Needs edits", "Save and resubmit", "In the student's history", "Add a photo", "Science fair"],
+        const expect = { "teacher/dashboard": ["Teacher command dashboard", "Alerts and time-sensitive notices", "Today\u2019s schedule and classes", "Work queue", "Classroom operations", "Transportation and school-day duties", "Staff connections"],
+          "teacher/schoolday": ["School day", "Library / media center duty", "Transport duty", "Confirm handoff", "Staff handoffs", "All duties", "Leave a handoff"],
+          "teacher/contributions": ["Volcano project", "Changes requested · Needs edits", "Save and resubmit", "In the student's history", "Add a photo", "Science fair"],
           "principal/history": ["Teacher contributions", "Science fair", "Ask for changes", "Reject"],
           "vice_principal/history": ["Teacher contributions", "Science fair", "Ask for changes"],
           "superintendent/history": ["Teacher contributions", "Science fair"],

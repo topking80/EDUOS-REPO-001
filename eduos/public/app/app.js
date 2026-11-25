@@ -136,7 +136,7 @@ function applyBranding(b) {
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
   pupil: [["home", "Home", "home"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
-  teacher: [["classes", "Classes", "grid"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
+  teacher: [["dashboard", "Dashboard", "home"], ["classes", "Classes", "grid"], ["schoolday", "School day", "bus"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["mediacenter", "Media center", "check"], ["messages", "Messages", "chat"]],
   // A vice principal gets this plus every principal tab (tabsFor).
@@ -184,7 +184,7 @@ const roleName = () => APP_NAME[isVP() ? "vice_principal" : state.me?.role] || s
 // tabs, then "More" for the rest. The desktop rail still lists every tab.
 const PHONE_TABS = {
   pupil: ["home", "courses", "christie", "library"],
-  teacher: ["classes", "grading", "courses", "messages"],
+  teacher: ["dashboard", "classes", "grading", "messages"],
   parent: ["children", "pickup", "messages", "alerts"],
   vice_principal: ["operations", "overview", "history", "messages"],
   principal: ["overview", "history", "messages", "alerts"],
@@ -871,6 +871,244 @@ async function activitiesLiveView() {
 VIEWS.activities = activitiesLiveView;
 
 // ---------------- teacher ----------------
+VIEWS.dashboard = async () => {
+  const d = (await api.get("/api/teacher/dashboard")).data || {};
+  const ov = d.overview || {}, cl = d.classroom || {}, tr = d.transportation || {};
+  const wq = d.workQueue || {}, cn = d.connections || {}, al = d.alerts || {};
+  const duties = Array.isArray(d.duties) ? d.duties : [];
+  const webTarget = (t) => t;
+  const safetyLive = (al.safetyIncidents || []).length;
+  const alertCount = safetyLive + (Number(al.unreadNotifications) || 0) + (Number(al.urgentTasksCount) || 0) + (Number(al.pendingArrivalsCount) || 0);
+
+  return [
+    h("section", { class: "card hero", "aria-label": "Teacher dashboard" },
+      h("p", { class: "muted small" }, `${d.school?.name || "Your school"} · ${d.date || ""}`),
+      h("h2", {}, "Teacher command dashboard"),
+      h("p", { class: "muted" }, "Daily overview, work queue, alerts, and shortcuts across your classes and school-day duties."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("dashboard", { push: false }) }, "Refresh"),
+        h("button", { class: "btn primary", type: "button", onclick: () => go("classes") }, icon("grid"), "Today in class"))),
+
+    h("div", { class: "stats" },
+      stat(ov.students ?? 0, "learners"),
+      stat(`${ov.attendanceMarkedToday ?? 0}/${ov.students ?? 0}`, "marked today"),
+      stat(wq.toGrade ?? 0, "to grade", true),
+      stat(tr.pickupWaitingCount ?? 0, "pick-up queue", true)),
+
+    h("section", { class: "card", "aria-label": "Alerts and safety" },
+      h("div", { class: "row" },
+        h("h2", { class: "grow" }, "Alerts and time-sensitive notices"),
+        chip(alertCount ? "absent" : "present", alertCount ? `${alertCount} active` : "Clear")),
+      safetyLive ? h("ul", { class: "list" }, al.safetyIncidents.map(i => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, `${i.kind.toUpperCase()}${i.is_drill ? " (drill)" : ""}`), h("p", { class: "small muted" }, i.instructions || `Status: ${i.status}`)),
+        chip("absent", i.status)))) : null,
+      (al.notifications || []).length ? h("ul", { class: "list" }, al.notifications.slice(0, 4).map(n => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, n.title), n.body ? h("p", { class: "small muted" }, n.body) : null),
+        chip(n.read_at ? "present" : "expected", n.read_at ? "Read" : "New")))) : empty("No recent notifications."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("alerts") }, icon("bell"), `Open alerts (${al.unreadNotifications ?? 0})`),
+        h("button", { class: "btn", type: "button", onclick: () => go("safety") }, icon("shield"), "Safety status"))),
+
+    h("section", { class: "card", "aria-label": "Daily overview" },
+      h("h2", {}, "Today\u2019s schedule and classes"),
+      ov.myOpenCases ? h("p", { class: "small" }, `${ov.myOpenCases} student support case(s) need follow-up.`) : null,
+      ov.absences7d ? h("p", { class: "small muted" }, `${ov.absences7d} absence event(s) on your roster in the last 7 days.`) : null,
+      (ov.scheduleToday || []).length ? h("ul", { class: "list" }, ov.scheduleToday.map(s => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, `${s.starts}–${s.ends} · ${s.label}`), h("p", { class: "small muted" }, s.room)),
+        chip(s.now ? "current" : "present", s.now ? "In progress" : "Scheduled")))) : empty("No timetabled periods scheduled for today."),
+      (ov.courses || []).length ? h("ul", { class: "list" }, ov.courses.map(c => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, c.title), h("p", { class: "small muted" }, `${c.students} learner(s) · ${c.planId ? (c.planStatus === "ready" ? "Lesson ready" : "Draft plan") : "No lesson plan today"}`)),
+        h("div", { class: "btns" },
+          h("button", { class: "btn small", type: "button", onclick: () => openView("plan", { planCourseId: c.id, planDate: d.date || localDate(), planEdit: null }) }, icon("calendar"), c.planId ? "Edit plan" : "Plan"),
+          c.planId && c.planBlocks ? h("button", { class: "btn small primary", type: "button", onclick: () => openView("present", { planCourseId: c.id, planDate: d.date || localDate(), presentAt: 0 }) }, icon("play"), "Present") : null)))) : empty("No active courses."),
+      (ov.upcomingEvents || []).length ? [h("h3", {}, "Upcoming school events"), h("ul", { class: "list" }, ov.upcomingEvents.map(e => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, `${e.title}${e.venue ? ` · ${e.venue}` : ""}`),
+        h("span", { class: "small muted" }, fmtDay(e.starts_at)))))] : null),
+
+    h("section", { class: "card", "aria-label": "Work queue" },
+      h("h2", {}, "Work queue"),
+      h("div", { class: "stats" },
+        stat(wq.toGrade ?? 0, "to grade", true),
+        stat(wq.quizzesToReview ?? 0, "quiz reviews", true),
+        stat(wq.tutoringFlagged ?? 0, "tutoring flags", true),
+        stat(wq.incompleteChecklists ?? 0, "checklist items", true)),
+      (wq.items || []).length ? h("ul", { class: "list" }, wq.items.map(item => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, item.title), h("p", { class: "small muted" }, item.detail)),
+        h("button", { class: "btn small", type: "button", onclick: () => go(webTarget(item.target)) }, "Open")))) : empty("No pending work items right now."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn primary", type: "button", onclick: () => go("grading") }, icon("check"), "Grading"),
+        h("button", { class: "btn", type: "button", onclick: () => go("courses") }, icon("book"), "Courses"),
+        h("button", { class: "btn", type: "button", onclick: () => go("copilot") }, icon("spark"), "Christie"),
+        h("button", { class: "btn", type: "button", onclick: () => go("contributions") }, icon("book"), "History items"))),
+
+    h("section", { class: "card", "aria-label": "Classroom operations" },
+      h("h2", {}, "Classroom operations"),
+      h("div", { class: "stats" },
+        stat(cl.assignedRooms ?? 0, "assigned rooms"),
+        stat(cl.connectedRooms ?? 0, "connected rooms"),
+        stat(cl.checkinsToday ?? 0, "check-ins today")),
+      (cl.rooms || []).length ? h("ul", { class: "list" }, cl.rooms.map(r => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, r.name), h("p", { class: "small muted" }, `${r.deviceCount} device(s)${r.paired ? ` · Connected as ${r.controller}` : ""}`)),
+        chip(r.paired ? "present" : (r.now ? "current" : "expected"), r.paired ? "Connected" : (r.now ? "Now" : "Not paired"))))) : empty("No classrooms assigned to your timetable."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("classes") }, icon("grid"), "Room controls & register"))),
+
+    h("section", { class: "card", "aria-label": "Transportation and duties" },
+      h("h2", {}, "Transportation and school-day duties"),
+      h("div", { class: "stats" },
+        stat(tr.busRidersCount ?? 0, "bus riders"),
+        stat(tr.arrivalsPending ?? 0, "arrivals pending", true),
+        stat(tr.pickupWaitingCount ?? 0, "waiting pick-up", true)),
+      duties.length ? h("ul", { class: "list" }, duties.map(duty => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, duty.label), h("p", { class: "small muted" }, `${duty.shiftsToday} shift(s) · ${duty.checklistsCompleted}/${duty.checklistsTotal} checklist · ${duty.openTasks} open task(s)`)),
+        chip(duty.openTasks ? "expected" : "present", duty.openTasks ? `${duty.openTasks} open` : "On track")))) : null,
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("schoolday") }, icon("bus"), "School day"),
+        h("button", { class: "btn", type: "button", onclick: () => go("pickup") }, icon("car"), "Pick-up duty"),
+        h("button", { class: "btn", type: "button", onclick: () => go("staffing") }, icon("people"), "Staffing & shifts"))),
+
+    h("section", { class: "card", "aria-label": "Staff connections" },
+      h("h2", {}, "Staff connections"),
+      h("p", { class: "small muted" }, `${cn.unreadMessages ?? 0} unread message(s) · ${cn.pendingHandoffsCount ?? 0} pending staff handoff(s)`),
+      (cn.staffAnnouncements || []).length ? h("ul", { class: "list" }, cn.staffAnnouncements.map(a => h("li", { class: "item" },
+        h("h3", {}, a.title), h("p", { class: "small muted" }, a.body)))) : null,
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("messages") }, icon("chat"), "Messages"),
+        h("button", { class: "btn", type: "button", onclick: () => go("network") }, icon("people"), "Colleagues & groups")))
+  ];
+};
+VIEWS.schoolday = async () => {
+  const [workspace, arrivals, pickup, transport, staffing] = await Promise.all([
+    safe(api.get("/api/staff-workspace")),
+    safe(api.get("/api/arrival/today")),
+    safe(api.get("/api/pickup/queue")),
+    safe(api.get("/api/transport/today")),
+    safe(api.get("/api/staff-management"))
+  ]);
+  const ws = workspace?.data || {};
+  const tasks = Array.isArray(ws.tasks) ? ws.tasks : [];
+  const checklists = Array.isArray(ws.checklists) ? ws.checklists : [];
+  const handoffs = Array.isArray(ws.handoffs) ? ws.handoffs : [];
+  const riders = transport?.data?.riders || [];
+  const waiting = pickup?.data?.waiting || [];
+  const shifts = staffing?.data?.shifts || [];
+  const arrivalRows = Array.isArray(arrivals?.data) ? arrivals.data : [];
+  const busArrivals = arrivalRows.filter(x => x.method === "bus");
+  const carArrivals = arrivalRows.filter(x => x.method === "car_rider" || x.method === "walk_in");
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const DUTIES = [
+    { domain: "library", label: "Library / media center duty" },
+    { domain: "meal_service", label: "Lunchroom duty" },
+    { domain: "transport", label: "Transport duty" }
+  ];
+  const forDomain = (domain) => {
+    const domainShifts = shifts.filter(x => x.department === domain && String(x.shift_date || "").slice(0, 10) === todayStr && x.status !== "cancelled");
+    const domainChecklists = checklists.filter(x => x.domain === domain);
+    const domainTasks = tasks.filter(x => x.domain === domain);
+    return { domainShifts, domainChecklists, domainTasks, active: domainShifts.length + domainChecklists.length + domainTasks.length > 0 };
+  };
+  const showAll = Boolean(state.schoolDayAllDuties);
+  const visible = DUTIES.map(d => ({ ...d, ...forDomain(d.domain) })).filter(d => showAll || d.active);
+  const completeItem = async (item) => {
+    try { await api.post(`/api/staff-workspace/checklists/${item.item_id}/complete`, {}); toast("Checklist item completed."); go("schoolday", { push: false }); }
+    catch { toast("Could not complete that checklist item."); }
+  };
+  const ackHandoff = async (row) => {
+    try { await api.post(`/api/staff-workspace/handoffs/${row.id}/acknowledge`, {}); toast("Handoff acknowledged."); go("schoolday", { push: false }); }
+    catch { toast("Could not acknowledge the handoff."); }
+  };
+  const confirmArrival = async (row) => {
+    try { await api.post(`/api/arrival/handoffs/${row.id}/receive`, {}); toast("Student handoff confirmed. Record first attendance in Classes."); go("schoolday", { push: false }); }
+    catch (e) { toast(e.body?.error === "independent_receipt_required" ? "A different staff member must confirm this handoff." : "Could not confirm the handoff."); }
+  };
+  const arrivalRow = (row) => h("li", { class: "row wrap" },
+    h("div", { class: "grow" }, h("h3", {}, row.display_name), h("p", { class: "small muted" }, [row.grade_level, row.method?.replaceAll("_", " "), row.status, row.initiated_at ? fmtTime(row.initiated_at) : null].filter(Boolean).join(" · "))),
+    row.status === "pending"
+      ? h("button", { class: "btn primary small", type: "button", onclick: () => confirmArrival(row) }, "Confirm handoff")
+      : chip(row.status === "received" ? "present" : "expected", row.status));
+  const checklistRows = (items) => items.map(item => h("li", { class: "row wrap" },
+    h("div", { class: "grow" }, h("h3", {}, item.label), h("p", { class: "small muted" }, item.title)),
+    item.completed_at
+      ? chip("present", "Done")
+      : h("button", { class: "btn small", type: "button", onclick: () => completeItem(item) }, "Complete")));
+  const dutyBoard = (duty) => {
+    const done = duty.domainChecklists.filter(x => x.completed_at).length;
+    return h("section", { class: "card", "aria-label": duty.label },
+      h("div", { class: "row" },
+        h("h2", { class: "grow" }, duty.label),
+        chip(duty.domainTasks.length ? "expected" : "present", `${duty.domainShifts.length} shift(s) · ${done}/${duty.domainChecklists.length} checklist · ${duty.domainTasks.length} task(s)`)),
+      duty.domainShifts.length ? h("ul", { class: "list" }, duty.domainShifts.map(shift => h("li", { class: "item" },
+        h("h3", {}, shift.assignment || "Duty assignment"),
+        h("p", { class: "small muted" }, `${String(shift.shift_date || "").slice(0, 10)} · ${shift.starts_at || ""}–${shift.ends_at || ""}`)))) : null,
+      duty.domainChecklists.length ? [h("h3", {}, "Duty checklist"), h("ul", { class: "list" }, ...checklistRows(duty.domainChecklists))] : null,
+      duty.domainTasks.length ? [h("h3", {}, "Open work"), h("ul", { class: "list" }, duty.domainTasks.map(task => h("li", { class: "item" },
+        h("h3", {}, task.summary), h("p", { class: "small muted" }, `${task.status}${task.priority ? ` · ${task.priority}` : ""}`))))] : null,
+      !duty.domainShifts.length && !duty.domainChecklists.length && !duty.domainTasks.length
+        ? empty("No assignments, checklists or tasks are assigned here today.") : null);
+  };
+  const summary = h("textarea", { required: true, maxlength: 500, rows: 3, placeholder: "What should the next staff member know?" });
+  const nextAction = h("input", { maxlength: 300, placeholder: "Suggested next action (optional)" });
+  const domain = h("select", {}, ...[["library", "Library / media center"], ["meal_service", "Lunchroom"], ["transport", "Transport"], ["general", "General staff"]].map(([v, l]) => h("option", { value: v }, l)));
+  const generalItems = checklists.filter(x => x.domain === "general");
+
+  return [
+    h("section", { class: "card hero", "aria-label": "School day" },
+      h("h2", {}, "School day"),
+      h("p", { class: "muted" }, "Duty boards, arrival confirmations, checklists and staff handoffs for today. Classroom teaching stays in Classes."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn", type: "button", onclick: () => go("schoolday", { push: false }) }, "Refresh"),
+        h("button", { class: "btn", type: "button", onclick: () => go("pickup") }, icon("car"), "Pick-up duty"))),
+    h("section", { class: "card", "aria-label": "Duty boards" },
+      h("div", { class: "row wrap" },
+        h("h2", { class: "grow" }, "Duty boards"),
+        seg([["mine", "My duties"], ["all", "All duties"]], showAll ? "all" : "mine", id => { state.schoolDayAllDuties = id === "all"; go("schoolday", { push: false }); })),
+      h("p", { class: "small muted" }, showAll
+        ? "Showing every Library, Lunchroom and Transport board, including those without an assignment today."
+        : "Showing only the boards where you have an active shift, task or checklist. Use All duties to see the rest.")),
+    ...visible.map(dutyBoard),
+    !visible.length ? empty("You have no Library, Lunchroom or Transport assignments today.") : null,
+
+    h("section", { class: "card", "aria-label": "Bus riders and handoffs" },
+      h("h2", {}, "Bus riders and handoffs"),
+      riders.length ? h("ul", { class: "list" }, riders.map(r => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, r.display_name), h("p", { class: "small muted" }, [r.bus_label, r.route_name, r.stop_name ? `stop ${r.stop_name}` : null].filter(Boolean).join(" · "))),
+        chip(r.status === "boarded" || r.status === "arrived" ? "present" : "expected", r.status || "expected")))) : empty("No bus riders are assigned to your roster."),
+      h("h3", {}, "Arrival handoffs awaiting your confirmation"),
+      busArrivals.length ? h("ul", { class: "list" }, busArrivals.map(arrivalRow)) : empty("No bus handoffs assigned to you today.")),
+
+    h("section", { class: "card", "aria-label": "Car rider arrivals" },
+      h("h2", {}, "Car rider arrivals"),
+      carArrivals.length ? h("ul", { class: "list" }, carArrivals.map(arrivalRow)) : empty("No car-rider arrivals assigned to you today.")),
+
+    h("section", { class: "card", "aria-label": "Car rider dismissal" },
+      h("h2", {}, "Car rider dismissal"),
+      h("p", { class: "small muted" }, `${waiting.length} student release(s) waiting at the school pick-up point. Pass verification and release stay in the dedicated pick-up workflow.`),
+      waiting.length ? h("ul", { class: "list" }, waiting.slice(0, 12).map(r => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, r.name || r.display_name), h("p", { class: "small muted" }, r.grade || r.grade_level || "Awaiting authorized release")),
+        chip("expected", "Waiting")))) : null,
+      h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => go("pickup") }, icon("car"), "Open pick-up queue"))),
+
+    h("section", { class: "card", "aria-label": "General staff checklist" },
+      h("h2", {}, "General staff checklist"),
+      generalItems.length ? h("ul", { class: "list" }, ...checklistRows(generalItems)) : empty("No general staff checklist items are assigned.")),
+
+    h("section", { class: "card", "aria-label": "Staff handoffs" },
+      h("h2", {}, "Staff handoffs"),
+      handoffs.length ? h("ul", { class: "list" }, handoffs.map(row => h("li", { class: "row wrap" },
+        h("div", { class: "grow" }, h("h3", {}, row.summary), h("p", { class: "small muted" }, [row.domain?.replaceAll("_", " "), row.next_action].filter(Boolean).join(" · "))),
+        row.acknowledged_at ? chip("present", "Acknowledged")
+          : h("button", { class: "btn small", type: "button", onclick: () => ackHandoff(row) }, "Acknowledge")))) : empty("No staff handoffs waiting."),
+      h("h3", {}, "Leave a handoff"),
+      h("form", { class: "stack", onsubmit: async e => {
+        e.preventDefault();
+        const text = summary.value.trim();
+        if (!text) return toast("A handoff summary is required.");
+        try { await api.post("/api/staff-workspace/handoffs", { domain: domain.value, summary: text, nextAction: nextAction.value.trim() }); toast("Handoff left for staff."); go("schoolday", { push: false }); }
+        catch { toast("Could not leave the handoff."); }
+      }}, h("label", {}, h("span", {}, "Duty area"), domain), summary, nextAction, h("button", { class: "btn primary", type: "submit" }, "Leave handoff")))
+  ];
+};
 VIEWS.classes = async () => {
   const [home, copilot, bus, news, tutoring, classroom] = await Promise.all([safe(api.get("/api/home")), safe(api.get("/api/christie/copilot")), safe(api.get("/api/transport/today")), safe(api.get("/api/comms/announcements")), safe(api.get("/api/christie/review")), myClassroomCard()]);
   const d = home?.data || {};
