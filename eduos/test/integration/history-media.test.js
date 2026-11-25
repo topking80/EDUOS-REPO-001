@@ -162,19 +162,25 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
   });
 
   it("guardian text documents are district-controlled, scanned, private attachments and released on rejection", async () => {
-    ok(await as("supt1")("PUT", "/api/history/document-policy", {
-      documentsEnabled: true, maxDocumentBytes: 10240, maxDocumentsPerContribution: 2
-    }));
     const contribution = ok(await as("pa")("POST", `/api/family/children/${ID.alice}/history-contributions`, {
       title: "Family letter", body: "A note for the portfolio.", occurredAt: "2026-10-21T15:00:00Z"
     }), 201);
     const text = Buffer.from("A family memory.\nWritten in UTF-8.\n", "utf8");
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, text)).body.error, "documents_not_enabled");
+    ok(await as("supt1")("PUT", "/api/history/document-policy", {
+      documentsEnabled: true, maxDocumentBytes: 10240, maxDocumentsPerContribution: 2
+    }));
     const uploaded = await uploadDocument("pa", ID.alice, contribution.id, text, "family-letter.txt", "doc-retry-0001");
     assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
     const asset = uploaded.body.data.assetId;
     const again = await uploadDocument("pa", ID.alice, contribution.id, text, "family-letter.txt", "doc-retry-0001");
     assert.equal(again.status, 200); assert.equal(again.body.data.assetId, asset, "idempotent retry");
+    const second = await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Second note"), "second.txt");
+    assert.equal(second.status, 201);
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Third note"), "third.txt")).body.error, "too_many_documents");
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, text, "not-a-pdf.pdf")).body.error, "invalid_document_name");
     const familyList = ok(await as("pa")("GET", `/api/family/children/${ID.alice}/history-contributions`));
+    assert.equal(familyList.find(c => c.id === contribution.id).documents.length, 2);
     assert.equal(familyList.find(c => c.id === contribution.id).documents[0].id, asset);
     const reviewerList = ok(await as("p1")("GET", "/api/history-contributions"));
     assert.equal(reviewerList.find(c => c.id === contribution.id).documents[0].fileName, "family-letter.txt");
