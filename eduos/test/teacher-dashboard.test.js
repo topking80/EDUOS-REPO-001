@@ -26,3 +26,18 @@ test("Flutter TeacherDashboardScreen prefers the unified /api/teacher/dashboard 
   assert.match(flutter, /Alerts and safety/);
   assert.match(flutter, /Today\\'s schedule/);
 });
+
+test("teacher school-day web view reuses staff-workspace and arrival endpoints", () => {
+  assert.match(appJs, /\["schoolday",\s*"School day",\s*"bus"\]/);
+  assert.match(appJs, /^VIEWS\.schoolday\s*=/m);
+  assert.match(appJs, /api\.get\("\/api\/staff-workspace"\)/);
+  assert.match(appJs, /api\.get\("\/api\/arrival\/today"\)/);
+  assert.match(appJs, /\/api\/staff-workspace\/checklists\/\$\{item\.item_id\}\/complete/);
+  assert.match(appJs, /\/api\/staff-workspace\/handoffs\/\$\{row\.id\}\/acknowledge/);
+  assert.match(appJs, /api\.post\("\/api\/staff-workspace\/handoffs"/);
+  assert.match(appJs, /\/api\/arrival\/handoffs\/\$\{row\.id\}\/receive/);
+  assert.match(appJs, /schoolDayAllDuties/);
+  assert.match(appJs, /Library \/ media center duty/);
+  assert.match(appJs, /Lunchroom duty/);
+  assert.match(appJs, /Transport duty/);
+});
