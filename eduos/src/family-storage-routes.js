@@ -49,7 +49,7 @@ export function registerFamilyStorageRoutes(app) {
           limits: { photosAllowed: pol.images_enabled, maxPhotoBytes: pol.max_image_bytes, maxPhotosPerItem: pol.max_per_entry,
             documentsAllowed: Boolean(pol.documents_enabled), maxDocumentBytes: pol.max_document_bytes || 1048576,
             maxDocumentsPerContribution: pol.max_documents_per_contribution || 5, maxBytesPerStudent: max,
-            types: Object.keys(HISTORY_IMAGE_TYPES), setBy: "district" },
+            types: Object.keys(HISTORY_IMAGE_TYPES), documentTypes: pol.documents_enabled ? ["text/plain; charset=utf-8"] : [], setBy: "district" },
           usage: { usedBytes: used, percent: max ? Math.min(100, Math.round(used * 1000 / max) / 10) : 0, photos: Number(usage.photos),
             inLongTermStorage: Number(usage.archived_photos), roomForAnotherPhoto: used + pol.max_image_bytes <= max },
           items: { inHistory: count(items, "published") + count(items, "archived"), waitingForReview: count(items, "submitted") + count(items, "approved"), drafts: count(items, "draft") },
