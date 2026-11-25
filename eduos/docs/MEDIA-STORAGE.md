@@ -1,4 +1,4 @@
-# Photos in Student History: storage and malware scanning (MEDIA-01)
+# Student History Photos: storage and malware scanning (MEDIA-01–03)
 
 Photos on student history items are stored in a **private S3-compatible
 bucket** and **scanned by ClamAV** before anyone can see them. Photos stay off
@@ -104,7 +104,15 @@ are the district's alone.
 
 ## Not yet
 
-* **Video.** Needs a transcoding step that sanitizes the file the way
-  re-encoding does for photos.
+* **Documents.** Guardian document uploads are not implemented. Do not accept
+  arbitrary files or expose an upload endpoint until file-type allowlists,
+  malware scanning, safe handling (including active-content risks), private
+  storage, authorized attachment downloads, district quotas and retention
+  behavior are implemented and tested.
+* **Video.** Upload remains disabled until a configured transcoding/sanitization
+  adapter can produce a safe derivative, enforce district size/duration limits,
+  strip location/device metadata, scan both source and derivative, and fail
+  closed when processing is unavailable. Video metadata must not imply the
+  underlying media has been scanned or approved.
 * **Deleting** a photo after publication follows the district's records rules
   (TC-08 retention work).

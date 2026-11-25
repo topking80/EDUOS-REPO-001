@@ -69,10 +69,13 @@ takes over their rights (`eduos_history_own_after_transition`).
   (TC-03) still go to guardians' review queue; after the transition the
   student should decide. Until that's changed, the records office should
   handle those items for students who hold their own rights.
-* **Media files.** Photos are built (MEDIA-01, `docs/MEDIA-STORAGE.md`). A
-  60-second link can be passed on within its minute; that window is the
-  residual. Video, family-contributed photos and capsule photos are still to
-  come and must use the same pipeline.
+* **Media files.** Student-history photos (MEDIA-01), guardian-contributed
+  family photos (MEDIA-02) and Time Capsule photos (MEDIA-03) use the private
+  S3-compatible storage and ClamAV pipeline described in
+  `eduos/docs/MEDIA-STORAGE.md`. A 60-second link can be passed on within its
+  minute; that window is the residual. Documents are not yet supported. Video
+  upload remains disabled until a sanitizing transcode adapter exists and is
+  tested; metadata alone must not be treated as proof that a video is safe.
 * **Exports.** Built (db/125): per student, by the people listed above,
   logged and limited, no links. A downloaded file is outside EduOS's control
   once saved; the page says so, and records offices should treat a copy like
