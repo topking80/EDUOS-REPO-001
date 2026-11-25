@@ -100,5 +100,37 @@ describe("teacher dashboard against real PostgreSQL", { skip }, () => {
     assert.ok(!d.connections.recentHandoffs.some(h => h.summary === "S2 handoff"));
     assert.ok(d.workQueue.items.some(i => i.kind === "checklist"));
     assert.ok(d.workQueue.items.some(i => i.kind === "handoffs"));
+    assert.equal(d.alerts.weatherPassOn, false);
+    assert.deepEqual(d.alerts.weatherAdvisories, []);
+  });
+
+  it("shows active NWS advisories only after the school opts in to pass them on", async () => {
+    const { Client } = await import("pg");
+    const admin = new Client({ connectionString: db.adminUrl });
+    await admin.connect();
+    try {
+      await admin.query(`INSERT INTO school_weather_alerts(district_id,school_id,nws_id,event,level,headline,expires)
+        VALUES($1,$2,'nws-winter-1','Winter Weather Advisory','advisory','Snow expected this afternoon', now() + interval '6 hours')`, [ID.d1, ID.s1]);
+    } finally {
+      await admin.end();
+    }
+
+    const hidden = await as("t1")("GET", "/api/teacher/dashboard");
+    assert.equal(hidden.status, 200, JSON.stringify(hidden.body));
+    assert.equal(hidden.body.data.alerts.weatherPassOn, false);
+    assert.equal(hidden.body.data.alerts.weatherAdvisories.length, 0);
+
+    const denied = await as("t1")("PUT", "/api/safety/weather/share", { schoolId: ID.s1, passOn: true });
+    assert.equal(denied.status, 403);
+
+    const on = await as("p1")("PUT", "/api/safety/weather/share", { schoolId: ID.s1, passOn: true });
+    assert.equal(on.status, 200, JSON.stringify(on.body));
+    assert.equal(on.body.data.passOn, true);
+
+    const shown = await as("t1")("GET", "/api/teacher/dashboard");
+    assert.equal(shown.status, 200, JSON.stringify(shown.body));
+    assert.equal(shown.body.data.alerts.weatherPassOn, true);
+    assert.equal(shown.body.data.alerts.weatherAdvisories.length, 1);
+    assert.equal(shown.body.data.alerts.weatherAdvisories[0].event, "Winter Weather Advisory");
   });
 });

@@ -727,6 +727,12 @@ GRANT UPDATE (decision, decided_by, decided_at, decision_note, incident_id) ON s
 REVOKE DELETE, TRUNCATE ON district_weather_settings, school_weather_alerts FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_weather_lead(uuid), eduos_weather_targets(), eduos_weather_record(uuid, uuid, jsonb), eduos_weather_recipients(uuid, uuid) TO eduos_app;
 
+-- db/151: a school can pass active NWS advisories on to teachers.
+GRANT SELECT, INSERT ON school_weather_share_settings TO eduos_app;
+GRANT UPDATE (pass_on, set_by, set_at) ON school_weather_share_settings TO eduos_app;
+REVOKE DELETE, TRUNCATE ON school_weather_share_settings FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_weather_share_manager(uuid), eduos_teacher_weather_advisories(uuid) TO eduos_app;
+
 -- TC-05 export (db/125): download limits.
 GRANT EXECUTE ON FUNCTION eduos_history_export_allowed(uuid) TO eduos_app;
 

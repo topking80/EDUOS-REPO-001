@@ -20,6 +20,20 @@ Future<void> _open(BuildContext context, String title, Widget screen) =>
       builder: (_) => Scaffold(appBar: AppBar(title: Text(title)), body: screen),
     ));
 
+Future<void> _act(BuildContext context, VoidCallback reload, String path, {Map<String, Object?> body = const {}, required String ok, String fail = 'Could not save. Try again.'}) async {
+  try {
+    await AppScope.read(context).api.post(path, body);
+    if (!context.mounted) return;
+    toast(context, ok);
+    reload();
+  } on ApiException catch (e) {
+    if (!context.mounted) return;
+    toast(context, e.error == 'independent_receipt_required'
+        ? 'A different staff member must confirm this handoff.'
+        : (e.isOffline ? 'You\'re offline. This needs a connection.' : fail));
+  }
+}
+
 class _TeacherDashboardData {
   const _TeacherDashboardData({
     required this.schoolName,
@@ -54,6 +68,11 @@ class _TeacherDashboardData {
     required this.unreadNotifications,
     required this.notifications,
     required this.safetyIncidents,
+    required this.pendingArrivals,
+    required this.checklistItems,
+    required this.recentHandoffs,
+    required this.weatherPassOn,
+    required this.weatherAdvisories,
   });
 
   final String schoolName;
@@ -88,6 +107,11 @@ class _TeacherDashboardData {
   final int unreadNotifications;
   final List<Json> notifications;
   final List<Json> safetyIncidents;
+  final List<Json> pendingArrivals;
+  final List<Json> checklistItems;
+  final List<Json> recentHandoffs;
+  final bool weatherPassOn;
+  final List<Json> weatherAdvisories;
 
   factory _TeacherDashboardData.fromDashboard(Json d) {
     final school = obj(d['school']);
@@ -130,6 +154,11 @@ class _TeacherDashboardData {
       unreadNotifications: integer(al['unreadNotifications']),
       notifications: objs(al['notifications']),
       safetyIncidents: objs(al['safetyIncidents']),
+      pendingArrivals: objs(tr['pendingArrivals']),
+      checklistItems: objs(wq['checklistItems']),
+      recentHandoffs: objs(cn['recentHandoffs']),
+      weatherPassOn: al['weatherPassOn'] == true,
+      weatherAdvisories: al['weatherPassOn'] == true ? objs(al['weatherAdvisories']) : const [],
     );
   }
 }
@@ -215,6 +244,11 @@ class TeacherDashboardScreen extends StatelessWidget {
       unreadNotifications: 0,
       notifications: const [],
       safetyIncidents: const [],
+      pendingArrivals: arrivals.where((a) => !['received', 'completed', 'cancelled'].contains(str(a['status']).toLowerCase())).toList(),
+      checklistItems: checklists.where((c) => c['completed_at'] == null).toList(),
+      recentHandoffs: handoffs,
+      weatherPassOn: false,
+      weatherAdvisories: const [],
     );
   }
 
@@ -248,7 +282,7 @@ class TeacherDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) => Loader<_TeacherDashboardData>(
         load: () => _load(context),
         builder: (context, data, reload) {
-          final hasAlerts = data.safetyIncidents.isNotEmpty || data.unreadNotifications > 0 || data.waitingArrivals > 0;
+          final hasAlerts = data.safetyIncidents.isNotEmpty || data.unreadNotifications > 0 || data.waitingArrivals > 0 || data.weatherAdvisories.isNotEmpty;
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -264,7 +298,17 @@ class TeacherDashboardScreen extends StatelessWidget {
                 SectionCard(title: 'Alerts and safety', children: [
                   for (final inc in data.safetyIncidents)
                     Notice('${str(inc['kind']).toUpperCase()}${inc['is_drill'] == true ? ' (drill)' : ''}: ${str(inc['instructions'], str(inc['status']))}'),
-                  if (data.waitingArrivals > 0)
+                  if (data.weatherAdvisories.isNotEmpty) const Text('Weather advisories', style: TextStyle(fontWeight: FontWeight.w600)),
+                  for (final w in data.weatherAdvisories)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.cloud_outlined),
+                      title: Text(str(w['event'])),
+                      subtitle: Text([str(w['headline']), str(w['instruction']), w['expires'] != null ? 'Until ${str(w['expires'])}' : ''].where((x) => x.isNotEmpty).join(' · ')),
+                      trailing: StatusChip(str(w['level']) == 'warning' ? 'absent' : 'expected', text: str(w['level'], 'advisory')),
+                    ),
+                  if (data.waitingArrivals > 0 && data.pendingArrivals.isEmpty)
                     Notice('${data.waitingArrivals} arrival handoff(s) awaiting confirmation.'),
                   for (final n in data.notifications.take(3))
                     ListTile(
@@ -273,9 +317,32 @@ class TeacherDashboardScreen extends StatelessWidget {
                       leading: Icon(alertIcon(str(n['kind']))),
                       title: Text(str(n['title']), style: const TextStyle(fontWeight: FontWeight.w600)),
                       subtitle: str(n['body']).isEmpty ? null : Text(str(n['body'])),
-                      trailing: n['read_at'] == null ? const StatusChip('current', text: 'New') : null,
+                      trailing: n['read_at'] == null
+                          ? TextButton(
+                              onPressed: () => _act(context, reload, '/api/notifications/read', body: {'ids': [str(n['id'])]}, ok: 'Notification marked read.', fail: 'Could not mark the notification read.'),
+                              child: const Text('Mark read'),
+                            )
+                          : const StatusChip('present', text: 'Read'),
+                    ),
+                  for (final row in data.pendingArrivals.take(5))
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.directions_bus_outlined),
+                      title: Text(str(row['displayName'], str(row['display_name']))),
+                      subtitle: Text([str(row['gradeLevel'], str(row['grade_level'])), str(row['method']).replaceAll('_', ' ')].where((x) => x.isNotEmpty).join(' · ')),
+                      trailing: TextButton(
+                        onPressed: () => _act(context, reload, '/api/arrival/handoffs/${str(row['id'])}/receive', ok: 'Student handoff confirmed. Record first attendance in Classes.', fail: 'Could not confirm the handoff.'),
+                        child: const Text('Confirm handoff'),
+                      ),
                     ),
                   Wrap(spacing: 8, runSpacing: 8, children: [
+                    if (data.unreadNotifications > 0)
+                      OutlinedButton.icon(
+                        onPressed: () => _act(context, reload, '/api/notifications/read', ok: 'All notifications marked read.', fail: 'Could not mark notifications read.'),
+                        icon: const Icon(Icons.done_all),
+                        label: const Text('Mark all read'),
+                      ),
                     OutlinedButton.icon(
                       onPressed: () => _open(context, 'Alerts', const AlertsScreen()),
                       icon: const Icon(Icons.notifications_none),
@@ -431,6 +498,17 @@ class TeacherDashboardScreen extends StatelessWidget {
                       child: const Text('Open'),
                     ),
                   ),
+                for (final item in data.checklistItems.take(5))
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(str(item['label'])),
+                    subtitle: Text(str(item['title'])),
+                    trailing: TextButton(
+                      onPressed: () => _act(context, reload, '/api/staff-workspace/checklists/${str(item['itemId'], str(item['item_id']))}/complete', ok: 'Checklist item completed.', fail: 'Could not complete that checklist item.'),
+                      child: const Text('Complete'),
+                    ),
+                  ),
                 for (final duty in data.duties)
                   ListTile(
                     dense: true,
@@ -453,6 +531,20 @@ class TeacherDashboardScreen extends StatelessWidget {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _open(context, 'Messages', const MessagesScreen()),
                 ),
+                for (final row in data.recentHandoffs.take(5))
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.assignment_ind_outlined),
+                    title: Text(str(row['summary'])),
+                    subtitle: Text([str(row['domain']).replaceAll('_', ' '), str(row['next_action'])].where((x) => x.isNotEmpty).join(' · ')),
+                    trailing: row['acknowledged_at'] == null
+                        ? TextButton(
+                            onPressed: () => _act(context, reload, '/api/staff-workspace/handoffs/${str(row['id'])}/acknowledge', ok: 'Handoff acknowledged.', fail: 'Could not acknowledge the handoff.'),
+                            child: const Text('Acknowledge'),
+                          )
+                        : const StatusChip('present', text: 'Acknowledged'),
+                  ),
                 for (final ann in data.staffAnnouncements.take(2))
                   ListTile(
                     dense: true,

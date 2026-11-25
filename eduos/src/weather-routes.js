@@ -1,7 +1,8 @@
 // SAFE-04: National Weather Service prompts (db/124, src/weather-alerts.js).
 //
-//   GET  /api/safety/weather                      setting, school locations, active alerts
+//   GET  /api/safety/weather                      setting, school locations, active alerts, pass-on flags
 //   PUT  /api/safety/weather/settings {enabled}    superintendent
+//   PUT  /api/safety/weather/share {schoolId, passOn}  principal / VP / superintendent
 //   PUT  /api/safety/weather/points {schoolId, lat, lon} | {schoolId, clear: true}
 //   POST /api/safety/weather/:id/dismiss {note}    a warning's prompt, with a reason
 //   POST /api/safety/weather/:id/started {incidentId}  the alert someone started from it
@@ -41,9 +42,12 @@ export function registerWeatherRoutes(app) {
     const setting = await one(c, `SELECT enabled FROM district_weather_settings WHERE district_id=$1`, [a.districtId]);
     const schools = await rows(c, `SELECT s.id,s.name,p.lat,p.lon FROM schools s LEFT JOIN school_weather_points p ON p.school_id=s.id
         WHERE s.status='active' AND ($1::uuid IS NULL OR s.id=$1) ORDER BY s.name`, [scopeOf(a)]);
+    const shares = await rows(c, `SELECT school_id,pass_on FROM school_weather_share_settings WHERE ($1::uuid IS NULL OR school_id=$1)`, [scopeOf(a)]);
+    const passOnBy = Object.fromEntries(shares.map(s => [s.school_id, s.pass_on]));
     const alerts = await rows(c, ACTIVE_ALERTS, [scopeOf(a)]);
     return { enabled: Boolean(setting?.enabled), running: Boolean(config.weatherAlertsUserAgent), canToggle: a.role === "superintendent",
-      schools: schools.map(s => ({ id: s.id, name: s.name, lat: s.lat === null ? null : Number(s.lat), lon: s.lon === null ? null : Number(s.lon) })),
+      canPassOn: ["principal", "vice_principal", "superintendent"].includes(a.role),
+      schools: schools.map(s => ({ id: s.id, name: s.name, lat: s.lat === null ? null : Number(s.lat), lon: s.lon === null ? null : Number(s.lon), passOn: Boolean(passOnBy[s.id]) })),
       alerts: alerts.map(alertOut) };
   }));
 
@@ -54,6 +58,19 @@ export function registerWeatherRoutes(app) {
           ON CONFLICT (district_id) DO UPDATE SET enabled=EXCLUDED.enabled,set_by=EXCLUDED.set_by,set_at=now()`, [req.actor.districtId, req.body.enabled, req.actor.userId]);
       await audit(c, req, req.body.enabled ? "enable" : "disable", "weather_alerts", req.actor.districtId);
       return { enabled: req.body.enabled };
+    }));
+
+  app.put("/api/safety/weather/share", limiter, requireSession, requireCsrf,
+    (req, res, next) => ["principal", "vice_principal", "superintendent"].includes(req.actor?.role) ? next() : res.status(403).json({ error: "role_not_allowed" }),
+    run(async (c, req) => {
+      const a = req.actor, { schoolId, passOn } = req.body || {};
+      if (typeof passOn !== "boolean" || !validId(schoolId)) throw new HttpError(400, "invalid_setting");
+      if (a.role !== "superintendent" && schoolId !== a.schoolId) throw new HttpError(404, "school_not_found");
+      if (!(await one(c, `SELECT id FROM schools WHERE id=$1`, [schoolId]))) throw new HttpError(404, "school_not_found");
+      await c.query(`INSERT INTO school_weather_share_settings(school_id,district_id,pass_on,set_by) VALUES($1,$2,$3,$4)
+          ON CONFLICT (school_id) DO UPDATE SET pass_on=EXCLUDED.pass_on,set_by=EXCLUDED.set_by,set_at=now()`, [schoolId, a.districtId, passOn, a.userId]);
+      await audit(c, req, passOn ? "enable" : "disable", "weather_pass_on", schoolId);
+      return { schoolId, passOn };
     }));
 
   app.put("/api/safety/weather/points", limiter, requireSession, requireCsrf, lead, run(async (c, req) => {
