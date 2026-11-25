@@ -17,7 +17,7 @@ import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./ro
 import { HAZARD_KIND, HAZARD_LABEL } from "./safety-model.js";
 import { config } from "./config.js";
 
-const LEADS = ["principal", "superintendent"];
+const LEADS = ["principal", "vice_principal", "superintendent"];
 export const alertOut = a => ({ id: a.id, schoolId: a.school_id, school: a.school, event: a.event, level: a.level, hazard: a.hazard,
   hazardLabel: a.hazard ? HAZARD_LABEL[a.hazard] : null, suggestedKind: a.hazard ? HAZARD_KIND[a.hazard] : null,
   severity: a.severity, headline: a.headline, area: a.area, instruction: a.instruction, onset: a.onset, expires: a.expires,
