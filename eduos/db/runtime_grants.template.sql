@@ -739,6 +739,12 @@ GRANT EXECUTE ON FUNCTION eduos_history_media_begin(uuid, uuid, text, text, bigi
   eduos_history_media_set(uuid, text, bigint, text, text, int, int), eduos_history_entry_photos(uuid[]) TO eduos_app;
 
 -- MEDIA-02 (db/127): family photos; reached only through these functions.
+-- TC-02 guardian text documents (db/138); metadata and objects remain private.
+GRANT EXECUTE ON FUNCTION eduos_history_contribution_document_begin(uuid, uuid, text, bigint, text, text),
+  eduos_history_contribution_document_set(uuid, text, bigint, text, text),
+  eduos_history_contribution_document_get(uuid),
+  eduos_history_contribution_documents_release(uuid) TO eduos_app;
+
 GRANT EXECUTE ON FUNCTION eduos_history_student_media_bytes(uuid, uuid), eduos_history_contribution_mine(uuid), eduos_history_contribution_reviewer(uuid),
   eduos_history_contribution_photo_begin(uuid, uuid, text, text, bigint, text, text, text),
   eduos_history_contribution_photo_set(uuid, text, bigint, text, text, int, int), eduos_history_contribution_photo_get(uuid),
