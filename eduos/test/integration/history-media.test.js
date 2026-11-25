@@ -181,6 +181,8 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     clamUp = false;
     assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Scanner outage"), "outage.txt")).body.error, "security_scan_unavailable");
     clamUp = true;
+    const eicar = Buffer.from("X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*");
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, eicar, "infected.txt")).body.error, "document_failed_security_scan");
     const second = await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Second note"), "second.txt");
     assert.equal(second.status, 201);
     assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Third note"), "third.txt")).body.error, "too_many_documents");
@@ -201,8 +203,6 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     assert.equal(download.headers.get("x-content-type-options"), "nosniff");
     assert.equal(Buffer.from(await download.arrayBuffer()).toString("utf8"), text.toString("utf8"));
     assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from([0xff,0xfe]), "bad.txt")).body.error, "invalid_utf8_text");
-    const eicar = Buffer.from("X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*");
-    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, eicar, "infected.txt")).body.error, "document_failed_security_scan");
     const rejected = ok(await as("p1")("PATCH", `/api/students/${ID.alice}/history-contributions/${contribution.id}`, { decision: "reject", note: "Not for publication" }));
     assert.equal(rejected.status, "rejected");
     assert.equal(objects.has(`/${S3.bucket}/history/${ID.d1}/${ID.alice}/${asset}.txt`), false, "rejected document object is deleted");
