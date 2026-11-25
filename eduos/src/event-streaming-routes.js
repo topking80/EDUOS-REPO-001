@@ -3,7 +3,8 @@ import { requireSession, requireCsrf } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./role-app-util.js";
-import { EVENT_KINDS, STREAM_ACCESS_MODES, hashStreamSecret, signStreamToken, verifyStreamToken, evaluateStreamAccess } from "./event-streaming.js";
+import { EVENT_KINDS, STREAM_ACCESS_MODES, STREAM_PROVIDER_CHOICES, canPublishEvents, eventSchoolAllowed, hashStreamSecret, signStreamToken, verifyStreamToken, evaluateStreamAccess } from "./event-streaming.js";
+import { sealSecrets, SecretsKeyMissing } from "./commerce/secrets.js";
 
 const DISTRICT = role => ["superintendent", "it_admin"].includes(role);
 const LEAD = role => ["superintendent", "principal"].includes(role);
@@ -65,7 +66,7 @@ export function registerEventStreamingRoutes(app) {
   // Standalone live events (plays, concerts, assemblies, ceremonies, club showcases, etc.).
   app.post("/api/events", requireSession, requireCsrf, async (req, res, next) => {
     const a = req.actor, b = req.body || {};
-    if (!EVENT_CREATOR(a.role)) return res.status(403).json({ error: "event_creator_role_required" });
+    if (!canPublishEvents(a.role)) return res.status(403).json({ error: "event_creator_role_required" });
     const kind = b.eventKind || (b.activityId ? "sport" : "play");
     if (!EVENT_KINDS.includes(kind) || (b.activityId && !validId(b.activityId))
       || !cleanText(b.title, 180, 2) || !Number.isFinite(Date.parse(b.startsAt)) || !Number.isFinite(Date.parse(b.endsAt))
@@ -82,7 +83,8 @@ export function registerEventStreamingRoutes(app) {
           if (!act || act.school_id !== schoolId) throw new HttpError(404, "activity_not_found");
           activityId = act.id;
         }
-        const status = LEAD(a.role) && b.publish === true ? "published" : "draft";
+        if (!eventSchoolAllowed(a, schoolId)) throw new HttpError(403, "event_school_scope_denied");
+        const status = b.publish === true ? "published" : "draft";
         const r = await one(c, `INSERT INTO school_events(district_id,school_id,activity_id,event_kind,title,description,starts_at,ends_at,venue,status,created_by)
             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
           [a.districtId, schoolId, activityId, kind, b.title.trim(), String(b.description || "").slice(0, 4000),
@@ -96,7 +98,7 @@ export function registerEventStreamingRoutes(app) {
 
   app.patch("/api/events/:id", requireSession, requireCsrf, async (req, res, next) => {
     const a = req.actor, b = req.body || {};
-    if (!LEAD(a.role)) return res.status(403).json({ error: "school_lead_required" });
+    if (!canPublishEvents(a.role)) return res.status(403).json({ error: "event_publisher_required" });
     if (!validId(req.params.id)) return res.status(400).json({ error: "invalid_event_id" });
     if (b.eventKind !== undefined && !EVENT_KINDS.includes(b.eventKind)) return res.status(400).json({ error: "invalid_event_kind" });
     if (b.status !== undefined && !["draft", "published", "cancelled"].includes(b.status)) return res.status(400).json({ error: "invalid_event_status" });
@@ -105,6 +107,7 @@ export function registerEventStreamingRoutes(app) {
         const cur = await one(c, "SELECT * FROM school_events WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3) FOR UPDATE",
           [req.params.id, a.districtId, DISTRICT(a.role) ? null : a.schoolId]);
         if (!cur) throw new HttpError(404, "event_not_found");
+        if (!eventSchoolAllowed(a, cur.school_id)) throw new HttpError(403, "event_school_scope_denied");
         const title = b.title !== undefined ? cleanText(b.title, 180, 2) : cur.title;
         if (!title) throw new HttpError(400, "invalid_event_title");
         const startsAt = b.startsAt !== undefined ? new Date(b.startsAt).toISOString() : cur.starts_at;
@@ -261,6 +264,51 @@ export function registerEventStreamingRoutes(app) {
             unconsentedCount: gate.unconsentedCount
           }
         };
+      });
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
+
+  // District livestream provider (choice only; credentials write-only; no live calls).
+  const streamProviderOut = r => ({ provider: r?.provider || "none", hasCredentials: Boolean(r?.has_credentials), updatedAt: r?.updated_at || null });
+  app.get("/api/stream-provider", requireSession, wrap(async (c, req) => {
+    const r = await one(c, `SELECT provider, (secrets_enc IS NOT NULL) AS has_credentials, updated_at
+        FROM district_stream_settings WHERE district_id=$1`, [req.actor.districtId]);
+    return streamProviderOut(r);
+  }));
+  app.put("/api/stream-provider", requireSession, requireCsrf, async (req, res, next) => {
+    const a = req.actor, b = req.body || {};
+    if (!DISTRICT(a.role)) return res.status(403).json({ error: "district_admin_required" });
+    const provider = b.provider ?? "none";
+    if (!STREAM_PROVIDER_CHOICES.includes(provider)) return res.status(400).json({ error: "invalid_stream_provider" });
+    const clear = b.clearCredentials === true || provider === "none";
+    let replaceSecrets = clear, sealed = null;
+    if (!clear && b.credentials && typeof b.credentials === "object" && !Array.isArray(b.credentials)) {
+      const entries = Object.entries(b.credentials).filter(([, v]) => typeof v === "string" && v.trim());
+      if (entries.length > 8 || entries.some(([k, v]) => !/^[A-Za-z0-9_]{1,40}$/.test(k) || v.length > 500)) {
+        return res.status(400).json({ error: "invalid_stream_credentials" });
+      }
+      if (entries.length) {
+        if (!config.commerceSecretsKey) return res.status(503).json({ error: "commerce_secrets_key_missing" });
+        try { sealed = sealSecrets(config.commerceSecretsKey, a.districtId, "stream", Object.fromEntries(entries)); }
+        catch (e) {
+          if (e instanceof SecretsKeyMissing) return res.status(503).json({ error: "commerce_secrets_key_missing" });
+          throw e;
+        }
+        replaceSecrets = true;
+      }
+    }
+    try {
+      const data = await withTenantTransaction(a, async c => {
+        const r = await one(c, `INSERT INTO district_stream_settings(district_id,provider,secrets_enc,updated_by,updated_at)
+            VALUES($1,$2,$3,$4,now())
+            ON CONFLICT (district_id) DO UPDATE SET provider=EXCLUDED.provider,
+              secrets_enc=CASE WHEN $5 THEN EXCLUDED.secrets_enc ELSE district_stream_settings.secrets_enc END,
+              updated_by=EXCLUDED.updated_by, updated_at=now()
+            RETURNING provider, (secrets_enc IS NOT NULL) AS has_credentials, updated_at`,
+          [a.districtId, provider, sealed, a.userId, replaceSecrets]);
+        await audit(c, req, "settings", "district_stream_settings", null, `provider=${r.provider};credentials=${r.has_credentials ? "set" : "cleared"}`);
+        return streamProviderOut(r);
       });
       res.json({ data });
     } catch (e) { sendError(res, next, e); }

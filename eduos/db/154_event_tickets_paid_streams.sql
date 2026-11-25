@@ -5,7 +5,7 @@
 
 ALTER TABLE school_events
   ADD COLUMN IF NOT EXISTS event_kind text NOT NULL DEFAULT 'sport'
-    CHECK (event_kind IN ('sport','play','concert','assembly','ceremony','club_showcase','other'));
+    CHECK (event_kind IN ('sport','play','concert','assembly','ceremony','club_showcase','recital','other'));
 
 CREATE TABLE IF NOT EXISTS school_stream_seasons (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -64,3 +64,30 @@ CREATE POLICY school_stream_seasons_tenant_scope ON school_stream_seasons
       OR current_setting('app.role', true) IN ('superintendent', 'it_admin')
     )
   );
+
+ALTER TABLE school_events DROP CONSTRAINT IF EXISTS school_events_event_kind_check;
+ALTER TABLE school_events ADD CONSTRAINT school_events_event_kind_check
+  CHECK (event_kind IN ('sport','play','concert','assembly','ceremony','club_showcase','recital','other'));
+
+-- District choice of livestream provider. Credentials are sealed and write-only.
+-- This table stores the choice only; no live provider API calls are made here.
+CREATE TABLE IF NOT EXISTS district_stream_settings (
+  district_id uuid PRIMARY KEY REFERENCES districts(id) ON DELETE CASCADE,
+  provider text NOT NULL DEFAULT 'none' CHECK (provider IN ('none','mux','cloudflare_stream','vimeo','other')),
+  secrets_enc text CHECK (secrets_enc IS NULL OR (secrets_enc ~ '^c1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]+$' AND length(secrets_enc) <= 8000)),
+  updated_by uuid REFERENCES users(id),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE district_stream_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE district_stream_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS district_stream_settings_tenant_scope ON district_stream_settings;
+CREATE POLICY district_stream_settings_tenant_scope ON district_stream_settings
+  USING (district_id = nullif(current_setting('app.district_id', true), '')::uuid)
+  WITH CHECK (district_id = nullif(current_setting('app.district_id', true), '')::uuid);
+DROP POLICY IF EXISTS district_stream_settings_admin_write ON district_stream_settings;
+CREATE POLICY district_stream_settings_admin_write ON district_stream_settings AS RESTRICTIVE FOR INSERT
+  WITH CHECK (eduos_is_table_owner() OR (eduos_ctx_role() IN ('superintendent','it_admin') AND updated_by = eduos_ctx_user()));
+DROP POLICY IF EXISTS district_stream_settings_admin_update ON district_stream_settings;
+CREATE POLICY district_stream_settings_admin_update ON district_stream_settings AS RESTRICTIVE FOR UPDATE
+  USING (eduos_is_table_owner() OR eduos_ctx_role() IN ('superintendent','it_admin'))
+  WITH CHECK (eduos_is_table_owner() OR (eduos_ctx_role() IN ('superintendent','it_admin') AND updated_by = eduos_ctx_user()));

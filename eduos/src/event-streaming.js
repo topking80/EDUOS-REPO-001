@@ -1,7 +1,7 @@
 // Helpers for non-sport live events and paywalled livestreams (db/154).
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
-export const EVENT_KINDS = Object.freeze(["sport", "play", "concert", "assembly", "ceremony", "club_showcase", "other"]);
+export const EVENT_KINDS = Object.freeze(["sport", "play", "concert", "assembly", "ceremony", "club_showcase", "recital", "other"]);
 export const PASS_KINDS = Object.freeze(["admission", "stream_pass", "season_stream_pass"]);
 export const STREAM_ACCESS_MODES = Object.freeze(["free", "paid_pass"]);
 
@@ -54,4 +54,15 @@ export function evaluateStreamAccess({ stream, hasPass, isLead, unconsentedCount
     unconsentedExcludedOrBlurred: Boolean(stream.unconsented_minors_masked && unconsentedCount > 0),
     unconsentedCount
   };
+}
+
+export const STREAM_PROVIDER_CHOICES = Object.freeze(["none", "mux", "cloudflare_stream", "vimeo", "other"]);
+// Teachers (including music: band, choir, orchestra), VPs, and athletic directors
+// (who are assigned from teacher/VP/principal) may publish for their own school.
+export const EVENT_PUBLISH_ROLES = Object.freeze(["superintendent", "it_admin", "principal", "vice_principal", "teacher"]);
+export function canPublishEvents(role) { return EVENT_PUBLISH_ROLES.includes(role); }
+export function eventSchoolAllowed(actor, schoolId) {
+  if (!schoolId) return false;
+  if (["superintendent", "it_admin"].includes(actor.role)) return true;
+  return Boolean(actor.schoolId && actor.schoolId === schoolId);
 }
