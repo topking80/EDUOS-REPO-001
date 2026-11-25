@@ -173,6 +173,9 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     const uploaded = await uploadDocument("pa", ID.alice, contribution.id, text, "family-letter.txt", "doc-retry-0001");
     assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
     const asset = uploaded.body.data.assetId;
+    const checksum = (await admin.query("SELECT sha256, integrity_status FROM private_media_objects WHERE asset_id=$1", [asset])).rows[0];
+    assert.match(checksum.sha256, /^[0-9a-f]{64}$/);
+    assert.equal(checksum.integrity_status, "ok", "documents enter the TC-08 integrity registry");
     const again = await uploadDocument("pa", ID.alice, contribution.id, text, "family-letter.txt", "doc-retry-0001");
     assert.equal(again.status, 200); assert.equal(again.body.data.assetId, asset, "idempotent retry");
     clamUp = false;
