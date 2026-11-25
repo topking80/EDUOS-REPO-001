@@ -733,7 +733,7 @@ GRANT EXECUTE ON FUNCTION eduos_history_export_allowed(uuid) TO eduos_app;
 -- MEDIA-01 (db/126): history photos. Policies are edited by the
 -- superintendent; photos go through the definer functions only.
 GRANT SELECT, INSERT ON district_history_media_policies TO eduos_app;
-GRANT UPDATE (images_enabled, max_image_bytes, max_per_entry, max_bytes_per_student, set_by, set_at) ON district_history_media_policies TO eduos_app;
+GRANT UPDATE (images_enabled, max_image_bytes, max_per_entry, max_bytes_per_student, documents_enabled, max_document_bytes, max_documents_per_contribution, set_by, set_at) ON district_history_media_policies TO eduos_app;
 REVOKE DELETE, TRUNCATE ON district_history_media_policies FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_history_media_begin(uuid, uuid, text, text, bigint, text, text, text), eduos_history_media_get(uuid, text),
   eduos_history_media_set(uuid, text, bigint, text, text, int, int), eduos_history_entry_photos(uuid[]) TO eduos_app;
