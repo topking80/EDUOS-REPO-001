@@ -454,25 +454,41 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
           ListTile(dense: true, contentPadding: EdgeInsets.zero, title: Text(str(rider['name'])), subtitle: Text('${str(rider['grade'])} · awaiting authorized release'), trailing: const StatusChip('expected', text: 'Waiting')),
         const Notice('This is the school pick-up duty queue. Pass verification, photo-ID checks, custody safeguards and release authorization remain in the dedicated pick-up workflow.'),
       ]),
-      SectionCard(title: 'Library and lunchroom duties', children: [
-        for (final shift in d.shifts.where((x) => ['library', 'meal_service', 'transport'].contains(str(x['department']))))
-          ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.schedule_outlined), title: Text(str(shift['assignment'])), subtitle: Text('${str(shift['department']).replaceAll('_', ' ')} · ${str(shift['shift_date'])} · ${str(shift['starts_at'])}–${str(shift['ends_at'])}')),
-        if (checklists.isEmpty && tasks.isEmpty) const EmptyState('No shared duty checklists or tasks are assigned right now.'),
-        for (final item in checklists.where((x) => ['library', 'meal_service', 'transport', 'general'].contains(str(x['domain']))))
+      _dutyDashboard(
+        title: 'Library / media center duty',
+        domain: 'library',
+        icon: Icons.local_library_outlined,
+        shifts: d.shifts,
+        checklists: checklists,
+        tasks: tasks,
+      ),
+      _dutyDashboard(
+        title: 'Lunchroom duty',
+        domain: 'meal_service',
+        icon: Icons.restaurant_outlined,
+        shifts: d.shifts,
+        checklists: checklists,
+        tasks: tasks,
+      ),
+      _dutyDashboard(
+        title: 'Transport duty',
+        domain: 'transport',
+        icon: Icons.directions_bus_outlined,
+        shifts: d.shifts,
+        checklists: checklists,
+        tasks: tasks,
+      ),
+      SectionCard(title: 'General staff checklist', children: [
+        for (final item in checklists.where((x) => str(x['domain']) == 'general'))
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
             value: item['completed_at'] != null,
             onChanged: item['completed_at'] != null ? null : (_) => _complete(item),
             title: Text(str(item['label'])),
-            subtitle: Text('${str(item['domain']).replaceAll('_', ' ')} · ${str(item['title'])}'),
+            subtitle: Text(str(item['title'])),
           ),
-        for (final task in tasks.where((x) => ['library', 'meal_service', 'transport'].contains(str(x['domain']))))
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.assignment_outlined),
-            title: Text(str(task['summary'])),
-            subtitle: Text('${str(task['domain']).replaceAll('_', ' ')} · ${str(task['status'])}'),
-          ),
+        if (checklists.every((x) => str(x['domain']) != 'general'))
+          const EmptyState('No general staff checklist items are assigned.'),
       ]),
       SectionCard(title: 'Staff handoffs', children: [
         if (handoffs.isEmpty) const EmptyState('No staff handoffs waiting.'),
@@ -491,6 +507,63 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
                 : null,
           ),
       ]),
+    ]);
+  }
+
+  Widget _dutyDashboard({
+    required String title,
+    required String domain,
+    required IconData icon,
+    required List<Json> shifts,
+    required List<Json> checklists,
+    required List<Json> tasks,
+  }) {
+    final assignedShifts = shifts.where((x) => str(x['department']) == domain).toList();
+    final assignedChecklists = checklists.where((x) => str(x['domain']) == domain).toList();
+    final assignedTasks = tasks.where((x) => str(x['domain']) == domain).toList();
+    final completed = assignedChecklists.where((x) => x['completed_at'] != null).length;
+    return SectionCard(title: title, children: [
+      Row(children: [
+        Icon(icon),
+        const SizedBox(width: 8),
+        Expanded(child: Text('${assignedShifts.length} shift(s) · $completed/${assignedChecklists.length} checklist items complete · ${assignedTasks.length} task(s)')),
+      ]),
+      if (assignedShifts.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        const Text('Your assignments', style: TextStyle(fontWeight: FontWeight.w600)),
+        for (final shift in assignedShifts)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.schedule_outlined),
+            title: Text(str(shift['assignment'])),
+            subtitle: Text('${str(shift['shift_date'])} · ${str(shift['starts_at'])}–${str(shift['ends_at'])}'),
+          ),
+      ],
+      if (assignedChecklists.isNotEmpty) ...[
+        const Divider(),
+        const Text('Duty checklist', style: TextStyle(fontWeight: FontWeight.w600)),
+        for (final item in assignedChecklists)
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            value: item['completed_at'] != null,
+            onChanged: item['completed_at'] != null ? null : (_) => _complete(item),
+            title: Text(str(item['label'])),
+            subtitle: Text(str(item['title'])),
+          ),
+      ],
+      if (assignedTasks.isNotEmpty) ...[
+        const Divider(),
+        const Text('Open work', style: TextStyle(fontWeight: FontWeight.w600)),
+        for (final task in assignedTasks)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.assignment_outlined),
+            title: Text(str(task['summary'])),
+            subtitle: Text(str(task['status'])),
+          ),
+      ],
+      if (assignedShifts.isEmpty && assignedChecklists.isEmpty && assignedTasks.isEmpty)
+        const EmptyState('No assignments, checklists or tasks are assigned here today.'),
     ]);
   }
 
