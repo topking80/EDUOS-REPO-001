@@ -38,19 +38,6 @@ class _TeacherDashboardData {
 class TeacherDashboardScreen extends StatelessWidget {
   const TeacherDashboardScreen({super.key});
 
-  Future<Map<String, Object?>?> _optional(String path) async {
-    try {
-      return await AppScope.read(_context!).api.get(path);
-    } on ApiException catch (e) {
-      if (e.isUnauthorized || e.isOffline) rethrow;
-      return null;
-    }
-  }
-
-  // Set only while the Loader invokes _load; avoids retaining BuildContext
-  // across asynchronous work or storing it on the widget.
-  static BuildContext? _context;
-
   Future<_TeacherDashboardData> _load(BuildContext context) async {
     final api = AppScope.read(context).api;
     Future<Map<String, Object?>?> get(String path) async {
