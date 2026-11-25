@@ -945,7 +945,7 @@ async function activitiesLiveView() {
       h("p", { class: "notice" }, commerce?.data?.enabled ? `${commerce.data.note || "Paid tickets are on."} Live video is not enabled.`
         : "Paid tickets and live video are not enabled. No payment is collected here."),
       family ? h("button", { class: "btn block", type: "button", onclick: () => go("tickets") }, "Tickets & receipts") : null,
-      ["principal", "superintendent"].includes(role) ? h("button", { class: "btn block", type: "button", onclick: () => go("commerce") }, "Ticketing & revenue") : null),
+      ["principal", "superintendent", "vice_principal", "teacher"].includes(role) || my.athleticDirector ? h("button", { class: "btn block", type: "button", onclick: () => go("commerce") }, "Ticketing & revenue") : null),
     adCard
   ];
 }
@@ -6205,7 +6205,7 @@ VIEWS.tickets = async () => {
       area.scrollIntoView?.({ behavior: "smooth" });
     } catch (e) { cmErr(e, "Couldn't get tickets."); }
   };
-  const KIND_LBL = { sport: "Sports", play: "Play", concert: "Concert", assembly: "Assembly", ceremony: "Ceremony", club_showcase: "Club showcase", other: "Live event" };
+  const KIND_LBL = { sport: "Sports", play: "Play", concert: "Concert", recital: "Recital", assembly: "Assembly", ceremony: "Ceremony", club_showcase: "Club showcase", other: "Live event" };
   const PASS_LBL = { admission: "Admission", stream_pass: "Livestream pass", season_stream_pass: "Season stream pass" };
   const watchStream = async ev => {
     try {
@@ -6376,9 +6376,31 @@ VIEWS.commerce = async () => {
         h("button", { class: "btn primary", type: "submit" }, "Save livestream"))));
   }
 
+  if (supt || state.me.role === "it_admin") {
+    const sp = (await safe(api.get("/api/stream-provider"), { data: { provider: "none", hasCredentials: false } })).data || {};
+    const prov = h("select", { id: "cm-sp-prov" },
+      [["none", "None"], ["mux", "Mux"], ["cloudflare_stream", "Cloudflare Stream"], ["vimeo", "Vimeo"], ["other", "Other"]]
+        .map(([v, lbl]) => h("option", { value: v, selected: sp.provider === v }, lbl)));
+    const cred = h("input", { id: "cm-sp-cred", type: "password", autocomplete: "new-password", placeholder: sp.hasCredentials ? "Credentials on file (write-only)" : "Optional API token (write-only)" });
+    out.push(h("section", { class: "card", "aria-label": "Livestream provider" }, h("h2", {}, "Livestream provider"),
+      h("p", { class: "small muted" }, "The district chooses the service. Credentials are stored encrypted and never shown again. This does not turn on a live connection."),
+      h("form", { class: "stack", onsubmit: async e => {
+        e.preventDefault();
+        try {
+          const body = { provider: prov.value };
+          if (cred.value.trim()) body.credentials = { apiToken: cred.value.trim() };
+          if (prov.value === "none") body.clearCredentials = true;
+          await api.put("/api/stream-provider", body);
+          toast("Livestream provider saved"); reload();
+        } catch (err) { cmErr(err, "Couldn't save the livestream provider."); }
+      } }, h("label", { for: "cm-sp-prov" }, "Provider"), prov, h("label", { for: "cm-sp-cred" }, "API token (write-only)"), cred,
+        h("p", { class: "small muted" }, sp.hasCredentials ? "Credentials are on file." : "No credentials stored."),
+        h("button", { class: "btn primary", type: "submit" }, "Save provider"))));
+  }
+
   // Create standalone live event (play, concert, assembly, ceremony, etc.) + stream season.
   const evKind = h("select", { id: "cm-ev-kind" },
-    [["play", "Play"], ["concert", "Concert"], ["assembly", "Assembly"], ["ceremony", "Ceremony"], ["club_showcase", "Club showcase"], ["sport", "Sport"], ["other", "Other"]]
+    [["play", "Play"], ["concert", "Concert"], ["recital", "Recital"], ["assembly", "Assembly"], ["ceremony", "Ceremony"], ["club_showcase", "Club showcase"], ["sport", "Sport"], ["other", "Other"]]
       .map(([v, lbl]) => h("option", { value: v }, lbl))),
     evTitle = h("input", { id: "cm-ev-title", required: true, maxlength: 180, placeholder: "Spring Musical" }),
     evVenue = h("input", { id: "cm-ev-venue", maxlength: 300, placeholder: "Main Auditorium" }),

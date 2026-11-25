@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
-  EVENT_KINDS, PASS_KINDS, STREAM_ACCESS_MODES,
+  EVENT_KINDS, PASS_KINDS, STREAM_ACCESS_MODES, STREAM_PROVIDER_CHOICES,
+  canPublishEvents, eventSchoolAllowed,
   hashStreamSecret, signStreamToken, verifyStreamToken, evaluateStreamAccess
 } from "../src/event-streaming.js";
 
@@ -10,9 +11,16 @@ const root = new URL("../", import.meta.url);
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 test("event kinds and pass kinds cover plays, live events, and stream passes", () => {
-  for (const k of ["sport", "play", "concert", "assembly", "ceremony", "club_showcase", "other"]) {
+  for (const k of ["sport", "play", "concert", "assembly", "ceremony", "club_showcase", "recital", "other"]) {
     assert.ok(EVENT_KINDS.includes(k));
   }
+  assert.ok(STREAM_PROVIDER_CHOICES.includes("mux") && STREAM_PROVIDER_CHOICES.includes("none"));
+  assert.equal(canPublishEvents("teacher"), true);
+  assert.equal(canPublishEvents("vice_principal"), true);
+  assert.equal(canPublishEvents("parent"), false);
+  assert.equal(eventSchoolAllowed({ role: "teacher", schoolId: id(1) }, id(1)), true);
+  assert.equal(eventSchoolAllowed({ role: "teacher", schoolId: id(1) }, id(2)), false);
+  assert.equal(eventSchoolAllowed({ role: "superintendent", schoolId: null }, id(2)), true);
   assert.deepEqual([...PASS_KINDS], ["admission", "stream_pass", "season_stream_pass"]);
   assert.deepEqual([...STREAM_ACCESS_MODES], ["free", "paid_pass"]);
   assert.equal(hashStreamSecret("short"), null);
@@ -51,11 +59,14 @@ test("stream access fails closed for kill switch, unmasked minors, and missing p
 test("migration 154 forces RLS, keeps live_enabled false by default, and grants via template only", async () => {
   const sql = await readFile(new URL("db/154_event_tickets_paid_streams.sql", root), "utf8");
   assert.match(sql, /CREATE TABLE IF NOT EXISTS school_stream_seasons/);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS district_stream_settings/);
+  assert.match(sql, /recital/);
   assert.match(sql, /live_enabled boolean NOT NULL DEFAULT false/);
   assert.match(sql, /FORCE ROW LEVEL SECURITY/);
   assert.doesNotMatch(sql, /TO eduos_app/);
   const grants = await readFile(new URL("db/runtime_grants.template.sql", root), "utf8");
   assert.match(grants, /GRANT SELECT, INSERT ON school_stream_seasons TO eduos_app/);
+  assert.match(grants, /GRANT SELECT, INSERT ON district_stream_settings TO eduos_app/);
   const server = await readFile(new URL("src/server.js", root), "utf8");
   assert.match(server, /registerEventStreamingRoutes\(app\)/);
 });

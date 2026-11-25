@@ -21,8 +21,8 @@ describe("live event tickets & paywalled streams against real PostgreSQL", { ski
     assert.equal(migrated.code, 0, migrated.out);
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
-    server = await startServer({ ...env, DATABASE_URL: db.appUrl });
-    for (const name of ["supt1", "p1", "t1", "pa", "pb", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
+    server = await startServer({ ...env, DATABASE_URL: db.appUrl, COMMERCE_SECRETS_KEY: "k".repeat(16) + "-commerce-test-key-0123456789" });
+    for (const name of ["supt1", "p1", "p2", "t1", "vp1", "pa", "pb", "pu"]) s[name] = await login(server.base, idp, name, { email_verified: true });
     assert.equal((await as("supt1")("PUT", "/api/commerce/payment-methods", { enabledMethods: ["sandbox"], defaultMethod: "sandbox" })).status, 200);
     assert.equal((await as("supt1")("PUT", "/api/commerce/settings", { enabled: true })).status, 200);
     // Keep sandbox-only mode explicit (no live payments).
@@ -153,5 +153,70 @@ describe("live event tickets & paywalled streams against real PostgreSQL", { ski
 
     const auditRow = await admin.query("SELECT detail FROM audit_events WHERE resource_type='event_stream' AND action='stream_access' ORDER BY occurred_at DESC LIMIT 1");
     assert.match(String(auditRow.rows[0].detail), /granted=1/);
+  });
+
+  it("teachers, vice principals and athletic directors publish recitals for their own school and can add stream passes", async () => {
+    const recital = await as("t1")("POST", "/api/events", {
+      eventKind: "recital", title: "Spring Choir Recital", venue: "Choir Room", startsAt: future(72), endsAt: future(74), publish: true
+    });
+    assert.equal(recital.status, 201, JSON.stringify(recital.body));
+    assert.equal(recital.body.data.event_kind, "recital");
+    assert.equal(recital.body.data.status, "published");
+    assert.equal(recital.body.data.school_id, ID.s1);
+
+    const vpPub = await as("vp1")("POST", "/api/events", {
+      eventKind: "concert", title: "VP Band Concert", venue: "Auditorium", startsAt: future(80), endsAt: future(82), publish: true
+    });
+    assert.equal(vpPub.status, 201, JSON.stringify(vpPub.body));
+    assert.equal(vpPub.body.data.status, "published");
+
+    await admin.query("INSERT INTO school_athletic_directors(district_id,school_id,user_id,assigned_by) VALUES($1,$2,$3,$4)",
+      [ID.d1, ID.s1, USERS.t1[0], USERS.p1[0]]);
+    const adPub = await as("t1")("PATCH", `/api/events/${recital.body.data.id}`, { status: "published", title: "Spring Choir Recital (AD)" });
+    assert.equal(adPub.status, 200, JSON.stringify(adPub.body));
+
+    const pass = await as("t1")("POST", `/api/events/${recital.body.data.id}/ticket-types`, {
+      name: "Recital Livestream", passKind: "stream_pass", priceCents: 500, capacity: 100, salesOpen: true
+    });
+    assert.equal(pass.status, 201, JSON.stringify(pass.body));
+    assert.equal(pass.body.data.pass_kind, "stream_pass");
+
+    assert.equal((await as("pa")("POST", "/api/events", {
+      eventKind: "recital", title: "Family Recital", startsAt: future(90), endsAt: future(92), publish: true
+    })).status, 403);
+    const cross = await as("p2")("POST", "/api/events", {
+      eventKind: "recital", title: "Other school recital", schoolId: ID.s1, startsAt: future(90), endsAt: future(92), publish: true
+    });
+    assert.equal(cross.status, 201, JSON.stringify(cross.body));
+    assert.equal(cross.body.data.school_id, ID.s2, "a principal cannot publish to another school");
+  });
+
+  it("the superintendent picks a district stream provider; credentials are write-only and never returned", async () => {
+    const empty = await as("p1")("GET", "/api/stream-provider");
+    assert.equal(empty.status, 200);
+    assert.equal(empty.body.data.provider, "none");
+    assert.equal(empty.body.data.hasCredentials, false);
+
+    assert.equal((await as("t1")("PUT", "/api/stream-provider", { provider: "mux", credentials: { apiToken: "mux-live-token-should-never-return" } })).status, 403);
+    const saved = await as("supt1")("PUT", "/api/stream-provider", { provider: "mux", credentials: { apiToken: "mux-live-token-should-never-return" } });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.equal(saved.body.data.provider, "mux");
+    assert.equal(saved.body.data.hasCredentials, true);
+    assert.equal(saved.body.data.apiToken, undefined);
+    assert.equal(saved.body.data.credentials, undefined);
+    assert.equal(saved.body.data.secrets_enc, undefined);
+    const raw = JSON.stringify(saved.body);
+    assert.equal(raw.includes("mux-live-token-should-never-return"), false);
+
+    const again = await as("pa")("GET", "/api/stream-provider");
+    assert.equal(again.status, 200);
+    assert.equal(again.body.data.provider, "mux");
+    assert.equal(again.body.data.hasCredentials, true);
+    assert.equal(JSON.stringify(again.body).includes("mux-live-token-should-never-return"), false);
+
+    const stored = await admin.query("SELECT secrets_enc, provider FROM district_stream_settings WHERE district_id=$1", [ID.d1]);
+    assert.equal(stored.rows[0].provider, "mux");
+    assert.match(stored.rows[0].secrets_enc, /^c1\./);
+    assert.equal(stored.rows[0].secrets_enc.includes("mux-live-token-should-never-return"), false);
   });
 });

@@ -6,7 +6,7 @@ import { audit, rows, one, validId, cleanText, HttpError, sendError } from "./ro
 import { startTicketCheckout, replayTicketCheckout } from "./commerce/service.js";
 import { runAfterCommit } from "./commerce/phases.js";
 import { requiresGuardianForClub } from "./activity-operations.js";
-import { EVENT_KINDS, PASS_KINDS } from "./event-streaming.js";
+import { EVENT_KINDS, PASS_KINDS, canPublishEvents, eventSchoolAllowed } from "./event-streaming.js";
 const DISTRICT = role => ["superintendent","it_admin"].includes(role);
 const LEAD = role => ["superintendent","principal"].includes(role);
 const wrap = fn => async (req,res,next) => { try { const data=await withTenantTransaction(req.actor,c=>fn(c,req)); res.setHeader("Cache-Control","no-store"); res.json({data}); } catch(e) { sendError(res,next,e); } };
@@ -216,12 +216,13 @@ export function registerClubsSportsRoutes(app) {
   });res.status(201).json({data});}catch(e){sendError(res,next,e)}
  });
  app.post("/api/events/:id/ticket-types",requireSession,requireCsrf,async(req,res,next)=>{
-  const a=req.actor,b=req.body||{};if(!LEAD(a.role))return res.status(403).json({error:"school_lead_required"});
+  const a=req.actor,b=req.body||{};if(!canPublishEvents(a.role))return res.status(403).json({error:"event_publisher_required"});
   const passKind=b.passKind||"admission";
   if(!PASS_KINDS.includes(passKind)||(passKind==="season_stream_pass"&&!validId(b.streamSeasonId))||(passKind!=="season_stream_pass"&&b.streamSeasonId))return res.status(400).json({error:"invalid_pass_kind"});
   if(!validId(req.params.id)||!cleanText(b.name,80,2)||!Number.isInteger(b.capacity)||b.capacity<1||b.capacity>1000000||!Number.isInteger(b.priceCents??0)||(b.priceCents??0)<0||(b.priceCents??0)>1000000||typeof (b.currency||"USD")!=="string"||!(b.currency||"USD").match(/^[A-Z]{3}$/))return res.status(400).json({error:"invalid_ticket_type"});
   try{const data=await withTenantTransaction(a,async c=>{
    const event=await one(c,"SELECT * FROM school_events WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3) FOR UPDATE",[req.params.id,a.districtId,DISTRICT(a.role)?null:a.schoolId]);if(!event)throw new HttpError(404,"event_not_found");
+   if(!eventSchoolAllowed(a,event.school_id))throw new HttpError(403,"event_school_scope_denied");
    if(b.streamSeasonId){const ss=await one(c,"SELECT id FROM school_stream_seasons WHERE id=$1 AND district_id=$2 AND school_id=$3",[b.streamSeasonId,a.districtId,event.school_id]);if(!ss)throw new HttpError(404,"stream_season_not_found");}
    const r=await one(c,`INSERT INTO event_ticket_types(district_id,school_id,event_id,name,price_cents,currency,capacity,sales_open,pass_kind,stream_season_id)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,event_id,name,price_cents,currency,capacity,sold_count,sales_open,pass_kind,stream_season_id`,
