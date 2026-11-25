@@ -143,7 +143,25 @@ BEGIN
   RETURNING o.storage_key;
 END $$;
 
-REVOKE ALL ON FUNCTION eduos_history_contribution_document_begin(uuid,uuid,text,bigint,text,text),
+
+CREATE FUNCTION eduos_history_contribution_documents(p_contributions uuid[])
+RETURNS TABLE(contribution_id uuid,asset_id uuid,file_name text,byte_size bigint)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $
+  SELECT d.contribution_id,d.asset_id,d.file_name,o.byte_size
+    FROM student_history_contribution_documents d
+    JOIN private_media_objects o ON o.asset_id=d.asset_id AND o.district_id=d.district_id
+    JOIN student_history_contributions c ON c.id=d.contribution_id AND c.district_id=d.district_id
+   WHERE d.district_id=eduos_ctx_district() AND d.contribution_id=ANY(p_contributions)
+     AND o.scan_status='clean' AND o.processing_status='processed'
+     AND c.status IN ('submitted','approved')
+     AND ((c.status='submitted' AND (eduos_history_contribution_mine(c.id) OR eduos_history_contribution_reviewer(c.id)))
+       OR (c.status='approved' AND c.history_entry_id IS NOT NULL
+           AND eduos_history_entry_access(c.history_entry_id,'read')))
+   ORDER BY d.contribution_id,d.created_at
+$;
+
+REVOKE ALL ON FUNCTION eduos_history_contribution_documents(uuid[]),
+  eduos_history_contribution_document_begin(uuid,uuid,text,bigint,text,text),
   eduos_history_contribution_document_set(uuid,text,bigint,text,text),
   eduos_history_contribution_document_get(uuid),
   eduos_history_contribution_documents_release(uuid) FROM PUBLIC;
