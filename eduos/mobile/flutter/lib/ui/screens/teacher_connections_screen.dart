@@ -526,7 +526,7 @@ class _TeacherConnectionsScreenState extends State<TeacherConnectionsScreen> {
       Row(children: [
         Icon(icon),
         const SizedBox(width: 8),
-        Expanded(child: Text('${assignedShifts.length} shift(s) · ${completed}/${assignedChecklists.length} checklist items complete · ${assignedTasks.length} task(s)')),
+        Expanded(child: Text('${assignedShifts.length} shift(s) · $completed/${assignedChecklists.length} checklist items complete · ${assignedTasks.length} task(s)')),
       ]),
       if (assignedShifts.isNotEmpty) ...[
         const SizedBox(height: 8),
