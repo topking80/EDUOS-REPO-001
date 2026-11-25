@@ -714,6 +714,23 @@ function staffSlipsPanel(activity) {
   return h("section", { class: "card" }, h("h3", {}, `Permission slips · ${activity.title}`), box, h("details", {}, h("summary", {}, "New slip"), form));
 }
 
+function familyClubApprovalsCard(rows, canApprove) {
+  if (!rows.length) return null;
+  const act = async (id, decision) => {
+    try { await api.post(`/api/activity-memberships/${id}/consent`, { decision }); toast(decision === "active" ? "Club sign-up approved." : "Declined."); go("activities", { push: false }); }
+    catch { toast("Couldn't save your answer."); }
+  };
+  return h("section", { class: "card", "aria-label": "Club sign-ups" },
+    h("h2", {}, "Club sign-ups"),
+    h("p", { class: "small muted" }, "Clubs need a guardian's OK before high school."),
+    h("ul", { class: "list" }, rows.map(r => h("li", { class: "row wrap" },
+      h("div", { class: "grow" }, h("b", {}, r.activity_title), r.student_name ? h("span", { class: "small muted" }, ` · ${r.student_name}`) : null),
+      chip(r.status === "active" ? "present" : r.status === "declined" ? "absent" : "expected", r.status === "pending" ? "Waiting for guardian" : r.status === "active" ? "Approved" : r.status),
+      canApprove && r.status === "pending" ? [
+        h("button", { class: "btn small primary", type: "button", onclick: () => act(r.id, "active") }, "Approve"),
+        h("button", { class: "btn small", type: "button", onclick: () => act(r.id, "declined") }, "Decline")
+      ] : null))));
+}
 function familySlipsCard(slips, canSign) {
   if (!slips.length) return h("section", { class: "card" }, h("h3", {}, "Permission slips"), h("p", { class: "muted" }, "No permission slips right now."));
   return h("section", { class: "card" }, h("h3", {}, "Permission slips"), h("ul", { class: "list" }, slips.map(s => {
@@ -887,9 +904,9 @@ VIEWS.teams = async () => {
 async function activitiesLiveView() {
   const role = state.me.role, family = ["parent", "pupil"].includes(role);
   const staff = ["teacher", "principal", "vice_principal", "superintendent", "it_admin"].includes(role);
-  const [acts, events, roles, slips, commerce] = await Promise.all([
+  const [acts, events, roles, slips, clubApprovals, commerce] = await Promise.all([
     safe(api.get("/api/activities"), { data: [] }), safe(api.get("/api/events"), { data: [] }),
-    staff ? safe(api.get("/api/sports/my-roles"), { data: {} }) : null, family ? safe(api.get("/api/my/permission-slips"), { data: [] }) : null,
+    staff ? safe(api.get("/api/sports/my-roles"), { data: {} }) : null, family ? safe(api.get("/api/my/permission-slips"), { data: [] }) : null, family ? safe(api.get("/api/my/club-approvals"), { data: [] }) : null,
     safe(api.get("/api/commerce/status"))]);
   const activities = actList(acts?.data), upcoming = actList(events?.data).filter(e => new Date(e.ends_at || e.starts_at) >= new Date()).slice(0, 10);
   const my = roles?.data && !Array.isArray(roles.data) ? roles.data : {};
@@ -904,7 +921,7 @@ async function activitiesLiveView() {
     a.description ? h("p", { class: "muted small" }, a.description) : null,
     a.meetingDetails ? h("p", {}, "📅 ", a.meetingDetails) : null,
     h("p", { class: "small muted" }, `${a.memberCount ?? 0} members${a.status !== "published" ? ` · ${a.status}` : ""}`),
-    role === "pupil" && a.status === "published" ? h("button", { class: "btn block", type: "button", onclick: async () => { try { await api.post(`/api/activities/${a.id}/join`); toast("You've joined. Staff confirm the roster."); } catch (e) { actErr(e, "Could not join."); } } }, "Join") : null,
+    role === "pupil" && a.status === "published" ? h("button", { class: "btn block", type: "button", disabled: a.myStatus === "pending", onclick: async () => { try { const r = await api.post(`/api/activities/${a.id}/join`); toast(r?.data?.status === "pending" ? "Waiting for a parent or guardian to approve." : "You've joined. Staff confirm the roster."); go("activities", { push: false }); } catch (e) { actErr(e, "Could not join."); } } }, a.myStatus === "pending" ? "Waiting for guardian" : a.myStatus === "active" ? "Joined" : "Join") : null,
     canSeeEligibility(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "eligibility") }, "Eligibility") : null,
     staff && canRunSlips(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "slips") }, "Permission slips") : null,
     staff && canRunSlips(a) ? h("button", { class: "btn block", type: "button", "aria-label": `Attendance: ${a.title}`, onclick: () => open(a, "attendance") }, "Attendance") : null,
@@ -918,6 +935,7 @@ async function activitiesLiveView() {
     my.athleticDirector ? h("p", { class: "notice" }, "You're this school's athletic director.") : null,
     role === "teacher" && coachOf.size ? h("button", { class: "btn primary block", type: "button", onclick: () => go("teams") }, icon("trophy"), "My teams") : null,
     family ? familySlipsCard(actList(slips?.data), role === "parent") : null,
+    family ? familyClubApprovalsCard(actList(clubApprovals?.data), role === "parent") : null,
     role === "parent" ? await familySharingCard() : null,
     ["principal", "vice_principal"].includes(role) || my.athleticDirector ? await connectorsCard() : null,
     activities.length ? h("div", { class: "grid" }, activities.map(card)) : h("section", { class: "card" }, h("p", { class: "muted" }, "No clubs or teams are published yet.")),
