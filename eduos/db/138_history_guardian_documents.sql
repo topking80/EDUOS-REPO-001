@@ -25,6 +25,8 @@ CREATE TABLE student_history_contribution_documents (
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (district_id, school_id) REFERENCES schools(district_id, id),
   FOREIGN KEY (district_id, student_id) REFERENCES students(district_id, id),
+  FOREIGN KEY (district_id, uploaded_by) REFERENCES district_users(district_id, user_id),
+  FOREIGN KEY (district_id, school_id, asset_id) REFERENCES private_media_objects(district_id, school_id, asset_id) ON DELETE RESTRICT,
   FOREIGN KEY (district_id, school_id, student_id, contribution_id)
     REFERENCES student_history_contributions(district_id, school_id, student_id, id) ON DELETE CASCADE
 );
