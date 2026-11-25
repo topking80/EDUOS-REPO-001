@@ -70,8 +70,3 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
    LIMIT 20
 $$;
 REVOKE ALL ON FUNCTION eduos_teacher_weather_advisories(uuid) FROM PUBLIC;
-
-GRANT SELECT, INSERT ON school_weather_share_settings TO eduos_app;
-GRANT UPDATE (pass_on, set_by, set_at) ON school_weather_share_settings TO eduos_app;
-REVOKE DELETE, TRUNCATE ON school_weather_share_settings FROM eduos_app;
-GRANT EXECUTE ON FUNCTION eduos_weather_share_manager(uuid), eduos_teacher_weather_advisories(uuid) TO eduos_app;
