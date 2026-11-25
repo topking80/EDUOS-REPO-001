@@ -435,6 +435,29 @@ void main() {
   });
 
 
+  testWidgets('school day: paired classroom devices expose only supported controls', (tester) async {
+    final fake = FakeServer({
+      'GET /api/my/rooms': (_) => {'data': [
+        {'id': 'room-1', 'name': 'Room 101', 'now': true, 'slots': [], 'pairing': {'id': 'pair-1', 'controller': 'Teacher mobile app'}, 'devices': [
+          {'id': 'display-1', 'name': 'Front board', 'capabilities': ['show', 'blank', 'volume']},
+        ]},
+      ]},
+      'POST /api/devices/display-1/commands': (_) => {'data': {'id': 'command-1', 'status': 'queued'}},
+    });
+    await launch(tester, fake);
+    await openTab(tester, 'School day');
+    await tester.tap(find.text('Control Front board'));
+    await tester.pumpAndSettle();
+    expect(find.text('Share teacher screen'), findsOneWidget);
+    expect(find.text('Blank display'), findsOneWidget);
+    expect(find.text('Set volume'), findsOneWidget);
+    expect(find.text('Lock student devices'), findsNothing);
+    await tester.tap(find.text('Blank display'));
+    await tester.pumpAndSettle();
+    final request = fake.sent('POST', '/api/devices/display-1/commands').single;
+    expect(jsonDecode(request.body), {'capability': 'blank', 'args': {'on': true}});
+  });
+
   testWidgets('school day: colleague message dialog survives dismissal and starts a conversation', (tester) async {
     final fake = FakeServer({
       'GET /api/network/colleagues': (_) => {'data': {'colleagues': [
