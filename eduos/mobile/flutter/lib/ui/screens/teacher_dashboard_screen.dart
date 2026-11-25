@@ -82,7 +82,7 @@ class TeacherDashboardScreen extends StatelessWidget {
           final incompleteChecklists = checklists.where((c) => c['completed_at'] == null).length;
           final waitingArrivals = data.arrivals.where((a) => !['received', 'completed', 'cancelled'].contains(str(a['status']).toLowerCase())).length;
           final waitingPickup = objs(data.pickup['waiting']).length;
-          final school = str(data.home['school_name'], app.me?.schoolId ?? 'Your school');
+          final school = str(data.home['school_name'], 'Your school');
 
           return ListView(
             padding: const EdgeInsets.all(16),
