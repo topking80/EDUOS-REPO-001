@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
 import '../../core/api_client.dart';
-import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
 import 'class_register_screen.dart';
