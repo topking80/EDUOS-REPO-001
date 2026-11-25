@@ -822,3 +822,10 @@ GRANT SELECT, INSERT ON activity_event_attendance, student_physical_clearances T
 GRANT UPDATE (status, marked_by, marked_at) ON activity_event_attendance TO eduos_app;
 REVOKE DELETE, TRUNCATE ON activity_event_attendance, student_physical_clearances FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_can_read_physical(uuid, uuid) TO eduos_app;
+
+-- Classrooms operations (153): bell schedules (school lead writes, school reads)
+-- and course seating charts (managed by course teacher / school lead).
+GRANT SELECT, INSERT, UPDATE ON school_bell_schedules, course_seating_charts TO eduos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON school_bell_periods, course_seat_assignments TO eduos_app;
+REVOKE DELETE, TRUNCATE ON school_bell_schedules, course_seating_charts FROM eduos_app;
+REVOKE TRUNCATE ON school_bell_periods, course_seat_assignments FROM eduos_app;
