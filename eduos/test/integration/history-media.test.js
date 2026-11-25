@@ -175,6 +175,9 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     const asset = uploaded.body.data.assetId;
     const again = await uploadDocument("pa", ID.alice, contribution.id, text, "family-letter.txt", "doc-retry-0001");
     assert.equal(again.status, 200); assert.equal(again.body.data.assetId, asset, "idempotent retry");
+    clamUp = false;
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Scanner outage"), "outage.txt")).body.error, "security_scan_unavailable");
+    clamUp = true;
     const second = await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Second note"), "second.txt");
     assert.equal(second.status, 201);
     assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Third note"), "third.txt")).body.error, "too_many_documents");
@@ -184,6 +187,9 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     assert.equal(familyList.find(c => c.id === contribution.id).documents[0].id, asset);
     const reviewerList = ok(await as("p1")("GET", "/api/history-contributions"));
     assert.equal(reviewerList.find(c => c.id === contribution.id).documents[0].fileName, "family-letter.txt");
+    const storage = ok(await as("pa")("GET", `/api/history/storage?studentId=${ID.alice}`));
+    assert.ok(storage.usage.usedBytes >= text.length, "family storage total includes document bytes");
+    assert.deepEqual(storage.limits.documentTypes, ["text/plain; charset=utf-8"]);
     assert.equal((await fetch(`${server.base}/api/history/documents/${asset}`, { headers: { cookie: s.pb.cookie } })).status, 404);
     const download = await fetch(`${server.base}/api/history/documents/${asset}`, { headers: { cookie: s.pa.cookie } });
     assert.equal(download.status, 200);
