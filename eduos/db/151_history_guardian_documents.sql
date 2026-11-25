@@ -98,6 +98,10 @@ BEGIN
   IF NOT FOUND OR NOT eduos_history_contribution_mine(p_contribution)
     THEN RETURN jsonb_build_object('error','contribution_not_found'); END IF;
   IF c.status <> 'submitted' THEN RETURN jsonb_build_object('error','contribution_not_editable'); END IF;
+  -- Serialize idempotency lookup as well as quota reservation: two concurrent
+  -- retries with the same key must return the same reservation, not race into
+  -- the unique index and surface an avoidable 500 response.
+  PERFORM pg_advisory_xact_lock(hashtextextended('history-media:'||c.student_id::text,0));
   IF p_upload_key IS NOT NULL THEN
     SELECT d.asset_id INTO existing FROM student_history_contribution_documents d
      WHERE d.district_id=c.district_id AND d.contribution_id=c.id AND d.upload_key=p_upload_key;
@@ -110,9 +114,7 @@ BEGIN
     THEN RETURN jsonb_build_object('error','document_too_large','maxBytes',pol.max_document_bytes); END IF;
   IF p_file_name !~ '^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}\.txt$'
     THEN RETURN jsonb_build_object('error','invalid_document_name'); END IF;
-  -- Serialize per-student reservations before both count and byte checks so
-  -- concurrent uploads cannot exceed either district-controlled limit.
-  PERFORM pg_advisory_xact_lock(hashtextextended('history-media:'||c.student_id::text,0));
+  -- The per-student lock above also serializes count and byte reservations.
   SELECT count(*) INTO n FROM student_history_contribution_documents d
     JOIN private_media_objects o ON o.asset_id=d.asset_id
    WHERE d.district_id=c.district_id AND d.contribution_id=c.id
