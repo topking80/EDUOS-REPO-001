@@ -70,7 +70,7 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
         return res.status(400).json({ error: "invalid_contribution_id" });
       const fileName = typeof req.query.name === "string" ? req.query.name.trim() : "";
       if (!NAME_RE.test(fileName)) return res.status(400).json({ error: "invalid_document_name" });
-      if (!/^text\\/plain(?:\\s*;\\s*charset=utf-8)?$/i.test(String(req.headers["content-type"] || "").trim()) ||
+      if (!/^text\/plain(?:\s*;\s*charset=utf-8)?$/i.test(String(req.headers["content-type"] || "").trim()) ||
           !Buffer.isBuffer(req.body) || !req.body.length || req.body.length > MAX_BYTES)
         return res.status(415).json({ error: "unsupported_document_type", accepted: ["text/plain; charset=utf-8"] });
       const key = req.headers["idempotency-key"];
