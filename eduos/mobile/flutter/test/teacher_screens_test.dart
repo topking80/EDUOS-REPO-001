@@ -190,7 +190,9 @@ void main() {
           'upcomingEvents': [{'id': 'ev1', 'title': 'Winter Concert', 'venue': 'Auditorium'}],
         },
         'classroom': {'assignedRooms': 1, 'connectedRooms': 1, 'checkinsToday': 1, 'rooms': []},
-        'transportation': {'busRidersCount': 4, 'arrivalsPending': 2, 'pickupWaitingCount': 3},
+        'transportation': {'busRidersCount': 4, 'arrivalsPending': 1, 'pickupWaitingCount': 3, 'pendingArrivals': [
+          {'id': 'ah1', 'displayName': 'Ada Lovelace', 'gradeLevel': '3', 'method': 'bus', 'status': 'pending'},
+        ]},
         'duties': [
           {'domain': 'library', 'label': 'Library / media center', 'shiftsToday': 1, 'checklistsTotal': 2, 'checklistsCompleted': 1, 'openTasks': 1},
           {'domain': 'meal_service', 'label': 'Lunchroom', 'shiftsToday': 0, 'checklistsTotal': 1, 'checklistsCompleted': 1, 'openTasks': 0},
@@ -209,10 +211,14 @@ void main() {
           'items': [
             {'kind': 'grading', 'title': 'Grade submitted work', 'detail': '5 submission(s) waiting', 'target': 'grading', 'priority': 'high'},
           ],
+          'checklistItems': [
+            {'itemId': 'cli1', 'title': 'Morning Library Check', 'label': 'Unlock media cart', 'domain': 'library'},
+          ],
         },
         'connections': {
           'unreadMessages': 3,
           'pendingHandoffsCount': 1,
+          'recentHandoffs': [{'id': 'h1', 'domain': 'library', 'summary': 'Cart ready', 'next_action': 'Shelve returns', 'acknowledged_at': null}],
           'staffAnnouncements': [{'id': 'sa1', 'title': 'Morning huddle', 'body': 'Library at 7:45'}],
         },
         'alerts': {
@@ -238,6 +244,57 @@ void main() {
     expect(find.text('3 unread conversation message(s)'), findsOneWidget);
     expect(fake.sent('GET', '/api/teacher/dashboard'), hasLength(1));
     expect(fake.sent('GET', '/api/home'), isEmpty);
+  });
+
+  testWidgets('dashboard inline actions mark a notification, confirm an arrival, complete a checklist, and acknowledge a handoff', (tester) async {
+    final fake = FakeServer({
+      'GET /api/teacher/dashboard': (_) => {'data': {
+        'school': {'id': 's1', 'name': 'Maple Elementary', 'timezone': 'America/New_York'},
+        'date': '2026-11-25',
+        'overview': {'students': 24, 'attendanceMarkedToday': 20, 'absences7d': 0, 'myOpenCases': 0, 'coursesCount': 0, 'courses': [], 'scheduleToday': [], 'upcomingEvents': []},
+        'classroom': {'assignedRooms': 0, 'connectedRooms': 0, 'checkinsToday': 0, 'rooms': []},
+        'transportation': {'busRidersCount': 0, 'arrivalsPending': 1, 'pickupWaitingCount': 0, 'pendingArrivals': [
+          {'id': 'ah1', 'displayName': 'Ada Lovelace', 'gradeLevel': '3', 'method': 'bus', 'status': 'pending'},
+        ]},
+        'duties': [],
+        'workQueue': {'toGrade': 0, 'quizzesToReview': 0, 'openAssignments': 0, 'draftAssignments': 0, 'tutoringFlagged': 0, 'historyDrafts': 0, 'openTasks': 0, 'incompleteChecklists': 1, 'pendingHandoffs': 1, 'items': [], 'checklistItems': [
+          {'itemId': 'cli1', 'title': 'Morning Library Check', 'label': 'Unlock media cart', 'domain': 'library'},
+        ]},
+        'connections': {'unreadMessages': 0, 'pendingHandoffsCount': 1, 'recentHandoffs': [
+          {'id': 'h1', 'domain': 'library', 'summary': 'Cart ready', 'next_action': 'Shelve returns', 'acknowledged_at': null},
+        ], 'staffAnnouncements': []},
+        'alerts': {'unreadNotifications': 1, 'notifications': [
+          {'id': 'n1', 'kind': 'safety', 'title': 'Bus 12 delayed', 'body': 'Arriving at 8:10', 'read_at': null},
+        ], 'safetyIncidents': [], 'urgentTasksCount': 0, 'pendingArrivalsCount': 1},
+      }},
+      'POST /api/notifications/read': (_) => {'data': {'marked': 1}},
+      'POST /api/arrival/handoffs/ah1/receive': (_) => {'data': {'id': 'ah1', 'status': 'received'}},
+      'POST /api/staff-workspace/checklists/cli1/complete': (_) => {'data': {'item_id': 'cli1'}},
+      'POST /api/staff-workspace/handoffs/h1/acknowledge': (_) => {'data': {'id': 'h1'}},
+    });
+
+    await launch(tester, fake);
+
+    expect(find.text('Mark read'), findsOneWidget);
+    await tester.tap(find.text('Mark read'));
+    await tester.pump();
+    expect(jsonDecode(fake.sent('POST', '/api/notifications/read').single.body), {'ids': ['n1']});
+    expect(find.text('Notification marked read.'), findsOneWidget);
+
+    await tester.tap(find.text('Confirm handoff'));
+    await tester.pump();
+    expect(fake.sent('POST', '/api/arrival/handoffs/ah1/receive'), hasLength(1));
+    expect(find.text('Student handoff confirmed. Record first attendance in Classes.'), findsOneWidget);
+
+    await tester.tap(find.text('Complete'));
+    await tester.pump();
+    expect(fake.sent('POST', '/api/staff-workspace/checklists/cli1/complete'), hasLength(1));
+    expect(find.text('Checklist item completed.'), findsOneWidget);
+
+    await tester.tap(find.text('Acknowledge'));
+    await tester.pump();
+    expect(fake.sent('POST', '/api/staff-workspace/handoffs/h1/acknowledge'), hasLength(1));
+    expect(find.text('Handoff acknowledged.'), findsOneWidget);
   });
 
   testWidgets('grading: review a quiz\'s open answer, grade with a rubric, and score a hand-in', (tester) async {

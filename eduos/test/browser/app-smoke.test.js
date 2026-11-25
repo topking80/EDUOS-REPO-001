@@ -663,7 +663,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
           if (!text.includes("CAPTURE-123") || !text.includes("evt-123")) failures.push(`${role} #/payments: webhook recovery records did not render`);
         }
         // TC-03: the teacher, reviewer and family screens show their items and actions.
-        const expect = { "teacher/dashboard": ["Teacher command dashboard", "Alerts and time-sensitive notices", "Today\u2019s schedule and classes", "Work queue", "Classroom operations", "Transportation and school-day duties", "Staff connections", "Mark read", "Confirm handoff", "Complete", "Acknowledge"],
+        const expect = { "teacher/dashboard": ["Teacher command dashboard", "Alerts and time-sensitive notices", "Today\u2019s schedule and classes", "Work queue", "Classroom operations", "Transportation and school-day duties", "Staff connections", "Mark read", "Confirm handoff", "Complete", "Acknowledge", "classroom roll", "2 of 3 checked in", "Pair this device to use live classroom controls."],
           "teacher/schoolday": ["School day", "Library / media center duty", "Transport duty", "Confirm handoff", "Staff handoffs", "All duties", "Leave a handoff"],
           "teacher/contributions": ["Volcano project", "Changes requested · Needs edits", "Save and resubmit", "In the student's history", "Add a photo", "Science fair"],
           "principal/history": ["Teacher contributions", "Science fair", "Ask for changes", "Reject"],

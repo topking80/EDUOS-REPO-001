@@ -59,3 +59,17 @@ test("teacher dashboard exposes inline notification, handoff, checklist, and arr
   assert.match(flutter, /Confirm handoff/);
   assert.match(flutter, /Mark all read/);
 });
+
+test("teacher dashboard and classes show a classroom roll and capability-filtered live device controls", () => {
+  assert.match(appJs, /classroomLiveExtras/);
+  assert.match(appJs, /api\.get\(`\/api\/rooms\/\$\{r\.id\}\/roll`\)/);
+  assert.match(appJs, /api\.post\(`\/api\/devices\/\$\{d\.id\}\/commands`/);
+  assert.match(appJs, /teacherDeviceControls/);
+  assert.match(appJs, /has\("show"\)/);
+  assert.match(appJs, /has\("blank"\)/);
+  assert.match(appJs, /has\("lock"\)/);
+  assert.match(appJs, /"Live device controls"/);
+  assert.match(appJs, /classroom roll/);
+  assert.match(appJs, /paused_for_safety/);
+  assert.match(appJs, /myClassroomCard\(\)/);
+});
