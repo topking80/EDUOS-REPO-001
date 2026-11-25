@@ -207,6 +207,22 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     assert.equal(rejected.status, "rejected");
     assert.equal(objects.has(`/${S3.bucket}/history/${ID.d1}/${ID.alice}/${asset}.txt`), false, "rejected document object is deleted");
     assert.equal((await fetch(`${server.base}/api/history/documents/${asset}`, { headers: { cookie: s.pa.cookie } })).status, 404);
+
+    const approvedContribution = ok(await as("pa")("POST", `/api/family/children/${ID.alice}/history-contributions`, {
+      title: "Grandparent story", body: "A story to keep.", occurredAt: "2026-10-22T15:00:00Z"
+    }), 201);
+    const approvedUpload = await uploadDocument("pa", ID.alice, approvedContribution.id, Buffer.from("A story preserved."), "story.txt");
+    assert.equal(approvedUpload.status, 201, JSON.stringify(approvedUpload.body));
+    const review = ok(await as("p1")("PATCH", `/api/students/${ID.alice}/history-contributions/${approvedContribution.id}`, { decision: "approve" }));
+    assert.equal(review.status, "approved");
+    ok(await as("pa")("POST", `/api/family/children/${ID.alice}/history-items/${review.history_entry_id}`, { decision: "accept" }));
+    const portfolio = ok(await as("pa")("GET", `/api/history/portfolio?studentId=${ID.alice}`));
+    const memory = portfolio.items.find(i => i.id === review.history_entry_id);
+    assert.equal(memory.documents[0].fileName, "story.txt", "approved document appears in the authorized history portfolio");
+    const familyDownload = await fetch(`${server.base}${memory.documents[0].href}`, { headers: { cookie: s.pa.cookie } });
+    assert.equal(familyDownload.status, 200);
+    assert.equal(Buffer.from(await familyDownload.arrayBuffer()).toString("utf8"), "A story preserved.");
+
     ok(await as("supt1")("PUT", "/api/history/document-policy", {
       documentsEnabled: false, maxDocumentBytes: 10240, maxDocumentsPerContribution: 2
     }));
