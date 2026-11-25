@@ -23,7 +23,7 @@
 
 **Latest changes:** PR #142 (MEDIA-01) and PR #143 (MEDIA-02) merged on 2026-11-24, adding private photo storage and guardian-contribution photo support. PR #141 added safe history export. The in-progress `tc/02-guardian-documents` branch adds a narrow plain-text document release; PDF/DOCX sanitization and video transcoding remain outstanding. TC-05 remains subject to district privacy/legal review.
 
-**Important validation boundary:** merged code is not proof of production readiness. Photo uploads remain disabled until each district configures private S3-compatible storage and ClamAV and a superintendent enables the district policy. Documents and video are not implemented; video requires a sanitizing transcode. District policy, legal/records review, production provider configuration and operational verification remain release gates.
+**Important validation boundary:** merged code is not proof of production readiness. Photo and plain-text document uploads remain disabled until each district configures private S3-compatible storage and ClamAV and a superintendent enables the relevant district policy. PDF/DOCX uploads remain unsupported until an active-content sanitizer is independently validated; video requires safe transcoding. District policy, legal/records review, production provider configuration and operational verification remain release gates.
 
 ## Product intent
 
