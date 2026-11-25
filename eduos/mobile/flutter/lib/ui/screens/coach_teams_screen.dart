@@ -5,6 +5,7 @@ import '../../core/api_client.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
+import 'activity_ops_screens.dart';
 
 /// COACH-01: "My teams" (GET /api/coach/teams): the teams this coach (or
 /// teacher who coaches) has at this school — what's coming up, the roster with
@@ -90,8 +91,22 @@ class CoachTeamsScreen extends StatelessWidget {
             if (_slip[str(r['slip'])] case final s?) StatusChip(s.$1, text: s.$2),
           ]),
         ),
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        for (final e in events)
+          OutlinedButton.icon(
+            onPressed: () => ActivityAttendanceScreen.open(context, eventId: str(e['id']), title: str(e['title'], 'Attendance')),
+            icon: const Icon(Icons.how_to_reg_outlined),
+            label: Text('Attendance: ${str(e['title'])}'),
+          ),
+        if (str(t['kind']) == 'sport')
+          OutlinedButton.icon(
+            onPressed: () => ActivityPhysicalsScreen.open(context, activityId: str(t['id']), title: str(t['title'])),
+            icon: const Icon(Icons.health_and_safety_outlined),
+            label: const Text('Physicals'),
+          ),
+      ]),
       if (str(t['kind']) == 'sport')
-        Text('Eligibility is worked out now from the district\'s rules and isn\'t stored. Only you and the athletic director see it.', style: text.bodySmall),
+        Text('Eligibility is worked out now from the district\'s rules and isn\'t stored. Only you and the athletic director see it. Physicals show dates only.', style: text.bodySmall),
     ]);
   }
 }
