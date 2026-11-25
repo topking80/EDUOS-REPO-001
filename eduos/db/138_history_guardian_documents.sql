@@ -99,14 +99,17 @@ CREATE FUNCTION eduos_history_contribution_document_set(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE d record;
 BEGIN
-  SELECT x.contribution_id INTO d FROM student_history_contribution_documents x
-   WHERE x.asset_id=p_asset AND x.district_id=eduos_ctx_district();
-  IF NOT FOUND OR NOT eduos_history_contribution_mine(d.contribution_id) THEN RETURN false; END IF;
+  SELECT x.contribution_id,c.status INTO d
+    FROM student_history_contribution_documents x
+    JOIN student_history_contributions c ON c.id=x.contribution_id AND c.district_id=x.district_id
+   WHERE x.asset_id=p_asset AND x.district_id=eduos_ctx_district()
+   FOR UPDATE OF c;
+  IF NOT FOUND OR d.status <> 'submitted' OR NOT eduos_history_contribution_mine(d.contribution_id) THEN RETURN false; END IF;
   UPDATE private_media_objects SET storage_key=coalesce(p_storage_key,storage_key),
     byte_size=coalesce(p_bytes,byte_size),scan_status=p_scan,processing_status=p_processing,updated_at=now()
-   WHERE asset_id=p_asset AND district_id=eduos_ctx_district();
-  RETURN true;
-END $$;
+   WHERE asset_id=p_asset AND district_id=eduos_ctx_district() AND processing_status='pending';
+  RETURN FOUND;
+END $;
 
 -- Pending documents are visible only to the submitting guardian and assigned
 -- school reviewer. Once approved, the ordinary history-entry audience check
