@@ -62,7 +62,7 @@ Use opaque IDs, ISO dates, stable enumerations, and nullable fields for unknowns
 ## Follow-on implementation slices
 
 1. FED-01A: registry schema, migrations, seed data, canonical IDs, source provenance.
-2. FED-01B: organization relationships, sections, islands, school-system and affiliate bodies.
+2. FED-01B: organization relationship integrity, effective-date validation, predecessor/successor cycle protection, and verified section/island/school-system/affiliate relationships.
 3. FED-01C: membership lifecycle and entitlements.
 4. SPORT-02: association governance, delegated authority, committees, voting and appeals.
 5. SPORT-03/04: rules, classifications, alignment, seasons, brackets and results.
