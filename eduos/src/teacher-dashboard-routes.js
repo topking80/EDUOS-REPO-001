@@ -59,6 +59,7 @@ export function registerTeacherDashboardRoutes(app) {
               (SELECT count(*)::int FROM course_enrollments e WHERE e.course_id=c.id AND e.status='active') AS students,
               (SELECT count(*)::int FROM quiz_attempts q JOIN assignments x ON x.id=q.assignment_id WHERE x.course_id=c.id AND q.status='needs_review') AS to_review,
               (SELECT count(*)::int FROM assignment_submissions s JOIN assignments x ON x.id=s.assignment_id WHERE x.course_id=c.id AND s.graded_at IS NULL) AS to_grade,
+              (SELECT count(*)::int FROM course_seat_assignments sa WHERE sa.district_id=c.district_id AND sa.course_id=c.id) AS seated_count,
               p.id AS plan_id,p.status AS plan_status,p.title AS plan_title,coalesce(jsonb_array_length(p.blocks),0)::int AS plan_blocks
             FROM courses c
             LEFT JOIN class_day_plans p ON p.course_id=c.id AND p.plan_date=$2::date
@@ -128,6 +129,12 @@ export function registerTeacherDashboardRoutes(app) {
             FROM staff_shift_assignments
             WHERE district_id=$1 AND school_id=$2 AND staff_user_id=$3 AND shift_date>=$4::date AND shift_date<=$4::date + 7
             ORDER BY shift_date,starts_at LIMIT 30`, [a.districtId, a.schoolId, a.userId, today]);
+        const bellRow = await one(client, `SELECT id,name,day_type FROM school_bell_schedules
+            WHERE district_id=$1 AND school_id=$2 AND status='active' ORDER BY is_default DESC,name LIMIT 1`, [a.districtId, a.schoolId]);
+        const bellPeriods = bellRow
+          ? await rows(client, `SELECT seq,label,kind,to_char(starts,'HH24:MI') AS starts,to_char(ends,'HH24:MI') AS ends
+              FROM school_bell_periods WHERE district_id=$1 AND schedule_id=$2 ORDER BY starts,seq`, [a.districtId, bellRow.id])
+          : [];
         const upcomingEvents = await rows(client, `SELECT id,title,starts_at,ends_at,venue,status
             FROM school_events
             WHERE district_id=$1 AND school_id=$2 AND status='published' AND ends_at>=now() AND starts_at<=now() + interval '14 days'
@@ -314,12 +321,14 @@ export function registerTeacherDashboardRoutes(app) {
               students: c.students,
               toReview: c.to_review,
               toGrade: c.to_grade,
+              seatedCount: c.seated_count,
               planId: c.plan_id,
               planStatus: c.plan_status,
               planTitle: c.plan_title,
               planBlocks: c.plan_blocks
             })),
             scheduleToday,
+            bellSchedule: bellRow ? { id: bellRow.id, name: bellRow.name, dayType: bellRow.day_type, periods: bellPeriods } : null,
             upcomingShifts: shifts.slice(0, 5),
             upcomingEvents
           },
