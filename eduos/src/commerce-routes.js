@@ -112,14 +112,20 @@ export function registerCommerceRoutes(app) {
   app.get("/api/commerce/shop", requireSession, wrap(async (c, req) => {
     need(["parent", "pupil"].includes(req.actor.role), 403, "ticket_buyer_role_required");
     await c.query("SELECT eduos_commerce_expire_holds()");
-    const list = await rows(c, `SELECT e.id, e.title, e.starts_at, e.venue, sc.name AS school_name, t.id AS type_id, t.name AS type_name, t.price_cents, t.currency,
+    const list = await rows(c, `SELECT e.id, e.event_kind, e.title, e.starts_at, e.venue, sc.name AS school_name, t.id AS type_id, t.name AS type_name, t.price_cents, t.currency,
+        t.pass_kind, t.stream_season_id, ss.title AS stream_season_title,
+        (SELECT es.access_mode FROM event_streams es WHERE es.event_id=e.id AND es.district_id=e.district_id ORDER BY es.created_at DESC LIMIT 1) AS stream_access_mode,
+        (SELECT es.live_enabled FROM event_streams es WHERE es.event_id=e.id AND es.district_id=e.district_id ORDER BY es.created_at DESC LIMIT 1) AS stream_live_enabled,
         greatest(t.capacity - t.sold_count, 0) AS available
       FROM school_events e JOIN schools sc ON sc.id=e.school_id JOIN event_ticket_types t ON t.event_id=e.id AND t.sales_open
+      LEFT JOIN school_stream_seasons ss ON ss.id=t.stream_season_id AND ss.district_id=t.district_id
       WHERE e.status='published' AND e.starts_at > now() ORDER BY e.starts_at, t.price_cents LIMIT 300`);
     const events = new Map();
     for (const r of list) {
-      if (!events.has(r.id)) events.set(r.id, { id: r.id, title: r.title, startsAt: r.starts_at, venue: r.venue, school: r.school_name, ticketTypes: [] });
-      events.get(r.id).ticketTypes.push({ id: r.type_id, name: r.type_name, priceCents: r.price_cents, currency: r.currency, available: r.available });
+      if (!events.has(r.id)) events.set(r.id, { id: r.id, eventKind: r.event_kind, title: r.title, startsAt: r.starts_at, venue: r.venue, school: r.school_name,
+        hasStream: Boolean(r.stream_access_mode), streamAccessMode: r.stream_access_mode || null, streamLiveEnabled: Boolean(r.stream_live_enabled), ticketTypes: [] });
+      events.get(r.id).ticketTypes.push({ id: r.type_id, name: r.type_name, priceCents: r.price_cents, currency: r.currency,
+        passKind: r.pass_kind, streamSeasonId: r.stream_season_id || null, streamSeasonTitle: r.stream_season_title || null, available: r.available });
     }
     return { events: [...events.values()] };
   }));

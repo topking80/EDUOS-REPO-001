@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { physicalStatus, validMarks, ATTENDANCE_STATUSES } from "../src/activity-operations.js";
+import { physicalStatus, validMarks, ATTENDANCE_STATUSES, gradeNumber, requiresGuardianForClub } from "../src/activity-operations.js";
 const root = new URL("../", import.meta.url);
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
@@ -43,4 +43,17 @@ test("routes are registered and the teacher dashboard carries my clubs and teams
   const dash = await readFile(new URL("src/teacher-dashboard-routes.js", root), "utf8");
   assert.match(dash, /activities: \{/);
   assert.match(dash, /attendanceDue/);
+});
+
+test("club guardian consent is required below grade 9 and optional from grade 9 up", () => {
+  assert.equal(gradeNumber("K"), 0);
+  assert.equal(gradeNumber("3"), 3);
+  assert.equal(gradeNumber("Grade 8"), 8);
+  assert.equal(gradeNumber("9"), 9);
+  assert.equal(gradeNumber("12th"), 12);
+  assert.equal(requiresGuardianForClub("3"), true);
+  assert.equal(requiresGuardianForClub("8"), true);
+  assert.equal(requiresGuardianForClub(null), true);
+  assert.equal(requiresGuardianForClub("9"), false);
+  assert.equal(requiresGuardianForClub("11"), false);
 });

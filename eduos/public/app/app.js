@@ -714,6 +714,23 @@ function staffSlipsPanel(activity) {
   return h("section", { class: "card" }, h("h3", {}, `Permission slips · ${activity.title}`), box, h("details", {}, h("summary", {}, "New slip"), form));
 }
 
+function familyClubApprovalsCard(rows, canApprove) {
+  if (!rows.length) return null;
+  const act = async (id, decision) => {
+    try { await api.post(`/api/activity-memberships/${id}/consent`, { decision }); toast(decision === "active" ? "Club sign-up approved." : "Declined."); go("activities", { push: false }); }
+    catch { toast("Couldn't save your answer."); }
+  };
+  return h("section", { class: "card", "aria-label": "Club sign-ups" },
+    h("h2", {}, "Club sign-ups"),
+    h("p", { class: "small muted" }, "Clubs need a guardian's OK before high school."),
+    h("ul", { class: "list" }, rows.map(r => h("li", { class: "row wrap" },
+      h("div", { class: "grow" }, h("b", {}, r.activity_title), r.student_name ? h("span", { class: "small muted" }, ` · ${r.student_name}`) : null),
+      chip(r.status === "active" ? "present" : r.status === "declined" ? "absent" : "expected", r.status === "pending" ? "Waiting for guardian" : r.status === "active" ? "Approved" : r.status),
+      canApprove && r.status === "pending" ? [
+        h("button", { class: "btn small primary", type: "button", onclick: () => act(r.id, "active") }, "Approve"),
+        h("button", { class: "btn small", type: "button", onclick: () => act(r.id, "declined") }, "Decline")
+      ] : null))));
+}
 function familySlipsCard(slips, canSign) {
   if (!slips.length) return h("section", { class: "card" }, h("h3", {}, "Permission slips"), h("p", { class: "muted" }, "No permission slips right now."));
   return h("section", { class: "card" }, h("h3", {}, "Permission slips"), h("ul", { class: "list" }, slips.map(s => {
@@ -887,9 +904,9 @@ VIEWS.teams = async () => {
 async function activitiesLiveView() {
   const role = state.me.role, family = ["parent", "pupil"].includes(role);
   const staff = ["teacher", "principal", "vice_principal", "superintendent", "it_admin"].includes(role);
-  const [acts, events, roles, slips, commerce] = await Promise.all([
+  const [acts, events, roles, slips, clubApprovals, commerce] = await Promise.all([
     safe(api.get("/api/activities"), { data: [] }), safe(api.get("/api/events"), { data: [] }),
-    staff ? safe(api.get("/api/sports/my-roles"), { data: {} }) : null, family ? safe(api.get("/api/my/permission-slips"), { data: [] }) : null,
+    staff ? safe(api.get("/api/sports/my-roles"), { data: {} }) : null, family ? safe(api.get("/api/my/permission-slips"), { data: [] }) : null, family ? safe(api.get("/api/my/club-approvals"), { data: [] }) : null,
     safe(api.get("/api/commerce/status"))]);
   const activities = actList(acts?.data), upcoming = actList(events?.data).filter(e => new Date(e.ends_at || e.starts_at) >= new Date()).slice(0, 10);
   const my = roles?.data && !Array.isArray(roles.data) ? roles.data : {};
@@ -904,7 +921,7 @@ async function activitiesLiveView() {
     a.description ? h("p", { class: "muted small" }, a.description) : null,
     a.meetingDetails ? h("p", {}, "📅 ", a.meetingDetails) : null,
     h("p", { class: "small muted" }, `${a.memberCount ?? 0} members${a.status !== "published" ? ` · ${a.status}` : ""}`),
-    role === "pupil" && a.status === "published" ? h("button", { class: "btn block", type: "button", onclick: async () => { try { await api.post(`/api/activities/${a.id}/join`); toast("You've joined. Staff confirm the roster."); } catch (e) { actErr(e, "Could not join."); } } }, "Join") : null,
+    role === "pupil" && a.status === "published" ? h("button", { class: "btn block", type: "button", disabled: a.myStatus === "pending", onclick: async () => { try { const r = await api.post(`/api/activities/${a.id}/join`); toast(r?.data?.status === "pending" ? "Waiting for a parent or guardian to approve." : "You've joined. Staff confirm the roster."); go("activities", { push: false }); } catch (e) { actErr(e, "Could not join."); } } }, a.myStatus === "pending" ? "Waiting for guardian" : a.myStatus === "active" ? "Joined" : "Join") : null,
     canSeeEligibility(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "eligibility") }, "Eligibility") : null,
     staff && canRunSlips(a) ? h("button", { class: "btn block", type: "button", onclick: () => open(a, "slips") }, "Permission slips") : null,
     staff && canRunSlips(a) ? h("button", { class: "btn block", type: "button", "aria-label": `Attendance: ${a.title}`, onclick: () => open(a, "attendance") }, "Attendance") : null,
@@ -918,6 +935,7 @@ async function activitiesLiveView() {
     my.athleticDirector ? h("p", { class: "notice" }, "You're this school's athletic director.") : null,
     role === "teacher" && coachOf.size ? h("button", { class: "btn primary block", type: "button", onclick: () => go("teams") }, icon("trophy"), "My teams") : null,
     family ? familySlipsCard(actList(slips?.data), role === "parent") : null,
+    family ? familyClubApprovalsCard(actList(clubApprovals?.data), role === "parent") : null,
     role === "parent" ? await familySharingCard() : null,
     ["principal", "vice_principal"].includes(role) || my.athleticDirector ? await connectorsCard() : null,
     activities.length ? h("div", { class: "grid" }, activities.map(card)) : h("section", { class: "card" }, h("p", { class: "muted" }, "No clubs or teams are published yet.")),
@@ -927,7 +945,7 @@ async function activitiesLiveView() {
       h("p", { class: "notice" }, commerce?.data?.enabled ? `${commerce.data.note || "Paid tickets are on."} Live video is not enabled.`
         : "Paid tickets and live video are not enabled. No payment is collected here."),
       family ? h("button", { class: "btn block", type: "button", onclick: () => go("tickets") }, "Tickets & receipts") : null,
-      ["principal", "superintendent"].includes(role) ? h("button", { class: "btn block", type: "button", onclick: () => go("commerce") }, "Ticketing & revenue") : null),
+      ["principal", "superintendent", "vice_principal", "teacher"].includes(role) || my.athleticDirector ? h("button", { class: "btn block", type: "button", onclick: () => go("commerce") }, "Ticketing & revenue") : null),
     adCard
   ];
 }
@@ -989,6 +1007,7 @@ VIEWS.dashboard = async () => {
       h("h2", {}, "Today\u2019s schedule and classes"),
       ov.myOpenCases ? h("p", { class: "small" }, `${ov.myOpenCases} student support case(s) need follow-up.`) : null,
       ov.absences7d ? h("p", { class: "small muted" }, `${ov.absences7d} absence event(s) on your roster in the last 7 days.`) : null,
+      ov.bellSchedule?.periods?.length ? h("p", { class: "small muted" }, `Bell: ${ov.bellSchedule.name} (${ov.bellSchedule.periods.map(p => `${p.label} ${p.starts}`).slice(0, 4).join(" · ")}${ov.bellSchedule.periods.length > 4 ? " …" : ""})`) : null,
       (ov.scheduleToday || []).length ? h("ul", { class: "list" }, ov.scheduleToday.map(s => h("li", { class: "row wrap" },
         h("div", { class: "grow" }, h("h3", {}, `${s.starts}–${s.ends} · ${s.label}`), h("p", { class: "small muted" }, s.room)),
         chip(s.now ? "current" : "present", s.now ? "In progress" : "Scheduled")))) : empty("No timetabled periods scheduled for today."),
@@ -1235,6 +1254,7 @@ VIEWS.classes = async () => {
     await remoteLessonsCard(),
     await scanCard(),
     await todayCard(),
+    await bellScheduleCard(false),
     h("section", { class: "card", "aria-label": "Bus riders" }, h("h2", {}, "Bus riders on my roster"),
       riders.length ? h("ul", { class: "list" }, riders.map(k => h("li", { class: "row" }, h("span", { class: "grow" }, `${k.display_name} · ${k.bus_label} ${k.direction.toUpperCase()}`), chip(k.status)))) : empty("None of your learners ride today.")),
     h("button", { class: "btn block", type: "button", onclick: () => go("pickup") }, icon("car"), "Pick-up duty: check passes"),
@@ -2176,7 +2196,8 @@ VIEWS.overview = async () => {
       h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => go("approvals") }, icon("check"), "Approvals"),
         h("button", { class: "btn", type: "button", onclick: () => go("edal") }, icon("ledger"), "Records ledger"),
         h("button", { class: "btn", type: "button", onclick: () => go("courses") }, icon("book"), "Courses"))),
-    role === "principal" && !hosted?.hosted ? h("section", { class: "card", "aria-label": "School announcement" }, h("h2", {}, "Announce to the school"), announceForm("school")) : null,
+    ["principal", "vice_principal"].includes(role) && state.me.schoolId ? await bellScheduleCard(true) : null,
+        role === "principal" && !hosted?.hosted ? h("section", { class: "card", "aria-label": "School announcement" }, h("h2", {}, "Announce to the school"), announceForm("school")) : null,
     h("section", { class: "card", "aria-label": "Announcements" }, h("h2", {}, "Announcements"), announcementsCard(news?.data, { limit: 3 }))
   ];
 };
@@ -3159,6 +3180,102 @@ const SCORE_STATUS = { pending: "waiting for you", recorded: "in the gradebook",
 const TOOL_ERRORS = { no_seats_available: "All seats for this tool are in use.", lti_approval_required: "This tool is waiting for district approval.",
   app_not_available: "This tool isn't available for your account.", content_not_available: "That activity isn't available any more.",
   deep_linking_not_registered: "This tool can't add content to assignments.", assignment_not_manageable: "You can't change this assignment." };
+// Classrooms operations (db/153): school bell schedules & course seating charts.
+const BELL_DAY_LABEL = { regular: "Regular day", early_release: "Early release", late_start: "Late start", assembly: "Assembly", custom: "Custom" };
+const PERIOD_KIND_LABEL = { instruction: "Class", homeroom: "Homeroom", lunch: "Lunch", passing: "Passing", assembly: "Assembly" };
+async function bellScheduleCard(canEdit) {
+  const res = await safe(api.get("/api/schools/bell-schedules"));
+  const d = res?.data || {};
+  const list = Array.isArray(d.schedules) ? d.schedules : [];
+  const active = d.todaySchedule || list[0] || null;
+  const box = h("section", { class: "card", "aria-label": "Bell schedule" }, h("h2", {}, "Bell schedule"));
+  const render = () => {
+    const kids = [];
+    if (active) {
+      kids.push(h("p", { class: "small muted" }, `${active.name} · ${BELL_DAY_LABEL[active.dayType] || active.dayType}${active.isDefault ? " (default)" : ""}`));
+      kids.push(h("ul", { class: "list" }, (active.periods || []).map(p => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, `${p.starts}–${p.ends} · ${p.label}`),
+        h("span", { class: "small muted" }, PERIOD_KIND_LABEL[p.kind] || p.kind)))));
+    } else {
+      kids.push(empty("No bell schedule set for this school yet."));
+    }
+    if (canEdit) {
+      const nameIn = h("input", { type: "text", placeholder: "Schedule name (e.g. Regular Day)", value: active?.name || "Regular Day", "aria-label": "Bell schedule name" });
+      const typeSel = h("select", { "aria-label": "Day type" }, Object.entries(BELL_DAY_LABEL).map(([v, t]) => h("option", { value: v, selected: (active?.dayType || "regular") === v }, t)));
+      const defChk = h("input", { type: "checkbox", id: "bell-def", checked: active ? active.isDefault : true });
+      const lines = (active?.periods || [{ label: "Period 1", kind: "instruction", starts: "08:00", ends: "08:50" }]).map(p => `${p.starts}-${p.ends} | ${p.label} | ${p.kind}`).join("\n");
+      const text = h("textarea", { rows: 4, "aria-label": "Periods (HH:MM-HH:MM | Label | kind)" }); text.value = lines;
+      const save = async () => {
+        const periods = text.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => {
+          const [times, label, kind = "instruction"] = l.split("|").map(x => x.trim());
+          const [starts, ends] = (times || "").split("-").map(x => x.trim());
+          return { starts, ends, label, kind };
+        });
+        try {
+          await api.post("/api/schools/bell-schedules", { id: active?.id || undefined, name: nameIn.value, dayType: typeSel.value, isDefault: defChk.checked, periods });
+          toast("Bell schedule saved."); go(state.tab, { push: false });
+        } catch { toast("Check period times (HH:MM-HH:MM | Label | kind) and make sure periods don't overlap."); }
+      };
+      kids.push(h("details", {}, h("summary", {}, active ? "Edit bell schedule" : "Set bell schedule"),
+        h("div", { class: "stack" }, nameIn, typeSel, h("label", { class: "inline", for: defChk.id }, defChk, " Default schedule"),
+          h("p", { class: "small muted" }, "One period per line: 08:00-08:50 | Period 1 | instruction"), text,
+          h("button", { class: "btn primary", type: "button", onclick: save }, "Save bell schedule"))));
+    }
+    box.replaceChildren(h("h2", {}, "Bell schedule"), ...kids);
+  };
+  render();
+  return box;
+}
+function seatingChartPanel(courseId) {
+  const box = h("div", { class: "stack" }, h("p", { class: "small muted" }, "Loading seating chart…"));
+  const load = () => api.get(`/api/learning/courses/${courseId}/seating`).then(r => {
+    const d = r.data || {}, ch = d.chart || { rowsCount: 5, colsCount: 6 };
+    if (!d.canManage) {
+      const mine = d.assignments || [];
+      box.replaceChildren(mine.length
+        ? h("ul", { class: "list" }, mine.map(a => h("li", {}, h("b", {}, a.name), h("p", { class: "small muted" }, `Row ${a.row}, seat ${a.col}${a.label ? ` · ${a.label}` : ""}${ch.roomName ? ` · ${ch.roomName}` : ""}`))))
+        : h("p", { class: "small muted" }, "The teacher has shared this chart, but no seat is assigned yet."));
+      return;
+    }
+    const byStudent = new Map((d.assignments || []).map(a => [a.studentId, a]));
+    const roomSel = h("select", { "aria-label": "Classroom room" }, h("option", { value: "" }, "No room linked"),
+      (d.rooms || []).map(rm => h("option", { value: rm.id, selected: ch.roomId === rm.id }, rm.name)));
+    const rowsIn = h("input", { type: "number", min: 1, max: 20, value: String(ch.rowsCount || 5), "aria-label": "Rows" });
+    const colsIn = h("input", { type: "number", min: 1, max: 20, value: String(ch.colsCount || 6), "aria-label": "Columns" });
+    const shareChk = h("input", { type: "checkbox", id: `seat-share-${courseId}`, checked: Boolean(d.shareWithFamilies || ch.shareWithFamilies) });
+    const inputs = new Map();
+    const list = (d.students || []).map(st => {
+      const cur = byStudent.get(st.studentId);
+      const rIn = h("input", { type: "number", min: 1, max: 20, placeholder: "Row", value: cur ? String(cur.row) : "", "aria-label": `Row for ${st.name}` });
+      const cIn = h("input", { type: "number", min: 1, max: 20, placeholder: "Seat", value: cur ? String(cur.col) : "", "aria-label": `Seat for ${st.name}` });
+      const lIn = h("input", { type: "text", maxlength: 40, placeholder: "Note (e.g. Front)", value: cur?.label || "", "aria-label": `Label for ${st.name}` });
+      inputs.set(st.studentId, { rIn, cIn, lIn });
+      return h("li", { class: "stack" }, h("span", {}, h("b", {}, st.name), h("span", { class: "small muted" }, ` · grade ${st.grade}`)),
+        h("div", { class: "row wrap" }, rIn, cIn, lIn));
+    });
+    const save = async () => {
+      const assignments = [];
+      for (const [studentId, { rIn, cIn, lIn }] of inputs) {
+        if (!rIn.value && !cIn.value) continue;
+        assignments.push({ studentId, row: Number(rIn.value), col: Number(cIn.value), label: lIn.value });
+      }
+      try {
+        await api.req("PUT", `/api/learning/courses/${courseId}/seating`, { roomId: roomSel.value || null, rowsCount: Number(rowsIn.value), colsCount: Number(colsIn.value), shareWithFamilies: shareChk.checked, assignments });
+        toast(shareChk.checked ? "Seating chart saved. Families can see their own seat." : "Seating chart saved. Families cannot see seats.");
+        load();
+      } catch { toast("Check row/seat numbers: each learner needs a unique seat inside the grid."); }
+    };
+    box.replaceChildren(
+      h("p", { class: "small muted" }, `${(d.assignments || []).length} of ${(d.students || []).length} enrolled learners seated.`),
+      h("label", { class: "inline", for: shareChk.id }, shareChk, " Let each student and their family see their own seat"),
+      h("div", { class: "row wrap" }, roomSel, rowsIn, colsIn),
+      list.length ? h("ul", { class: "list" }, list) : h("p", { class: "muted small" }, "No enrolled learners in this course yet."),
+      h("button", { class: "btn primary", type: "button", onclick: save }, "Save seating chart"));
+  }).catch(() => box.replaceChildren(h("p", { class: "small muted" }, "This seating chart isn't shared with families.")));
+  load();
+  return h("section", { class: "card", "aria-label": "Seating chart" }, h("h2", {}, "Seating chart"), box);
+}
+
 VIEWS.course = async () => {
   if (!state.courseId) return VIEWS.courses();
   const c = (await api.get(`/api/learning/courses/${state.courseId}${learnerQuery()}`)).data;
@@ -3245,7 +3362,8 @@ VIEWS.course = async () => {
       a.mine ? chip(a.mine.missing ? "absent" : a.mine.status === "graded" ? "present" : "not_started", a.mine.missing ? "Missing" : a.mine.status === "graded" ? `${a.mine.earned}/${a.points}` : statusText[a.mine.status]) : null),
       a.kind === "quiz" || state.me.role !== "teacher" ? h("button", { class: `btn${a.kind === "quiz" && state.me.role === "pupil" ? " primary" : ""}`, type: "button", "aria-label": `${a.kind === "quiz" ? "Open quiz" : "Details"}: ${a.title}`, onclick: () => openView("quiz", { assignmentId: a.id }) }, a.kind === "quiz" ? "Open quiz" : "Details") : null,
       toolsFor(a)))) : empty("Nothing assigned yet.")));
-  if (c.canManage && state.me.role !== "superintendent") {
+  if ((c.canManage && state.me.role !== "superintendent") || ["parent", "pupil"].includes(state.me.role)) {
+    out.push(seatingChartPanel(c.id));
     const acc = await safe(api.get(`/api/learning/accommodations?courseId=${c.id}`));
     if (acc) out.push(h("section", { class: "card", "aria-label": "Accommodations" }, h("h2", {}, "Accommodations"),
       h("p", { class: "small muted" }, "Extra time stretches quiz timers; read-aloud adds a button that uses the device's own voice."),
@@ -6087,19 +6205,36 @@ VIEWS.tickets = async () => {
       area.scrollIntoView?.({ behavior: "smooth" });
     } catch (e) { cmErr(e, "Couldn't get tickets."); }
   };
+  const KIND_LBL = { sport: "Sports", play: "Play", concert: "Concert", recital: "Recital", assembly: "Assembly", ceremony: "Ceremony", club_showcase: "Club showcase", other: "Live event" };
+  const PASS_LBL = { admission: "Admission", stream_pass: "Livestream pass", season_stream_pass: "Season stream pass" };
+  const watchStream = async ev => {
+    try {
+      const r = (await api.post(`/api/events/${ev.id}/stream/access`, {})).data;
+      area.replaceChildren(h("section", { class: "card", "aria-label": "Livestream access" },
+        h("h3", {}, `${ev.title} — Livestream`),
+        h("p", { class: "small" }, r.mediaPolicy?.unconsentedExcludedOrBlurred ? "Media consent enforced: students without consent are excluded or blurred." : "Access verified."),
+        h("p", { class: "code small" }, `Token expires ${fmtTime(r.expiresAt)}`)));
+    } catch (e) {
+      const msg = { stream_live_kill_switch_off: "Livestream is turned off right now.", stream_pass_required: "A paid stream pass or season pass is required.", media_consent_masking_required: "Stream paused until unconsented students are masked." }[e?.body?.error];
+      toast(msg || "Stream unavailable.");
+    }
+  };
   const typeRow = (ev, t) => {
     const paid = t.priceCents > 0, max = Math.min(10, t.available);
     const qty = h("select", { "aria-label": `How many ${t.name} tickets` }, Array.from({ length: Math.max(max, 1) }, (_, i) => h("option", { value: i + 1 }, String(i + 1))));
     const blocked = t.available < 1 ? "Sold out" : paid && !parent ? "Ask a parent or guardian to buy this." : paid && !s?.enabled ? "Paid tickets are off" : null;
+    const passTag = PASS_LBL[t.passKind] || "Admission";
     return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, t.name), " · ", paid ? money(t.priceCents, t.currency) : "Free",
-      h("span", { class: "small muted" }, ` · ${t.available} left`)),
+      h("span", { class: "small muted" }, ` · ${passTag}${t.streamSeasonTitle ? ` (${t.streamSeasonTitle})` : ""} · ${t.available} left`)),
       blocked ? h("span", { class: "small muted" }, blocked) : [qty, h("button", { class: "btn primary", type: "button", onclick: () => buy(ev, t, Number(qty.value)) }, paid ? "Buy" : "Get")]);
   };
   const events = shop?.data?.events || [];
   return [back("activities", "Clubs & Sports"), h("h2", {}, "Tickets"), cmBanner(s),
     !parent ? h("p", { class: "small muted" }, "Students can get free tickets. A parent or guardian buys paid ones.") : null,
     pick,
-    events.length ? events.map(ev => h("section", { class: "card", "aria-label": ev.title }, h("h3", {}, ev.title),
+    events.length ? events.map(ev => h("section", { class: "card", "aria-label": ev.title },
+      h("div", { class: "row wrap" }, h("h3", { class: "grow" }, ev.title), chip("expected", KIND_LBL[ev.eventKind] || "Live event"),
+        ev.hasStream ? h("button", { class: "btn small", type: "button", onclick: () => watchStream(ev) }, ev.streamAccessMode === "paid_pass" ? "Watch paid stream" : "Watch stream") : null),
       h("p", { class: "small muted" }, `${fmtDay(ev.startsAt)} ${fmtTime(ev.startsAt)}${ev.venue ? ` · ${ev.venue}` : ""} · ${ev.school}`),
       h("ul", { class: "list" }, ev.ticketTypes.map(t => typeRow(ev, t))))) : h("section", { class: "card" }, empty("No tickets on sale right now.")),
     area,
@@ -6132,8 +6267,9 @@ VIEWS.receipt = async () => {
 // Leaders: settings (superintendent), revenue, refunds, gate check-in, ticket types, marketplace.
 VIEWS.commerce = async () => {
   const supt = state.me.role === "superintendent";
-  const [st, rep, evs, mkt] = await Promise.all([api.get("/api/commerce/status"), safe(api.get("/api/commerce/report")), safe(api.get("/api/events"), { data: [] }),
-    supt ? safe(api.get("/api/commerce/marketplace")) : null]);
+  const [st, rep, evs, seasons, mkt] = await Promise.all([api.get("/api/commerce/status"), safe(api.get("/api/commerce/report")), safe(api.get("/api/events"), { data: [] }),
+    safe(api.get("/api/stream-seasons"), { data: [] }), supt ? safe(api.get("/api/commerce/marketplace")) : null]);
+  const seasonList = seasons?.data || [];
   const s = st.data, set = s.settings, report = rep?.data, reload = () => go("commerce", { push: false });
   const upcoming = (evs?.data || []).filter(e => new Date(e.ends_at || e.starts_at) >= new Date());
   const evPick = id => h("select", { id, "aria-label": "Event" }, upcoming.map(e => h("option", { value: e.id }, `${e.title} · ${fmtDay(e.starts_at)}`)));
@@ -6197,18 +6333,89 @@ VIEWS.commerce = async () => {
       } }, h("label", { for: "cm-gate-ev" }, "Event"), ev, h("label", { for: "cm-code" }, "Ticket code (scan or type)"), code,
         h("button", { class: "btn primary", type: "submit" }, "Check in"), res)));
     const ev2 = evPick("cm-tt-ev"), name = h("input", { id: "cm-tt-name", required: true, maxlength: 80, value: "General admission" }),
+      pk = h("select", { id: "cm-tt-pk" },
+        h("option", { value: "admission" }, "Admission ticket"),
+        h("option", { value: "stream_pass" }, "Per-event livestream pass"),
+        h("option", { value: "season_stream_pass" }, "Season livestream pass")),
+      ssPick = h("select", { id: "cm-tt-ss" }, h("option", { value: "" }, "No season"), seasonList.map(x => h("option", { value: x.id }, `${x.title} (${x.school_year})`))),
       price = h("input", { id: "cm-tt-price", type: "number", min: 0, step: "0.01", value: "0" }), cap = h("input", { id: "cm-tt-cap", type: "number", min: 1, step: "1", value: "100" }),
       open = h("input", { id: "cm-tt-open", type: "checkbox", class: "check", checked: true });
-    out.push(h("section", { class: "card", "aria-label": "Add tickets" }, h("h2", {}, "Add tickets to an event"),
+    out.push(h("section", { class: "card", "aria-label": "Add tickets" }, h("h2", {}, "Add tickets or stream passes"),
       h("form", { class: "stack", onsubmit: async e => {
         e.preventDefault();
-        try { await api.post(`/api/events/${ev2.value}/ticket-types`, { name: name.value, priceCents: Math.round(Number(price.value) * 100), capacity: Number(cap.value), salesOpen: open.checked });
+        try { await api.post(`/api/events/${ev2.value}/ticket-types`, { name: name.value, passKind: pk.value,
+          streamSeasonId: pk.value === "season_stream_pass" ? (ssPick.value || undefined) : undefined,
+          priceCents: Math.round(Number(price.value) * 100), capacity: Number(cap.value), salesOpen: open.checked });
           toast("Tickets added"); reload(); } catch (err) { cmErr(err, "Couldn't add tickets."); }
-      } }, h("label", { for: "cm-tt-ev" }, "Event"), ev2, h("label", { for: "cm-tt-name" }, "Ticket name"), name, h("label", { for: "cm-tt-price" }, "Price ($, 0 for free)"), price,
+      } }, h("label", { for: "cm-tt-ev" }, "Event"), ev2, h("label", { for: "cm-tt-name" }, "Ticket or pass name"), name,
+        h("label", { for: "cm-tt-pk" }, "Pass type"), pk, h("label", { for: "cm-tt-ss" }, "Stream season (for season passes)"), ssPick,
+        h("label", { for: "cm-tt-price" }, "Price ($, 0 for free)"), price,
         h("label", { for: "cm-tt-cap" }, "How many"), cap, h("label", { class: "row" }, open, h("span", {}, "On sale now")),
         h("p", { class: "small muted" }, s.enabled ? `Families pay with ${(s.methods || []).map(m => m.label).join(", ")}. Students can only get free tickets.` : "Paid tickets can't be sold until commerce is on; free tickets work now."),
         h("button", { class: "btn primary", type: "submit" }, "Add tickets"))));
+
+    const ev3 = evPick("cm-st-ev"), stAud = h("select", { id: "cm-st-aud" },
+      h("option", { value: "ticket_holders" }, "Ticket / pass holders"), h("option", { value: "school" }, "School"), h("option", { value: "district" }, "District")),
+      stMode = h("select", { id: "cm-st-mode" }, h("option", { value: "paid_pass" }, "Paid pass required"), h("option", { value: "free" }, "Free")),
+      stSs = h("select", { id: "cm-st-ss" }, h("option", { value: "" }, "No season pass"), seasonList.map(x => h("option", { value: x.id }, `${x.title} (${x.school_year})`))),
+      stLive = h("input", { id: "cm-st-live", type: "checkbox", class: "check", checked: false }),
+      stMask = h("input", { id: "cm-st-mask", type: "checkbox", class: "check", checked: false }),
+      stSec = h("input", { id: "cm-st-sec", type: "password", autocomplete: "new-password", placeholder: "Optional write-only stream key" });
+    out.push(h("section", { class: "card", "aria-label": "Livestream paywall" }, h("h2", {}, "Livestream paywall & consent"),
+      h("form", { class: "stack", onsubmit: async e => {
+        e.preventDefault();
+        try { await api.put(`/api/events/${ev3.value}/stream`, { audience: stAud.value, accessMode: stMode.value,
+          streamSeasonId: stSs.value || null, liveEnabled: stLive.checked, mediaConsentRequired: true,
+          unconsentedMinorsMasked: stMask.checked, streamSecret: stSec.value || undefined });
+          toast("Livestream settings saved"); reload(); } catch (err) { cmErr(err, "Couldn't save stream settings."); }
+      } }, h("label", { for: "cm-st-ev" }, "Event"), ev3, h("label", { for: "cm-st-mode" }, "Access"), stMode,
+        h("label", { for: "cm-st-aud" }, "Audience"), stAud, h("label", { for: "cm-st-ss" }, "Season pass link"), stSs,
+        h("label", { class: "row" }, stLive, h("span", {}, "Live stream enabled (kill switch, off by default)")),
+        h("label", { class: "row" }, stMask, h("span", {}, "Unconsented minors excluded or blurred on stream")),
+        h("label", { for: "cm-st-sec" }, "Stream secret (write-only)"), stSec,
+        h("button", { class: "btn primary", type: "submit" }, "Save livestream"))));
   }
+
+  if (supt || state.me.role === "it_admin") {
+    const sp = (await safe(api.get("/api/stream-provider"), { data: { provider: "none", hasCredentials: false } })).data || {};
+    const prov = h("select", { id: "cm-sp-prov" },
+      [["none", "None"], ["mux", "Mux"], ["cloudflare_stream", "Cloudflare Stream"], ["vimeo", "Vimeo"], ["other", "Other"]]
+        .map(([v, lbl]) => h("option", { value: v, selected: sp.provider === v }, lbl)));
+    const cred = h("input", { id: "cm-sp-cred", type: "password", autocomplete: "new-password", placeholder: sp.hasCredentials ? "Credentials on file (write-only)" : "Optional API token (write-only)" });
+    out.push(h("section", { class: "card", "aria-label": "Livestream provider" }, h("h2", {}, "Livestream provider"),
+      h("p", { class: "small muted" }, "The district chooses the service. Credentials are stored encrypted and never shown again. This does not turn on a live connection."),
+      h("form", { class: "stack", onsubmit: async e => {
+        e.preventDefault();
+        try {
+          const body = { provider: prov.value };
+          if (cred.value.trim()) body.credentials = { apiToken: cred.value.trim() };
+          if (prov.value === "none") body.clearCredentials = true;
+          await api.put("/api/stream-provider", body);
+          toast("Livestream provider saved"); reload();
+        } catch (err) { cmErr(err, "Couldn't save the livestream provider."); }
+      } }, h("label", { for: "cm-sp-prov" }, "Provider"), prov, h("label", { for: "cm-sp-cred" }, "API token (write-only)"), cred,
+        h("p", { class: "small muted" }, sp.hasCredentials ? "Credentials are on file." : "No credentials stored."),
+        h("button", { class: "btn primary", type: "submit" }, "Save provider"))));
+  }
+
+  // Create standalone live event (play, concert, assembly, ceremony, etc.) + stream season.
+  const evKind = h("select", { id: "cm-ev-kind" },
+    [["play", "Play"], ["concert", "Concert"], ["recital", "Recital"], ["assembly", "Assembly"], ["ceremony", "Ceremony"], ["club_showcase", "Club showcase"], ["sport", "Sport"], ["other", "Other"]]
+      .map(([v, lbl]) => h("option", { value: v }, lbl))),
+    evTitle = h("input", { id: "cm-ev-title", required: true, maxlength: 180, placeholder: "Spring Musical" }),
+    evVenue = h("input", { id: "cm-ev-venue", maxlength: 300, placeholder: "Main Auditorium" }),
+    evStart = h("input", { id: "cm-ev-start", type: "datetime-local", required: true }),
+    evEnd = h("input", { id: "cm-ev-end", type: "datetime-local", required: true });
+  out.push(h("section", { class: "card", "aria-label": "Create live event" }, h("h2", {}, "Create live event"),
+    h("form", { class: "stack", onsubmit: async e => {
+      e.preventDefault();
+      try { await api.post("/api/events", { eventKind: evKind.value, title: evTitle.value, venue: evVenue.value,
+        startsAt: new Date(evStart.value).toISOString(), endsAt: new Date(evEnd.value).toISOString(), publish: true });
+        toast("Live event published"); reload(); } catch (err) { cmErr(err, "Couldn't create event."); }
+    } }, h("label", { for: "cm-ev-kind" }, "Event type"), evKind, h("label", { for: "cm-ev-title" }, "Title"), evTitle,
+      h("label", { for: "cm-ev-venue" }, "Venue"), evVenue, h("label", { for: "cm-ev-start" }, "Starts"), evStart,
+      h("label", { for: "cm-ev-end" }, "Ends"), evEnd,
+      h("button", { class: "btn primary", type: "submit" }, "Publish event"))));
 
   if (supt && mkt?.data) {
     const area = h("div", { class: "stack" }), mpick = s.enabled ? methodPick(s, "mk-method") : null;

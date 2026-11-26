@@ -1,4 +1,5 @@
 // COACH-01: the native "My teams" screen for a coach profile.
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'operations_screens_test.dart' show FakeServer, launch;
@@ -35,5 +36,62 @@ void main() {
     expect(find.text('Slip signed'), findsOneWidget);
     expect(find.text('Slip waiting'), findsOneWidget);
     expect(find.text('Your teams at Hill Primary'), findsOneWidget);
+    expect(find.text('Attendance: Home game'), findsOneWidget);
+    expect(find.text('Physicals'), findsOneWidget);
+  });
+
+  testWidgets('a coach marks attendance and sees physical clearance status', (tester) async {
+    final fake = FakeServer({
+      'GET /api/coach/teams': (_) => {
+            'data': {
+              'teams': [
+                {
+                  'id': 'a1', 'kind': 'sport', 'title': 'S2 Soccer', 'role': 'coach',
+                  'events': [{'id': 'e1', 'title': 'Home game', 'starts_at': DateTime.now().subtract(const Duration(hours: 1)).toIso8601String(), 'venue': 'Field'}],
+                  'results': [],
+                  'roster': [
+                    {'studentId': 'c1', 'name': 'Carol C', 'grade': '5', 'jersey': 9, 'eligibility': 'eligible'},
+                  ],
+                },
+              ],
+              'elsewhere': [],
+            },
+          },
+      'GET /api/events/e1/attendance': (_) => {
+            'data': {
+              'event': {'id': 'e1', 'title': 'Home game', 'activityId': 'a1', 'kind': 'sport'},
+              'unmarked': 1,
+              'counts': {'present': 0, 'late': 0, 'excused': 0, 'absent': 0},
+              'students': [{'studentId': 'c1', 'name': 'Carol C', 'grade': '5', 'status': null}],
+            },
+          },
+      'PUT /api/events/e1/attendance': (_) => {'data': {'eventId': 'e1', 'saved': 1, 'counts': {'present': 1, 'late': 0, 'excused': 0, 'absent': 0}}},
+      'GET /api/activities/a1/physicals': (_) => {
+            'data': {
+              'activityId': 'a1',
+              'summary': {'cleared': 0, 'expiring': 0, 'expired': 0, 'missing': 1},
+              'students': [{'studentId': 'c1', 'name': 'Carol C', 'grade': '5', 'jersey': 9, 'status': 'missing', 'clearedOn': null, 'expiresOn': null}],
+            },
+          },
+    }, role: 'coach');
+    await launch(tester, fake);
+    await tester.tap(find.text('Attendance: Home game'));
+    await tester.pumpAndSettle();
+    expect(find.text('Carol C'), findsOneWidget);
+    expect(find.text('1 not marked yet'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('attendance-status-c1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Present').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save attendance'));
+    await tester.pumpAndSettle();
+    expect(fake.sent('PUT', '/api/events/e1/attendance'), hasLength(1));
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Physicals'));
+    await tester.pumpAndSettle();
+    expect(find.text('No physical on file'), findsOneWidget);
+    expect(fake.sent('GET', '/api/activities/a1/physicals'), hasLength(1));
   });
 }
+
