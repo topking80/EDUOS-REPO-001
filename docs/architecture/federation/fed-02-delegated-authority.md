@@ -2,7 +2,7 @@
 
 Status: data contract plus a tested rule engine. The running app does not use it yet; FED-03 (Master Control API and console) wires it in.
 
-- Contract: `authority-model.schema.json` (JSON Schema 2020-12) and the seed `authority-model.v0.1.json`.
+- Contract: `authority-model.schema.json` (JSON Schema 2020-12) and the seed `authority-model.v0.1.json` (model 0.2.0). The catalog part (capabilities, roles, policy definitions) is also shipped with the app as `eduos/src/federation/authority-catalog.json`; a test keeps the two identical.
 - Engine: `eduos/src/federation/authority.js`, with three functions:
   - `validateAuthorityModel(model)` checks a model and lists every problem;
   - `authorize(model, {principal_id, capability_id, node_id, at, purpose?})` answers whether someone may act;
@@ -40,6 +40,7 @@ A capability is one thing someone can do. Each one says:
 |---|---|---|---|---|
 | `platform.config.manage` | none | platform | node | no |
 | `federation.membership.manage` | none | platform | descendants | no |
+| `federation.roles.assign` | none | platform, state | descendants | no |
 | `service.health.view` | none | platform, state, district | descendants | yes |
 | `security.incident.coordinate` | none | platform, state, district | descendants | yes |
 | `policy.set` | none | all | node | yes |
@@ -67,6 +68,7 @@ Roles are named bundles of capabilities held at one level (seed: platform operat
    - Tenant administration (`tenant` reach) stops at the district boundary.
    - A state authority gets such a capability only when the district delegates it, with a stated purpose, an end date and an approval reference.
    - Assigning roles inside the tenant (`tenant.roles.assign`) is never delegable.
+   - Roles at platform and state nodes are assigned with `federation.roles.assign`; roles at districts and schools only with `tenant.roles.assign`, which only the district holds. Master Control (FED-03) applies this split.
 3. **No enlargement.**
    - A delegation can carry only capabilities the delegator holds over the delegation's node, on the day it starts and on every day it is used.
    - Redelegation needs `may_redelegate` on the parent link, and chains are at most 3 deep.

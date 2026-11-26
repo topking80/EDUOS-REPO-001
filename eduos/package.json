@@ -30,7 +30,10 @@
     "ui:screens": "node dev/ui-screens.mjs",
     "slo:rules": "node scripts/generate-slo-rules.mjs",
     "release:preflight": "node scripts/production-preflight.js",
-    "test:staff": "node --test test/staff-management-36.9.test.js test/staff-management-ui-37.1.test.js test/staff-daily-workspace-36.8.test.js"
+    "test:staff": "node --test test/staff-management-36.9.test.js test/staff-management-ui-37.1.test.js test/staff-daily-workspace-36.8.test.js",
+    "mc:migrate": "node src/master-control/migrate.js",
+    "mc:start": "node src/master-control/server.js",
+    "mc:bootstrap": "node src/master-control/bootstrap.js"
   },
   "dependencies": {
     "compression": "^1.7.5",
