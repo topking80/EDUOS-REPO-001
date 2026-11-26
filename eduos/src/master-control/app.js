@@ -15,7 +15,8 @@ import { loadModel, catalog, today, authorize, validateAuthorityModel, resolvePo
 import { appendAudit, verifyAudit } from "./audit.js";
 import { randomSecret, sha256 } from "./oidc.js";
 import { PRIMARY, claimProblem, readProviderSecret } from "./identity.js";
-import { BUNDLE_FORMAT, bundleKeys, signBundle } from "../federation/policy-bundle.js";
+import { BUNDLE_FORMAT, bundleKeys, signBundle, parsePublicKey } from "../federation/policy-bundle.js";
+import { DATASETS, PURPOSES, MIN_CELL_FLOOR, DEFAULT_MIN_CELL, checkEnvelope } from "../federation/exchange.js";
 
 const COOKIE = "eduos_mc";
 const STATE_COOKIE = "eduos_mc_state";
@@ -746,6 +747,150 @@ export function createApp({ cfg, db, providers }) {
         [aid, b.id, b.district_node_id, decisionText, note, req.principal]),
       detail: { decision: decisionText, note, version: b.version, release: b.release_id }, result: { id: aid, bundleId: b.id, decision: decisionText } };
   }));
+
+  // ---- FED-06: exchange gateway (aggregates only) ---------------------------
+  const agreementView = a => ({ id: a.id, producerNodeId: a.producer_node_id, recipientNodeId: a.recipient_node_id, dataset: a.dataset, datasetName: DATASETS[a.dataset]?.name,
+    fields: a.fields, purpose: a.purpose, legalBasis: a.legal_basis, minCellSize: a.min_cell_size, effectiveFrom: dateOf(a.effective_from), effectiveTo: dateOf(a.effective_to),
+    producerFingerprint: a.producer_fingerprint, producerApprovedAt: a.producer_approved_at, recipientApprovedAt: a.recipient_approved_at, status: a.status,
+    revokedAt: a.revoked_at, revokeReason: a.revoke_reason, createdAt: a.created_at });
+  const sideOf = (m, principal, a) => ({
+    producer: decideAt(m, principal, "exchange.share", a.producer_node_id),
+    recipient: decideAt(m, principal, "reporting.aggregate.view", a.recipient_node_id) });
+  const inForceAgreement = a => a.status === "active" && dateOf(a.effective_to) >= today();
+  const loadAgreement = async (c, aid, lock = false) => {
+    const { rows: [a] } = await c.query(`SELECT * FROM exchange_agreements WHERE id=$1${lock ? " FOR UPDATE" : ""}`, [aid]);
+    if (!a) throw new HttpError(404, "agreement_not_found");
+    return a;
+  };
+
+  app.get("/mc/api/exchange/datasets", ...read(async () => ({ datasets: DATASETS, purposes: PURPOSES, minCellFloor: MIN_CELL_FLOOR, defaultMinCell: DEFAULT_MIN_CELL })));
+
+  app.post("/mc/api/exchange-agreements", ...change("propose_exchange", "exchange_agreement", async (req, m) => {
+    const b = req.body || {};
+    const producer = m.nodes.find(n => n.id === b.producerNodeId), recipient = m.nodes.find(n => n.id === b.recipientNodeId), ds = DATASETS[b.dataset];
+    const fields = Array.isArray(b.fields) && b.fields.length ? [...new Set(b.fields)] : ds?.fields;
+    const minCell = b.minCellSize === undefined ? DEFAULT_MIN_CELL : b.minCellSize;
+    const basis = text(b.legalBasis, 500, 3), from = date(b.effectiveFrom) || today(), to = date(b.effectiveTo);
+    if (!producer || !recipient || !ds || !PURPOSES[b.purpose] || !basis || !to) throw new HttpError(400, "producer_recipient_dataset_purpose_basis_and_end_required");
+    const extraErrors = [];
+    if (producer.kind !== "district") extraErrors.push("exchange_agreements: the producer is a district (it owns the data)");
+    if (producer.id === recipient.id) extraErrors.push("exchange_agreements: the recipient must be someone else");
+    if (fields.some(f => !ds.fields.includes(f))) extraErrors.push(`exchange_agreements: fields outside ${b.dataset}: ${fields.filter(f => !ds.fields.includes(f)).join(", ")}`);
+    if (ds.required.some(f => !fields.includes(f))) extraErrors.push(`exchange_agreements: ${b.dataset} needs ${ds.required.join(", ")}`);
+    if (!Number.isInteger(minCell) || minCell < MIN_CELL_FLOOR) extraErrors.push(`exchange_agreements: minimum cell size is at least ${MIN_CELL_FLOOR}`);
+    if (to < from || from < today()) extraErrors.push("exchange_agreements: the period must start today or later and end after it starts");
+    const ordered = ds.fields.filter(f => fields.includes(f));
+    const draft = { producer_node_id: producer.id, recipient_node_id: recipient.id };
+    const side = sideOf(m, req.principal, draft);
+    const decision = side.producer.allowed ? { ...side.producer, basis: { ...side.producer.basis, side: "producer" } }
+      : side.recipient.allowed ? { ...side.recipient, basis: { ...side.recipient.basis, side: "recipient" } } : side.producer;
+    const aid = id("xa");
+    return { capability: side.producer.allowed ? "exchange.share" : "reporting.aggregate.view", nodeId: producer.id, targetId: aid, created: true, decision, extraErrors, next: mm => mm,
+      apply: c => c.query(`INSERT INTO exchange_agreements(id, producer_node_id, recipient_node_id, dataset, fields, purpose, legal_basis, min_cell_size, effective_from, effective_to, status, proposed_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'proposed',$11)`, [aid, producer.id, recipient.id, b.dataset, ordered, b.purpose, basis, minCell, from, to, req.principal]),
+      detail: { recipient: recipient.id, dataset: b.dataset, fields: ordered, purpose: b.purpose, minCellSize: minCell, effectiveTo: to },
+      result: { id: aid, status: "proposed", fields: ordered } };
+  }));
+
+  // Each side approves for itself; the producer district supplies the public
+  // key its EduOS signs with. Active only when both have, and not by one person.
+  app.post("/mc/api/exchange-agreements/:id/approve", ...change("approve_exchange", "exchange_agreement", async (req, m, c) => {
+    const a = await loadAgreement(c, req.params.id, true);
+    if (a.status !== "proposed") throw new HttpError(409, "agreement_not_proposed");
+    const side = sideOf(m, req.principal, a);
+    const as = side.producer.allowed && !a.producer_approved_at ? "producer" : side.recipient.allowed && !a.recipient_approved_at ? "recipient" : null;
+    const decision = as ? { ...side[as], basis: { ...side[as].basis, side: as } } : side.producer.allowed || side.recipient.allowed ? { allowed: false, reason: "already_approved_by_your_side" } : side.producer;
+    const extraErrors = [];
+    let key = null;
+    if (as === "producer") {
+      key = parsePublicKey(typeof req.body?.publicKey === "string" ? req.body.publicKey : "");
+      if (!key) extraErrors.push("exchange_agreements: the district's EduOS exchange public key (Ed25519) is required");
+    }
+    const other = as === "producer" ? a.recipient_approved_by : a.producer_approved_by;
+    if (as && other === req.principal) extraErrors.push("exchange_agreements: one person can't approve both sides");
+    const bothNow = as === "producer" ? !!a.recipient_approved_at : !!a.producer_approved_at;
+    return { capability: as === "producer" ? "exchange.share" : "reporting.aggregate.view", nodeId: a.producer_node_id, targetId: a.id, decision, extraErrors, next: mm => mm,
+      apply: cc => as === "producer"
+        ? cc.query("UPDATE exchange_agreements SET producer_approved_by=$2, producer_approved_at=now(), producer_public_key=$3, producer_fingerprint=$4, status=CASE WHEN recipient_approved_at IS NOT NULL THEN 'active' ELSE status END WHERE id=$1",
+          [a.id, req.principal, key.spki, key.fingerprint])
+        : cc.query("UPDATE exchange_agreements SET recipient_approved_by=$2, recipient_approved_at=now(), status=CASE WHEN producer_approved_at IS NOT NULL THEN 'active' ELSE status END WHERE id=$1", [a.id, req.principal]),
+      detail: { side: as, producerFingerprint: key?.fingerprint }, result: { id: a.id, side: as, status: bothNow ? "active" : "proposed" } };
+  }));
+
+  app.post("/mc/api/exchange-agreements/:id/revoke", ...change("revoke_exchange", "exchange_agreement", async (req, m, c) => {
+    const a = await loadAgreement(c, req.params.id, true), reason = text(req.body?.reason, 500, 3);
+    if (!reason) throw new HttpError(400, "reason_required");
+    if (a.status === "revoked") throw new HttpError(409, "already_revoked");
+    const side = sideOf(m, req.principal, a);
+    const decision = side.producer.allowed ? side.producer : side.recipient.allowed ? side.recipient : side.producer;
+    return { capability: side.producer.allowed ? "exchange.share" : "reporting.aggregate.view", nodeId: a.producer_node_id, targetId: a.id, decision, next: mm => mm,
+      apply: cc => cc.query("UPDATE exchange_agreements SET status='revoked', revoked_by=$2, revoked_at=now(), revoke_reason=$3 WHERE id=$1", [a.id, req.principal, reason]),
+      detail: { reason, side: side.producer.allowed ? "producer" : "recipient" }, result: { id: a.id, status: "revoked" } };
+  }));
+
+  app.get("/mc/api/exchange-agreements", ...read(async (req, m) => {
+    const node = text(req.query.nodeId, 80);
+    if (!node || !visibleNodes(m, req.principal).has(node)) throw new HttpError(404, "node_not_found");
+    const { rows } = await db.query("SELECT * FROM exchange_agreements WHERE producer_node_id=$1 OR recipient_node_id=$1 ORDER BY created_at DESC LIMIT 200", [node]);
+    const out = [];
+    for (const a of rows) {
+      const { rows: [n] } = await db.query("SELECT count(*)::int AS n, max(delivered_at) AS last FROM exchange_deliveries WHERE agreement_id=$1", [a.id]);
+      out.push({ ...agreementView(a), deliveries: n.n, lastDeliveredAt: n.last });
+    }
+    return out;
+  }));
+
+  app.post("/mc/api/exchange-agreements/:id/deliveries", ...change("deliver_exchange", "exchange_delivery", async (req, m, c) => {
+    const a = await loadAgreement(c, req.params.id, true);
+    const decision = decideAt(m, req.principal, "exchange.share", a.producer_node_id);
+    if (decision.allowed && !inForceAgreement(a)) throw new HttpError(409, a.status === "active" ? "agreement_expired" : `agreement_${a.status}`);
+    const producer = m.nodes.find(n => n.id === a.producer_node_id);
+    const v = checkEnvelope(req.body, { ...a, fields: a.fields, producer_tenant_ref: producer?.tenant_ref, effective_from: dateOf(a.effective_from), effective_to: dateOf(a.effective_to) });
+    if (decision.allowed && !v.ok) throw new HttpError(422, v.reason, { detail: v.detail });
+    const did = id("xd");
+    let version = 1;
+    if (v.ok) {
+      const { rows: [x] } = await c.query("SELECT max(version) AS v FROM exchange_deliveries WHERE agreement_id=$1 AND period_from=$2 AND period_to=$3", [a.id, v.body.period.from, v.body.period.to]);
+      version = (x?.v || 0) + 1;
+      if ((await c.query("SELECT 1 FROM exchange_deliveries WHERE sha256=$1", [v.sha256])).rowCount) throw new HttpError(409, "already_delivered");
+    }
+    const suppressed = v.ok ? v.body.rows.filter(r => r.suppressed).length : 0;
+    return { capability: "exchange.share", nodeId: a.producer_node_id, targetId: did, created: true, decision, next: mm => mm,
+      apply: cc => cc.query(`INSERT INTO exchange_deliveries(id, agreement_id, period_from, period_to, version, sha256, row_count, suppressed_cells, envelope, delivered_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [did, a.id, v.body.period.from, v.body.period.to, version, v.sha256, v.body.rows.length, suppressed, JSON.stringify(req.body), req.principal]),
+      detail: { agreement: a.id, period: v.ok ? v.body.period : null, version, rows: v.ok ? v.body.rows.length : 0, suppressed, sha256: v.sha256 },
+      result: { id: did, agreementId: a.id, version, rows: v.ok ? v.body.rows.length : 0, suppressed } };
+  }));
+
+  app.get("/mc/api/exchange-agreements/:id/deliveries", ...read(async (req, m) => {
+    const a = await loadAgreement(db, req.params.id);
+    const side = sideOf(m, req.principal, a);
+    if (!side.producer.allowed && !side.recipient.allowed) throw new HttpError(403, "not_a_party");
+    const { rows } = await db.query("SELECT id, period_from, period_to, version, sha256, row_count, suppressed_cells, delivered_at FROM exchange_deliveries WHERE agreement_id=$1 ORDER BY delivered_at DESC", [a.id]);
+    return rows.map(r => ({ id: r.id, period: { from: dateOf(r.period_from), to: dateOf(r.period_to) }, version: r.version, sha256: r.sha256, rows: r.row_count, suppressed: r.suppressed_cells, deliveredAt: r.delivered_at }));
+  }));
+
+  // Reading a delivery: either party, only while the agreement is in force.
+  // Every read is audited.
+  app.get("/mc/api/exchange-deliveries/:id", requireOperator, async (req, res, next) => {
+    try {
+      const out = await db.tx(async c => {
+        const m = await loadModel(c);
+        const { rows: [d] } = await c.query("SELECT * FROM exchange_deliveries WHERE id=$1", [req.params.id]);
+        if (!d) return { status: 404, body: { error: "delivery_not_found" } };
+        const a = await loadAgreement(c, d.agreement_id);
+        const side = sideOf(m, req.principal, a);
+        const party = side.recipient.allowed ? "recipient" : side.producer.allowed ? "producer" : null;
+        const base = { actor: req.principal, action: "read_exchange_delivery", target_type: "exchange_delivery", target_id: d.id, node_id: a.producer_node_id, capability: party === "producer" ? "exchange.share" : "reporting.aggregate.view" };
+        if (!party) { await appendAudit(c, { ...base, decision: "denied", reason: side.recipient.reason }); return { status: 403, body: { error: "not_a_party" } }; }
+        if (!inForceAgreement(a)) { await appendAudit(c, { ...base, decision: "denied", reason: `agreement_${a.status}` }); return { status: 410, body: { error: "agreement_not_in_force" } }; }
+        await appendAudit(c, { ...base, decision: "allowed", basis: { side: party, agreement: a.id }, detail: { purpose: a.purpose, sha256: d.sha256 } });
+        return { status: 200, body: { data: { id: d.id, agreement: agreementView(a), version: d.version, envelope: d.envelope } } };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.status(out.status).json(out.body);
+    } catch (e) { e instanceof HttpError ? res.status(e.status).json({ error: e.code }) : next(e); }
+  });
 
   // ---- console -------------------------------------------------------------
   app.use("/mc", express.static(fileURLToPath(new URL("./console/", import.meta.url)), { index: "index.html", maxAge: 0 }));
