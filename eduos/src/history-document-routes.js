@@ -66,16 +66,21 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
   app.post("/api/family/children/:studentId/history-contributions/:contributionId/documents",
     requireSession, limiter, requireCsrf, raw, async (req,res,next) => {
       if (!ready) return res.status(503).json({ error: "media_storage_not_configured" });
+      const studentId = typeof req.params?.studentId === "string" ? req.params.studentId : "";
+      const contributionId = typeof req.params?.contributionId === "string" ? req.params.contributionId : "";
       if (!validId(studentId) || !validId(contributionId))
         return res.status(400).json({ error: "invalid_contribution_id" });
-      const fileName = typeof req.query.name === "string" ? req.query.name.trim() : "";
+      const requestedName = req.query?.name;
+      const fileName = typeof requestedName === "string" ? requestedName.trim() : "";
       if (!NAME_RE.test(fileName)) return res.status(400).json({ error: "invalid_document_name" });
-      if (!/^text\/plain(?:\s*;\s*charset=utf-8)?$/i.test(String(req.headers["content-type"] || "").trim()) ||
+      const contentType = req.headers["content-type"];
+      if (typeof contentType !== "string" || !/^text\\/plain(?:\\s*;\\s*charset=utf-8)?$/i.test(contentType.trim()) ||
           !Buffer.isBuffer(req.body) || !req.body.length || req.body.length > MAX_BYTES)
         return res.status(415).json({ error: "unsupported_document_type", accepted: ["text/plain; charset=utf-8"] });
-      const key = req.headers["idempotency-key"];
-      if (key !== undefined && (typeof key !== "string" || !KEY_RE.test(key)))
+      const suppliedKey = req.headers["idempotency-key"];
+      if (suppliedKey !== undefined && (typeof suppliedKey !== "string" || !KEY_RE.test(suppliedKey)))
         return res.status(400).json({ error: "invalid_idempotency_key" });
+      const key = typeof suppliedKey === "string" ? suppliedKey : null;
       try {
         decodeText(req.body);
         const asset = crypto.randomUUID();
