@@ -24,10 +24,10 @@ test("every curated link is https, sourced, dated, in a known category and a kno
   }
 });
 
-test("coverage: agency pages for 49, athletics associations for 50", () => {
+test("coverage: agency pages for 49, athletics associations for all 51 (50 states and DC)", () => {
   const n = cat => Object.values(ENTRIES).filter(l => l.some(e => e.category === cat)).length;
   assert.equal(n("agency"), 49);
-  assert.equal(n("athletics"), 50);
+  assert.equal(n("athletics"), 51);
 });
 
 test("a state with no entries still gets the national directories", () => {

@@ -385,3 +385,25 @@ test("SPORT-03 rejects cross-source supersession and inverted effective dates", 
     classification_cycles: [{ id: "cycle-a", organization_id: "association-a", cycle_start: "2027-07-01", cycle_end: "2026-06-30" }]
   }).some(error => error.includes("inverted effective date range")));
 });
+
+test("the in-app state index and the federation registry name the same state athletic association", async () => {
+  const { ENTRIES, JURISDICTIONS } = await import("../src/state-index-data.js");
+  for (const [code] of JURISDICTIONS) {
+    const indexed = (ENTRIES[code] || []).filter(e => e.category === "athletics").map(e => e.title);
+    assert.equal(indexed.length, 1, `${code} has one NFHS member association in the index`);
+    const registered = registry.organizations.filter(o => o.active && o.jurisdiction_ids.includes(`US-${code}`)).map(o => o.legal_name);
+    assert.ok(registered.includes(indexed[0]), `${code}: "${indexed[0]}" is in the registry (${registered.join("; ")})`);
+  }
+});
+
+test("reviewed corrections hold: sources are the organization's own, and governance matches primary sources", () => {
+  const byId = new Map(registry.organizations.map(o => [o.id, o]));
+  assert.equal(new URL(byId.get("us-ok-ossaa").source_url).hostname, "www.ossaa.com");
+  assert.deepEqual([byId.get("us-de-diaa").organization_type, byId.get("us-de-diaa").legal_authority], ["government_office", "statutory"]);
+  assert.equal(byId.get("us-nv-niaa").legal_authority, "statutory");
+  assert.equal(byId.get("us-hi-hhsaa").governance_type, "private_nonprofit");
+  assert.equal(byId.get("us-as-ashssa-historical").legal_name, "American Samoa High School Athletic Association");
+  assert.equal(byId.get("us-as-ashssa-historical").verification_status, "conflicting_sources");
+  assert.deepEqual(byId.get("us-pr-prhsaa").scope.school_types, ["private"]);
+  assert.equal(byId.get("us-vi-vide-sports").organization_type, "government_office");
+});

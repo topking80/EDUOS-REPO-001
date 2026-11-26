@@ -71,3 +71,25 @@ Use opaque IDs, ISO dates, stable enumerations, and nullable fields for unknowns
 ## Evidence limitations
 
 The 50-state research is first-pass. Several associations need current bylaws, classification formula, membership status, and appeal process revalidated before operational rule ingestion. Puerto Rico public-school governance and the U.S. Virgin Islands territory-wide governance structure need further primary-source research. American Samoa's current DOE athletics office was identified as successor to ASHSSA. D.C. statutory membership provisions have an implementation caveat and require legal review before encoding.
+
+## Review, 2026-11-26
+
+Checked the seed against primary or official sources where the first pass looked doubtful. Changes:
+
+- **Oklahoma (OSSAA):** the source pointed at another organization's executive-director search page; it now points to `ossaa.com`.
+- **Delaware (DIAA):** reclassified from an independent association to a **government office with statutory authority**. It is established under 14 Del.C. ch. 3, and the Department's regulation (14 DE Admin. Code 1006) calls it a unit of the Department of Education.
+- **Hawaii (HHSAA):** governance set to **private nonprofit** (a 501(c)(3) of public and independent member schools).
+- **Nevada (NIAA):** statutory classification confirmed (NRS 385B).
+- **District of Columbia (DCSAA):** delegated/statutory classification confirmed (D.C. Code ch. 26A-i, § 38-2661.22; overseen by the D.C. State Athletics Commission).
+- **American Samoa:** the historical record's name corrected to the **American Samoa High School Athletic Association (ASHSAA)**. Public sources describe ASHSAA as the Department of Education's athletic division as recently as the 2022–23 season, so "historical predecessor" is marked `conflicting_sources` pending primary-source review.
+- **U.S. Virgin Islands:**
+  - Added the locally used name, St. Thomas/St. John Interscholastic Athletic Association, as an alias of the IAA.
+  - Added the **VI Department of Education, Division of Sports & Athletics** as a separate departmental body.
+  - Territory-wide authority remains unverified.
+- **Puerto Rico (PRHSAA):**
+  - Scope confirmed as private schools; it is not the authority for public schools.
+  - The source isn't an official PRHSAA page, so the record is marked for source review.
+
+The in-app state index (STATE-01) was missing D.C.'s association; it now has all 51 NFHS member associations. A test keeps the index and this registry naming the same association for every state and D.C.
+
+Still first-pass for the other states: the names and official sites match the NFHS member list in the state index, but governance type and legal authority for the records marked `directory_seed_source_review_required` still need their constitutions or statutes reviewed.
