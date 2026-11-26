@@ -2,7 +2,9 @@
 
 Teachers add projects, achievements, coursework, events and reflections to a
 student's history. The school reviews each item, then the family decides
-whether it joins the child's history.
+whether it joins the child's history. Teacher-authored entries already support
+secure photo attachments through the shared history-media pipeline (MEDIA-01);
+this is not a guardian-only capability.
 
 ## Flow
 
@@ -20,6 +22,14 @@ longer change the item. Every step is recorded in
 Reason codes: `needs_edits`, `inaccurate`, `privacy_concern`,
 `other_students_identifiable`, `not_appropriate`, `duplicate`, `not_relevant`,
 `family_preference`, `other`.
+
+## Media
+
+- Teacher-authored entries accept district-enabled JPEG, PNG and WebP photos through `POST /api/history/entries/:id/photos`.
+- Uploads use the shared private-storage and ClamAV/image re-encoding pipeline, district per-entry and per-student quotas, idempotency keys, and short-lived authorized reads.
+- Photos remain hidden until the entry is visible to the requesting audience. The teacher can see their own draft photos; the family sees them only after school approval and family acceptance.
+- Integration coverage verifies teacher upload, malware and MIME rejection, quota enforcement, visibility before/after publication, and signed-link access.
+- Plain-text documents and video are not yet supported on teacher-authored entries. PDF/DOCX remain out of scope until independently validated active-content sanitization exists.
 
 ## API
 
@@ -42,8 +52,7 @@ change an item's status any other way.
 
 ## Not in this step
 
-- Photos, artwork scans and other media: they wait until private storage,
-  malware scanning and image processing are configured (as in TC-02).
-- Screens in the web and mobile apps: this step adds the API.
+- Plain-text documents and video: not yet supported for teacher-authored entries. PDF/DOCX remain unsupported until active-content sanitization is independently validated; video requires safe transcoding.
+- Screens in the web and mobile apps: this step adds the API; teacher-authored photos use the shared history-media endpoint and are exposed in supported portfolio views.
 - Reassigning items when a teacher leaves, and district-configurable approver
   roles (roadmap items for a later step).
