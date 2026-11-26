@@ -2222,5 +2222,12 @@
   "governance_bodies": [],
   "delegations": [],
   "governance_decisions": [],
-  "appeals": []
+  "appeals": [],
+  "rule_sources": [],
+  "rule_versions": [],
+  "eligibility_policies": [],
+  "classification_cycles": [],
+  "classifications": [],
+  "official_credentials": [],
+  "sanctioning_records": []
 }
