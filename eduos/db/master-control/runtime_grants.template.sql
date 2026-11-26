@@ -8,3 +8,5 @@ GRANT SELECT, INSERT, UPDATE ON master_control.nodes, master_control.operators, 
 GRANT SELECT, INSERT, DELETE ON master_control.pending_logins, master_control.sessions TO mc_app;
 GRANT UPDATE (last_seen_at) ON master_control.sessions TO mc_app;
 GRANT SELECT, INSERT ON master_control.audit_log TO mc_app;
+-- FED-04
+GRANT SELECT, INSERT, UPDATE ON master_control.identity_providers, master_control.invitations TO mc_app;

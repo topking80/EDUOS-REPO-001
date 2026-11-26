@@ -7,7 +7,13 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 export const randomSecret = (bytes = 32) => crypto.randomBytes(bytes).toString("base64url");
 export const sha256 = v => crypto.createHash("sha256").update(v).digest("hex");
 
-export function createOidc(cfg) {
+/**
+ * One OIDC client for one trusted provider:
+ * {issuer, clientId, clientSecret, scopes, redirectUri, timeoutMs, nodeEnv}.
+ */
+export function createOidc(p) {
+  const cfg = { oidcIssuer: p.issuer.replace(/\/$/, ""), oidcClientId: p.clientId, oidcClientSecret: p.clientSecret, oidcScopes: p.scopes,
+    oidcRedirectUri: p.redirectUri, oidcHttpTimeoutMs: p.timeoutMs, nodeEnv: p.nodeEnv };
   let meta = null, jwks = null;
   async function metadata() {
     if (meta) return meta;
@@ -45,7 +51,7 @@ export function createOidc(cfg) {
       if ((aud.length > 1 || payload.azp !== undefined) && payload.azp !== cfg.oidcClientId) throw new Error("OIDC authorized-party mismatch");
       if (payload.nonce !== nonce) throw new Error("OIDC nonce mismatch");
       if (typeof payload.sub !== "string" || !payload.sub) throw new Error("OIDC subject is missing");
-      return { issuer: m.issuer.replace(/\/$/, ""), subject: payload.sub };
+      return { issuer: m.issuer.replace(/\/$/, ""), subject: payload.sub, claims: payload };
     },
   };
 }

@@ -10,7 +10,7 @@ Code: `eduos/src/master-control/` (server, API, console in `console/`). Schema: 
 |---|---|---|
 | Process | `npm start` | `npm run mc:start` (own port, `MC_PORT`, default 3100) |
 | Database | `public` schema, `eduos_app` login with RLS | `master_control` schema (or a separate database), its own login (`MC_APP_ROLE`) |
-| Sign-in | district OIDC (`OIDC_*`) | its own OIDC client (`MC_OIDC_*`); only registered operators |
+| Sign-in | district OIDC (`OIDC_*`) | its own OIDC client (`MC_OIDC_*`, the "primary" provider) plus other trusted providers (FED-04); only registered operators |
 | Cookies | `eduos_session`, path `/` | `eduos_mc`, path `/mc` |
 | Imports | — | only its own files and `src/federation/` (a unit test checks this) |
 

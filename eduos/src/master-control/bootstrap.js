@@ -7,12 +7,13 @@ import crypto from "node:crypto";
 import { loadConfig } from "./config.js";
 import { createDb } from "./db.js";
 import { appendAudit } from "./audit.js";
+import { ensurePrimaryProvider } from "./identity.js";
 
 export async function bootstrap({ subject, name, approval, platformName = "EduOS platform", cfg = loadConfig() }) {
   if (!subject || !name || !approval) throw new Error("--subject, --name and --approval are required");
   const db = createDb(cfg);
   try {
-    return await db.tx(async c => {
+    const out = await db.tx(async c => {
       if ((await c.query("SELECT 1 FROM nodes WHERE kind='platform'")).rowCount) throw new Error("Master Control is already bootstrapped");
       const principal = `op-${crypto.randomUUID()}`, today = new Date().toISOString().slice(0, 10), aid = `ra-${crypto.randomBytes(8).toString("hex")}`;
       await c.query("INSERT INTO nodes(id, kind, name, status, effective_from, approval_reference, created_by) VALUES ('platform','platform',$1,'active',$2,$3,'bootstrap')", [platformName, today, approval]);
@@ -23,6 +24,8 @@ export async function bootstrap({ subject, name, approval, platformName = "EduOS
         basis: { type: "bootstrap" }, detail: { operator: principal, assignment: aid, approvalReference: approval } });
       return { principal, assignment: aid };
     });
+    await ensurePrimaryProvider(db, cfg);
+    return out;
   } finally { await db.end(); }
 }
 

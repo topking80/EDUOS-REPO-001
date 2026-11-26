@@ -1,5 +1,5 @@
 {
-  "model_version": "0.2.0",
+  "model_version": "0.3.0",
   "as_of": "2026-11-26",
   "capabilities": [
     {
@@ -35,6 +35,18 @@
       "reach": "descendants",
       "delegable": false,
       "description": "Assign roles at platform and state-authority nodes. Never at a district or school: those use tenant.roles.assign, held by the district."
+    },
+    {
+      "id": "federation.identity.manage",
+      "domain": "federation",
+      "student_data": "none",
+      "assignable_levels": [
+        "platform",
+        "state_education_authority"
+      ],
+      "reach": "descendants",
+      "delegable": false,
+      "description": "Register, suspend and retire trusted identity providers, and manage operator accounts, for platform and state scopes. District-scoped providers and accounts are the district's (tenant.roles.assign)."
     },
     {
       "id": "service.health.view",
@@ -196,6 +208,7 @@
         "platform.config.manage",
         "federation.membership.manage",
         "federation.roles.assign",
+        "federation.identity.manage",
         "service.health.view",
         "security.incident.coordinate",
         "policy.set",
@@ -210,6 +223,7 @@
       "capabilities": [
         "service.health.view",
         "federation.roles.assign",
+        "federation.identity.manage",
         "security.incident.coordinate",
         "policy.set",
         "audit.view",

@@ -8,11 +8,52 @@ export const today = () => new Date().toISOString().slice(0, 10);
 const d = v => v ? (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)) : undefined;
 const clean = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null));
 
+/** True when nodeId is scopeId or below it. */
+export function withinNode(nodes, scopeId, nodeId) {
+  const byId = nodes instanceof Map ? nodes : new Map(nodes.map(n => [n.id, n]));
+  for (let n = byId.get(nodeId), i = 0; n && i < 10; n = n.parent_id ? byId.get(n.parent_id) : null, i++) if (n.id === scopeId) return true;
+  return false;
+}
+
+/**
+ * FED-04: a person's authority holds only while their account is enabled,
+ * their identity provider is active, and only at nodes inside what that
+ * provider may vouch for. Outside that, their assignments and the
+ * delegations they received are treated as suspended (from the day the
+ * account was disabled or the provider stopped, or from the start for nodes
+ * outside the provider's scope), so earlier dates keep their answers.
+ */
+function applyIdentity(model, operators, providers) {
+  const nodes = new Map(model.nodes.map(n => [n.id, n]));
+  const prov = new Map(providers.map(p => [p.id, p]));
+  const ops = new Map(operators.map(o => [o.principal_id, o]));
+  const cutoff = (principal, nodeId, from) => {
+    const o = ops.get(principal);
+    if (!o) return from;
+    const p = prov.get(o.idp_id);
+    if (!p || !withinNode(nodes, p.scope_node_id, nodeId)) return from;
+    const dates = [];
+    if (o.status !== "active" && o.disabled_at) dates.push(d(o.disabled_at));
+    if (p.status !== "active") dates.push(d(p.status_changed_at));
+    return dates.sort()[0];
+  };
+  const limit = (rec, principal) => {
+    const on = cutoff(principal, rec.node_id, rec.effective_from);
+    if (!on || (rec.suspended_on && rec.suspended_on <= on) || (rec.revoked_on && rec.revoked_on <= on)) return;
+    if (rec.status === "active" || rec.status === "suspended") Object.assign(rec, { status: "suspended", suspended_on: on });
+    else rec.suspended_on = on;
+  };
+  for (const a of model.role_assignments) limit(a, a.principal_id);
+  for (const x of model.delegations) limit(x, x.delegate_principal_id);
+  return model;
+}
+
 export async function loadModel(c) {
-  const [nodes, assignments, delegations, settings] = await Promise.all([
+  const [nodes, assignments, delegations, settings, operators, providers] = await Promise.all([
     c.query("SELECT * FROM nodes ORDER BY id"), c.query("SELECT * FROM role_assignments ORDER BY id"),
-    c.query("SELECT * FROM delegations ORDER BY id"), c.query("SELECT * FROM policy_settings ORDER BY id")]);
-  return {
+    c.query("SELECT * FROM delegations ORDER BY id"), c.query("SELECT * FROM policy_settings ORDER BY id"),
+    c.query("SELECT principal_id, idp_id, status, disabled_at FROM operators"), c.query("SELECT id, scope_node_id, status, status_changed_at FROM identity_providers")]);
+  return applyIdentity({
     model_version: catalog.model_version, as_of: today(),
     capabilities: catalog.capabilities, role_definitions: catalog.role_definitions, policy_definitions: catalog.policy_definitions,
     nodes: nodes.rows.map(n => clean({ id: n.id, kind: n.kind, parent_id: n.parent_id, jurisdiction_id: n.jurisdiction_id, tenant_ref: n.tenant_ref,
@@ -25,7 +66,7 @@ export async function loadModel(c) {
       revoked_on: d(x.revoked_on), suspended_on: d(x.suspended_on), approval_reference: x.approval_reference })),
     policy_settings: settings.rows.map(s => clean({ id: s.id, policy_id: s.policy_id, node_id: s.node_id, value: s.value, lock_descendants: s.lock_descendants,
       version: s.version, status: s.status, effective_from: d(s.effective_from), effective_to: d(s.effective_to), set_by_assignment_id: s.set_by_assignment_id, reason: s.reason })),
-  };
+  }, operators.rows, providers.rows);
 }
 
 export { authorize, validateAuthorityModel, resolvePolicy };
