@@ -903,6 +903,18 @@ VIEWS.teams = async () => {
         t.kind === "sport" ? h("button", { class: "btn", type: "button", "aria-label": `Physicals: ${t.title}`, onclick: e => e.target.closest("section").append(physicalsPanel({ id: t.id, title: t.title, kind: t.kind }, false)) }, "Physicals") : null),
       t.kind === "sport" ? h("p", { class: "small muted" }, "Eligibility is worked out now from the district's rules and isn't stored. Only you and the athletic director see it.") : null))];
 };
+// Game scheduling and officials assigning happen in Arbiter, which many
+// state associations and conferences use. Plain links: EduOS sends nothing
+// to Arbiter.
+const ARBITER_LINKS = [
+  ["Arbiter: sign in", "https://www.arbitersports.com/"],
+  ["Game and event scheduling", "https://arbiter.io/products/scheduling/"],
+  ["Officials assigning", "https://arbiter.io/products/assigning/"]];
+function schedulingOfficialsCard() {
+  return h("section", { class: "card", "aria-label": "Scheduling and officials" }, h("h3", {}, "Scheduling & officials"),
+    h("p", { class: "small muted" }, "Game schedules and officials' assignments are managed in Arbiter (opens in a new tab). EduOS doesn't send your schedules, rosters or student information there."),
+    h("ul", { class: "list" }, ARBITER_LINKS.map(([label, url]) => h("li", {}, h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, label)))));
+}
 async function activitiesLiveView() {
   const role = state.me.role, family = ["parent", "pupil"].includes(role);
   const staff = ["teacher", "principal", "vice_principal", "superintendent", "it_admin"].includes(role);
@@ -940,6 +952,7 @@ async function activitiesLiveView() {
     family ? familyClubApprovalsCard(actList(clubApprovals?.data), role === "parent") : null,
     role === "parent" ? await familySharingCard() : null,
     ["principal", "vice_principal"].includes(role) || my.athleticDirector ? await connectorsCard() : null,
+    ["principal", "vice_principal", "superintendent"].includes(role) || my.athleticDirector || coachOf.size ? schedulingOfficialsCard() : null,
     activities.length ? h("div", { class: "grid" }, activities.map(card)) : h("section", { class: "card" }, h("p", { class: "muted" }, "No clubs or teams are published yet.")),
     detail,
     h("section", { class: "card" }, h("h3", {}, "Upcoming events"),

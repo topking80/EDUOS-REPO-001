@@ -1125,6 +1125,10 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/activities` });
       await page.mainText();
       await waitFor(`!!document.querySelector('main button[aria-label="MaxPreps & Hudl: Falcons Soccer"]')`);
+      // A coach gets the Arbiter scheduling and officials links, opening in a new tab.
+      const arbiter = await page.eval(`JSON.stringify([...document.querySelectorAll('main section[aria-label="Scheduling and officials"] a')].map(a => [a.textContent, a.getAttribute("href"), a.target, a.rel]))`);
+      if (arbiter !== JSON.stringify([["Arbiter: sign in", "https://www.arbitersports.com/", "_blank", "noopener noreferrer"], ["Game and event scheduling", "https://arbiter.io/products/scheduling/", "_blank", "noopener noreferrer"], ["Officials assigning", "https://arbiter.io/products/assigning/", "_blank", "noopener noreferrer"]]))
+        failures.push(`coach: Arbiter links ${arbiter}`);
       await page.eval(`document.querySelector('main button[aria-label="MaxPreps & Hudl: Falcons Soccer"]').click()`);
       if (!(await waitFor(`!!document.querySelector('dialog[open] button[aria-label="MaxPreps roster file"]')`))) failures.push("coach: no MaxPreps roster file");
       const d = await page.eval(`document.querySelector("dialog[open]").textContent`);
