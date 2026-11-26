@@ -9,6 +9,7 @@
     "jurisdictions",
     "organizations",
     "organization_relationships",
+    "memberships",
     "notes"
   ],
   "properties": {
@@ -284,6 +285,107 @@
       "type": "array",
       "items": {
         "type": "string"
+      }
+    },
+    "memberships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "school_id",
+          "membership_class",
+          "activity_scope",
+          "status",
+          "effective_from",
+          "entitlements",
+          "verification_status",
+          "source_url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "school_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "education_tenant_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "membership_class": {
+            "type": "string",
+            "minLength": 1
+          },
+          "activity_scope": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "level_scope": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "season_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "active",
+              "suspended",
+              "withdrawn",
+              "expired"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "entitlements": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "approval_reference": {
+            "type": "string"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       }
     }
   },
