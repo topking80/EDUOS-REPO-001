@@ -66,7 +66,7 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
   app.post("/api/family/children/:studentId/history-contributions/:contributionId/documents",
     requireSession, limiter, requireCsrf, raw, async (req,res,next) => {
       if (!ready) return res.status(503).json({ error: "media_storage_not_configured" });
-      if (!validId(req.params.studentId) || !validId(req.params.contributionId))
+      if (!validId(studentId) || !validId(contributionId))
         return res.status(400).json({ error: "invalid_contribution_id" });
       const fileName = typeof req.query.name === "string" ? req.query.name.trim() : "";
       if (!NAME_RE.test(fileName)) return res.status(400).json({ error: "invalid_document_name" });
@@ -82,10 +82,10 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
         const begun = await withTenantTransaction(req.actor, async c => {
           const matches = await one(c,`SELECT 1 FROM student_history_contributions
             WHERE id=$1 AND student_id=$2 AND district_id=$3`,
-            [req.params.contributionId,req.params.studentId,req.actor.districtId]);
+            [contributionId,studentId,req.actor.districtId]);
           if (!matches) throw new HttpError(404,"contribution_not_found");
           const out = (await one(c,`SELECT eduos_history_contribution_document_begin($1,$2,$3,$4,$5,$6) AS out`,
-            [req.params.contributionId,asset,`history/${req.actor.districtId}/pending/${asset}.txt`,req.body.length,fileName,key || null])).out;
+            [contributionId,asset,`history/${req.actor.districtId}/pending/${asset}.txt`,req.body.length,fileName,key || null])).out;
           if (out.error) throw new HttpError(BEGIN_ERRORS[out.error] || 400,out.error,out);
           return out;
         });
@@ -113,18 +113,19 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
           `SELECT eduos_history_media_checksum($1,$2)`,
           [asset,crypto.createHash("sha256").update(req.body).digest("hex")]));
         await withTenantTransaction(req.actor,c=>audit(c,req,"add","history_document",asset,
-          `contribution=${req.params.contributionId};bytes=${req.body.length}`));
+          `contribution=${contributionId};bytes=${req.body.length}`));
         res.setHeader("Cache-Control","no-store");
         res.status(201).json({ data: { assetId:asset,fileName,status:"processed",bytes:req.body.length } });
       } catch(e) { sendError(res,next,e); }
     });
 
   app.get("/api/history/documents/:assetId",requireSession,async(req,res,next)=>{
-    if (!validId(req.params.assetId)) return res.status(400).json({error:"invalid_asset_id"});
+    const assetId = typeof req.params?.assetId === "string" ? req.params.assetId : "";
+    if (!validId(assetId)) return res.status(400).json({error:"invalid_asset_id"});
     if (!storage) return res.status(503).json({error:"media_storage_not_configured"});
     try {
       const doc = await withTenantTransaction(req.actor,c=>
-        one(c,`SELECT * FROM eduos_history_contribution_document_get($1)`,[req.params.assetId]));
+        one(c,`SELECT * FROM eduos_history_contribution_document_get($1)`,[assetId]));
       if (!doc || doc.scan_status !== "clean" || doc.processing_status !== "processed")
         return res.status(404).json({error:"document_not_found"});
       const body = await storage.get(doc.storage_key,MAX_BYTES);
