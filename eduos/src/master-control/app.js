@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { loadModel, catalog, today, authorize, validateAuthorityModel, resolvePolicy, visibleNodes, inForce, withinNode } from "./model.js";
 import { appendAudit, verifyAudit } from "./audit.js";
 import { randomSecret, sha256 } from "./oidc.js";
-import { PRIMARY, claimProblem } from "./identity.js";
+import { PRIMARY, claimProblem, readProviderSecret } from "./identity.js";
 
 const COOKIE = "eduos_mc";
 const STATE_COOKIE = "eduos_mc_state";
@@ -438,7 +438,7 @@ export function createApp({ cfg, db, providers }) {
 
   // ---- FED-04: trusted identity providers ----------------------------------
   const providerView = r => ({ id: r.id, issuer: r.issuer, displayName: r.display_name, clientId: r.client_id, clientSecretEnv: r.client_secret_env,
-    secretConfigured: !!process.env[r.client_secret_env], scopes: r.scopes, scopeNodeId: r.scope_node_id, requireMfa: r.require_mfa,
+    secretConfigured: !!readProviderSecret(r.client_secret_env), scopes: r.scopes, scopeNodeId: r.scope_node_id, requireMfa: r.require_mfa,
     allowedEmailDomains: r.allowed_email_domains, status: r.status, statusChangedAt: r.status_changed_at, statusReason: r.status_reason });
   app.get("/mc/api/identity-providers", ...read(async (req, m) => {
     const vis = visibleNodes(m, req.principal);

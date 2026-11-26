@@ -1,4 +1,6 @@
 // FED-04: trusted identity providers for Master Control.
+import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createOidc } from "./oidc.js";
 import { appendAudit } from "./audit.js";
 
@@ -6,17 +8,39 @@ export const PRIMARY = "primary";
 // amr values that show a second factor (RFC 8176), plus Entra's "mfa".
 const MFA_AMR = new Set(["mfa", "otp", "hwk", "swk", "sms", "tel", "fpt", "face", "iris", "retina", "vbm", "sc", "pop"]);
 
-/** Clients per provider, rebuilt when its issuer or client changes. */
-export function providerRegistry(cfg) {
-  const cache = new Map();
+/**
+ * A provider's client secret: from the file named by <NAME>_FILE (so a
+ * mounted secret can be rotated in place without a restart), else from the
+ * environment variable <NAME>. Read on every use.
+ */
+export function readProviderSecret(name, env = process.env) {
+  const file = env[`${name}_FILE`];
+  if (file) {
+    try { return readFileSync(file, "utf8").trim() || null; } catch { return null; }
+  }
+  return env[name] || null;
+}
+
+/**
+ * One OIDC client per provider. The client is rebuilt whenever anything it
+ * was built from changes: issuer, client ID, scopes or the secret itself.
+ * The secret is compared through an HMAC with a key that exists only in
+ * this process, so the cache never holds a reusable fingerprint of it.
+ */
+export function providerRegistry(cfg, { create = createOidc, env = process.env } = {}) {
+  const cache = new Map(); // provider id -> { fingerprint, client }
+  const key = crypto.randomBytes(32);
   return {
     client(row) {
-      const secret = process.env[row.client_secret_env];
+      const secret = readProviderSecret(row.client_secret_env, env);
       if (!secret) throw Object.assign(new Error(`${row.client_secret_env} is not set`), { code: "provider_secret_missing" });
-      const key = `${row.id}|${row.issuer}|${row.client_id}|${secret.length}`;
-      if (!cache.has(key)) cache.set(key, createOidc({ issuer: row.issuer, clientId: row.client_id, clientSecret: secret, scopes: row.scopes,
-        redirectUri: cfg.oidcRedirectUri, timeoutMs: cfg.oidcHttpTimeoutMs, nodeEnv: cfg.nodeEnv }));
-      return cache.get(key);
+      const fingerprint = crypto.createHmac("sha256", key).update(JSON.stringify([row.issuer, row.client_id, row.scopes, secret])).digest("hex");
+      const hit = cache.get(row.id);
+      if (hit && hit.fingerprint === fingerprint) return hit.client;
+      const client = create({ issuer: row.issuer, clientId: row.client_id, clientSecret: secret, scopes: row.scopes,
+        redirectUri: cfg.oidcRedirectUri, timeoutMs: cfg.oidcHttpTimeoutMs, nodeEnv: cfg.nodeEnv });
+      cache.set(row.id, { fingerprint, client });
+      return client;
     },
   };
 }
