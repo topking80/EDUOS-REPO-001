@@ -34,14 +34,29 @@ describe("clubs & sports attendance and physicals against real PostgreSQL", { sk
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
     server = await startServer({ ...env, DATABASE_URL: db.appUrl });
+    const NURSE = "a0000000-0000-4000-8000-0000000000d1", PU9 = "a0000000-0000-4000-8000-0000000000d2", STU9 = "b0000000-0000-4000-8000-0000000000d2";
+    await admin.query("INSERT INTO users(id,oidc_issuer,oidc_subject,display_name,email) VALUES ($1,$2,'ns1','Nurse S1','ns1@d1.test'),($3,$2,'pu9','Pupil Nine','pu9@d1.test')", [NURSE, idp.issuer, PU9]);
+    await admin.query("INSERT INTO memberships(user_id,district_id,school_id,role,is_default) VALUES ($1,$2,$3,'nurse',true),($4,$2,$3,'pupil',true)", [NURSE, ID.d1, ID.s1, PU9]);
+    await admin.query("INSERT INTO students(id,district_id,school_id,local_student_number,display_name,grade_level) VALUES ($1,$2,$3,'S1-900','Ninth Grader','9')", [STU9, ID.d1, ID.s1]);
+    await admin.query("INSERT INTO student_user_links(district_id,student_id,user_id,relationship,status) VALUES ($1,$2,$3,'pupil','active')", [ID.d1, STU9, PU9]);
     for (const name of ["p1", "t1", "vp1", "pa", "pb", "pu", "supt1"]) s[name] = await login(server.base, idp, name, { email_verified: true });
+    for (const name of ["ns1", "pu9"]) s[name] = await login(server.base, idp, name, { email: `${name}@d1.test`, email_verified: true });
 
     team = (await as("p1")("POST", "/api/activities", { kind: "sport", title: "Falcons Soccer", status: "published" })).body.data;
     club = (await as("p1")("POST", "/api/activities", { kind: "club", title: "Robotics Club", status: "published" })).body.data;
     assert.equal((await as("p1")("POST", `/api/activities/${team.id}/staff`, { userId: USERS.t1[0], staffRole: "coach" })).status, 201);
     assert.equal((await as("p1")("POST", `/api/activities/${club.id}/staff`, { userId: USERS.t1[0], staffRole: "advisor" })).status, 201);
     assert.equal((await as("pu")("POST", `/api/activities/${team.id}/join`)).status, 201);
-    assert.equal((await as("pu")("POST", `/api/activities/${club.id}/join`)).status, 201);
+    const clubJoin = await as("pu")("POST", `/api/activities/${club.id}/join`);
+    assert.equal(clubJoin.status, 201);
+    assert.equal(clubJoin.body.data.status, "pending", "grade 3 needs guardian approval for clubs");
+    assert.equal((await as("pb")("POST", `/api/activity-memberships/${clubJoin.body.data.id}/consent`, { decision: "active" })).status, 404, "unrelated parent cannot approve");
+    const consent = await as("pa")("POST", `/api/activity-memberships/${clubJoin.body.data.id}/consent`, { decision: "active" });
+    assert.equal(consent.status, 200, JSON.stringify(consent.body));
+    assert.equal(consent.body.data.status, "active");
+    const hsJoin = await as("pu9")("POST", `/api/activities/${club.id}/join`);
+    assert.equal(hsJoin.status, 201);
+    assert.equal(hsJoin.body.data.status, "active", "grade 9+ joins clubs directly");
     assert.equal((await as("t1")("POST", `/api/activities/${team.id}/roster`, { studentId: ID.alice, jerseyNumber: 9 })).status, 201);
     await admin.query("INSERT INTO activity_roster_entries(district_id,school_id,activity_id,student_id,jersey_number,added_by) VALUES($1,$2,$3,$4,4,$5)", [ID.d1, ID.s1, team.id, ID.bob, USERS.p1[0]]);
     game = await event(team.id, "Home game", -3);
@@ -70,7 +85,7 @@ describe("clubs & sports attendance and physicals against real PostgreSQL", { sk
   it("club attendance covers members through their pupil link; future events and outsiders are refused", async () => {
     const list = await as("t1")("GET", `/api/events/${meeting}/attendance`);
     assert.equal(list.status, 200, JSON.stringify(list.body));
-    assert.deepEqual(list.body.data.students.map(x => x.name), ["Alice A"]);
+    assert.deepEqual(list.body.data.students.map(x => x.name).sort(), ["Alice A", "Ninth Grader"]);
     assert.equal((await as("t1")("PUT", `/api/events/${meeting}/attendance`, { marks: [{ studentId: ID.bob, status: "present" }] })).status, 409);
     assert.equal((await as("t1")("PUT", `/api/events/${future}/attendance`, { marks: [{ studentId: ID.alice, status: "present" }] })).body.error, "event_not_started");
     for (const who of ["pa", "pu"]) assert.equal((await as(who)("GET", `/api/events/${game}/attendance`)).status, 404, who);
@@ -86,13 +101,15 @@ describe("clubs & sports attendance and physicals against real PostgreSQL", { sk
     const today = new Date().toISOString().slice(0, 10);
     const exp = new Date(Date.now() + 300 * 864e5).toISOString().slice(0, 10);
     assert.equal((await as("t1")("POST", `/api/students/${ID.alice}/physical-clearance`, { clearedOn: today, expiresOn: exp })).status, 403);
+    const nurseRec = await as("ns1")("POST", `/api/students/${ID.bob}/physical-clearance`, { clearedOn: today, expiresOn: exp });
+    assert.equal(nurseRec.status, 201, JSON.stringify(nurseRec.body));
     const rec = await as("p1")("POST", `/api/students/${ID.alice}/physical-clearance`, { clearedOn: today, expiresOn: exp });
     assert.equal(rec.status, 201, JSON.stringify(rec.body));
     assert.equal(rec.body.data.status, "cleared");
     assert.equal((await as("p1")("POST", `/api/students/${ID.alice}/physical-clearance`, { clearedOn: exp, expiresOn: today })).status, 400);
     const team1 = await as("t1")("GET", `/api/activities/${team.id}/physicals`);
     assert.equal(team1.status, 200, JSON.stringify(team1.body));
-    assert.deepEqual(team1.body.data.summary, { cleared: 1, expiring: 0, expired: 0, missing: 1 });
+    assert.deepEqual(team1.body.data.summary, { cleared: 2, expiring: 0, expired: 0, missing: 0 });
     assert.equal((await as("t1")("GET", `/api/activities/${club.id}/physicals`)).status, 400);
     assert.equal((await as("pa")("GET", `/api/activities/${team.id}/physicals`)).status, 404);
     const mine = await as("pa")("GET", `/api/students/${ID.alice}/physical-clearance`);
