@@ -792,7 +792,7 @@ GRANT EXECUTE ON FUNCTION eduos_history_family_storage(uuid) TO eduos_app;
 -- TC-09 (db/135): donations (sandbox only). Gifts are started by the donor;
 -- outcomes and acknowledgements only through the function.
 GRANT SELECT, INSERT ON district_donation_settings TO eduos_app;
-GRANT UPDATE (enabled, min_cents, max_cents, suggested_cents, acknowledgement_text, tax_wording_enabled, tax_wording, updated_by, updated_at) ON district_donation_settings TO eduos_app;
+GRANT UPDATE (enabled, min_cents, max_cents, suggested_cents, acknowledgement_text, tax_wording_enabled, tax_wording, recurring_enabled, updated_by, updated_at) ON district_donation_settings TO eduos_app;
 REVOKE DELETE, TRUNCATE ON district_donation_settings FROM eduos_app;
 GRANT SELECT, INSERT ON history_donations TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON history_donations FROM eduos_app;
@@ -847,3 +847,12 @@ REVOKE DELETE, TRUNCATE ON school_stream_seasons FROM eduos_app;
 GRANT SELECT, INSERT ON district_stream_settings TO eduos_app;
 GRANT UPDATE (provider, secrets_enc, updated_by, updated_at) ON district_stream_settings TO eduos_app;
 REVOKE DELETE, TRUNCATE ON district_stream_settings FROM eduos_app;
+
+-- TC-13 (db/139): recurring gifts. A donor starts a schedule (pending) through
+-- RLS; everything after that goes through functions. The schedule job runs as
+-- the runtime role and reaches due schedules in every district only through
+-- schedules_due/schedule_charge, which accept sandbox charges only.
+GRANT SELECT, INSERT ON history_donation_schedules TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON history_donation_schedules FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_history_donation_schedule_cancel(uuid, text), eduos_history_donation_schedules_due(date, integer),
+  eduos_history_donation_schedule_charge(uuid, uuid, integer, date, text, integer, text, text) TO eduos_app;

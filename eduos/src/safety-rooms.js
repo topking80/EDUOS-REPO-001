@@ -3,7 +3,7 @@ import { validId, cleanText } from "./role-app-util.js";
 
 export const ROOM_STATUSES = ["secured", "not_secured", "needs_help", "moved"];
 export const ROOM_NEEDS = ["medical", "threat", "missing_student", "other"];
-export const REPORTER_ROLES = ["teacher", "principal", "vice_principal", "sro", "librarian", "counselor", "nurse", "coach", "maintenance", "lunch_staff"];
+export const REPORTER_ROLES = ["teacher", "principal", "vice_principal", "sro", "librarian", "counselor", "nurse", "coach", "maintenance", "lunch_staff", "school_secretary"];
 export const VIEWER_ROLES = ["principal", "vice_principal", "sro", "superintendent"];
 export const NEED_TEXT = { medical: "medical help", threat: "a threat seen or heard", missing_student: "a missing student", other: "help" };
 

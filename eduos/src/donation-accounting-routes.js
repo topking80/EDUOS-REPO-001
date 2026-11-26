@@ -10,7 +10,8 @@
 //   POST /api/donations/reconciliations {from,to,note}  finance: sign off a period
 //   GET  /api/donations/reconciliations         finance: signed-off periods
 //
-// "Finance" is the superintendent or a staff member the superintendent named.
+// "Finance" is the district account (superintendent) or a school secretary the
+// superintendent designated, signed in as school secretary (db/140).
 // Nobody refunds their own gift, and nobody signs off a period in which they
 // recorded a refund (both enforced in the database).
 import rateLimit from "express-rate-limit";
@@ -44,6 +45,7 @@ const reconOut = r => ({ id: r.id, periodStart: r.period_start, periodEnd: r.per
 const LINE_TEXT = { gift: "Gift", processing_fee: "Processing fee", refund: "Refund" };
 
 export function registerDonationAccountingRoutes(app) {
+  // Runs after requireSession so each person has their own bucket.
   const limiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false, keyGenerator: req => `donacct:${req.actor?.userId}` });
 
   app.get("/api/donations/finance/access", requireSession, pgWrap(async c => ({ finance: await isDonationFinance(c) })));
@@ -52,13 +54,13 @@ export function registerDonationAccountingRoutes(app) {
     if (req.actor.role !== "superintendent") throw new HttpError(403, "forbidden");
     const list = await rows(c, `SELECT r.*, u.display_name AS name FROM history_donation_finance_reviewers r JOIN users u ON u.id=r.user_id WHERE r.district_id=$1 ORDER BY r.named_at DESC LIMIT 200`, [req.actor.districtId]);
     const staff = await rows(c, `SELECT DISTINCT u.id, u.display_name AS name FROM memberships m JOIN users u ON u.id=m.user_id
-        WHERE m.district_id=$1 AND m.status='active' AND m.role NOT IN ('parent','pupil','superintendent') ORDER BY name LIMIT 500`, [req.actor.districtId]);
+        WHERE m.district_id=$1 AND m.status='active' AND m.role = 'school_secretary' ORDER BY name LIMIT 500`, [req.actor.districtId]);
     return { reviewers: list.filter(r => !r.removed_at).map(r => ({ userId: r.user_id, name: r.name, namedAt: r.named_at })),
       history: list.map(r => ({ userId: r.user_id, name: r.name, namedAt: r.named_at, removedAt: r.removed_at })), staff,
-      rules: ["Nobody refunds their own gift.", "Nobody signs off a period in which they recorded a refund."] };
+      eligible: "School secretaries", rules: ["Nobody refunds their own gift.", "Nobody signs off a period in which they recorded a refund."] };
   }));
 
-  app.put("/api/donations/finance/reviewers/:userId", limiter, requireSession, requireCsrf, pgWrap(async (c, req) => {
+  app.put("/api/donations/finance/reviewers/:userId", requireSession, limiter, requireCsrf, pgWrap(async (c, req) => {
     if (req.actor.role !== "superintendent") throw new HttpError(403, "forbidden");
     if (!validId(req.params.userId)) throw new HttpError(400, "invalid_id");
     if (typeof req.body?.on !== "boolean") throw new HttpError(400, "invalid_value");
@@ -79,7 +81,7 @@ export function registerDonationAccountingRoutes(app) {
         amountCents: l.amount_cents, currency: l.currency, providerRef: l.provider_ref, test: l.test_mode, recordedAt: l.recorded_at })) };
   }));
 
-  app.post("/api/donations/:id/refund", limiter, requireSession, requireCsrf, finance(async (c, req) => {
+  app.post("/api/donations/:id/refund", requireSession, limiter, requireCsrf, finance(async (c, req) => {
     if (!validId(req.params.id)) throw new HttpError(400, "invalid_id");
     const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
     if (reason.length < 5 || reason.length > 500 || /[\u0000-\u0008\u000b-\u001f]/.test(reason)) throw new HttpError(400, "reason_required");
@@ -116,7 +118,7 @@ export function registerDonationAccountingRoutes(app) {
       signOffBlocked: recordedRefund ? "You recorded a refund in this period, so someone else signs it off." : null };
   }));
 
-  app.post("/api/donations/reconciliations", limiter, requireSession, requireCsrf, finance(async (c, req) => {
+  app.post("/api/donations/reconciliations", requireSession, limiter, requireCsrf, finance(async (c, req) => {
     const { from, to } = period(req.body || {});
     const note = req.body?.note;
     if (note !== undefined && note !== null && (typeof note !== "string" || note.length > 1000)) throw new HttpError(400, "invalid_note");

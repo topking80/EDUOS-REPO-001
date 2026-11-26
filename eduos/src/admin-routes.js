@@ -29,16 +29,16 @@ const validId = v => typeof v === "string" && UUID_RE.test(v);
 const text = (v, max) => typeof v === "string" && v.trim().length > 0 && v.trim().length <= max;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SUBJECT_RE = /^[\x21-\x7e]{1,255}$/;
-export const ROLES = ["superintendent", "it_admin", "principal", "teacher", "parent", "pupil", "driver", "sro", "librarian", "vice_principal", "counselor", "nurse", "maintenance", "lunch_staff"];
+export const ROLES = ["superintendent", "it_admin", "principal", "teacher", "parent", "pupil", "driver", "sro", "librarian", "vice_principal", "counselor", "nurse", "maintenance", "lunch_staff", "school_secretary"];
 const SCHOOL_LEVELS = ["elementary", "middle", "high", "k8", "k12", "other"];
-const PRINCIPAL_MANAGED = ["teacher", "parent", "pupil", "driver", "librarian", "vice_principal", "counselor", "nurse", "maintenance", "lunch_staff"];
+const PRINCIPAL_MANAGED = ["teacher", "parent", "pupil", "driver", "librarian", "vice_principal", "counselor", "nurse", "maintenance", "lunch_staff", "school_secretary"];
 
 const audit = (client, req, action, type, id, detail = null) => client.query(
   `INSERT INTO audit_events(district_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
    VALUES($1,$2,$3,$4,$5,$6,'success',$7,$8)`,
   [req.actor.districtId, req.actor.userId, req.actor.role, action, type, id, detail, req.requestId]);
 
-const IT_MANAGED = ["principal", "teacher", "parent", "pupil", "driver", "sro", "librarian", "vice_principal", "counselor", "nurse", "maintenance", "lunch_staff"];
+const IT_MANAGED = ["principal", "teacher", "parent", "pupil", "driver", "sro", "librarian", "vice_principal", "counselor", "nurse", "maintenance", "lunch_staff", "school_secretary"];
 function canManage(actor, role, schoolId) {
   if (actor.role === "superintendent") return true;
   if (actor.role === "it_admin") return IT_MANAGED.includes(role);

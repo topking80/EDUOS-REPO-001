@@ -145,6 +145,8 @@ const ROLE_TABS = {
   nurse: [["healthoffice", "Health office", "heart-pulse"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   maintenance: [["facilities", "Facilities", "wrench"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   lunch_staff: [["meals", "Meal service", "utensils"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
+  // TC-13: gift accounts once the superintendent designates them (db/140).
+  school_secretary: [["gifts", "Gift accounts", "check"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   principal: [["overview", "School", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"], ["devices", "Rooms & devices", "server"], ["alerts", "Alerts", "bell"]],
   superintendent: [["overview", "District", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
@@ -152,7 +154,7 @@ const ROLE_TABS = {
   coach: [["teams", "My teams", "trophy"], ["alerts", "Alerts", "bell"]],
   it_admin: [["apps", "Apps", "apps"], ["devices", "Classroom devices", "server"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
 };
-const APP_NAME = { coach: "Coach", pupil: "Student", teacher: "Teacher", parent: "Family", principal: "School leader", superintendent: "District leader", driver: "Driver", sro: "School Resource Officer", librarian: "Librarian", vice_principal: "Vice Principal", counselor: "Guidance Counselor", nurse: "School Nurse", maintenance: "Maintenance", lunch_staff: "Lunch Staff", it_admin: "District IT" };
+const APP_NAME = { coach: "Coach", pupil: "Student", teacher: "Teacher", parent: "Family", principal: "School leader", superintendent: "District leader", driver: "Driver", sro: "School Resource Officer", librarian: "Librarian", vice_principal: "Vice Principal", counselor: "Guidance Counselor", nurse: "School Nurse", maintenance: "Maintenance", lunch_staff: "Lunch Staff", school_secretary: "School Secretary", it_admin: "District IT" };
 const state = { me: null, brand: null, tab: null, unread: 0, home: null, safety: [], safetySig: "" };
 const STAFF_ROLES = ["teacher", "principal", "vice_principal", "superintendent"];
 
@@ -1740,6 +1742,17 @@ async function donationCard(role) {
   const amount = h("input", { id: "don-amt", type: "number", min: st.minCents / 100, max: st.maxCents / 100, step: "1", value: (st.suggestedCents[0] || st.minCents) / 100, style: "width:7em" });
   const where = h("select", { id: "don-where" }, h("option", { value: "" }, "The whole district"), (st.schools || []).map(x => h("option", { value: x.id }, x.name)));
   const anon = h("input", { id: "don-anon", type: "checkbox" });
+  // TC-13: once, monthly or yearly (sandbox only; the donor can cancel any time).
+  const freqs = Array.isArray(st.frequencies) && st.frequencies.length ? st.frequencies : ["one_time"];
+  const FREQ = { one_time: "Once", monthly: "Every month", yearly: "Every year" };
+  const freq = h("select", { id: "don-freq" }, freqs.map(f => h("option", { value: f }, FREQ[f] || f)));
+  const schedules = freqs.length > 1 ? (await safe(api.get("/api/donations/schedules/mine")))?.data || [] : [];
+  const cancelSchedule = async x => {
+    const yes = await dialogForm(`Stop your ${x.frequencyLabel.toLowerCase()} gift of ${money(x.amountCents)}?`, () => ({
+      fields: [h("p", { class: "small" }, "No more charges will be made. Past gifts and their records stay.")], value: () => true }), "Stop gift");
+    if (!yes) return;
+    try { await api.post(`/api/donations/schedules/${x.id}/cancel`, {}); toast("Stopped. No more charges."); go(state.tab, { push: false }); } catch { toast("Couldn't stop it."); }
+  };
   const feeLine = h("span", {});
   const fee = () => { const c = Math.round(Number(amount.value) * 100); feeLine.textContent = c > 0 ? `Estimated fee ${money(Math.round(c * 0.029) + 30)}, so about ${money(Math.max(0, c - Math.round(c * 0.029) - 30))} reaches the fund.` : ""; return feeLine; };
   amount.addEventListener("input", fee);
@@ -1747,9 +1760,9 @@ async function donationCard(role) {
     const cents = Math.round(Number(amount.value) * 100);
     if (!(cents >= st.minCents && cents <= st.maxCents)) return toast(`Choose between ${money(st.minCents)} and ${money(st.maxCents)}.`);
     try {
-      const g = (await api.post("/api/donations", { amountCents: cents, schoolId: where.value || null, anonymous: anon.checked, idempotencyKey: `web-${crypto.randomUUID()}` })).data;
+      const g = (await api.post("/api/donations", { amountCents: cents, schoolId: where.value || null, anonymous: anon.checked, frequency: freq.value, idempotencyKey: `web-${crypto.randomUUID()}` })).data;
       const r = (await api.post(`/api/donations/${g.id}/confirm`, { testOutcome: "sandbox_success" })).data;
-      toast(r.acknowledgement ? `Thank you. Test gift recorded as ${r.acknowledgement.number}.` : "The test gift didn't go through.");
+      toast(r.acknowledgement ? `Thank you. Test gift recorded as ${r.acknowledgement.number}.${g.schedule ? ` It repeats ${g.schedule.frequency === "monthly" ? "every month" : "every year"} until you stop it.` : ""}` : "The test gift didn't go through.");
       go(state.tab, { push: false });
     } catch { toast("Couldn't record the gift."); }
   };
@@ -1759,10 +1772,17 @@ async function donationCard(role) {
     h("p", { class: "small", "aria-live": "polite" }, fee()),
     h("div", { class: "btns" }, st.suggestedCents.map(c => h("button", { class: "btn small", type: "button", onclick: () => { amount.value = c / 100; fee(); } }, money(c)))),
     h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "don-amt" }, "Amount ($)"), amount), h("div", {}, h("label", { for: "don-where" }, "For"), where),
+      freqs.length > 1 ? h("div", {}, h("label", { for: "don-freq" }, "How often"), freq) : null,
       h("label", { for: "don-anon", class: "small" }, anon, " Don't show my name in district reports")),
     h("button", { class: "btn primary small", type: "button", onclick: give }, "Give (test)"),
     fund ? fundAbout(fund) : null,
-    mine.length ? [h("h4", {}, "Your gifts"), h("ul", { class: "list small" }, mine.map(g => h("li", {}, `${money(g.amountCents)} · ${g.designation.name || "District"} · ${g.status}${g.acknowledgement ? ` · ${g.acknowledgement.number}` : ""}${g.refundNotice ? ` · refund ${g.refundNotice.number}` : ""}`)))] : null);
+    schedules.length ? [h("h4", {}, "Your recurring gifts"), h("ul", { class: "list small" }, schedules.map(x => h("li", { class: "row wrap" },
+      h("span", { class: "grow" }, `${money(x.amountCents)} ${x.frequencyLabel.toLowerCase()} · ${x.designation.name || "District"} · ${scheduleStatus(x)}`),
+      x.canCancel ? h("button", { class: "btn small", type: "button", "aria-label": `Stop ${x.frequencyLabel.toLowerCase()} gift of ${money(x.amountCents)}`, onclick: () => cancelSchedule(x) }, "Stop") : null)))] : null,
+    mine.length ? [h("h4", {}, "Your gifts"), h("ul", { class: "list small" }, mine.map(g => h("li", {}, `${money(g.amountCents)} · ${g.designation.name || "District"} · ${g.status}${g.installment ? ` · charge ${g.installment}` : ""}${g.acknowledgement ? ` · ${g.acknowledgement.number}` : ""}${g.refundNotice ? ` · refund ${g.refundNotice.number}` : ""}`)))] : null);
+}
+function scheduleStatus(x) {
+  return { pending: "starting", active: `next charge ${x.nextChargeOn}`, failed: "first payment didn't go through", cancelled: "stopped", stopped: "stopped after declined payments" }[x.status] || x.status;
 }
 async function donationSettingsCard() {
   const s = (await safe(api.get("/api/donations/settings")))?.data;
@@ -1774,12 +1794,14 @@ async function donationSettingsCard() {
   const sugg = h("input", { id: "ds-sugg", value: s.suggestedCents.map(c => c / 100).join(", "), style: "width:12em" });
   const ack = h("textarea", { id: "ds-ack", rows: 2, maxlength: 1000 }, s.acknowledgementText);
   const taxOn = h("input", { id: "ds-tax-on", type: "checkbox", checked: s.taxWordingEnabled || undefined });
+  const rec = h("input", { id: "ds-rec", type: "checkbox", checked: s.recurringEnabled !== false || undefined });
   const tax = h("textarea", { id: "ds-tax", rows: 2, maxlength: 1000, placeholder: "Only wording your district's advisers approved" }, s.taxWording || "");
   const t = report?.totals;
   return h("section", { class: "card", "aria-label": "Preservation gifts" }, h("h3", {}, "Preservation gifts"),
     h("p", { class: "small muted" }, "Voluntary gifts from families and staff, never from students. Sandbox only for now: no money moves. Gifts never change storage limits."),
     t ? h("p", { class: "small" }, `${t.gifts} gift${t.gifts === 1 ? "" : "s"} · ${money(t.grossCents)} given · ${money(t.feesCents)} processing · ${money(t.netCents)} net`) : null,
     h("label", { for: "ds-on", class: "small" }, on, " Accept gifts"),
+    h("label", { for: "ds-rec", class: "small" }, rec, " Let donors give monthly or yearly (sandbox charges; donors can stop any time)"),
     h("div", { class: "row wrap" }, h("div", {}, h("label", { for: "ds-min" }, "Smallest ($)"), min), h("div", {}, h("label", { for: "ds-max" }, "Largest ($)"), max),
       h("div", {}, h("label", { for: "ds-sugg" }, "Suggested ($, commas)"), sugg)),
     h("label", { for: "ds-ack" }, "Acknowledgement text"), ack,
@@ -1790,7 +1812,7 @@ async function donationSettingsCard() {
       try {
         await api.put("/api/donations/settings", { enabled: on.checked, minCents: Math.round(Number(min.value) * 100), maxCents: Math.round(Number(max.value) * 100),
           suggestedCents: sugg.value.split(",").map(v => v.trim()).filter(Boolean).map(v => Math.round(Number(v) * 100)),
-          acknowledgementText: ack.value, taxWordingEnabled: taxOn.checked, taxWording: tax.value.trim() || null });
+          acknowledgementText: ack.value, taxWordingEnabled: taxOn.checked, taxWording: tax.value.trim() || null, recurringEnabled: rec.checked });
         toast("Saved."); go(state.tab, { push: false });
       } catch { toast("Couldn't save. Check the amounts and wording."); } } }, "Save"));
 }
@@ -1798,9 +1820,11 @@ async function donationSettingsCard() {
 async function donationAccountsCard() {
   if (!(await safe(api.get("/api/donations/finance/access")))?.data?.finance) return null;
   const today = new Date().toISOString().slice(0, 10), from = `${today.slice(0, 7)}-01`;
-  const [rep, list, recs, people] = await Promise.all([safe(api.get(`/api/donations/reconciliation?from=${from}&to=${today}`)), safe(api.get("/api/donations")),
-    safe(api.get("/api/donations/reconciliations")), state.me.role === "superintendent" ? safe(api.get("/api/donations/finance/reviewers")) : null]);
+  const [rep, list, recs, people, sch] = await Promise.all([safe(api.get(`/api/donations/reconciliation?from=${from}&to=${today}`)), safe(api.get("/api/donations")),
+    safe(api.get("/api/donations/reconciliations")), state.me.role === "superintendent" ? safe(api.get("/api/donations/finance/reviewers")) : null,
+    safe(api.get("/api/donations/schedules"))]);
   const r = rep?.data, gifts = list?.data?.gifts || [], done = recs?.data || [], ppl = people?.data;
+  const scheds = (sch?.data?.schedules || []).filter(x => x.status === "active" || x.status === "pending");
   const reload = () => go(state.tab, { push: false });
   const refund = async g => {
     const reason = await dialogForm(`Refund ${money(g.amountCents)} from ${g.donor}`, () => ({ fields: [
@@ -1815,7 +1839,7 @@ async function donationAccountsCard() {
     try { const x = (await api.post("/api/donations/reconciliations", { from, to: today })).data; toast(x.matched ? "Signed off: the books match." : "Signed off with differences recorded."); reload(); }
     catch (e) { toast(e?.body?.error === "separation_of_duties" ? "You recorded a refund in this period, so someone else signs it off." : "Couldn't sign it off."); }
   };
-  const pick = ppl ? h("select", { id: "fr-u" }, h("option", { value: "" }, "Choose staff"), ppl.staff.filter(x => !ppl.reviewers.some(y => y.userId === x.id)).map(x => h("option", { value: x.id }, x.name))) : null;
+  const pick = ppl ? h("select", { id: "fr-u" }, h("option", { value: "" }, "Choose a school secretary"), ppl.staff.filter(x => !ppl.reviewers.some(y => y.userId === x.id)).map(x => h("option", { value: x.id }, x.name))) : null;
   const setReviewer = async (userId, on) => {
     if (!userId) return toast("Choose someone first.");
     try { await api.put(`/api/donations/finance/reviewers/${userId}`, { on }); toast(on ? "Named." : "Removed."); reload(); } catch { toast("Couldn't change reviewers."); }
@@ -1831,10 +1855,12 @@ async function donationAccountsCard() {
     gifts.length ? [h("h4", {}, "Recent gifts"), h("ul", { class: "list small" }, gifts.slice(0, 20).map(g => h("li", { class: "row wrap" },
       h("span", { class: "grow" }, `${money(g.amountCents)} · ${g.donor} · ${g.status}${g.acknowledgement ? ` · ${g.acknowledgement.number}` : ""}${g.refundNotice ? ` · ${g.refundNotice.number}` : ""}`),
       g.status === "succeeded" ? h("button", { class: "btn small", type: "button", "aria-label": `Refund ${money(g.amountCents)} from ${g.donor}`, onclick: () => refund(g) }, "Refund") : null)))] : null,
-    ppl ? [h("h4", {}, "Finance reviewers"), h("p", { class: "small muted" }, "Staff you name can see the gift accounts, refund gifts and sign off periods."),
+    scheds.length ? [h("h4", {}, "Recurring gifts"), h("ul", { class: "list small" }, scheds.slice(0, 20).map(x =>
+      h("li", {}, `${money(x.amountCents)} ${x.frequencyLabel.toLowerCase()} · ${x.donor} · ${x.charges} charge${x.charges === 1 ? "" : "s"} · ${scheduleStatus(x)}`)))] : null,
+    ppl ? [h("h4", {}, "Finance reviewers"), h("p", { class: "small muted" }, "School secretaries you designate can see the gift accounts, refund gifts and sign off periods, while signed in as school secretary."),
       ppl.reviewers.length ? h("ul", { class: "list small" }, ppl.reviewers.map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, x.name),
         h("button", { class: "btn small", type: "button", "aria-label": `Remove ${x.name}`, onclick: () => setReviewer(x.userId, false) }, "Remove")))) : h("p", { class: "small" }, "No reviewers yet."),
-      h("div", { class: "row wrap" }, h("label", { for: "fr-u", class: "sr-only" }, "Staff member"), pick, h("button", { class: "btn small", type: "button", onclick: () => setReviewer(pick.value, true) }, "Name reviewer"))] : null);
+      h("div", { class: "row wrap" }, h("label", { for: "fr-u", class: "sr-only" }, "School secretary"), pick, h("button", { class: "btn small", type: "button", onclick: () => setReviewer(pick.value, true) }, "Name reviewer"))] : null);
 }
 // ---- TC-12: the district preservation fund ----------------
 const FUND_STATUS = { pending: "Waiting for approvals", approved: "Approved, not yet paid", rejected: "Rejected", withdrawn: "Withdrawn", cancelled: "Cancelled", paid: "Paid" };
@@ -2126,6 +2152,12 @@ VIEWS.history = async () => {
     h("p", { class: "small muted" }, "Family memories and teacher items wait here before they reach a student's history."),
     ...(response ? [h("h3", {}, "Family memories"), ...content] : []),
     ...(teacher || [])];
+};
+// TC-13: a school secretary's gift accounts (db/140). They appear once the
+// superintendent designates the secretary as a donation finance reviewer.
+VIEWS.gifts = async () => {
+  const cards = [await donationAccountsCard(), await fundDisbursementsCard()].filter(Boolean);
+  return cards.length ? cards : empty("Gift accounts appear here once your superintendent designates you as a finance reviewer.");
 };
 VIEWS.children = async () => {
   const [home, bus] = await Promise.all([api.get("/api/home"), safe(api.get("/api/transport/today"))]);
@@ -2756,7 +2788,7 @@ async function rollCallCard(i) {
   return card;
 }
 // ---- SAFE-01: room status during an emergency -------------------------------
-const ROOM_REPORTERS = ["teacher", "principal", "vice_principal", "sro", "librarian", "counselor", "nurse", "coach", "maintenance", "lunch_staff"];
+const ROOM_REPORTERS = ["teacher", "principal", "vice_principal", "sro", "librarian", "counselor", "nurse", "coach", "maintenance", "lunch_staff", "school_secretary"];
 const ROOM_STATUS_TEXT = { secured: "Secured", not_secured: "Not secured", needs_help: "Needs help", moved: "We moved out" };
 const ROOM_NEED_TEXT = { medical: "Medical", threat: "Threat seen or heard", missing_student: "Missing student", other: "Other" };
 const ROOM_CHIP = { secured: "present", not_secured: "absent", needs_help: "absent", moved: "expected" };

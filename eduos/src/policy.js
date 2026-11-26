@@ -125,7 +125,10 @@ export const ROLE_PERMISSIONS = Object.freeze({
   // assignments, never managed by hand.
   // SAFE-01: every adult at a school sees a live alert there and reports their
   // room (safety:read); starting and leading alerts stay with teachers and administrators.
-  coach: { schools:["read"], branding:["read"], safety:["read"] }
+  coach: { schools:["read"], branding:["read"], safety:["read"] },
+  // TC-13 (db/140): the school office. The role alone grants no finance access;
+  // the superintendent designates a secretary as a donation finance reviewer.
+  school_secretary: { schools:["read"], branding:["read"], safety:["read"] }
 });
 
 // District-level roles hold memberships without a school (school_id NULL).
