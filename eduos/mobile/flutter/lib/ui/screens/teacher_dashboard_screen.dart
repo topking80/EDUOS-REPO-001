@@ -7,6 +7,8 @@ import '../widgets.dart';
 import 'alerts_screen.dart';
 import 'class_planner_screen.dart';
 import 'class_register_screen.dart';
+import 'coach_teams_screen.dart';
+import 'course_seating_screen.dart';
 import 'messages_screen.dart';
 import 'safety_board.dart';
 import 'staff_pickup_screen.dart';
@@ -73,6 +75,9 @@ class _TeacherDashboardData {
     required this.recentHandoffs,
     required this.weatherPassOn,
     required this.weatherAdvisories,
+    required this.activities,
+    required this.attendanceDue,
+    required this.bellSchedule,
   });
 
   final String schoolName;
@@ -112,6 +117,9 @@ class _TeacherDashboardData {
   final List<Json> recentHandoffs;
   final bool weatherPassOn;
   final List<Json> weatherAdvisories;
+  final List<Json> activities;
+  final int attendanceDue;
+  final Json bellSchedule;
 
   factory _TeacherDashboardData.fromDashboard(Json d) {
     final school = obj(d['school']);
@@ -159,6 +167,9 @@ class _TeacherDashboardData {
       recentHandoffs: objs(cn['recentHandoffs']),
       weatherPassOn: al['weatherPassOn'] == true,
       weatherAdvisories: al['weatherPassOn'] == true ? objs(al['weatherAdvisories']) : const [],
+      activities: objs(obj(d['activities'])['items']),
+      attendanceDue: integer(obj(d['activities'])['attendanceDue']),
+      bellSchedule: obj(ov['bellSchedule']),
     );
   }
 }
@@ -249,6 +260,9 @@ class TeacherDashboardScreen extends StatelessWidget {
       recentHandoffs: handoffs,
       weatherPassOn: false,
       weatherAdvisories: const [],
+      activities: const [],
+      attendanceDue: 0,
+      bellSchedule: const {},
     );
   }
 
@@ -392,6 +406,17 @@ class TeacherDashboardScreen extends StatelessWidget {
                       trailing: s['now'] == true ? const StatusChip('current', text: 'Now') : null,
                     ),
                 ],
+                if (data.bellSchedule.isNotEmpty) ...[
+                  const Divider(),
+                  Text('Bell: ${str(data.bellSchedule['name'], 'School day')}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  for (final p in objs(data.bellSchedule['periods']))
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('${str(p['starts'])}–${str(p['ends'])} · ${str(p['label'])}'),
+                      subtitle: Text(str(p['kind'])),
+                    ),
+                ],
                 if (data.upcomingEvents.isNotEmpty) ...[
                   const Divider(),
                   const Text('Upcoming events', style: TextStyle(fontWeight: FontWeight.w600)),
@@ -425,6 +450,18 @@ class TeacherDashboardScreen extends StatelessWidget {
                     subtitle: Text('${integer(r['deviceCount'])} device(s)${r['controller'] != null ? ' · ${str(r['controller'])}' : ''}'),
                     trailing: r['paired'] == true ? const StatusChip('current', text: 'Paired') : null,
                   ),
+                for (final c in data.courses)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.event_seat_outlined),
+                    title: Text(str(c['title'])),
+                    subtitle: Text('${integer(c['students'])} learner(s) · ${integer(c['seatedCount'])} seated'),
+                    trailing: TextButton(
+                      onPressed: () => CourseSeatingScreen.open(context, courseId: str(c['id']), title: 'Seats · ${str(c['title'])}'),
+                      child: const Text('Seats'),
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 Wrap(spacing: 8, runSpacing: 8, children: [
                   FilledButton.icon(
@@ -439,6 +476,26 @@ class TeacherDashboardScreen extends StatelessWidget {
                   ),
                 ]),
               ]),
+              if (data.activities.isNotEmpty)
+                SectionCard(title: 'My clubs and teams', children: [
+                  StatTile(data.attendanceDue, 'Attendance due', warnWhenPositive: true),
+                  for (final a in data.activities)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(str(a['title'])),
+                      subtitle: Text([
+                        str(a['role']) == 'coach' ? 'Coach' : 'Advisor',
+                        if (obj(a['nextEvent']).isNotEmpty) 'next: ${str(obj(a['nextEvent'])['title'])}',
+                        if (integer(a['attendanceDue']) > 0) '${integer(a['attendanceDue'])} to mark',
+                      ].join(' · ')),
+                    ),
+                  OutlinedButton.icon(
+                    onPressed: () => _open(context, 'My teams', const CoachTeamsScreen()),
+                    icon: const Icon(Icons.emoji_events_outlined),
+                    label: const Text('Clubs & Sports'),
+                  ),
+                ]),
               SectionCard(title: 'Teaching and grading', children: [
                 Row(children: [
                   Expanded(child: StatTile(data.openAssignments, 'Published assignments')),

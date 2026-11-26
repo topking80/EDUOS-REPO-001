@@ -22,7 +22,7 @@ Base: origin/main @ 783935c (includes #174 Teacher Dashboard).
 5. Classrooms: no seating chart; no bell/period schedule table separate from timetable slots.
 
 ## Built (branch feat/clubs-sports-classrooms)
-- Migration **152_activity_attendance_physicals.sql**: `activity_event_attendance`, `student_physical_clearances` (dates only, append-only), forced RLS + restrictive role policies, grants only in runtime_grants.template.sql.
+- Migration **152_activity_attendance_physicals.sql**: `activity_event_attendance`, `student_physical_clearances` (dates only, append-only), forced RLS + restrictive role policies, grants only in runtime_grants.template.sql. Follow-up **154_activity_physicals_nurse_guardian.sql**: school nurses record/read clearance dates; `eduos_guardian_of_member` for family views.
 - API: GET/PUT `/api/events/:id/attendance`; GET `/api/activities/:id/physicals`; POST/GET `/api/students/:id/physical-clearance`. EDAL audit on every write and on physical status views (counts only).
 - Teacher Dashboard `activities` block (my clubs/teams, next event, attendance due) + web card; web Attendance and Physicals panels in Clubs & Sports and My teams.
 - Tests: unit test/activity-operations.test.js, integration test/integration/activity-operations.test.js.
