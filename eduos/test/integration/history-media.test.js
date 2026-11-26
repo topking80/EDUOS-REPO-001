@@ -215,7 +215,7 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     assert.equal(approvedUpload.status, 201, JSON.stringify(approvedUpload.body));
     const review = ok(await as("p1")("PATCH", `/api/students/${ID.alice}/history-contributions/${approvedContribution.id}`, { decision: "approve" }));
     assert.equal(review.status, "approved");
-    ok(await as("pa")("POST", `/api/family/children/${ID.alice}/history-items/${review.history_entry_id}`, { decision: "accept" }));
+    // Guardian memories are published directly to their family audience after school approval.
     const portfolio = ok(await as("pa")("GET", `/api/history/portfolio?studentId=${ID.alice}`));
     const memory = portfolio.items.find(i => i.id === review.history_entry_id);
     assert.equal(memory.documents[0].fileName, "story.txt", "approved document appears in the authorized history portfolio");
