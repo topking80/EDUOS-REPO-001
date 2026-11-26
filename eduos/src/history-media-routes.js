@@ -25,7 +25,9 @@ import { createClamAvScanner } from "./clamav-scanner.js";
 import { processHistoryImage, HISTORY_IMAGE_TYPES } from "./history-image.js";
 
 const DEFAULTS = { imagesEnabled: false, maxImageBytes: 10485760, maxPerEntry: 6, maxBytesPerStudent: 262144000 };
-const policyOut = p => p ? { imagesEnabled: p.images_enabled, maxImageBytes: p.max_image_bytes, maxPerEntry: p.max_per_entry, maxBytesPerStudent: Number(p.max_bytes_per_student) } : DEFAULTS;
+const policyOut = p => p ? { imagesEnabled: p.images_enabled, maxImageBytes: p.max_image_bytes, maxPerEntry: p.max_per_entry, maxBytesPerStudent: Number(p.max_bytes_per_student),
+  documentsEnabled: p.documents_enabled, maxDocumentBytes: p.max_document_bytes, maxDocumentsPerContribution: p.max_documents_per_contribution } :
+  { ...DEFAULTS, documentsEnabled: false, maxDocumentBytes: 1048576, maxDocumentsPerContribution: 5 };
 const IDEMPOTENCY_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const BEGIN_ERRORS = { entry_not_found: 404, entry_not_editable: 409, contribution_not_found: 404, contribution_not_editable: 409, capsule_not_found: 404, capsule_not_a_draft: 409,
   photos_not_enabled: 409, photo_too_large: 413, too_many_photos: 409, student_storage_full: 409 };
@@ -58,7 +60,7 @@ export function registerHistoryMediaRoutes(app, providers = historyMedia()) {
     try {
       const p = await withTenantTransaction(req.actor, c => one(c, `SELECT * FROM district_history_media_policies WHERE district_id=$1`, [req.actor.districtId]));
       res.setHeader("Cache-Control", "no-store");
-      res.json({ data: { ...policyOut(p), storageReady: ready, canEdit: req.actor.role === "superintendent", types: Object.keys(HISTORY_IMAGE_TYPES) } });
+      res.json({ data: { ...policyOut(p), storageReady: ready, canEdit: req.actor.role === "superintendent", types: Object.keys(HISTORY_IMAGE_TYPES), documentTypes: ["text/plain; charset=utf-8"], documentStorageReady: ready } });
     } catch (e) { sendError(res, next, e); }
   });
 

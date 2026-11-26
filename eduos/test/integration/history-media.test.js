@@ -33,6 +33,13 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     return { status: r.status, body: await r.json() };
   };
   const photo = async (who, id) => fetch(`${server.base}/api/history/photos/${id}`, { headers: { cookie: s[who].cookie }, redirect: "manual" });
+  const uploadDocument = async (who, studentId, contributionId, body, name = "family-note.txt", key) => {
+    const csrf = (await as(who)("GET", "/api/csrf")).body.csrfToken;
+    const url = `${server.base}/api/family/children/${studentId}/history-contributions/${contributionId}/documents?name=${encodeURIComponent(name)}`;
+    const r = await fetch(url, { method: "POST", body, headers: { cookie: s[who].cookie,
+      "content-type": "text/plain; charset=utf-8", "x-csrf-token": csrf, ...(key ? { "idempotency-key": key } : {}) } });
+    return { status: r.status, body: await r.json() };
+  };
 
   before(async () => {
     // A private S3-compatible bucket that verifies SigV4 on every request.
@@ -152,5 +159,76 @@ describe("MEDIA-01 history photos against real PostgreSQL", { skip }, () => {
     assert.equal((await upload("t1", other.id, png, "image/png")).body.error, "security_scan_unavailable");
     clamUp = true;
     assert.equal(ok(await as("t1")("GET", "/api/teacher/history-items")).find(i => i.id === other.id).photos.length, 0);
+  });
+
+  it("guardian text documents are district-controlled, scanned, private attachments and released on rejection", async () => {
+    const contribution = ok(await as("pa")("POST", `/api/family/children/${ID.alice}/history-contributions`, {
+      title: "Family letter", body: "A note for the portfolio.", occurredAt: "2026-10-21T15:00:00Z"
+    }), 201);
+    const text = Buffer.from("A family memory.\nWritten in UTF-8.\n", "utf8");
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, text)).body.error, "documents_not_enabled");
+    ok(await as("supt1")("PUT", "/api/history/document-policy", {
+      documentsEnabled: true, maxDocumentBytes: 10240, maxDocumentsPerContribution: 2
+    }));
+    const uploaded = await uploadDocument("pa", ID.alice, contribution.id, text, "family-letter.txt", "doc-retry-0001");
+    assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
+    const asset = uploaded.body.data.assetId;
+    const checksum = (await admin.query("SELECT sha256, integrity_status FROM private_media_objects WHERE asset_id=$1", [asset])).rows[0];
+    assert.match(checksum.sha256, /^[0-9a-f]{64}$/);
+    assert.equal(checksum.integrity_status, "ok", "documents enter the TC-08 integrity registry");
+    const again = await uploadDocument("pa", ID.alice, contribution.id, text, "family-letter.txt", "doc-retry-0001");
+    assert.equal(again.status, 200); assert.equal(again.body.data.assetId, asset, "idempotent retry");
+    clamUp = false;
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Scanner outage"), "outage.txt")).body.error, "security_scan_unavailable");
+    clamUp = true;
+    const eicar = Buffer.from("X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*");
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, eicar, "infected.txt")).body.error, "document_failed_security_scan");
+    const second = await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Second note"), "second.txt");
+    assert.equal(second.status, 201);
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from("Third note"), "third.txt")).body.error, "too_many_documents");
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, text, "not-a-pdf.pdf")).body.error, "invalid_document_name");
+    const familyList = ok(await as("pa")("GET", `/api/family/children/${ID.alice}/history-contributions`));
+    assert.equal(familyList.find(c => c.id === contribution.id).documents.length, 2);
+    assert.equal(familyList.find(c => c.id === contribution.id).documents[0].id, asset);
+    const reviewerList = ok(await as("p1")("GET", "/api/history-contributions"));
+    assert.equal(reviewerList.find(c => c.id === contribution.id).documents[0].fileName, "family-letter.txt");
+    const storage = ok(await as("pa")("GET", `/api/history/storage?studentId=${ID.alice}`));
+    assert.ok(storage.usage.usedBytes >= text.length, "family storage total includes document bytes");
+    assert.deepEqual(storage.limits.documentTypes, ["text/plain; charset=utf-8"]);
+    assert.equal((await fetch(`${server.base}/api/history/documents/${asset}`, { headers: { cookie: s.pb.cookie } })).status, 404);
+    const download = await fetch(`${server.base}/api/history/documents/${asset}`, { headers: { cookie: s.pa.cookie } });
+    assert.equal(download.status, 200);
+    assert.equal(download.headers.get("content-type"), "text/plain; charset=utf-8");
+    assert.match(download.headers.get("content-disposition"), /attachment; filename="family-letter.txt"/);
+    assert.equal(download.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(Buffer.from(await download.arrayBuffer()).toString("utf8"), text.toString("utf8"));
+    assert.equal((await uploadDocument("pa", ID.alice, contribution.id, Buffer.from([0xff,0xfe]), "bad.txt")).body.error, "invalid_utf8_text");
+    const rejected = ok(await as("p1")("PATCH", `/api/students/${ID.alice}/history-contributions/${contribution.id}`, { decision: "reject", note: "Not for publication" }));
+    assert.equal(rejected.status, "rejected");
+    assert.equal(objects.has(`/${S3.bucket}/history/${ID.d1}/${ID.alice}/${asset}.txt`), false, "rejected document object is deleted");
+    assert.equal((await fetch(`${server.base}/api/history/documents/${asset}`, { headers: { cookie: s.pa.cookie } })).status, 404);
+
+    const approvedContribution = ok(await as("pa")("POST", `/api/family/children/${ID.alice}/history-contributions`, {
+      title: "Grandparent story", body: "A story to keep.", occurredAt: "2026-10-22T15:00:00Z"
+    }), 201);
+    const approvedUpload = await uploadDocument("pa", ID.alice, approvedContribution.id, Buffer.from("A story preserved."), "story.txt");
+    assert.equal(approvedUpload.status, 201, JSON.stringify(approvedUpload.body));
+    const review = ok(await as("p1")("PATCH", `/api/students/${ID.alice}/history-contributions/${approvedContribution.id}`, { decision: "approve" }));
+    assert.equal(review.status, "approved");
+    // Guardian memories are published directly to their family audience after school approval.
+    const portfolio = ok(await as("pa")("GET", `/api/history/portfolio?studentId=${ID.alice}`));
+    const memory = portfolio.items.find(i => i.id === review.history_entry_id);
+    assert.equal(memory.documents[0].fileName, "story.txt", "approved document appears in the authorized history portfolio");
+    const familyDownload = await fetch(`${server.base}${memory.documents[0].href}`, { headers: { cookie: s.pa.cookie } });
+    assert.equal(familyDownload.status, 200);
+    assert.equal(Buffer.from(await familyDownload.arrayBuffer()).toString("utf8"), "A story preserved.");
+    const exportResponse = await fetch(`${server.base}/api/history/export?format=json&studentId=${ID.alice}`, { headers: { cookie: s.pa.cookie } });
+    assert.equal(exportResponse.status, 200);
+    const exportDoc = await exportResponse.json();
+    assert.equal(exportDoc.items.find(i => i.title === "Grandparent story").documents[0].fileName, "story.txt");
+
+    ok(await as("supt1")("PUT", "/api/history/document-policy", {
+      documentsEnabled: false, maxDocumentBytes: 10240, maxDocumentsPerContribution: 2
+    }));
   });
 });

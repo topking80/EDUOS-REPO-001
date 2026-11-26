@@ -1,4 +1,4 @@
-# Student History Photos: storage and malware scanning (MEDIA-01–03)
+# Student History Media: storage and malware scanning (MEDIA-01–03, TC-02 documents)
 
 Photos on student history items are stored in a **private S3-compatible
 bucket** and **scanned by ClamAV** before anyone can see them. Photos stay off
@@ -38,6 +38,29 @@ pending. Approval puts the photos on the published family memory, where
 exactly the people who can see that memory see them. If the memory is
 withdrawn or rejected, its photos stop counting toward the student's total and
 are deleted from the bucket.
+
+## Guardian documents (TC-02)
+
+The district may enable guardian document contributions separately from photos.
+The first release accepts **UTF-8 plain-text `.txt` only**, up to the district's
+per-file limit (maximum 5 MB) and document-count limit per contribution. Files
+are validated as strict UTF-8, reject control and bidirectional override
+characters, scanned by ClamAV (unavailable scanner means fail closed), and
+stored only in the private bucket. Downloads are authorized by the same pending
+contribution reviewer/guardian rules or, after approval, by the published
+history entry's audience. Every download is forced to `attachment` with
+`X-Content-Type-Options: nosniff`, a restrictive CSP and `Cache-Control:
+no-store`; documents are never rendered inline. Rejected or withdrawn
+contributions mark document assets failed and delete their objects. Document
+bytes count against the same district-set per-student storage quota as photos.
+
+The superintendent controls document enablement, maximum file size and
+maximum documents per contribution through the district document policy.
+Donations do not change any of these limits.
+
+**Not accepted:** PDF, DOCX, macro-enabled Office files, HTML, archives,
+executables and video. ClamAV alone does not sanitize active content; PDF and
+Office support must wait for a separately configured and tested sanitizer.
 
 ## Time Capsule photos (MEDIA-03)
 
@@ -104,11 +127,9 @@ are the district's alone.
 
 ## Not yet
 
-* **Documents.** Guardian document uploads are not implemented. Do not accept
-  arbitrary files or expose an upload endpoint until file-type allowlists,
-  malware scanning, safe handling (including active-content risks), private
-  storage, authorized attachment downloads, district quotas and retention
-  behavior are implemented and tested.
+* **Richer documents.** Guardian `.txt` contributions are implemented as above.
+  PDF and DOCX remain disabled until active content can be safely sanitized,
+  scanned before and after processing, and covered by fail-closed integration tests.
 * **Video.** Upload remains disabled until a configured transcoding/sanitization
   adapter can produce a safe derivative, enforce district size/duration limits,
   strip location/device metadata, scan both source and derivative, and fail

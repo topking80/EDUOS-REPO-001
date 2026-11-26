@@ -87,6 +87,7 @@ export function registerStudentHistoryPortfolioRoutes(app) {
         const page = more ? rows.slice(0, PAGE) : rows;
         // MEDIA-01: the items' ready photos (only for items this person can see).
         const photos = page.length ? (await client.query(`SELECT * FROM eduos_history_entry_photos($1::uuid[])`, [page.map(r => r.id)])).rows : [];
+        const documents = page.length ? (await client.query(`SELECT * FROM eduos_history_entry_documents($1::uuid[])`, [page.map(r => r.id)])).rows : [];
         // TC-06b: items that came from another district say where from.
         const origins = page.length ? (await client.query(`SELECT * FROM eduos_history_entry_origins($1::uuid[])`, [page.map(r => r.id)])).rows : [];
         const distinct = key => [...new Set(facets.map(f => f[key]))].sort();
@@ -95,7 +96,8 @@ export function registerStudentHistoryPortfolioRoutes(app) {
           items: page.map(r => ({ id: r.id, entryType: r.entry_type, kind: r.classification, title: r.title, body: r.body,
             occurredAt: r.occurred_at, schoolYear: r.school_year, source: r.source_type, authorName: r.author_name ?? origins.find(o => o.entry_id === r.id)?.author_name ?? null,
             transferredFrom: (o => o ? [o.district_name, o.school_name].filter(Boolean).join(", ") : null)(origins.find(o => o.entry_id === r.id)),
-            photos: photos.filter(p => p.entry_id === r.id).map(p => ({ id: p.asset_id, caption: p.caption, alt: p.alt_text, width: p.width, height: p.height })) })),
+            photos: photos.filter(p => p.entry_id === r.id).map(p => ({ id: p.asset_id, caption: p.caption, alt: p.alt_text, width: p.width, height: p.height })),
+            documents: documents.filter(d => d.entry_id === r.id).map(d => ({ id: d.asset_id, fileName: d.file_name, bytes: Number(d.byte_size), href: `/api/history/documents/${d.asset_id}` })) })),
           nextCursor: more ? encodeCursor(page.at(-1)) : null,
           facets: { years: distinct("school_year").reverse(), types: distinct("entry_type"), kinds: distinct("classification"),
             total: facets.reduce((n, f) => n + f.n, 0) }

@@ -19,6 +19,7 @@ const MILESTONES = ["grade_5_completion", "grade_8_completion", "graduation", "a
 export const STORAGE_GUIDANCE = [
   "Photos are checked for safety and saved as a smaller copy without location data, so the size counted is usually less than the original.",
   "JPEG, PNG and WebP photos are accepted. A phone photo of 3 to 5 MB is fine; very large images can be resized before uploading.",
+  "Guardian documents, when enabled by the district, accept UTF-8 plain-text .txt files only. PDF, DOCX, HTML and video are not accepted.",
   "Deleting a draft or a declined item frees its space. Items accepted into the history stay under the district's records rules.",
   "The limit is the same for every student and is set by the district. It can't be raised by payment or donation."
 ];
@@ -45,8 +46,10 @@ export function registerFamilyStorageRoutes(app) {
         const used = Number(usage.used_bytes), max = Number(pol.max_bytes_per_student);
         return {
           student: { id: student.id, name: student.display_name },
-          limits: { photosAllowed: pol.images_enabled, maxPhotoBytes: pol.max_image_bytes, maxPhotosPerItem: pol.max_per_entry, maxBytesPerStudent: max,
-            types: Object.keys(HISTORY_IMAGE_TYPES), setBy: "district" },
+          limits: { photosAllowed: pol.images_enabled, maxPhotoBytes: pol.max_image_bytes, maxPhotosPerItem: pol.max_per_entry,
+            documentsAllowed: Boolean(pol.documents_enabled), maxDocumentBytes: pol.max_document_bytes || 1048576,
+            maxDocumentsPerContribution: pol.max_documents_per_contribution || 5, maxBytesPerStudent: max,
+            types: Object.keys(HISTORY_IMAGE_TYPES), documentTypes: pol.documents_enabled ? ["text/plain; charset=utf-8"] : [], setBy: "district" },
           usage: { usedBytes: used, percent: max ? Math.min(100, Math.round(used * 1000 / max) / 10) : 0, photos: Number(usage.photos),
             inLongTermStorage: Number(usage.archived_photos), roomForAnotherPhoto: used + pol.max_image_bytes <= max },
           items: { inHistory: count(items, "published") + count(items, "archived"), waitingForReview: count(items, "submitted") + count(items, "approved"), drafts: count(items, "draft") },
