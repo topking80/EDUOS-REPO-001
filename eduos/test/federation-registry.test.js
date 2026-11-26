@@ -57,6 +57,54 @@ test("organization relationships resolve to known canonical IDs", () => {
   }
 });
 
+
+
+function validateSchemaSubset(value, definition, path = "$") {
+  const errors = [];
+  if (definition.type === "object") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return [`${path} must be an object`];
+    for (const key of definition.required ?? []) {
+      if (!Object.hasOwn(value, key)) errors.push(`${path}.${key} is required`);
+    }
+    if (definition.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        if (!Object.hasOwn(definition.properties ?? {}, key)) errors.push(`${path}.${key} is not declared`);
+      }
+    }
+    for (const [key, child] of Object.entries(definition.properties ?? {})) {
+      if (Object.hasOwn(value, key)) errors.push(...validateSchemaSubset(value[key], child, `${path}.${key}`));
+    }
+  } else if (definition.type === "array") {
+    if (!Array.isArray(value)) return [`${path} must be an array`];
+    if (definition.minItems !== undefined && value.length < definition.minItems) errors.push(`${path} has too few items`);
+    if (definition.uniqueItems && new Set(value.map(item => JSON.stringify(item))).size !== value.length) errors.push(`${path} items must be unique`);
+    if (definition.items) value.forEach((item, index) => errors.push(...validateSchemaSubset(item, definition.items, `${path}[${index}]`)));
+  } else {
+    const validTypes = {
+      string: item => typeof item === "string",
+      integer: item => Number.isInteger(item),
+      boolean: item => typeof item === "boolean"
+    };
+    if (definition.type && validTypes[definition.type] && !validTypes[definition.type](value)) {
+      return [`${path} must be ${definition.type}`];
+    }
+    if (definition.const !== undefined && value !== definition.const) errors.push(`${path} must equal ${definition.const}`);
+    if (definition.enum && !definition.enum.includes(value)) errors.push(`${path} has an unsupported value`);
+    if (definition.minLength !== undefined && value.length < definition.minLength) errors.push(`${path} is too short`);
+    if (definition.pattern && typeof value === "string" && !new RegExp(definition.pattern).test(value)) errors.push(`${path} has an invalid format`);
+    if (definition.format === "date" && (typeof value !== "string" || !/^\\d{4}-\\d{2}-\\d{2}$/.test(value) || Number.isNaN(Date.parse(value)))) errors.push(`${path} must be an ISO date`);
+    if (definition.format === "uri") {
+      try { new URL(value); } catch { errors.push(`${path} must be a URI`); }
+    }
+  }
+  return errors;
+}
+
+test("registry seed conforms to the declared schema's structural constraints", () => {
+  const errors = validateSchemaSubset(registry, schema);
+  assert.deepEqual(errors, [], errors.join("\\n"));
+});
+
 test("registry JSON Schema declares the 2020-12 contract and required arrays", () => {
   assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.ok(schema.required.includes("jurisdictions"));
