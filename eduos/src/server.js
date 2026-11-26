@@ -61,6 +61,7 @@ import { registerDonationRoutes } from "./donation-routes.js";
 import { registerDonationAccountingRoutes } from "./donation-accounting-routes.js";
 import { registerPreservationFundRoutes } from "./preservation-fund-routes.js";
 import { startHistoryPreservationSweep } from "./history-preservation.js";
+import { startDonationScheduleSweep } from "./donation-schedules.js";
 import { registerHistoryTransferRoutes } from "./history-transfer-routes.js";
 import { registerHistoryImportRoutes, HISTORY_IMPORT_PATHS } from "./history-import-routes.js";
 import { registerSafetyRoutes } from "./safety-routes.js";
@@ -2175,6 +2176,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
     startCommerceReconcile();
     startCapsuleReleaseSweep();
     startHistoryPreservationSweep(historyMedia().storage);
+    startDonationScheduleSweep();
     if(config.nodeTier==="school"&&process.env.EDEN_AGENT!=="off")startAgent();
   });
 }

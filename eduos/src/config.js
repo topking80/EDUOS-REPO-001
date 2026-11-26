@@ -163,6 +163,8 @@ export const config = {
   // TC-08: the storage class old history photos move to (instant-read classes only); empty = never move.
   historyArchiveStorageClass: process.env.HISTORY_ARCHIVE_STORAGE_CLASS || "",
   historyPreserveIntervalSeconds: Number(process.env.HISTORY_PRESERVE_INTERVAL_SECONDS ?? 0),
+  // TC-13: how often the API charges due recurring gifts (sandbox only; 0 = off, e.g. when cron runs npm run donations:charge).
+  donationScheduleIntervalSeconds: Number(process.env.DONATION_SCHEDULE_INTERVAL_SECONDS ?? 0),
   capsuleReleaseIntervalSeconds: Number(process.env.CAPSULE_RELEASE_INTERVAL_SECONDS ?? 300),
   // Native mobile app sign-in (RFC 8252). Comma-separated redirect URIs the
   // EduOS app may return to after district sign-in, e.g.
@@ -370,6 +372,7 @@ intIn("COMMERCE_RECONCILE_INTERVAL_SECONDS", config.commerceReconcileIntervalSec
 intIn("COMMERCE_RECONCILE_STALE_SECONDS", config.commerceReconcileStaleSeconds, 10, 86400);
 intIn("CAPSULE_RELEASE_INTERVAL_SECONDS", config.capsuleReleaseIntervalSeconds, 0, 86400);
 intIn("HISTORY_PRESERVE_INTERVAL_SECONDS", config.historyPreserveIntervalSeconds, 0, 604800);
+intIn("DONATION_SCHEDULE_INTERVAL_SECONDS", config.donationScheduleIntervalSeconds, 0, 604800);
 if (config.historyArchiveStorageClass && !["STANDARD_IA", "GLACIER_IR", "ONEZONE_IA"].includes(config.historyArchiveStorageClass))
   throw new Error("HISTORY_ARCHIVE_STORAGE_CLASS must be STANDARD_IA, GLACIER_IR or ONEZONE_IA (classes that read instantly), or empty");
 intIn("POWERSCHOOL_MAX_STUDENTS", config.powerschoolMaxStudents, 1_000, 200_000);
