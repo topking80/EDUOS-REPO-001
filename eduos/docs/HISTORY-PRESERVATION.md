@@ -89,4 +89,4 @@ version over the same key; the next check marks it `recovered`.
 * Deleting history at the end of its retention period. Nothing is deleted
   automatically. A retention review workflow (with notice and a second
   approver) needs the district's records schedule decisions first.
-* Video, audio and documents (only photos are stored today).
+* Video and audio are not stored by this workflow. Guardian-contributed UTF-8 `.txt` documents are stored in the private media bucket and count against the shared district-set student quota; see `MEDIA-STORAGE.md`. This preservation job's checksum verification, archive transition and restore-drill procedure are photo-scoped unless a separate document-integrity implementation is explicitly verified. Do not infer document integrity coverage from the photo checks.

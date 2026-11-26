@@ -23,5 +23,5 @@ Every write requires a session and CSRF validation. Guardian links and school/di
 - Approved contributions become `family_memory` history entries with `family` audience; they do not alter official records.
 - Rejected submissions remain auditable and never become history entries.
 - Parents cannot approve their own submissions or change a submission after it enters review.
-- This phase intentionally accepts text only. Multimedia upload remains unavailable until approved private storage, malware scanning, image processing, and read authorization providers are configured and exposed through a complete fail-closed workflow.
+- Text contributions, family photos, and district-opt-in UTF-8 plain-text `.txt` documents are implemented. Guardian photos and documents require configured private S3-compatible storage, ClamAV, and superintendent district-policy enablement before use. Photos are re-encoded and metadata-stripped; `.txt` files are scanned and downloaded as attachments, never rendered inline. PDF/DOCX, HTML, archives, executables, and video remain unsupported. See `MEDIA-STORAGE.md` for the enforced formats, limits, and lifecycle.
 - Donations do not increase storage quotas, bypass moderation, change access, or unlock features. Per-student storage and media limits remain district policy and are not modified by this phase.
