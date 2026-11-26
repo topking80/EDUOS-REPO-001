@@ -157,6 +157,30 @@ test("membership seed does not fabricate unverified school affiliations", () => 
     "populate memberships only from source-backed, approved school affiliation records");
 });
 
+
+test("membership schema accepts a scoped, effective-dated school affiliation", () => {
+  const membership = {
+    id: "membership-example-001",
+    organization_id: registry.organizations[0].id,
+    school_id: "school-system-record-opaque-001",
+    education_tenant_id: "district-tenant-opaque-001",
+    membership_class: "full_member",
+    activity_scope: ["athletics"],
+    level_scope: ["high_school"],
+    season_id: "2026-2027",
+    status: "active",
+    effective_from: "2026-07-01",
+    effective_to: "2027-06-30",
+    entitlements: ["association_calendar.read", "membership_directory.read"],
+    approval_reference: "approval-record-opaque-001",
+    verification_status: "verified",
+    source_url: "https://example.org/official-membership-record"
+  };
+  const definition = schema.properties.memberships.items;
+  assert.deepEqual(validateSchemaSubset(membership, definition), []);
+  assert.ok(validateSchemaSubset({ ...membership, status: "unrestricted_student_records" }, definition).length > 0);
+});
+
 test("registry seed conforms to the declared schema's structural constraints", () => {
   const errors = validateSchemaSubset(registry, schema);
   assert.deepEqual(errors, [], errors.join("\n"));
