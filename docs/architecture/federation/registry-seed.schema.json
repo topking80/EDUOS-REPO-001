@@ -10,7 +10,11 @@
     "organizations",
     "organization_relationships",
     "memberships",
-    "notes"
+    "notes",
+    "governance_bodies",
+    "delegations",
+    "governance_decisions",
+    "appeals"
   ],
   "properties": {
     "registry_version": {
@@ -380,6 +384,327 @@
           "source_url": {
             "type": "string",
             "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "governance_bodies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "body_type",
+          "name",
+          "scope",
+          "status",
+          "effective_from",
+          "verification_status",
+          "source_url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "body_type": {
+            "enum": [
+              "board",
+              "executive_committee",
+              "standing_committee",
+              "sport_committee",
+              "appeals_panel",
+              "membership_assembly",
+              "other"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "active",
+              "inactive",
+              "dissolved"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "membership_rule": {
+            "type": "string"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "delegations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "delegator",
+          "delegate",
+          "authority_scope",
+          "status",
+          "effective_from",
+          "verification_status",
+          "source_url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "delegator": {
+            "type": "string",
+            "minLength": 1
+          },
+          "delegate": {
+            "type": "string",
+            "minLength": 1
+          },
+          "authority_scope": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "decision_types": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "constraints": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "active",
+              "suspended",
+              "revoked",
+              "expired"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "approval_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "governance_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "decision_type",
+          "decision_body_id",
+          "authority_reference",
+          "decision_date",
+          "status",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision_body_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "authority_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "proposed",
+              "approved",
+              "rejected",
+              "superseded",
+              "withdrawn"
+            ]
+          },
+          "vote_record_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "appeals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "decision_id",
+          "filed_at",
+          "status",
+          "review_authority",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "filed_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "filed",
+              "accepted",
+              "under_review",
+              "granted",
+              "denied",
+              "withdrawn",
+              "closed"
+            ]
+          },
+          "review_authority": {
+            "type": "string",
+            "minLength": 1
+          },
+          "outcome_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "outcome_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
           },
           "notes": {
             "type": "string"
