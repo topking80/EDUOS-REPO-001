@@ -100,6 +100,42 @@ function validateSchemaSubset(value, definition, path = "$") {
   return errors;
 }
 
+
+test("organization relationship IDs are unique and effective date ranges are valid", () => {
+  const relationships = registry.organization_relationships;
+  const ids = relationships.map(item => item.id);
+  assert.equal(new Set(ids).size, ids.length, "relationship IDs must be unique");
+  for (const relationship of relationships) {
+    if (relationship.effective_from && relationship.effective_to) {
+      assert.ok(Date.parse(relationship.effective_from) <= Date.parse(relationship.effective_to),
+        relationship.id + " effective_from must not be after effective_to");
+    }
+  }
+});
+
+test("predecessor-successor relationships cannot contain directed cycles", () => {
+  const edges = registry.organization_relationships
+    .filter(item => item.relationship_type === "predecessor_successor")
+    .map(item => [item.from_organization_id, item.to_organization_id]);
+  const graph = new Map();
+  for (const [from, to] of edges) {
+    if (!graph.has(from)) graph.set(from, []);
+    graph.get(from).push(to);
+  }
+  const visiting = new Set();
+  const visited = new Set();
+  function visit(node) {
+    if (visiting.has(node)) return false;
+    if (visited.has(node)) return true;
+    visiting.add(node);
+    for (const next of graph.get(node) ?? []) if (!visit(next)) return false;
+    visiting.delete(node);
+    visited.add(node);
+    return true;
+  }
+  for (const node of graph.keys()) assert.ok(visit(node), "predecessor-successor graph must be acyclic");
+});
+
 test("registry seed conforms to the declared schema's structural constraints", () => {
   const errors = validateSchemaSubset(registry, schema);
   assert.deepEqual(errors, [], errors.join("\n"));
