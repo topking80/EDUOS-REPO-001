@@ -74,6 +74,7 @@ async function nodePanel(id) {
   out.push(await policyCard(n, await can("policy.set")));
   if (n.kind !== "district" && n.kind !== "school" && await can("policy.distribute")) out.push(await releasesCard(n));
   if (n.kind === "district") out.push(await bundlesCard(n, await can("policy.set")));
+  if (n.kind !== "school") out.push(await exchangeCard(n, await can("exchange.share")));
   if (await can("audit.view")) out.push(await auditCard(n));
   return out;
 }
@@ -193,6 +194,25 @@ async function bundlesCard(n, canAck) {
         h("td", {}, h("a", { href: `/mc/api/policy-bundles/${encodeURIComponent(b.id)}/file` }, "Download"),
           canAck ? [" ", h("button", { class: "link", type: "button", onclick: () => answer(b, "accepted") }, "Accept"), " ",
             h("button", { class: "link", type: "button", onclick: () => answer(b, "objected") }, "Object")] : null)))) : h("p", { class: "muted" }, "No bundles yet."));
+}
+
+// FED-06: aggregate exchange agreements at this node (as producer or recipient).
+async function exchangeCard(n, isProducer) {
+  const list = await api("GET", `/exchange-agreements?nodeId=${encodeURIComponent(n.id)}`);
+  const act = async (a, path, body) => { try { await api("POST", `/exchange-agreements/${encodeURIComponent(a.id)}/${path}`, body); await refresh(); } catch (err) { alertCard(message(err)); } };
+  const deliver = a => { const f = h("input", { type: "file", accept: ".json,application/json" }); f.addEventListener("change", async () => {
+    try { const env = JSON.parse(await f.files[0].text()); const r = await api("POST", `/exchange-agreements/${encodeURIComponent(a.id)}/deliveries`, env); alertCard(`Delivered version ${r.version}: ${r.rows} rows, ${r.suppressed} hidden.`); await refresh(); }
+    catch (err) { alertCard(message(err)); } }); f.click(); };
+  return h("section", { class: "card", "aria-label": "Exchange agreements" }, h("h3", {}, "Aggregate exchange agreements"),
+    list.length ? h("table", {}, h("tr", {}, h("th", {}, "Agreement"), h("th", {}, "Status"), h("th", {}, "Deliveries"), h("th", {}, "")),
+      list.map(a => h("tr", {}, h("td", {}, `${a.datasetName} → ${a.recipientNodeId} · ${a.purpose} · min ${a.minCellSize}`, h("br"), h("code", {}, a.id), h("span", { class: "muted" }, ` ${a.effectiveFrom} – ${a.effectiveTo}`)),
+        h("td", {}, a.status), h("td", {}, String(a.deliveries)),
+        h("td", {}, a.status === "proposed" ? h("button", { class: "link", type: "button", onclick: () => {
+            const publicKey = a.producerNodeId === n.id && isProducer && !a.producerApprovedAt ? prompt("Paste the district EduOS exchange public key:") : undefined;
+            if (publicKey === null) return; act(a, "approve", publicKey ? { publicKey } : {}); } }, "Approve") : null, " ",
+          a.status === "active" && a.producerNodeId === n.id && isProducer ? [h("a", { href: `/mc/api/exchange-agreements/${encodeURIComponent(a.id)}/terms` }, "Terms file"), " ",
+            h("button", { class: "link", type: "button", onclick: () => deliver(a) }, "Deliver report"), " "] : null,
+          a.status !== "revoked" ? h("button", { class: "link", type: "button", onclick: () => { const reason = prompt("Reason for revoking?"); if (reason) act(a, "revoke", { reason }); } }, "Revoke") : null)))) : h("p", { class: "muted" }, "No agreements."));
 }
 function alertCard(text) { const el = h("p", { class: "bad", role: "alert" }, text); main.prepend(el); setTimeout(() => el.remove(), 8000); }
 boot();

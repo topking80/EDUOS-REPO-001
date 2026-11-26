@@ -16,7 +16,7 @@ import { appendAudit, verifyAudit } from "./audit.js";
 import { randomSecret, sha256 } from "./oidc.js";
 import { PRIMARY, claimProblem, readProviderSecret } from "./identity.js";
 import { BUNDLE_FORMAT, bundleKeys, signBundle, parsePublicKey } from "../federation/policy-bundle.js";
-import { DATASETS, PURPOSES, MIN_CELL_FLOOR, DEFAULT_MIN_CELL, checkEnvelope } from "../federation/exchange.js";
+import { DATASETS, PURPOSES, MIN_CELL_FLOOR, DEFAULT_MIN_CELL, TERMS_FORMAT, checkEnvelope, signTerms } from "../federation/exchange.js";
 
 const COOKIE = "eduos_mc";
 const STATE_COOKIE = "eduos_mc_state";
@@ -756,7 +756,9 @@ export function createApp({ cfg, db, providers }) {
   const sideOf = (m, principal, a) => ({
     producer: decideAt(m, principal, "exchange.share", a.producer_node_id),
     recipient: decideAt(m, principal, "reporting.aggregate.view", a.recipient_node_id) });
-  const inForceAgreement = a => a.status === "active" && dateOf(a.effective_to) >= today();
+  // In force: active, and today inside its window (start and end).
+  const inForceAgreement = a => a.status === "active" && dateOf(a.effective_from) <= today() && dateOf(a.effective_to) >= today();
+  const notInForce = a => a.status !== "active" ? `agreement_${a.status}` : dateOf(a.effective_from) > today() ? "agreement_not_started" : "agreement_expired";
   const loadAgreement = async (c, aid, lock = false) => {
     const { rows: [a] } = await c.query(`SELECT * FROM exchange_agreements WHERE id=$1${lock ? " FOR UPDATE" : ""}`, [aid]);
     if (!a) throw new HttpError(404, "agreement_not_found");
@@ -843,10 +845,11 @@ export function createApp({ cfg, db, providers }) {
   app.post("/mc/api/exchange-agreements/:id/deliveries", ...change("deliver_exchange", "exchange_delivery", async (req, m, c) => {
     const a = await loadAgreement(c, req.params.id, true);
     const decision = decideAt(m, req.principal, "exchange.share", a.producer_node_id);
-    if (decision.allowed && !inForceAgreement(a)) throw new HttpError(409, a.status === "active" ? "agreement_expired" : `agreement_${a.status}`);
+    if (decision.allowed && !inForceAgreement(a)) throw new HttpError(409, notInForce(a));
     const producer = m.nodes.find(n => n.id === a.producer_node_id);
     const v = checkEnvelope(req.body, { ...a, fields: a.fields, producer_tenant_ref: producer?.tenant_ref, effective_from: dateOf(a.effective_from), effective_to: dateOf(a.effective_to) });
     if (decision.allowed && !v.ok) throw new HttpError(422, v.reason, { detail: v.detail });
+    if (decision.allowed && v.body.as_of > today()) throw new HttpError(422, "dated_in_the_future");
     const did = id("xd");
     let version = 1;
     if (v.ok) {
@@ -861,6 +864,34 @@ export function createApp({ cfg, db, providers }) {
       detail: { agreement: a.id, period: v.ok ? v.body.period : null, version, rows: v.ok ? v.body.rows.length : 0, suppressed, sha256: v.sha256 },
       result: { id: did, agreementId: a.id, version, rows: v.ok ? v.body.rows.length : 0, suppressed } };
   }));
+
+
+  // The agreement's exact terms for the producing district's EduOS, signed
+  // with the policy key that EduOS already trusts (FED-05). EduOS builds a
+  // report only from these, so fields, purpose and minimum cell size match.
+  app.get("/mc/api/exchange-agreements/:id/terms", requireOperator, async (req, res, next) => {
+    try {
+      const out = await db.tx(async c => {
+        const m = await loadModel(c);
+        const a = await loadAgreement(c, req.params.id);
+        const dcs = decideAt(m, req.principal, "exchange.share", a.producer_node_id);
+        const base = { actor: req.principal, action: "issue_exchange_terms", target_type: "exchange_agreement", target_id: a.id, node_id: a.producer_node_id, capability: "exchange.share" };
+        if (!dcs.allowed) { await appendAudit(c, { ...base, decision: "denied", reason: dcs.reason }); return { status: 403, body: { error: "not_authorized" } }; }
+        if (!inForceAgreement(a)) return { status: 409, body: { error: notInForce(a) } };
+        const keys = policyKeys();
+        if (!keys) return { status: 503, body: { error: "policy_signing_not_configured" } };
+        const producer = m.nodes.find(n => n.id === a.producer_node_id), recipient = m.nodes.find(n => n.id === a.recipient_node_id);
+        const terms = signTerms({ format: TERMS_FORMAT, agreement_id: a.id, producer: { node_id: producer.id, tenant_ref: producer.tenant_ref, name: producer.name },
+          recipient: { node_id: recipient.id, name: recipient.name }, dataset: a.dataset, fields: a.fields, purpose: a.purpose, legal_basis: a.legal_basis,
+          min_cell_size: a.min_cell_size, effective_from: dateOf(a.effective_from), effective_to: dateOf(a.effective_to), issued_at: today() }, keys);
+        await appendAudit(c, { ...base, decision: "allowed", basis: dcs.basis, detail: { sha256: terms.signature.sha256 } });
+        return { status: 200, body: terms };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      if (out.status === 200) res.setHeader("Content-Disposition", `attachment; filename="exchange-terms-${req.params.id}.json"`);
+      res.status(out.status).json(out.body);
+    } catch (e) { e instanceof HttpError ? res.status(e.status).json({ error: e.code }) : next(e); }
+  });
 
   app.get("/mc/api/exchange-agreements/:id/deliveries", ...read(async (req, m) => {
     const a = await loadAgreement(db, req.params.id);
@@ -883,7 +914,7 @@ export function createApp({ cfg, db, providers }) {
         const party = side.recipient.allowed ? "recipient" : side.producer.allowed ? "producer" : null;
         const base = { actor: req.principal, action: "read_exchange_delivery", target_type: "exchange_delivery", target_id: d.id, node_id: a.producer_node_id, capability: party === "producer" ? "exchange.share" : "reporting.aggregate.view" };
         if (!party) { await appendAudit(c, { ...base, decision: "denied", reason: side.recipient.reason }); return { status: 403, body: { error: "not_a_party" } }; }
-        if (!inForceAgreement(a)) { await appendAudit(c, { ...base, decision: "denied", reason: `agreement_${a.status}` }); return { status: 410, body: { error: "agreement_not_in_force" } }; }
+        if (!inForceAgreement(a)) { await appendAudit(c, { ...base, decision: "denied", reason: notInForce(a) }); return { status: 410, body: { error: "agreement_not_in_force", reason: notInForce(a) } }; }
         await appendAudit(c, { ...base, decision: "allowed", basis: { side: party, agreement: a.id }, detail: { purpose: a.purpose, sha256: d.sha256 } });
         return { status: 200, body: { data: { id: d.id, agreement: agreementView(a), version: d.version, envelope: d.envelope } } };
       });

@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 import { canonical, sha256, fingerprintOf, parsePublicKey } from "./policy-bundle.js";
 
 export const ENVELOPE_FORMAT = "eduos-exchange-1";
+export const TERMS_FORMAT = "eduos-exchange-terms-1";
 export const MIN_CELL_FLOOR = 5;       // no agreement may allow smaller cells
 export const DEFAULT_MIN_CELL = 10;
 export const MAX_ROWS = 5000;
@@ -95,11 +96,13 @@ export function checkEnvelope(pkg, agreement) {
   if (body.dataset !== agreement.dataset || !DATASETS[body.dataset]) return fail("wrong_dataset");
   if (body.purpose !== agreement.purpose) return fail("wrong_purpose");
   if (JSON.stringify(body.fields) !== JSON.stringify(agreement.fields)) return fail("wrong_fields");
+  // Snapshot reporting only: EduOS counts what it holds today, so a report
+  // covers exactly one day, its as_of date, and that day must fall inside
+  // the agreement's window. Nothing is labelled as covering any other period.
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
   const p = body.period || {};
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.from || "") || !/^\d{4}-\d{2}-\d{2}$/.test(p.to || "") || p.to < p.from) return fail("malformed", "period");
-  // The agreement's dates govern when reports may be delivered; a report
-  // can cover an earlier period but not one past the agreement's end.
-  if (p.to > agreement.effective_to) return fail("outside_agreement_period");
+  if (!DAY.test(body.as_of || "") || p.from !== body.as_of || p.to !== body.as_of || body.snapshot !== true) return fail("not_a_snapshot");
+  if (body.as_of < agreement.effective_from || body.as_of > agreement.effective_to) return fail("outside_agreement_period");
   if (body.suppression?.min_cell_size !== agreement.min_cell_size) return fail("wrong_min_cell_size");
   const ds = DATASETS[body.dataset];
   if (!Array.isArray(body.rows) || body.rows.length > MAX_ROWS) return fail("malformed", "rows");
@@ -120,4 +123,41 @@ export function checkEnvelope(pkg, agreement) {
     if (lone.length) return fail("not_minimized", `secondary suppression missing for ${lone.length} group(s)`);
   }
   return { ok: true, body, sha256: signature.sha256 };
+}
+
+// ---- Agreement terms ----------------------------------------------------------
+// Master Control gives the producing district the agreement's exact terms,
+// signed with its policy key (the one the district's EduOS already trusts for
+// FED-05). EduOS builds a report only from verified terms, so the fields,
+// purpose and minimum cell size are exactly what both sides approved.
+
+/** Sign terms with Master Control's policy keys ({private, fingerprint}). */
+export function signTerms(body, keys) {
+  if (body?.format !== TERMS_FORMAT) throw new TypeError("not exchange terms");
+  if (!keys) throw new Error("policy_signing_not_configured");
+  const text = canonical(body);
+  return { ...body, signature: { alg: "Ed25519", keyFingerprint: keys.fingerprint, sha256: sha256(text), value: crypto.sign(null, Buffer.from(text), keys.private).toString("base64") } };
+}
+
+/**
+ * Check terms against the trusted Master Control key, for this district, on
+ * this date. Returns {ok, terms} or {ok:false, reason}.
+ */
+export function verifyTerms(pkg, trusted, tenantRef, on) {
+  if (!pkg || typeof pkg !== "object" || pkg.format !== TERMS_FORMAT) return { ok: false, reason: "not_exchange_terms" };
+  const { signature, ...body } = pkg;
+  if (!signature || signature.alg !== "Ed25519" || typeof signature.value !== "string") return { ok: false, reason: "malformed" };
+  let text; try { text = canonical(body); } catch { return { ok: false, reason: "malformed" }; }
+  if (sha256(text) !== signature.sha256) return { ok: false, reason: "altered" };
+  if (!trusted || signature.keyFingerprint !== trusted.fingerprint) return { ok: false, reason: "wrong_key" };
+  let good = false; try { good = crypto.verify(null, Buffer.from(text), trusted.key, Buffer.from(signature.value, "base64")); } catch { good = false; }
+  if (!good) return { ok: false, reason: "bad_signature" };
+  const ds = DATASETS[body.dataset];
+  if (!ds || !Array.isArray(body.fields) || body.fields.some(f => !ds.fields.includes(f)) || ds.required.some(f => !body.fields.includes(f))
+      || !PURPOSES[body.purpose] || !Number.isInteger(body.min_cell_size) || body.min_cell_size < MIN_CELL_FLOOR || !/^xa-[0-9a-f]{16}$/.test(body.agreement_id || ""))
+    return { ok: false, reason: "malformed" };
+  if (body.producer?.tenant_ref !== tenantRef) return { ok: false, reason: "not_for_this_district" };
+  if (on < body.effective_from) return { ok: false, reason: "agreement_not_started" };
+  if (on > body.effective_to) return { ok: false, reason: "agreement_ended" };
+  return { ok: true, terms: body };
 }

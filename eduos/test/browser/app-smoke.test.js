@@ -223,7 +223,7 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     // FED-06: the district's exchange gateway side.
     case "/api/district/exchange": return { data: { configured: true, publicKey: "TEST-PUBLIC-KEY", fingerprint: "1a".repeat(16),
       datasets: { enrollment_by_grade: { name: "Enrollment by school and grade" }, sports_participation: { name: "Students on sports rosters, by school" } },
-      purposes: { state_reporting: "Required state reporting" }, minCellFloor: 5, defaultMinCell: 10 } };
+      purposes: { state_reporting: "Required state reporting" }, minCellFloor: 5, defaultMinCell: 10, termsKeyConfigured: true } };
     // FED-05: a policy bundle received from Master Control.
     case "/api/district/policy-bundles": { const b = { id: "pbr1", bundleId: "pb-1", releaseId: "rel-1", version: 2, kind: "release", issuedAt: now, effectiveFrom: now,
       issuer: "Texas Education Agency", receivedAt: now, receivedBy: "Supt One", policies: [{ id: "security.mfa.required_for_staff", value: true, locked_by: "ps-1" }, { id: "ui.default_locale", value: "en-US", locked_by: null }] };
@@ -695,7 +695,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       let text = await page.mainText();
       if (!text.includes("students and class rosters")) failures.push("superintendent #/integrations: class rosters status is missing");
       if (!text.includes("Stop class rosters")) failures.push("superintendent #/integrations: class rosters switch is missing");
-      for (const w of ["Share aggregates (exchange gateway)", "Build and sign", "Enrollment by school and grade"])
+      for (const w of ["Share aggregates (exchange gateway)", "Build and sign", "Agreement terms file"])
         if (!text.includes(w)) failures.push(`superintendent #/integrations: exchange "${w}" is missing`);
       for (const w of ["Policies from Master Control", "Version 2", "security.mfa.required_for_staff", "Locked", "Earlier versions received: 1", "Check and keep"])
         if (!text.includes(w)) failures.push(`superintendent #/integrations: policy bundles "${w}" is missing`);
