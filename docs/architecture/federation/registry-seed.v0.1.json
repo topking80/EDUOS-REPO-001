@@ -1458,21 +1458,25 @@
         "NMAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "private_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-NM"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "middle_school",
+          "junior_high",
+          "high_school"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "activities",
+          "academic_competitions",
+          "performing_arts"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://www.nmact.org/"
     },
@@ -1483,21 +1487,28 @@
         "NYSPHSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-NY"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "grades_7_12"
+        ],
+        "school_types": [
+          "public",
+          "parochial",
+          "private"
+        ],
+        "geography": [
+          "11_sections"
         ],
         "activities": [
-          "athletics",
-          "activities"
+          "athletics"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://nysphsaa.org/"
     },
@@ -1515,14 +1526,14 @@
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "middle_school",
+          "high_school"
         ],
         "activities": [
-          "athletics",
-          "activities"
+          "athletics"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://www.nchsaa.org/"
     },
@@ -1533,21 +1544,22 @@
         "NDHSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
+      "governance_type": "voluntary_member_association",
       "legal_authority": "unverified",
       "jurisdiction_ids": [
         "US-ND"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "high_school"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "fine_arts",
+          "academic_activities"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://ndhsaa.com/"
     },
@@ -1558,21 +1570,22 @@
         "OHSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-OH"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "middle_school",
+          "junior_high",
+          "high_school"
         ],
         "activities": [
-          "athletics",
-          "activities"
+          "athletics"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://www.ohsaa.org/"
     },
@@ -1944,7 +1957,8 @@
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "middle_school",
+          "high_school"
         ],
         "school_types": [
           "private",
@@ -1954,7 +1968,7 @@
           "athletics"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://ncisaa.org/"
     },
