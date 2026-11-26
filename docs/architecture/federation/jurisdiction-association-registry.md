@@ -35,7 +35,7 @@ Keep `legal_authority` separate from `governance_type`: `independent`, `statutor
 `organization_relationships` records predecessor/successor, umbrella/member, section/league, affiliate, and cross-island relationships with source, effective dates, and verification status.
 
 ### Membership
-A separate record references organization, school, school level, activity, season, membership class, entitlements, status, approval evidence, fees, and effective dates. Never store a single association ID directly on a school as the only affiliation.
+A separate record references organization, school, optional education-tenant ID, school level, activity scope, season, membership class, entitlements, status, approval evidence, source provenance, and effective dates. Membership is many-to-many: a school may hold multiple simultaneous memberships, including across different activities or associations. Never store a single association ID directly on a school as the only affiliation. The school ID is an opaque reference to the school/district system of record; it does not transfer ownership of student records. The optional education-tenant ID is a routing/reference field only and grants no association access to the tenant's student data. Entitlements must be explicit, least-privilege capabilities and must not imply access to student records.
 
 ### Authority and rules
 A separate rule-source record identifies issuer, authority level, document type, version, publication/approval/effective dates, scope, URL, language, and supersession. A rule decision records who decided, under which authority/version, evidence, appeal path, and outcome.
@@ -63,7 +63,7 @@ Use opaque IDs, ISO dates, stable enumerations, and nullable fields for unknowns
 
 1. FED-01A: registry schema, migrations, seed data, canonical IDs, source provenance.
 2. FED-01B: organization relationship integrity, effective-date validation, predecessor/successor cycle protection, and verified section/island/school-system/affiliate relationships.
-3. FED-01C: membership lifecycle and entitlements.
+3. FED-01C: membership lifecycle and entitlements, with school affiliation references kept separate from education-tenant ownership.
 4. SPORT-02: association governance, delegated authority, committees, voting and appeals.
 5. SPORT-03/04: rules, classifications, alignment, seasons, brackets and results.
 6. FED-06/07: authorized exchange and jurisdiction/privacy controls.
