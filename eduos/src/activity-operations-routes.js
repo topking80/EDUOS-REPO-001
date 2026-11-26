@@ -78,7 +78,7 @@ export function registerActivityOperationsRoutes(app) {
     const a = req.actor; if (!validId(req.params.id)) throw new HttpError(400, "invalid_activity_id");
     const act = await one(c, "SELECT id,school_id,kind FROM school_activities WHERE id=$1 AND district_id=$2 AND ($3::uuid IS NULL OR school_id=$3)", [req.params.id, a.districtId, DISTRICT(a.role) ? null : a.schoolId]);
     if (!act) throw new HttpError(404, "activity_not_found");
-    if (!(await one(c, "SELECT eduos_can_manage_roster($1,$2) AS ok", [act.id, act.school_id]))?.ok) throw new HttpError(404, "activity_not_found");
+    if (!(await one(c, "SELECT (eduos_can_manage_roster($1,$2) OR eduos_can_record_physical($2)) AS ok", [act.id, act.school_id]))?.ok) throw new HttpError(404, "activity_not_found");
     if (act.kind !== "sport") throw new HttpError(400, "physicals_require_sport_team");
     const list = await rows(c, `SELECT r.student_id,s.display_name,s.grade_level,r.jersey_number,p.cleared_on,p.expires_on
         FROM activity_roster_entries r JOIN students s ON s.id=r.student_id AND s.district_id=r.district_id
@@ -100,8 +100,8 @@ export function registerActivityOperationsRoutes(app) {
       const data = await withTenantTransaction(a, async c => {
         const st = await one(c, "SELECT id,school_id FROM students WHERE id=$1 AND district_id=$2 AND school_id=$3", [req.params.id, a.districtId, a.schoolId]);
         if (!st) throw new HttpError(404, "student_not_found");
-        const ok = await one(c, "SELECT (eduos_is_school_lead($1) OR eduos_is_athletic_director($1)) AS ok", [st.school_id]);
-        if (!ok?.ok) throw new HttpError(403, "school_lead_or_athletic_director_required");
+        const ok = await one(c, "SELECT eduos_can_record_physical($1) AS ok", [st.school_id]);
+        if (!ok?.ok) throw new HttpError(403, "physical_recorder_required");
         const r = await one(c, `INSERT INTO student_physical_clearances(district_id,school_id,student_id,cleared_on,expires_on,recorded_by)
             VALUES($1,$2,$3,$4,$5,$6) RETURNING id,cleared_on,expires_on`, [a.districtId, st.school_id, st.id, b.clearedOn, b.expiresOn, a.userId]);
         await audit(c, req, "record", "physical_clearance", r.id, `student=${st.id};expires=${b.expiresOn}`);
@@ -119,4 +119,42 @@ export function registerActivityOperationsRoutes(app) {
     const latest = await one(c, "SELECT cleared_on,expires_on FROM student_physical_clearances WHERE district_id=$1 AND student_id=$2 ORDER BY recorded_at DESC LIMIT 1", [a.districtId, st.id]);
     return { studentId: st.id, ...physicalStatus(latest) };
   }));
+
+  // Guardian consent for clubs below high school (db/051, db/152).
+  app.get("/api/my/club-approvals", requireSession, wrap(async (c, req) => {
+    const a = req.actor;
+    if (!["parent", "pupil"].includes(a.role)) throw new HttpError(403, "family_access_required");
+    if (a.role === "pupil") {
+      return rows(c, `SELECT m.id,m.activity_id,a.title AS activity_title,m.status,m.joined_at
+          FROM activity_memberships m JOIN school_activities a ON a.id=m.activity_id AND a.district_id=m.district_id
+         WHERE m.district_id=$1 AND m.user_id=$2 AND a.kind='club' ORDER BY m.joined_at DESC LIMIT 100`, [a.districtId, a.userId]);
+    }
+    return rows(c, `SELECT m.id,m.activity_id,a.title AS activity_title,m.status,m.joined_at,s.id AS student_id,s.display_name AS student_name,s.grade_level
+        FROM activity_memberships m
+        JOIN school_activities a ON a.id=m.activity_id AND a.district_id=m.district_id
+        JOIN student_user_links kp ON kp.district_id=m.district_id AND kp.user_id=m.user_id AND kp.relationship='pupil' AND kp.status='active'
+        JOIN student_user_links gp ON gp.district_id=m.district_id AND gp.student_id=kp.student_id AND gp.user_id=$2 AND gp.relationship IN ('parent','guardian') AND gp.status='active'
+        JOIN students s ON s.id=kp.student_id AND s.district_id=m.district_id
+       WHERE m.district_id=$1 AND a.kind='club' ORDER BY (m.status='pending') DESC,m.joined_at DESC LIMIT 100`, [a.districtId, a.userId]);
+  }));
+
+  app.post("/api/activity-memberships/:id/consent", requireSession, requireCsrf, async (req, res, next) => {
+    const a = req.actor, decision = req.body?.decision;
+    if (a.role !== "parent") return res.status(403).json({ error: "guardian_consent_only" });
+    if (!validId(req.params.id) || !["active", "declined"].includes(decision)) return res.status(400).json({ error: "invalid_club_consent" });
+    try {
+      const data = await withTenantTransaction(a, async c => {
+        const m = await one(c, `SELECT m.id,m.activity_id,m.user_id,m.status,a.kind,eduos_guardian_of_member(m.user_id) AS ok
+            FROM activity_memberships m JOIN school_activities a ON a.id=m.activity_id AND a.district_id=m.district_id
+           WHERE m.id=$1 AND m.district_id=$2 FOR UPDATE OF m`, [req.params.id, a.districtId]);
+        if (!m || !m.ok) throw new HttpError(404, "membership_not_found");
+        if (m.kind !== "club") throw new HttpError(400, "club_membership_required");
+        const r = await one(c, `UPDATE activity_memberships SET status=$2,reviewed_by=$3 WHERE id=$1 RETURNING id,activity_id,status,reviewed_by`,
+          [m.id, decision, a.userId]);
+        await audit(c, req, "consent", "activity_membership", r.id, `activity=${m.activity_id};decision=${decision}`);
+        return r;
+      });
+      res.json({ data });
+    } catch (e) { sendError(res, next, e); }
+  });
 }
