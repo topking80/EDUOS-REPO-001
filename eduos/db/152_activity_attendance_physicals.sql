@@ -60,36 +60,15 @@ CREATE INDEX student_physical_clearances_latest ON student_physical_clearances(d
 CREATE TRIGGER student_physical_clearances_append_only BEFORE UPDATE OR DELETE ON student_physical_clearances
   FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
 
--- Who may record a learner's physical clearance dates: school lead,
--- athletic director, or school nurse at that school (t51u).
-CREATE FUNCTION eduos_can_record_physical(p_school uuid) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
-  SELECT eduos_is_school_lead(p_school) OR eduos_is_athletic_director(p_school)
-      OR (eduos_ctx_role()='nurse' AND p_school=eduos_ctx_school())
-$$;
-REVOKE ALL ON FUNCTION eduos_can_record_physical(uuid) FROM PUBLIC;
-
--- Who may see a learner's clearance: anyone who can record it, a coach of a
--- team the learner is rostered on, or the learner's own family.
+-- Who may see a learner's clearance: the school lead, the athletic director,
+-- a coach of a team the learner is rostered on, or the learner's own family.
 CREATE FUNCTION eduos_can_read_physical(p_school uuid, p_student uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
-  SELECT eduos_can_record_physical(p_school) OR eduos_is_linked_student(p_student)
+  SELECT eduos_is_school_lead(p_school) OR eduos_is_athletic_director(p_school) OR eduos_is_linked_student(p_student)
       OR EXISTS(SELECT 1 FROM activity_roster_entries r WHERE r.district_id=eduos_ctx_district() AND r.student_id=p_student
                 AND r.status='active' AND eduos_is_activity_staff(r.activity_id, ARRAY['coach']))
 $$;
 REVOKE ALL ON FUNCTION eduos_can_read_physical(uuid,uuid) FROM PUBLIC;
-
--- True when the current parent/guardian user is linked to the pupil user.
-CREATE FUNCTION eduos_guardian_of_member(p_pupil_user uuid) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
-  SELECT eduos_ctx_role()='parent' AND EXISTS(
-    SELECT 1 FROM student_user_links gp
-    JOIN student_user_links kp ON kp.student_id=gp.student_id AND kp.district_id=gp.district_id
-    WHERE gp.district_id=eduos_ctx_district() AND gp.user_id=eduos_ctx_user()
-      AND gp.relationship IN ('parent','guardian') AND gp.status='active'
-      AND kp.user_id=p_pupil_user AND kp.relationship='pupil' AND kp.status='active')
-$$;
-REVOKE ALL ON FUNCTION eduos_guardian_of_member(uuid) FROM PUBLIC;
 
 DO $$ DECLARE t text; BEGIN
  FOREACH t IN ARRAY ARRAY['activity_event_attendance','student_physical_clearances'] LOOP
@@ -112,4 +91,4 @@ CREATE POLICY attendance_update ON activity_event_attendance AS RESTRICTIVE FOR 
 CREATE POLICY physical_read ON student_physical_clearances AS RESTRICTIVE FOR SELECT
   USING (eduos_is_table_owner() OR eduos_can_read_physical(school_id, student_id));
 CREATE POLICY physical_insert ON student_physical_clearances AS RESTRICTIVE FOR INSERT
-  WITH CHECK (eduos_is_table_owner() OR eduos_can_record_physical(school_id));
+  WITH CHECK (eduos_is_table_owner() OR eduos_is_school_lead(school_id) OR eduos_is_athletic_director(school_id));

@@ -33,8 +33,8 @@ test("seating chart parser rejects duplicate seats, duplicate students and out-o
   assert.equal(parseSeatingChart({ rowsCount: 4, colsCount: 5, assignments: [{ studentId: id(2), row: 1, col: 1 }, { studentId: id(2), row: 1, col: 2 }] }), null);
 });
 
-test("migration 153 forces RLS, restricts seating to course managers and grants via template only", async () => {
-  const sql = await readFile(new URL("db/153_classrooms_seating_bell.sql", root), "utf8");
+test("migration 155 forces RLS, restricts seating to course managers and grants via template only", async () => {
+  const sql = await readFile(new URL("db/155_classrooms_seating_bell.sql", root), "utf8");
   for (const t of ["school_bell_schedules", "school_bell_periods", "course_seating_charts", "course_seat_assignments"]) {
     assert.match(sql, new RegExp(`CREATE TABLE ${t}`));
   }

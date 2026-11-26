@@ -56,8 +56,8 @@ test("stream access fails closed for kill switch, unmasked minors, and missing p
   assert.equal(ok.unconsentedExcludedOrBlurred, true);
 });
 
-test("migration 154 forces RLS, keeps live_enabled false by default, and grants via template only", async () => {
-  const sql = await readFile(new URL("db/154_event_tickets_paid_streams.sql", root), "utf8");
+test("migration 156 forces RLS, keeps live_enabled false by default, and grants via template only", async () => {
+  const sql = await readFile(new URL("db/156_event_tickets_paid_streams.sql", root), "utf8");
   assert.match(sql, /CREATE TABLE IF NOT EXISTS school_stream_seasons/);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS district_stream_settings/);
   assert.match(sql, /recital/);

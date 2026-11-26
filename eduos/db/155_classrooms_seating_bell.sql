@@ -1,6 +1,6 @@
 -- Classrooms operations: school bell schedules (periods per day type) and
 -- teacher-managed seating charts tied to existing courses and classroom rooms.
--- Numbered 153: 152 is clubs & sports attendance/physicals.
+-- Numbered 155: 152 and 154 are clubs & sports attendance/physicals, 153 is guardian documents.
 --
 -- Promises kept here: bell schedules belong to a school and are readable across
 -- that school; seating charts hold only grid coordinates and optional seat

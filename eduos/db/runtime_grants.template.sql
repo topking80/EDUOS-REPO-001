@@ -830,7 +830,7 @@ GRANT UPDATE (status, marked_by, marked_at) ON activity_event_attendance TO eduo
 REVOKE DELETE, TRUNCATE ON activity_event_attendance, student_physical_clearances FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_can_record_physical(uuid), eduos_can_read_physical(uuid, uuid), eduos_guardian_of_member(uuid) TO eduos_app;
 
--- Classrooms operations (153): bell schedules (school lead writes, school reads)
+-- Classrooms operations (155): bell schedules (school lead writes, school reads)
 -- and course seating charts (managed by course teacher / school lead).
 GRANT SELECT, INSERT, UPDATE ON school_bell_schedules, course_seating_charts TO eduos_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON school_bell_periods, course_seat_assignments TO eduos_app;
@@ -838,7 +838,7 @@ REVOKE DELETE, TRUNCATE ON school_bell_schedules, course_seating_charts FROM edu
 REVOKE TRUNCATE ON school_bell_periods, course_seat_assignments FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_can_manage_bell_schedule(uuid), eduos_can_read_seating_chart(uuid), eduos_can_read_seat(uuid, uuid) TO eduos_app;
 
--- Event ticketing & paid livestreams (154): school stream seasons are created
+-- Event ticketing & paid livestreams (156): school stream seasons are created
 -- and updated by school/district leads under school-scoped RLS.
 GRANT SELECT, INSERT ON school_stream_seasons TO eduos_app;
 GRANT UPDATE (title, school_year, starts_at, ends_at, status) ON school_stream_seasons TO eduos_app;
