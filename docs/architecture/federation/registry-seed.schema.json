@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EduOS Federation Registry Seed",
+  "type": "object",
+  "required": [
+    "registry_version",
+    "as_of",
+    "coverage",
+    "jurisdictions",
+    "organizations",
+    "organization_relationships",
+    "notes"
+  ],
+  "properties": {
+    "registry_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date"
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "states",
+        "federal_districts",
+        "commonwealths",
+        "territories",
+        "total_jurisdictions"
+      ],
+      "properties": {
+        "states": {
+          "const": 50
+        },
+        "federal_districts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commonwealths": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "territories": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_jurisdictions": {
+          "const": 54
+        }
+      },
+      "additionalProperties": false
+    },
+    "jurisdictions": {
+      "type": "array",
+      "minItems": 54,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "country_code",
+          "active"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^US-[A-Z]{2}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "state",
+              "federal_district",
+              "commonwealth",
+              "territory"
+            ]
+          },
+          "country_code": {
+            "const": "US"
+          },
+          "postal_code": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "organizations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "legal_name",
+          "aliases",
+          "organization_type",
+          "governance_type",
+          "jurisdiction_ids",
+          "scope",
+          "verification_status",
+          "active",
+          "source_url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]+$"
+          },
+          "legal_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "organization_type": {
+            "enum": [
+              "independent_association",
+              "government_office",
+              "school_system_league",
+              "regional_association",
+              "university_league",
+              "youth_league",
+              "affiliate_body"
+            ]
+          },
+          "governance_type": {
+            "enum": [
+              "member_governed_nonprofit",
+              "voluntary_member_association",
+              "private_nonprofit",
+              "statutory_body",
+              "delegated_authority_body",
+              "education_department_office",
+              "school_system_program",
+              "unverified"
+            ]
+          },
+          "legal_authority": {
+            "enum": [
+              "independent",
+              "statutory",
+              "delegated",
+              "departmental",
+              "school_system",
+              "contractual",
+              "unverified"
+            ]
+          },
+          "jurisdiction_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^US-[A-Z]{2}$"
+            }
+          },
+          "scope": {
+            "type": "object",
+            "required": [
+              "levels",
+              "activities"
+            ],
+            "properties": {
+              "levels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "school_types": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "geography": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "activities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "notes": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "organization_relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "from_organization_id",
+          "to_organization_id",
+          "relationship_type",
+          "verification_status",
+          "source_url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from_organization_id": {
+            "type": "string"
+          },
+          "to_organization_id": {
+            "type": "string"
+          },
+          "relationship_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

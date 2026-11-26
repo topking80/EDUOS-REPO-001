@@ -1,0 +1,2041 @@
+{
+  "registry_version": "0.1.0",
+  "as_of": "2026-11-25",
+  "coverage": {
+    "states": 50,
+    "federal_districts": 1,
+    "commonwealths": 1,
+    "territories": 2,
+    "total_jurisdictions": 54
+  },
+  "jurisdictions": [
+    {
+      "id": "US-AL",
+      "name": "Alabama",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "AL",
+      "active": true
+    },
+    {
+      "id": "US-AK",
+      "name": "Alaska",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "AK",
+      "active": true
+    },
+    {
+      "id": "US-AZ",
+      "name": "Arizona",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "AZ",
+      "active": true
+    },
+    {
+      "id": "US-AR",
+      "name": "Arkansas",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "AR",
+      "active": true
+    },
+    {
+      "id": "US-CA",
+      "name": "California",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "CA",
+      "active": true
+    },
+    {
+      "id": "US-CO",
+      "name": "Colorado",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "CO",
+      "active": true
+    },
+    {
+      "id": "US-CT",
+      "name": "Connecticut",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "CT",
+      "active": true
+    },
+    {
+      "id": "US-DE",
+      "name": "Delaware",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "DE",
+      "active": true
+    },
+    {
+      "id": "US-FL",
+      "name": "Florida",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "FL",
+      "active": true
+    },
+    {
+      "id": "US-GA",
+      "name": "Georgia",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "GA",
+      "active": true
+    },
+    {
+      "id": "US-HI",
+      "name": "Hawaii",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "HI",
+      "active": true
+    },
+    {
+      "id": "US-ID",
+      "name": "Idaho",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "ID",
+      "active": true
+    },
+    {
+      "id": "US-IL",
+      "name": "Illinois",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "IL",
+      "active": true
+    },
+    {
+      "id": "US-IN",
+      "name": "Indiana",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "IN",
+      "active": true
+    },
+    {
+      "id": "US-IA",
+      "name": "Iowa",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "IA",
+      "active": true
+    },
+    {
+      "id": "US-KS",
+      "name": "Kansas",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "KS",
+      "active": true
+    },
+    {
+      "id": "US-KY",
+      "name": "Kentucky",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "KY",
+      "active": true
+    },
+    {
+      "id": "US-LA",
+      "name": "Louisiana",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "LA",
+      "active": true
+    },
+    {
+      "id": "US-ME",
+      "name": "Maine",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "ME",
+      "active": true
+    },
+    {
+      "id": "US-MD",
+      "name": "Maryland",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "MD",
+      "active": true
+    },
+    {
+      "id": "US-MA",
+      "name": "Massachusetts",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "MA",
+      "active": true
+    },
+    {
+      "id": "US-MI",
+      "name": "Michigan",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "MI",
+      "active": true
+    },
+    {
+      "id": "US-MN",
+      "name": "Minnesota",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "MN",
+      "active": true
+    },
+    {
+      "id": "US-MS",
+      "name": "Mississippi",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "MS",
+      "active": true
+    },
+    {
+      "id": "US-MO",
+      "name": "Missouri",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "MO",
+      "active": true
+    },
+    {
+      "id": "US-MT",
+      "name": "Montana",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "MT",
+      "active": true
+    },
+    {
+      "id": "US-NE",
+      "name": "Nebraska",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "NE",
+      "active": true
+    },
+    {
+      "id": "US-NV",
+      "name": "Nevada",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "NV",
+      "active": true
+    },
+    {
+      "id": "US-NH",
+      "name": "New Hampshire",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "NH",
+      "active": true
+    },
+    {
+      "id": "US-NJ",
+      "name": "New Jersey",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "NJ",
+      "active": true
+    },
+    {
+      "id": "US-NM",
+      "name": "New Mexico",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "NM",
+      "active": true
+    },
+    {
+      "id": "US-NY",
+      "name": "New York",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "NY",
+      "active": true
+    },
+    {
+      "id": "US-NC",
+      "name": "North Carolina",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "NC",
+      "active": true
+    },
+    {
+      "id": "US-ND",
+      "name": "North Dakota",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "ND",
+      "active": true
+    },
+    {
+      "id": "US-OH",
+      "name": "Ohio",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "OH",
+      "active": true
+    },
+    {
+      "id": "US-OK",
+      "name": "Oklahoma",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "OK",
+      "active": true
+    },
+    {
+      "id": "US-OR",
+      "name": "Oregon",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "OR",
+      "active": true
+    },
+    {
+      "id": "US-PA",
+      "name": "Pennsylvania",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "PA",
+      "active": true
+    },
+    {
+      "id": "US-RI",
+      "name": "Rhode Island",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "RI",
+      "active": true
+    },
+    {
+      "id": "US-SC",
+      "name": "South Carolina",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "SC",
+      "active": true
+    },
+    {
+      "id": "US-SD",
+      "name": "South Dakota",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "SD",
+      "active": true
+    },
+    {
+      "id": "US-TN",
+      "name": "Tennessee",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "TN",
+      "active": true
+    },
+    {
+      "id": "US-TX",
+      "name": "Texas",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "TX",
+      "active": true
+    },
+    {
+      "id": "US-UT",
+      "name": "Utah",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "UT",
+      "active": true
+    },
+    {
+      "id": "US-VT",
+      "name": "Vermont",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "VT",
+      "active": true
+    },
+    {
+      "id": "US-VA",
+      "name": "Virginia",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "VA",
+      "active": true
+    },
+    {
+      "id": "US-WA",
+      "name": "Washington",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "WA",
+      "active": true
+    },
+    {
+      "id": "US-WV",
+      "name": "West Virginia",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "WV",
+      "active": true
+    },
+    {
+      "id": "US-WI",
+      "name": "Wisconsin",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "WI",
+      "active": true
+    },
+    {
+      "id": "US-WY",
+      "name": "Wyoming",
+      "kind": "state",
+      "country_code": "US",
+      "postal_code": "WY",
+      "active": true
+    },
+    {
+      "id": "US-DC",
+      "name": "District of Columbia",
+      "kind": "federal_district",
+      "country_code": "US",
+      "postal_code": "DC",
+      "active": true
+    },
+    {
+      "id": "US-PR",
+      "name": "Puerto Rico",
+      "kind": "commonwealth",
+      "country_code": "US",
+      "postal_code": "PR",
+      "active": true
+    },
+    {
+      "id": "US-VI",
+      "name": "U.S. Virgin Islands",
+      "kind": "territory",
+      "country_code": "US",
+      "postal_code": "VI",
+      "active": true
+    },
+    {
+      "id": "US-AS",
+      "name": "American Samoa",
+      "kind": "territory",
+      "country_code": "US",
+      "postal_code": "AS",
+      "active": true
+    }
+  ],
+  "organizations": [
+    {
+      "id": "us-al-ahsaa",
+      "legal_name": "Alabama High School Athletic Association",
+      "aliases": [
+        "AHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "private_nonprofit",
+      "jurisdiction_ids": [
+        "US-AL"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "school_types": [
+          "public",
+          "private",
+          "parochial"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.ahsaa.com/"
+    },
+    {
+      "id": "us-ak-asaa",
+      "legal_name": "Alaska School Activities Association",
+      "aliases": [
+        "ASAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "jurisdiction_ids": [
+        "US-AK"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "arts",
+          "debate",
+          "student_government"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://asaa.org/"
+    },
+    {
+      "id": "us-az-aia",
+      "legal_name": "Arizona Interscholastic Association",
+      "aliases": [
+        "AIA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "jurisdiction_ids": [
+        "US-AZ"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://aiaonline.org/"
+    },
+    {
+      "id": "us-ar-aaa",
+      "legal_name": "Arkansas Activities Association",
+      "aliases": [
+        "AAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "jurisdiction_ids": [
+        "US-AR"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "arts",
+          "esports",
+          "debate",
+          "student_government"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.ahsaa.org/"
+    },
+    {
+      "id": "us-ca-cif",
+      "legal_name": "California Interscholastic Federation",
+      "aliases": [
+        "CIF"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "jurisdiction_ids": [
+        "US-CA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.cifstate.org/"
+    },
+    {
+      "id": "us-ia-ihsaa",
+      "legal_name": "Iowa High School Athletic Association",
+      "aliases": [
+        "IHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "jurisdiction_ids": [
+        "US-IA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "boys_athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.iahsaa.org/"
+    },
+    {
+      "id": "us-ia-ighsau",
+      "legal_name": "Iowa Girls High School Athletic Union",
+      "aliases": [
+        "IGHSAU"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "jurisdiction_ids": [
+        "US-IA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "girls_athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://ighsau.org/"
+    },
+    {
+      "id": "us-mi-mhsaa",
+      "legal_name": "Michigan High School Athletic Association",
+      "aliases": [
+        "MHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "private_nonprofit",
+      "jurisdiction_ids": [
+        "US-MI"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.mhsaa.com/"
+    },
+    {
+      "id": "us-ms-mhsaa",
+      "legal_name": "Mississippi High School Activities Association",
+      "aliases": [
+        "MHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "jurisdiction_ids": [
+        "US-MS"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.misshsaa.com/"
+    },
+    {
+      "id": "us-wa-wiaa",
+      "legal_name": "Washington Interscholastic Activities Association",
+      "aliases": [
+        "WIAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "jurisdiction_ids": [
+        "US-WA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "cheer",
+          "dance",
+          "debate",
+          "drama",
+          "music"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.wiaa.com/"
+    },
+    {
+      "id": "us-wi-wiaa",
+      "legal_name": "Wisconsin Interscholastic Athletic Association",
+      "aliases": [
+        "WIAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "jurisdiction_ids": [
+        "US-WI"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.wiaawi.org/"
+    },
+    {
+      "id": "us-dc-dcsaa",
+      "legal_name": "District of Columbia State Athletic Association",
+      "aliases": [
+        "DCSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "delegated_authority_body",
+      "legal_authority": "delegated",
+      "jurisdiction_ids": [
+        "US-DC"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "school_types": [
+          "district",
+          "charter",
+          "private",
+          "parochial"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.dcsaasports.com/"
+    },
+    {
+      "id": "us-dc-dciaa",
+      "legal_name": "District of Columbia Interscholastic Athletic Association",
+      "aliases": [
+        "DCIAA"
+      ],
+      "organization_type": "school_system_league",
+      "governance_type": "school_system_program",
+      "legal_authority": "school_system",
+      "jurisdiction_ids": [
+        "US-DC"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "school_types": [
+          "DCPS"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://dcps.dc.gov/sports"
+    },
+    {
+      "id": "us-pr-prhsaa",
+      "legal_name": "Puerto Rico High School Athletic Alliance Corporation",
+      "aliases": [
+        "PRHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "private_nonprofit",
+      "jurisdiction_ids": [
+        "US-PR"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "school_types": [
+          "private"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://csaapr.com/deportes/"
+    },
+    {
+      "id": "us-vi-iaa-stthomas-stjohn",
+      "legal_name": "Inter-Island Interscholastic Athletic Association",
+      "aliases": [
+        "IAA"
+      ],
+      "organization_type": "regional_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-VI"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "geography": [
+          "St. Thomas",
+          "St. John"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "unverified_governance",
+      "active": true,
+      "source_url": "https://www.vimsia.org/athletics"
+    },
+    {
+      "id": "us-vi-sciaa-stcroix",
+      "legal_name": "St. Croix Interscholastic Athletic Association",
+      "aliases": [
+        "SCIAA"
+      ],
+      "organization_type": "regional_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-VI"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "geography": [
+          "St. Croix"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "unverified_governance",
+      "active": true,
+      "source_url": "https://vitrackandfield.com/competitions/"
+    },
+    {
+      "id": "us-as-asdoe-athletics",
+      "legal_name": "American Samoa Department of Education Athletic Office",
+      "aliases": [
+        "ASDOE-AO"
+      ],
+      "organization_type": "government_office",
+      "governance_type": "education_department_office",
+      "legal_authority": "departmental",
+      "jurisdiction_ids": [
+        "US-AS"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.amsamoadoe.com/athletics-office"
+    },
+    {
+      "id": "us-as-ashssa-historical",
+      "legal_name": "American Samoa High School Sports Association",
+      "aliases": [
+        "ASHSSA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-AS"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "historical_predecessor",
+      "active": false,
+      "source_url": "https://www.amsamoadoe.com/athletics-office"
+    },
+    {
+      "id": "us-co-chsaa",
+      "legal_name": "Colorado High School Activities Association",
+      "aliases": [
+        "CHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-CO"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://chsaanow.com/"
+    },
+    {
+      "id": "us-ct-ciac",
+      "legal_name": "Connecticut Interscholastic Athletic Conference",
+      "aliases": [
+        "CIAC"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-CT"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.ciacsports.com/"
+    },
+    {
+      "id": "us-de-diaa",
+      "legal_name": "Delaware Interscholastic Athletic Association",
+      "aliases": [
+        "DIAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-DE"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://education.delaware.gov/diaa/"
+    },
+    {
+      "id": "us-fl-fhsaa",
+      "legal_name": "Florida High School Athletic Association",
+      "aliases": [
+        "FHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-FL"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://fhsaa.com/"
+    },
+    {
+      "id": "us-ga-ghsa",
+      "legal_name": "Georgia High School Association",
+      "aliases": [
+        "GHSA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-GA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.ghsa.net/"
+    },
+    {
+      "id": "us-hi-hhsaa",
+      "legal_name": "Hawaii High School Athletic Association",
+      "aliases": [
+        "HHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-HI"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://hhsaa.org/"
+    },
+    {
+      "id": "us-id-ihsaa",
+      "legal_name": "Idaho High School Activities Association",
+      "aliases": [
+        "IHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-ID"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://idhsaa.org/"
+    },
+    {
+      "id": "us-il-ihsa",
+      "legal_name": "Illinois High School Association",
+      "aliases": [
+        "IHSA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-IL"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.ihsa.org/"
+    },
+    {
+      "id": "us-in-ihsaa",
+      "legal_name": "Indiana High School Athletic Association",
+      "aliases": [
+        "IHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-IN"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.ihsaa.org/"
+    },
+    {
+      "id": "us-ks-kshsaa",
+      "legal_name": "Kansas State High School Activities Association",
+      "aliases": [
+        "KSHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-KS"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.kshsaa.org/"
+    },
+    {
+      "id": "us-ky-khsaa",
+      "legal_name": "Kentucky High School Athletic Association",
+      "aliases": [
+        "KHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-KY"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://khsaa.org/"
+    },
+    {
+      "id": "us-la-lhsaa",
+      "legal_name": "Louisiana High School Athletic Association",
+      "aliases": [
+        "LHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-LA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://lhsaa.org/"
+    },
+    {
+      "id": "us-me-mpa",
+      "legal_name": "Maine Principals' Association",
+      "aliases": [
+        "MPA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-ME"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.mpa.cc/"
+    },
+    {
+      "id": "us-md-mpssaa",
+      "legal_name": "Maryland Public Secondary Schools Athletic Association",
+      "aliases": [
+        "MPSSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-MD"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.mpssaa.org/"
+    },
+    {
+      "id": "us-ma-miaa",
+      "legal_name": "Massachusetts Interscholastic Athletic Association",
+      "aliases": [
+        "MIAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-MA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://miaa.net/"
+    },
+    {
+      "id": "us-mn-mshsl",
+      "legal_name": "Minnesota State High School League",
+      "aliases": [
+        "MSHSL"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-MN"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.mshsl.org/"
+    },
+    {
+      "id": "us-mo-mshsaa",
+      "legal_name": "Missouri State High School Activities Association",
+      "aliases": [
+        "MSHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-MO"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.mshsaa.org/"
+    },
+    {
+      "id": "us-mt-mhsa",
+      "legal_name": "Montana High School Association",
+      "aliases": [
+        "MHSA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-MT"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "fine_arts"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.mhsa.org/"
+    },
+    {
+      "id": "us-ne-nsaa",
+      "legal_name": "Nebraska School Activities Association",
+      "aliases": [
+        "NSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-NE"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "performing_arts"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://nsaahome.org/"
+    },
+    {
+      "id": "us-nv-niaa",
+      "legal_name": "Nevada Interscholastic Activities Association",
+      "aliases": [
+        "NIAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "statutory_body",
+      "legal_authority": "statutory",
+      "jurisdiction_ids": [
+        "US-NV"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://niaa.com/"
+    },
+    {
+      "id": "us-nh-nhiaa",
+      "legal_name": "New Hampshire Interscholastic Athletic Association",
+      "aliases": [
+        "NHIAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "voluntary_member_association",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-NH"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.nhiaa.org/"
+    },
+    {
+      "id": "us-nj-njsiaa",
+      "legal_name": "New Jersey State Interscholastic Athletic Association",
+      "aliases": [
+        "NJSIAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "private_nonprofit",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-NJ"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://www.njsiaa.org/"
+    },
+    {
+      "id": "us-nm-nmaa",
+      "legal_name": "New Mexico Activities Association",
+      "aliases": [
+        "NMAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-NM"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.nmact.org/"
+    },
+    {
+      "id": "us-ny-nysphsaa",
+      "legal_name": "New York State Public High School Athletic Association",
+      "aliases": [
+        "NYSPHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-NY"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://nysphsaa.org/"
+    },
+    {
+      "id": "us-nc-nchsaa",
+      "legal_name": "North Carolina High School Athletic Association",
+      "aliases": [
+        "NCHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-NC"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.nchsaa.org/"
+    },
+    {
+      "id": "us-nd-ndhsaa",
+      "legal_name": "North Dakota High School Activities Association",
+      "aliases": [
+        "NDHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-ND"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://ndhsaa.com/"
+    },
+    {
+      "id": "us-oh-ohsaa",
+      "legal_name": "Ohio High School Athletic Association",
+      "aliases": [
+        "OHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-OH"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.ohsaa.org/"
+    },
+    {
+      "id": "us-ok-ossaa",
+      "legal_name": "Oklahoma Secondary School Activities Association",
+      "aliases": [
+        "OSSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-OK"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.ossaa.com/"
+    },
+    {
+      "id": "us-or-osaa",
+      "legal_name": "Oregon School Activities Association",
+      "aliases": [
+        "OSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-OR"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.osaa.org/"
+    },
+    {
+      "id": "us-pa-piaa",
+      "legal_name": "Pennsylvania Interscholastic Athletic Association",
+      "aliases": [
+        "PIAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-PA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.piaa.org/"
+    },
+    {
+      "id": "us-ri-riil",
+      "legal_name": "Rhode Island Interscholastic League",
+      "aliases": [
+        "RIIL"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-RI"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.riil.org/"
+    },
+    {
+      "id": "us-sc-schsl",
+      "legal_name": "South Carolina High School League",
+      "aliases": [
+        "SCHSL"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-SC"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://schsl.org/"
+    },
+    {
+      "id": "us-sd-sdhsaa",
+      "legal_name": "South Dakota High School Activities Association",
+      "aliases": [
+        "SDHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-SD"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.sdhsaa.com/"
+    },
+    {
+      "id": "us-tn-tssaa",
+      "legal_name": "Tennessee Secondary School Athletic Association",
+      "aliases": [
+        "TSSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-TN"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://tssaa.org/"
+    },
+    {
+      "id": "us-tx-uil",
+      "legal_name": "University Interscholastic League",
+      "aliases": [
+        "UIL"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-TX"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.uiltexas.org/"
+    },
+    {
+      "id": "us-ut-uhsaa",
+      "legal_name": "Utah High School Activities Association",
+      "aliases": [
+        "UHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-UT"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://uhsaa.org/"
+    },
+    {
+      "id": "us-vt-vpa",
+      "legal_name": "Vermont Principals' Association",
+      "aliases": [
+        "VPA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-VT"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://vpaonline.org/"
+    },
+    {
+      "id": "us-va-vhsl",
+      "legal_name": "Virginia High School League",
+      "aliases": [
+        "VHSL"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-VA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.vhsl.org/"
+    },
+    {
+      "id": "us-wv-wvssac",
+      "legal_name": "West Virginia Secondary School Activities Commission",
+      "aliases": [
+        "WVSSAC"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-WV"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://wvssac.org/"
+    },
+    {
+      "id": "us-wy-whsaa",
+      "legal_name": "Wyoming High School Activities Association",
+      "aliases": [
+        "WHSAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-WY"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.whsaa.org/"
+    },
+    {
+      "id": "us-tx-tapps",
+      "legal_name": "Texas Association of Private and Parochial Schools",
+      "aliases": [
+        "TAPPS"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-TX"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "school_types": [
+          "private",
+          "parochial"
+        ],
+        "activities": [
+          "athletics",
+          "activities"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://tapps.biz/"
+    },
+    {
+      "id": "us-nc-ncisaa",
+      "legal_name": "North Carolina Independent Schools Athletic Association",
+      "aliases": [
+        "NCISAA"
+      ],
+      "organization_type": "independent_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-NC"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "school_types": [
+          "private",
+          "independent"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://ncisaa.org/"
+    },
+    {
+      "id": "us-ny-psal",
+      "legal_name": "Public Schools Athletic League",
+      "aliases": [
+        "PSAL"
+      ],
+      "organization_type": "school_system_league",
+      "governance_type": "school_system_program",
+      "legal_authority": "school_system",
+      "jurisdiction_ids": [
+        "US-NY"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "school_types": [
+          "NYC public schools"
+        ],
+        "activities": [
+          "athletics"
+        ]
+      },
+      "verification_status": "directory_seed_source_review_required",
+      "active": true,
+      "source_url": "https://www.psal.org/"
+    },
+    {
+      "id": "us-ca-cif-sections",
+      "legal_name": "California Interscholastic Federation Sections",
+      "aliases": [
+        "CIF Sections"
+      ],
+      "organization_type": "regional_association",
+      "governance_type": "unverified",
+      "legal_authority": "unverified",
+      "jurisdiction_ids": [
+        "US-CA"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "activities": [
+          "athletics"
+        ],
+        "notes": "Section entities should be instantiated individually after authoritative roster validation."
+      },
+      "verification_status": "relationship_model_only",
+      "active": true,
+      "source_url": "https://www.cifstate.org/"
+    }
+  ],
+  "organization_relationships": [
+    {
+      "id": "rel-as-ashssa-successor",
+      "from_organization_id": "us-as-ashssa-historical",
+      "to_organization_id": "us-as-asdoe-athletics",
+      "relationship_type": "predecessor_successor",
+      "verification_status": "first_pass",
+      "source_url": "https://www.amsamoadoe.com/athletics-office"
+    },
+    {
+      "id": "rel-dc-dcsaa-dciaa-scope",
+      "from_organization_id": "us-dc-dcsaa",
+      "to_organization_id": "us-dc-dciaa",
+      "relationship_type": "distinct_overlapping_scope",
+      "verification_status": "first_pass",
+      "source_url": "https://www.dcsaasports.com/about-dcsaa/"
+    }
+  ],
+  "notes": [
+    "Jurisdiction coverage is complete: 50 states, DC, Puerto Rico, U.S. Virgin Islands, and American Samoa.",
+    "Organization directory is an expanded discovery seed, not a legally verified complete census. Records marked directory_seed_source_review_required must be reviewed against current official constitutions, membership rosters, and governing documents before operational activation.",
+    "Several states support multiple independent, private-school, public-school-system, or regional competition bodies. The starter set includes examples for Iowa, Texas, North Carolina, New York, California, and DC; this is not exhaustive.",
+    "Association acronyms are aliases, never primary keys; duplicate aliases across jurisdictions are permitted.",
+    "U.S. Virgin Islands governance status remains explicitly unverified; island competition organizations must not be treated as confirmed statutory territory-wide authorities.",
+    "American Samoa ASHSSA is retained as historical predecessor to the current ASDOE Athletic Office.",
+    "Do not infer that every listed body has authority over every school or sport in its jurisdiction. Scope and membership entitlements require separate validation."
+  ]
+}
