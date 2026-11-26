@@ -1,6 +1,6 @@
 {
   "registry_version": "0.1.0",
-  "as_of": "2026-11-25",
+  "as_of": "2026-11-26",
   "coverage": {
     "states": 50,
     "federal_districts": 1,
@@ -767,7 +767,8 @@
         ],
         "activities": [
           "athletics"
-        ]
+        ],
+        "notes": "Established in D.C. Code ch. 26A-i (§38-2661.22, purpose and duties); overseen by the D.C. State Athletics Commission; the NFHS member for D.C. Reviewed 2026-11-26."
       },
       "verification_status": "first_pass",
       "active": true,
@@ -820,9 +821,10 @@
         ],
         "activities": [
           "athletics"
-        ]
+        ],
+        "notes": "Organizes competition for private schools; not the authority for Puerto Rico Department of Education public schools. Source URL is not an official PRHSAA page; replace when one is confirmed. Reviewed 2026-11-26."
       },
-      "verification_status": "first_pass",
+      "verification_status": "first_pass_source_review_required",
       "active": true,
       "source_url": "https://csaapr.com/deportes/"
     },
@@ -830,7 +832,8 @@
       "id": "us-vi-iaa-stthomas-stjohn",
       "legal_name": "Inter-Island Interscholastic Athletic Association",
       "aliases": [
-        "IAA"
+        "IAA",
+        "St. Thomas/St. John Interscholastic Athletic Association"
       ],
       "organization_type": "regional_association",
       "governance_type": "unverified",
@@ -848,7 +851,8 @@
         ],
         "activities": [
           "athletics"
-        ]
+        ],
+        "notes": "Local reporting names it the St. Thomas/St. John Interscholastic Athletic Association (IAA), the organizing body of school sports on those islands; legal status unverified. Reviewed 2026-11-26."
       },
       "verification_status": "unverified_governance",
       "active": true,
@@ -907,13 +911,14 @@
     },
     {
       "id": "us-as-ashssa-historical",
-      "legal_name": "American Samoa High School Sports Association",
+      "legal_name": "American Samoa High School Athletic Association",
       "aliases": [
+        "ASHSAA",
         "ASHSSA"
       ],
-      "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "organization_type": "government_office",
+      "governance_type": "education_department_office",
+      "legal_authority": "departmental",
       "jurisdiction_ids": [
         "US-AS"
       ],
@@ -923,11 +928,12 @@
         ],
         "activities": [
           "athletics"
-        ]
+        ],
+        "notes": "Name corrected from 'High School Sports Association'. Public sources describe ASHSAA as the Department of Education's athletic division and the Governor's office reported it opening the 2022-23 season, so whether it is a predecessor of, or another name for, the DOE athletics office is unconfirmed. Kept inactive here pending primary-source review; do not treat as independent. Reviewed 2026-11-26."
       },
-      "verification_status": "historical_predecessor",
+      "verification_status": "conflicting_sources",
       "active": false,
-      "source_url": "https://www.amsamoadoe.com/athletics-office"
+      "source_url": "https://americansamoa.gov/_files/ugd/4bfff9_6b3a2baf77724e74aa20ea55aa2f26e8.pdf"
     },
     {
       "id": "us-co-chsaa",
@@ -985,9 +991,9 @@
       "aliases": [
         "DIAA"
       ],
-      "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "organization_type": "government_office",
+      "governance_type": "statutory_body",
+      "legal_authority": "statutory",
       "jurisdiction_ids": [
         "US-DE"
       ],
@@ -998,11 +1004,12 @@
         "activities": [
           "athletics",
           "activities"
-        ]
+        ],
+        "notes": "Established under 14 Del.C. ch. 3 (§301); 14 DE Admin. Code 1006 describes DIAA as a unit of the Delaware Department of Education, overseen with a Governor-appointed board. Reviewed 2026-11-26."
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://education.delaware.gov/diaa/"
+      "source_url": "https://archive.regulations.delaware.gov/register/july2018/final/22%20DE%20Reg%2056%2007-01-18.htm"
     },
     {
       "id": "us-fl-fhsaa",
@@ -1061,8 +1068,8 @@
         "HHSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "private_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-HI"
       ],
@@ -1073,11 +1080,12 @@
         "activities": [
           "athletics",
           "activities"
-        ]
+        ],
+        "notes": "Private 501(c)(3) serving public and independent member high schools; Hawaii DOE public schools compete through it. Reviewed 2026-11-26."
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://hhsaa.org/"
+      "source_url": "https://hhsaa.org/about"
     },
     {
       "id": "us-id-ihsaa",
@@ -1423,7 +1431,8 @@
         "activities": [
           "athletics",
           "activities"
-        ]
+        ],
+        "notes": "NRS 385B: formed by the county school districts; adopts regulations as state agencies do (NRS 233B). Reviewed 2026-11-26."
       },
       "verification_status": "first_pass",
       "active": true,
@@ -1658,7 +1667,7 @@
       },
       "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://www.ossba.org/services/superintendent-search-services/oklahoma-secondary-school-activities-association-executive-director-search/"
+      "source_url": "https://www.ossaa.com/"
     },
     {
       "id": "us-or-osaa",
@@ -2189,6 +2198,34 @@
       "verification_status": "relationship_model_only",
       "active": true,
       "source_url": "https://www.cifstate.org/"
+    },
+    {
+      "id": "us-vi-vide-sports",
+      "legal_name": "Virgin Islands Department of Education, Division of Sports & Athletics",
+      "aliases": [
+        "VIDE Sports & Athletics"
+      ],
+      "organization_type": "government_office",
+      "governance_type": "education_department_office",
+      "legal_authority": "departmental",
+      "jurisdiction_ids": [
+        "US-VI"
+      ],
+      "scope": {
+        "levels": [
+          "K-12"
+        ],
+        "school_types": [
+          "public"
+        ],
+        "activities": [
+          "athletics"
+        ],
+        "notes": "Runs territory-level public-school events (e.g. inter-island tournaments). Its relationship to the island IAAs is unverified; not a statutory territory-wide association. Reviewed 2026-11-26."
+      },
+      "verification_status": "first_pass",
+      "active": true,
+      "source_url": "https://vide.vi/wq6"
     }
   ],
   "organization_relationships": [

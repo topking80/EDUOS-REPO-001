@@ -104,9 +104,16 @@ const ATHLETICS = {
   WY: ["Wyoming High School Activities Association", "https://www.whsaa.org/"]
 };
 
+// D.C. was missing from the list above although NFHS counts it among its 51
+// member associations. Its association is set up in D.C. law (D.C. Code
+// § 38-2661.22, checked 2026-11-26) and overseen by the D.C. State Athletics Commission.
+const DC_ATHLETICS = { category: "athletics", title: "District of Columbia State Athletic Association", url: "https://www.dcsaasports.com/",
+  description: "D.C.'s state athletic association (NFHS member), established in D.C. law (D.C. Code § 38-2661.22).",
+  source: "https://nfhs.org/about", checked: "2026-11-26" };
+
 export const ENTRIES = Object.fromEntries(JURISDICTIONS.map(([code]) => [code, [
   ...(AGENCY_CHECKED[code] ? [ed(code, AGENCY_CHECKED[code])] : []),
-  ...(ATHLETICS[code] ? [assoc(...ATHLETICS[code])] : [])]]));
+  ...(ATHLETICS[code] ? [assoc(...ATHLETICS[code])] : code === "DC" ? [DC_ATHLETICS] : [])]]));
 
 /** The curated index for one state: its own checked entries plus the national directories. */
 export function curatedFor(code) {
