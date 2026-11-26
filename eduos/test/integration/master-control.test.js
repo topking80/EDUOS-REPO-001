@@ -13,7 +13,7 @@ import { PG_URL, ROOT, startIdp, baseEnv, run, createDatabase, freePort } from "
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 
 describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
-  let db, idp, admin, mc, mcRole, mcUrl, env, s = {}, ids = {};
+  let db, idp, idpTx, idpD1, admin, mc, mcRole, mcUrl, env, s = {}, ids = {};
   const mcPw = `mc-${crypto.randomBytes(4).toString("hex")}-pw`;
 
   async function startMc(extra = {}) {
@@ -27,11 +27,13 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     return { base: `http://127.0.0.1:${port}`, log: () => out, stop: () => new Promise(r => { child.removeAllListeners("exit"); child.on("exit", r); child.kill(); }) };
   }
   const pick = (res, prefix) => res.headers.getSetCookie().map(c => c.split(";")[0]).find(c => c.startsWith(prefix) && !c.endsWith("="));
-  async function signIn(sub) {
-    const start = await fetch(`${mc.base}/mc/auth/login`, { redirect: "manual" });
+  async function signIn(sub, { via = "primary", invite, claims = {} } = {}) {
+    const start = await fetch(`${mc.base}/mc/auth/login?idp=${via}${invite ? `&invite=${encodeURIComponent(invite)}` : ""}`, { redirect: "manual" });
+    if (start.status !== 302) return { status: start.status };
     const loc = new URL(start.headers.get("location"));
     const code = crypto.randomBytes(8).toString("hex");
-    idp.codes.set(code, { sub, nonce: loc.searchParams.get("nonce") });
+    const mock = [idp, idpTx, idpD1].find(x => x && loc.href.startsWith(x.issuer));
+    mock.codes.set(code, { sub, nonce: loc.searchParams.get("nonce"), ...claims });
     const cb = await fetch(`${mc.base}/mc/auth/callback?code=${code}&state=${encodeURIComponent(loc.searchParams.get("state"))}`,
       { redirect: "manual", headers: { cookie: pick(start, "eduos_mc_state=") } });
     const cookie = pick(cb, "eduos_mc=");
@@ -49,7 +51,7 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
 
   before(async () => {
     db = await createDatabase();
-    idp = await startIdp();
+    idp = await startIdp(); idpTx = await startIdp(); idpD1 = await startIdp();
     const eduEnv = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app });
     const migrated = await run(["src/migrate.js"], { ...eduEnv, DATABASE_URL: db.ownerUrl });
     assert.equal(migrated.code, 0, migrated.out);
@@ -58,7 +60,8 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     await admin.query(`CREATE ROLE ${mcRole} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '${mcPw}'`);
     const u = new URL(db.ownerUrl); u.username = mcRole; u.password = mcPw; mcUrl = u.toString();
     env = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: "development", MC_DATABASE_URL: mcUrl, MC_PUBLIC_ORIGIN: "http://localhost",
-      MC_OIDC_ISSUER: idp.issuer, MC_OIDC_CLIENT_ID: "eduos-it", MC_OIDC_CLIENT_SECRET: "it-secret", MC_OIDC_REDIRECT_URI: "http://localhost/mc/auth/callback" };
+      MC_OIDC_ISSUER: idp.issuer, MC_OIDC_CLIENT_ID: "eduos-it", MC_OIDC_CLIENT_SECRET: "it-secret", MC_OIDC_REDIRECT_URI: "http://localhost/mc/auth/callback",
+      MC_IDP_SECRET_TX: "it-secret", MC_IDP_SECRET_D1: "it-secret" };
     const m = await run(["src/master-control/migrate.js"], { ...env, MC_MIGRATE_DATABASE_URL: db.ownerUrl, MC_APP_ROLE: mcRole });
     assert.equal(m.code, 0, m.out);
     const b = await run(["src/master-control/bootstrap.js", "--subject", "op", "--name", "Platform Operator", "--approval", "board-2026-01"], env);
@@ -73,7 +76,7 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     await db?.drop();
     const c = new pg.Client(PG_URL); await c.connect();
     await c.query(`DROP ROLE IF EXISTS ${mcRole}`).catch(() => {}); await c.end();
-    await idp?.close();
+    await idp?.close(); await idpTx?.close(); await idpD1?.close();
   });
 
   it("its database login can't read EduOS tables, and it refuses to start if it could", async () => {
@@ -171,6 +174,84 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     await admin.query("ALTER TABLE master_control.audit_log ENABLE TRIGGER audit_log_append_only");
     const broken = ok(await as("op")("GET", "/audit/verify"));
     assert.equal(broken.ok, false); assert.equal(broken.brokenAt, 3);
+  });
+
+  // ---- FED-04: identity federation ----------------------------------------
+  it("trusted providers are registered by whoever governs their scope, after discovery confirms them", async () => {
+    const providers = (await (await fetch(`${mc.base}/mc/auth/providers`)).json()).data;
+    assert.deepEqual(providers.map(p => p.id), ["primary"], "the configured provider, created at start-up");
+    const tx = { id: "tx-idp", issuer: idpTx.issuer, displayName: "Texas state sign-in", clientId: "eduos-it", clientSecretEnv: "MC_IDP_SECRET_TX",
+      scopeNodeId: ids.tx, requireMfa: true, allowedEmailDomains: ["tea.texas.gov"] };
+    assert.equal((await as("tea")("POST", "/identity-providers", { ...tx, scopeNodeId: "platform" })).status, 403, "a state can't vouch for the platform");
+    assert.equal((await as("sup1")("POST", "/identity-providers", tx)).status, 403, "a district can't register the state's provider");
+    const dead = await as("tea")("POST", "/identity-providers", { ...tx, id: "dead", issuer: "http://127.0.0.1:9" });
+    assert.equal(dead.status, 422); assert.match(dead.body.errors.join(";"), /discovery failed/);
+    ok(await as("tea")("POST", "/identity-providers", tx), 201);
+    const d1 = { id: "lakeside-idp", issuer: idpD1.issuer, displayName: "Lakeside staff sign-in", clientId: "eduos-it", clientSecretEnv: "MC_IDP_SECRET_D1", scopeNodeId: ids.d1 };
+    assert.equal((await as("tea")("POST", "/identity-providers", d1)).status, 403, "a district's provider is the district's to register");
+    ok(await as("sup1")("POST", "/identity-providers", d1), 201);
+    assert.equal((await as("op")("POST", "/identity-providers/primary/status", { status: "suspended", reason: "test lockout" })).status, 409);
+  });
+
+  it("invitations provision an account on first sign-in, with the provider's MFA and domain rules, once", async () => {
+    const inv = ok(await as("tea")("POST", "/invitations", { nodeId: ids.tx, roleId: "state-oversight", idpId: "tx-idp", displayName: "Ana Analyst", approvalReference: "hr-tx-9" }), 201);
+    assert.match(inv.signInUrl, /\/mc\/auth\/login\?idp=tx-idp&invite=/);
+    const claims = { email: "ana@tea.texas.gov", email_verified: true };
+    assert.equal((await signIn("ana", { via: "tx-idp", invite: inv.code, claims })).status, 403, "no second factor");
+    assert.equal((await signIn("ana", { via: "tx-idp", invite: inv.code, claims: { ...claims, amr: ["pwd", "mfa"], email: "ana@gmail.com" } })).status, 403, "wrong domain");
+    assert.equal((await signIn("ana", { via: "primary", invite: inv.code })).status, 403, "the provider named in the invitation");
+    s.ana = await signIn("ana", { via: "tx-idp", invite: inv.code, claims: { ...claims, amr: ["pwd", "mfa"] } });
+    assert.equal(s.ana.status, 303);
+    assert.deepEqual(s.ana.me.roles.map(r => [r.role_id, r.node_id]), [["state-oversight", ids.tx]]);
+    assert.equal(s.ana.me.idp, "tx-idp");
+    assert.equal((await signIn("mallory", { via: "tx-idp", invite: inv.code, claims: { ...claims, amr: ["mfa"] } })).status, 403, "used once");
+    const again = await signIn("ana", { via: "tx-idp", claims: { ...claims, amr: ["mfa"] } });
+    assert.equal(again.status, 303, "and then signs in normally");
+    // A provider vouches only inside its scope.
+    const outside = await as("op")("POST", "/invitations", { nodeId: "platform", roleId: "platform-operator", idpId: "tx-idp", displayName: "X", approvalReference: "x" });
+    assert.equal(outside.status, 422); assert.match(outside.body.errors.join(";"), /outside what tx-idp may vouch for/);
+    const district = ok(await as("sup1")("POST", "/invitations", { nodeId: ids.k1, roleId: "school-principal", idpId: "lakeside-idp", displayName: "Vice Elm", approvalReference: "hr-56" }), 201);
+    s.vp = await signIn("vice-elm", { via: "lakeside-idp", invite: district.code });
+    assert.equal(s.vp.status, 303); assert.equal(s.vp.me.roles[0].node_id, ids.k1);
+    const tooHigh = await as("sup1")("POST", "/assignments", { nodeId: ids.d1, roleId: "district-it-admin", principalId: s.vp.me.principalId, approvalReference: "x" });
+    assert.equal(tooHigh.status, 201, "the district's provider covers the district too");
+    const stateRole = await as("tea")("POST", "/assignments", { nodeId: ids.tx, roleId: "state-oversight", principalId: s.vp.me.principalId, approvalReference: "x" });
+    assert.equal(stateRole.status, 422, "but not the state"); assert.match(stateRole.body.errors.join(";"), /outside what this person's identity provider may vouch for/);
+  });
+
+  it("an invitation is honored only while the inviter can still give the role; it can be revoked", async () => {
+    const inv = ok(await as("ana")("POST", "/invitations", { nodeId: ids.tx, roleId: "state-oversight", idpId: "tx-idp", displayName: "Ben", approvalReference: "x" }), 201);
+    const inv2 = ok(await as("ana")("POST", "/invitations", { nodeId: ids.tx, roleId: "state-oversight", idpId: "tx-idp", displayName: "Cy", approvalReference: "x" }), 201);
+    ok(await as("ana")("POST", `/invitations/${inv2.id}/revoke`, { reason: "role filled" }));
+    const claims = { email: "x@tea.texas.gov", email_verified: true, amr: ["mfa"] };
+    assert.equal((await signIn("cy", { via: "tx-idp", invite: inv2.code, claims })).status, 403);
+    ok(await as("tea")("POST", `/operators/${s.ana.me.principalId}/disable`, { reason: "left the agency" }));
+    assert.equal((await as("ana")("GET", "/me")).status, 401, "signed out everywhere at once");
+    assert.equal((await signIn("ana", { via: "tx-idp", claims: { ...claims, email: "ana@tea.texas.gov" } })).status, 403);
+    assert.equal((await signIn("ben", { via: "tx-idp", invite: inv.code, claims })).status, 403, "the inviter no longer has authority");
+    const list = ok(await as("tea")("GET", `/invitations?nodeId=${ids.tx}`));
+    assert.deepEqual(list.filter(i => [inv.id, inv2.id].includes(i.id)).map(i => i.state).sort(), ["pending", "revoked"]);
+    ok(await as("tea")("POST", `/operators/${s.ana.me.principalId}/enable`, { reason: "returned" }));
+    assert.equal((await signIn("ben", { via: "tx-idp", invite: inv.code, claims })).status, 303, "and is honored again once they can");
+  });
+
+  it("account lifecycle: self-service limits, provider suspension, and stale-account review", async () => {
+    s.ana = await signIn("ana", { via: "tx-idp", claims: { email: "ana@tea.texas.gov", email_verified: true, amr: ["mfa"] } });
+    assert.equal((await as("ana")("POST", `/operators/${s.ana.me.principalId}/enable`, { reason: "back again" })).body.error, "cannot_enable_yourself");
+    assert.equal((await as("sup1")("POST", `/operators/${s.ana.me.principalId}/disable`, { reason: "not ours" })).status, 403, "a district doesn't manage state accounts");
+    ok(await as("tea")("POST", "/identity-providers/tx-idp/status", { status: "suspended", reason: "key compromise drill" }));
+    assert.equal((await as("ana")("GET", "/me")).status, 401);
+    assert.equal((await signIn("ana", { via: "tx-idp" })).status, 404, "the option disappears");
+    ok(await as("tea")("POST", "/identity-providers/tx-idp/status", { status: "active", reason: "drill over" }));
+    const review = ok(await as("op")("GET", "/operators/review?days=30"));
+    const names = review.accounts.map(a => a.name);
+    assert.ok(names.includes("Principal Elm"), "assigned but never signed in");
+    assert.ok(!names.includes("Dr. Lake"), "signed in recently");
+    const sup1Review = ok(await as("sup1")("GET", "/operators/review?days=30"));
+    assert.ok(sup1Review.accounts.every(a => !["State Analyst", "Ben"].includes(a.name)), "a district sees only its own people");
+    const log = ok(await as("tea")("GET", `/audit?nodeId=${ids.tx}`));
+    for (const a of ["register_identity_provider", "invite", "disable_operator", "enable_operator", "set_identity_provider_status", "revoke_invitation"]) assert.ok(log.some(e => e.action === a), a);
+    assert.equal(ok(await as("op")("GET", "/audit/verify")).ok, false, "still shows the earlier tampering");
   });
 
   it("the console loads with a strict content security policy", async () => {

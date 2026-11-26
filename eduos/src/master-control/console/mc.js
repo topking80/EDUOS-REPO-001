@@ -10,7 +10,7 @@ const h = (tag, attrs = {}, ...kids) => {
   return el;
 };
 const main = document.getElementById("main");
-let me = null, catalog = null, nodes = [], selected = null;
+let me = null, catalog = null, nodes = [], selected = null, providers = [];
 
 async function api(method, path, body) {
   const res = await fetch(`/mc/api${path}`, { method, headers: { ...(body ? { "content-type": "application/json" } : {}), ...(method !== "GET" ? { "x-csrf-token": me?.csrfToken || "" } : {}) },
@@ -24,11 +24,18 @@ const message = err => err.body?.reason ? `${err.message}: ${err.body.reason}` :
 async function boot() {
   try { me = await api("GET", "/me"); }
   catch (e) {
-    if (e.status === 401) { main.replaceChildren(h("section", { class: "card" }, h("p", {}, "Sign in with your Master Control account."), h("a", { href: "/mc/auth/login" }, "Sign in"))); return; }
+    if (e.status === 401) {
+      const providers = (await (await fetch("/mc/auth/providers")).json().catch(() => ({ data: [] }))).data || [];
+      const invite = new URLSearchParams(location.search).get("invite");
+      main.replaceChildren(h("section", { class: "card" }, h("p", {}, "Sign in with your Master Control account."),
+        h("ul", {}, providers.map(p => h("li", {}, h("a", { href: `/mc/auth/login?idp=${encodeURIComponent(p.id)}${invite ? `&invite=${encodeURIComponent(invite)}` : ""}` }, `Sign in with ${p.displayName}`))))));
+      return;
+    }
     main.replaceChildren(h("p", { class: "bad" }, `Couldn't load: ${e.message}`)); return;
   }
   document.getElementById("who").replaceChildren(`${me.name} · `, h("button", { class: "link", type: "button", onclick: async () => { await fetch("/mc/auth/logout", { method: "POST", headers: { "x-csrf-token": me.csrfToken }, credentials: "same-origin" }).catch(() => {}); location.reload(); } }, "Sign out"));
   catalog = await api("GET", "/catalog");
+  providers = await api("GET", "/identity-providers").catch(() => []);
   await refresh();
 }
 async function refresh() {
@@ -47,7 +54,7 @@ const kindLabel = k => ({ platform: "platform", state_education_authority: "stat
 async function render() {
   const side = h("nav", { "aria-label": "Federation" }, h("h2", {}, "Federation"), tree(null) || h("p", { class: "muted" }, "Nothing you hold a role in yet."),
     h("h2", {}, "Your roles"), h("ul", {}, me.roles.map(r => h("li", {}, `${r.role} at ${r.nodeName}`, r.inForce ? "" : h("span", { class: "muted" }, ` (${r.status})`)))));
-  const panel = h("div", {}, selected ? await nodePanel(selected) : h("p", {}, "Choose a node."), await delegationPanel());
+  const panel = h("div", {}, await reviewCard(), selected ? await nodePanel(selected) : h("p", {}, "Choose a node."), await delegationPanel());
   main.replaceChildren(side, panel);
 }
 
@@ -72,13 +79,27 @@ async function nodePanel(id) {
 function field(label, input) { return h("label", {}, label, input); }
 function assignForm(n) {
   const roles = catalog.roles.filter(r => r.level === n.kind && r.status === "active");
-  const role = h("select", { name: "role" }, roles.map(r => h("option", { value: r.id }, r.name)));
-  const subject = h("input", { name: "subject", required: true, autocomplete: "off" }), name = h("input", { name: "displayName", required: true }), appr = h("input", { name: "approval", required: true });
-  return h("section", { class: "card", "aria-label": "Assign a role" }, h("h3", {}, "Assign a role"),
+  const role = h("select", {}, roles.map(r => h("option", { value: r.id }, r.name)));
+  const idp = h("select", {}, providers.filter(p => p.status === "active").map(p => h("option", { value: p.id }, p.displayName)));
+  const name = h("input", { required: true }), appr = h("input", { required: true });
+  const out = h("div", { "aria-live": "polite" });
+  return h("section", { class: "card", "aria-label": "Invite someone" }, h("h3", {}, "Invite someone to a role here"),
+    h("p", { class: "muted" }, "They sign in once with the chosen provider using the link, and the role is attached. The link is shown only now."),
     h("form", { onsubmit: async e => { e.preventDefault();
-      try { await api("POST", "/assignments", { nodeId: n.id, roleId: role.value, subject: subject.value, displayName: name.value, approvalReference: appr.value }); await refresh(); }
+      try { const r = await api("POST", "/invitations", { nodeId: n.id, roleId: role.value, idpId: idp.value, displayName: name.value, approvalReference: appr.value });
+        out.replaceChildren(h("p", {}, `Send this link to ${name.value} privately (expires in ${r.expiresInDays} days):`), h("code", {}, r.signInUrl)); }
       catch (err) { alertCard(message(err)); } } },
-      field("Role", role), field("Sign-in subject (from the identity provider)", subject), field("Name", name), field("Approval reference", appr), h("button", { class: "btn", type: "submit" }, "Assign")));
+      field("Role", role), field("Sign-in provider", idp), field("Name", name), field("Approval reference", appr), h("button", { class: "btn", type: "submit" }, "Create invitation")), out);
+}
+async function reviewCard() {
+  const r = await api("GET", "/operators/review?days=90").catch(() => null);
+  if (!r || !r.accounts.length) return null;
+  return h("section", { class: "card", "aria-label": "Accounts to review" }, h("h2", {}, "Accounts to review"),
+    h("p", { class: "muted" }, `People you manage who hold roles but haven't signed in for ${r.days} days (or ever).`),
+    h("table", {}, h("tr", {}, h("th", {}, "Who"), h("th", {}, "Last sign-in"), h("th", {}, "Roles"), h("th", {}, "")),
+      r.accounts.map(a => h("tr", {}, h("td", {}, a.name), h("td", {}, a.lastSignInAt ? new Date(a.lastSignInAt).toLocaleDateString() : "never"), h("td", {}, a.roles.map(x => x.role).join(", ")),
+        h("td", {}, h("button", { class: "link", type: "button", onclick: async () => { const reason = prompt(`Disable ${a.name}'s account? Reason:`); if (!reason) return;
+          try { await api("POST", `/operators/${encodeURIComponent(a.principalId)}/disable`, { reason }); await refresh(); } catch (err) { alertCard(message(err)); } } }, "Disable"))))));
 }
 function childForm(n) {
   const kind = { platform: "state_education_authority", state_education_authority: "district", district: "school" }[n.kind];
