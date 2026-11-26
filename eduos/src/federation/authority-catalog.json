@@ -1,0 +1,349 @@
+{
+  "model_version": "0.2.0",
+  "capabilities": [
+    {
+      "id": "platform.config.manage",
+      "domain": "platform",
+      "student_data": "none",
+      "assignable_levels": [
+        "platform"
+      ],
+      "reach": "node",
+      "delegable": false,
+      "description": "Platform-wide configuration and release settings."
+    },
+    {
+      "id": "federation.membership.manage",
+      "domain": "federation",
+      "student_data": "none",
+      "assignable_levels": [
+        "platform"
+      ],
+      "reach": "descendants",
+      "delegable": false,
+      "description": "Add, suspend or retire state authorities, districts and schools in the federation registry."
+    },
+    {
+      "id": "federation.roles.assign",
+      "domain": "federation",
+      "student_data": "none",
+      "assignable_levels": [
+        "platform",
+        "state_education_authority"
+      ],
+      "reach": "descendants",
+      "delegable": false,
+      "description": "Assign roles at platform and state-authority nodes. Never at a district or school: those use tenant.roles.assign, held by the district."
+    },
+    {
+      "id": "service.health.view",
+      "domain": "operations",
+      "student_data": "none",
+      "assignable_levels": [
+        "platform",
+        "state_education_authority",
+        "district"
+      ],
+      "reach": "descendants",
+      "delegable": true,
+      "description": "Service health and availability for nodes in scope. No records."
+    },
+    {
+      "id": "security.incident.coordinate",
+      "domain": "security",
+      "student_data": "none",
+      "assignable_levels": [
+        "platform",
+        "state_education_authority",
+        "district"
+      ],
+      "reach": "descendants",
+      "delegable": true,
+      "description": "Open and coordinate security incidents across nodes in scope. Does not grant access to records."
+    },
+    {
+      "id": "policy.set",
+      "domain": "policy",
+      "student_data": "none",
+      "assignable_levels": [
+        "platform",
+        "state_education_authority",
+        "district",
+        "school"
+      ],
+      "reach": "node",
+      "delegable": true,
+      "description": "Set a policy value at this node (inheritance rules decide what descendants may change)."
+    },
+    {
+      "id": "audit.view",
+      "domain": "audit",
+      "student_data": "none",
+      "assignable_levels": [
+        "platform",
+        "state_education_authority",
+        "district",
+        "school"
+      ],
+      "reach": "node",
+      "delegable": true,
+      "description": "Administrative audit trail for this node. Student-record access entries stay in the district tenant."
+    },
+    {
+      "id": "reporting.aggregate.view",
+      "domain": "reporting",
+      "student_data": "aggregate",
+      "assignable_levels": [
+        "state_education_authority",
+        "district",
+        "school"
+      ],
+      "reach": "descendants",
+      "delegable": true,
+      "description": "De-identified, thresholded aggregate reports for nodes in scope."
+    },
+    {
+      "id": "reporting.submit",
+      "domain": "reporting",
+      "student_data": "aggregate",
+      "assignable_levels": [
+        "district"
+      ],
+      "reach": "node",
+      "delegable": true,
+      "description": "Submit the district's required aggregate reports to its state authority."
+    },
+    {
+      "id": "tenant.users.manage",
+      "domain": "tenant_admin",
+      "student_data": "none",
+      "assignable_levels": [
+        "district",
+        "school"
+      ],
+      "reach": "tenant",
+      "delegable": true,
+      "description": "Create and deactivate staff accounts inside the district tenant."
+    },
+    {
+      "id": "tenant.roles.assign",
+      "domain": "tenant_admin",
+      "student_data": "none",
+      "assignable_levels": [
+        "district",
+        "school"
+      ],
+      "reach": "tenant",
+      "delegable": false,
+      "description": "Assign roles inside the district tenant. Never delegable: the district keeps who-administers-what."
+    },
+    {
+      "id": "school.operations.manage",
+      "domain": "tenant_admin",
+      "student_data": "none",
+      "assignable_levels": [
+        "district",
+        "school"
+      ],
+      "reach": "tenant",
+      "delegable": true,
+      "description": "Calendars, rooms, schedules and safety operations for schools in the tenant."
+    },
+    {
+      "id": "student.records.read",
+      "domain": "student_records",
+      "student_data": "identifiable",
+      "assignable_levels": [
+        "district",
+        "school"
+      ],
+      "reach": "tenant",
+      "delegable": true,
+      "description": "Read identifiable student and guardian records inside the district tenant (still subject to the app's relationship and RLS rules)."
+    },
+    {
+      "id": "student.records.write",
+      "domain": "student_records",
+      "student_data": "identifiable",
+      "assignable_levels": [
+        "district",
+        "school"
+      ],
+      "reach": "tenant",
+      "delegable": false,
+      "description": "Change identifiable student records inside the district tenant."
+    },
+    {
+      "id": "student.storage_quota.set",
+      "domain": "tenant_admin",
+      "student_data": "none",
+      "assignable_levels": [
+        "district"
+      ],
+      "reach": "node",
+      "delegable": false,
+      "district_reserved": true,
+      "description": "Set the district's per-pupil storage quota. District only."
+    }
+  ],
+  "role_definitions": [
+    {
+      "id": "platform-operator",
+      "level": "platform",
+      "name": "Platform operator",
+      "capabilities": [
+        "platform.config.manage",
+        "federation.membership.manage",
+        "federation.roles.assign",
+        "service.health.view",
+        "security.incident.coordinate",
+        "policy.set",
+        "audit.view"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "state-oversight",
+      "level": "state_education_authority",
+      "name": "State education authority oversight",
+      "capabilities": [
+        "service.health.view",
+        "federation.roles.assign",
+        "security.incident.coordinate",
+        "policy.set",
+        "audit.view",
+        "reporting.aggregate.view"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "district-superintendent",
+      "level": "district",
+      "name": "Superintendent",
+      "capabilities": [
+        "service.health.view",
+        "security.incident.coordinate",
+        "policy.set",
+        "audit.view",
+        "reporting.aggregate.view",
+        "reporting.submit",
+        "tenant.users.manage",
+        "tenant.roles.assign",
+        "school.operations.manage",
+        "student.records.read",
+        "student.records.write",
+        "student.storage_quota.set"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "district-it-admin",
+      "level": "district",
+      "name": "District IT administrator",
+      "capabilities": [
+        "service.health.view",
+        "security.incident.coordinate",
+        "audit.view",
+        "tenant.users.manage"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "school-principal",
+      "level": "school",
+      "name": "Principal",
+      "capabilities": [
+        "policy.set",
+        "audit.view",
+        "reporting.aggregate.view",
+        "tenant.users.manage",
+        "school.operations.manage",
+        "student.records.read",
+        "student.records.write"
+      ],
+      "status": "active"
+    }
+  ],
+  "policy_definitions": [
+    {
+      "id": "security.mfa.required_for_staff",
+      "value_type": "boolean",
+      "default": false,
+      "mode": "restrict_only",
+      "stricter": "true",
+      "settable_levels": [
+        "platform",
+        "state_education_authority",
+        "district",
+        "school"
+      ],
+      "lockable_levels": [
+        "platform",
+        "state_education_authority"
+      ],
+      "description": "Staff sign-in needs a second factor. Anyone may require it; nobody below may turn it off once an ancestor requires it."
+    },
+    {
+      "id": "history.retention.minimum_years",
+      "value_type": "integer",
+      "min": 0,
+      "max": 100,
+      "default": 0,
+      "mode": "restrict_only",
+      "stricter": "higher",
+      "settable_levels": [
+        "state_education_authority",
+        "district"
+      ],
+      "lockable_levels": [],
+      "description": "Minimum years student history is kept. A district may keep longer than its state's minimum, never shorter."
+    },
+    {
+      "id": "media.photo_uploads.enabled",
+      "value_type": "boolean",
+      "default": false,
+      "mode": "restrict_only",
+      "stricter": "false",
+      "settable_levels": [
+        "state_education_authority",
+        "district",
+        "school"
+      ],
+      "lockable_levels": [
+        "state_education_authority"
+      ],
+      "description": "Whether photo uploads are allowed. Once a state, district or school turns them off, nobody below can turn them on; a school can turn them off where its district has them on."
+    },
+    {
+      "id": "student.storage_quota_mb_per_pupil",
+      "value_type": "integer",
+      "min": 0,
+      "max": 102400,
+      "default": 0,
+      "mode": "district_reserved",
+      "settable_levels": [
+        "district"
+      ],
+      "lockable_levels": [],
+      "description": "Per-pupil storage quota. Set only by the district."
+    },
+    {
+      "id": "ui.default_locale",
+      "value_type": "enum",
+      "allowed_values": [
+        "en-US",
+        "es-US"
+      ],
+      "default": "en-US",
+      "mode": "free",
+      "settable_levels": [
+        "platform",
+        "state_education_authority",
+        "district",
+        "school"
+      ],
+      "lockable_levels": [],
+      "description": "Default interface language. Any level may choose its own."
+    }
+  ]
+}

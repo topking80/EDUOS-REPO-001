@@ -1,0 +1,10 @@
+-- Master Control runtime role (FED-03). It gets this schema only; nothing in
+-- the EduOS (public) schema or any other.
+REVOKE ALL ON SCHEMA public FROM mc_app;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM mc_app;
+GRANT USAGE ON SCHEMA master_control TO mc_app;
+GRANT SELECT, INSERT, UPDATE ON master_control.nodes, master_control.operators, master_control.role_assignments,
+  master_control.delegations, master_control.policy_settings TO mc_app;
+GRANT SELECT, INSERT, DELETE ON master_control.pending_logins, master_control.sessions TO mc_app;
+GRANT UPDATE (last_seen_at) ON master_control.sessions TO mc_app;
+GRANT SELECT, INSERT ON master_control.audit_log TO mc_app;
