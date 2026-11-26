@@ -83,6 +83,7 @@ import { registerStudentHistoryPortfolioRoutes } from "./student-history-portfol
 import { registerStudentHistoryCapsuleRoutes, startCapsuleReleaseSweep } from "./student-history-capsule-routes.js";
 import { registerSportsEligibilityRoutes } from "./sports-eligibility-routes.js";
 import { registerActivityOperationsRoutes } from "./activity-operations-routes.js";
+import { registerEventStreamingRoutes } from "./event-streaming-routes.js";
 import { registerClassroomOpsRoutes } from "./classroom-ops-routes.js";
 import { registerSchoolOperationsRoutes } from "./school-operations-routes.js";
 import { registerWellbeingRoutes } from "./wellbeing-routes.js";
@@ -2073,6 +2074,7 @@ registerStudentHistoryPortfolioRoutes(app);
 registerStudentHistoryCapsuleRoutes(app);
 registerSportsEligibilityRoutes(app);
 registerActivityOperationsRoutes(app);
+registerEventStreamingRoutes(app);
 registerClassroomOpsRoutes(app);
 registerWellbeingRoutes(app);
 // 37.7.3: the fixed /api/school-operations/* paths (command-center, schedules,

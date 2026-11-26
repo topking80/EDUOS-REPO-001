@@ -830,3 +830,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON school_bell_periods, course_seat_assignm
 REVOKE DELETE, TRUNCATE ON school_bell_schedules, course_seating_charts FROM eduos_app;
 REVOKE TRUNCATE ON school_bell_periods, course_seat_assignments FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_can_manage_bell_schedule(uuid), eduos_can_read_seating_chart(uuid), eduos_can_read_seat(uuid, uuid) TO eduos_app;
+
+-- Event ticketing & paid livestreams (154): school stream seasons are created
+-- and updated by school/district leads under school-scoped RLS.
+GRANT SELECT, INSERT ON school_stream_seasons TO eduos_app;
+GRANT UPDATE (title, school_year, starts_at, ends_at, status) ON school_stream_seasons TO eduos_app;
+REVOKE DELETE, TRUNCATE ON school_stream_seasons FROM eduos_app;
+
+GRANT SELECT, INSERT ON district_stream_settings TO eduos_app;
+GRANT UPDATE (provider, secrets_enc, updated_by, updated_at) ON district_stream_settings TO eduos_app;
+REVOKE DELETE, TRUNCATE ON district_stream_settings FROM eduos_app;
