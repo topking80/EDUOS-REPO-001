@@ -15,6 +15,7 @@ import { loadModel, catalog, today, authorize, validateAuthorityModel, resolvePo
 import { appendAudit, verifyAudit } from "./audit.js";
 import { randomSecret, sha256 } from "./oidc.js";
 import { PRIMARY, claimProblem, readProviderSecret } from "./identity.js";
+import { BUNDLE_FORMAT, bundleKeys, signBundle } from "../federation/policy-bundle.js";
 
 const COOKIE = "eduos_mc";
 const STATE_COOKIE = "eduos_mc_state";
@@ -223,7 +224,7 @@ export function createApp({ cfg, db, providers }) {
         }
         await p.apply(c);
         const { seq } = await appendAudit(c, { ...base, decision: "allowed", basis: p.decision.basis, detail: p.detail });
-        return { status: p.created ? 201 : 200, body: { data: { ...p.result, auditSeq: seq } } };
+        return { status: p.created ? 201 : 200, body: { data: { ...p.result, auditSeq: seq } } }; // p.result may be a getter filled in by apply
       });
       res.status(out.status).json(out.body);
     } catch (e) { e instanceof HttpError ? res.status(e.status).json({ error: e.code, ...e.extra }) : next(e); }
@@ -588,6 +589,162 @@ export function createApp({ cfg, db, providers }) {
         roles: held.map(a => ({ id: a.id, role: a.role_id, nodeId: a.node_id })) });
     }
     return { days, accounts: out };
+  }));
+
+  // ---- FED-05: signed policy distribution -----------------------------------
+  const policyKeys = () => bundleKeys(readProviderSecret("MC_POLICY_SIGNING_SECRET"));
+  const districtsUnder = (m, nodeId, at) => m.nodes.filter(n => n.kind === "district" && withinNode(m.nodes, nodeId, n.id) && n.status === "active"
+    && (!n.effective_from || n.effective_from <= at) && (!n.effective_to || n.effective_to >= at)).map(n => n.id);
+  const resolveFor = (m, districtId, at) => catalog.policy_definitions.map(pd => {
+    const r = resolvePolicy(m, pd.id, districtId, at);
+    return { id: pd.id, value: r.value, source: r.source, locked_by: r.lockedBy || null, chain: r.chain };
+  });
+  async function issueBundles(c, m, release, districtIds, stage, contentFor, actor) {
+    const keys = policyKeys(), issuer = m.nodes.find(n => n.id === release.node_id), out = [];
+    for (const did of districtIds) {
+      const node = m.nodes.find(n => n.id === did);
+      const { rows: [prev] } = await c.query("SELECT version, sha256 FROM policy_bundles WHERE district_node_id=$1 ORDER BY version DESC LIMIT 1", [did]);
+      const bid = id("pb");
+      const body = { format: BUNDLE_FORMAT, bundle_id: bid, release_id: release.id, kind: release.kind, ...(release.rollback_of && { rollback_of: release.rollback_of }),
+        version: (prev?.version || 0) + 1, previous_sha256: prev?.sha256 || null, issued_at: today(), effective_from: release.effective_from,
+        district: { node_id: did, name: node.name, tenant_ref: node.tenant_ref, jurisdiction_id: node.jurisdiction_id }, issuer: { node_id: issuer.id, name: issuer.name },
+        catalog_version: release.catalog_version, policies: contentFor(did) };
+      const signed = signBundle(body, keys);
+      await c.query("INSERT INTO policy_bundles(id, release_id, district_node_id, version, stage, sha256, bundle, issued_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [bid, release.id, did, body.version, stage, signed.signature.sha256, JSON.stringify(signed), actor]);
+      out.push({ id: bid, district: did, version: body.version });
+    }
+    return out;
+  }
+  const latestAck = async (q, bundleId) => (await q.query("SELECT decision, note, acknowledged_by, acknowledged_at FROM policy_acknowledgements WHERE bundle_id=$1 ORDER BY acknowledged_at DESC, id DESC LIMIT 1", [bundleId])).rows[0] || null;
+
+  app.get("/mc/api/policy-signing-key", ...read(async () => {
+    const k = policyKeys();
+    return k ? { configured: true, publicKey: k.public, fingerprint: k.fingerprint } : { configured: false };
+  }));
+
+  app.post("/mc/api/policy-releases", ...change("release_policies", "policy_release", async (req, m) => {
+    const b = req.body || {}, node = m.nodes.find(n => n.id === b.nodeId), reason = text(b.reason, 500, 3);
+    const from = date(b.effectiveFrom) || today();
+    if (!node || !reason) throw new HttpError(400, "node_and_reason_required");
+    if (from < today()) throw new HttpError(400, "cannot_release_in_the_past");
+    if (!policyKeys()) throw new HttpError(503, "policy_signing_not_configured");
+    const decision = decideAt(m, req.principal, "policy.distribute", node.id);
+    const targets = districtsUnder(m, node.id, from);
+    const pilot = Array.isArray(b.pilotDistrictIds) ? [...new Set(b.pilotDistrictIds)] : [];
+    const extraErrors = [];
+    if (!targets.length) extraErrors.push(`policy_releases: no active districts under ${node.id}`);
+    for (const p of pilot) if (!targets.includes(p)) extraErrors.push(`policy_releases: pilot ${p} isn't a district under ${node.id}`);
+    if (pilot.length && pilot.length === targets.length) extraErrors.push("policy_releases: a pilot must leave some districts for the general release");
+    const rid = id("rel");
+    const snapshot = Object.fromEntries(targets.map(t => [t, resolveFor(m, t, from)]));
+    const release = { id: rid, node_id: node.id, kind: "release", effective_from: from, catalog_version: catalog.model_version };
+    let issued = [];
+    return { capability: "policy.distribute", nodeId: node.id, targetId: rid, created: true, decision, extraErrors, next: mm => mm,
+      apply: async c => {
+        await c.query(`INSERT INTO policy_releases(id, node_id, kind, effective_from, reason, pilot_district_ids, target_district_ids, snapshot, catalog_version, status, created_by)
+          VALUES ($1,$2,'release',$3,$4,$5,$6,$7,$8,$9,$10)`, [rid, node.id, from, reason, pilot, targets, JSON.stringify(snapshot), catalog.model_version, pilot.length ? "piloting" : "published", req.principal]);
+        issued = await issueBundles(c, m, release, pilot.length ? pilot : targets, pilot.length ? "pilot" : "general", d => snapshot[d], req.principal);
+      },
+      detail: { targets: targets.length, pilot, reason, effectiveFrom: from },
+      get result() { return { id: rid, status: pilot.length ? "piloting" : "published", targets, pilot, issued }; } };
+  }));
+
+  app.post("/mc/api/policy-releases/:id/promote", ...change("promote_policy_release", "policy_release", async (req, m, c) => {
+    const { rows: [rel] } = await c.query("SELECT * FROM policy_releases WHERE id=$1 FOR UPDATE", [req.params.id]);
+    if (!rel) throw new HttpError(404, "release_not_found");
+    if (rel.status !== "piloting") throw new HttpError(409, "release_not_piloting");
+    const note = text(req.body?.note, 500, 3), force = req.body?.force === true;
+    const decision = decideAt(m, req.principal, "policy.distribute", rel.node_id);
+    const { rows: pilots } = await c.query("SELECT id, district_node_id FROM policy_bundles WHERE release_id=$1 AND stage='pilot'", [rel.id]);
+    const pending = [];
+    for (const pb of pilots) { const a = await latestAck(c, pb.id); if (a?.decision !== "accepted") pending.push({ district: pb.district_node_id, state: a?.decision || "no_response" }); }
+    if (decision.allowed && pending.length && !(force && note)) throw new HttpError(409, "pilot_not_cleared", { pilots: pending });
+    const rest = rel.target_district_ids.filter(d => !rel.pilot_district_ids.includes(d));
+    const release = { id: rel.id, node_id: rel.node_id, kind: rel.kind, effective_from: dateOf(rel.effective_from), catalog_version: rel.catalog_version };
+    let issued = [];
+    return { capability: "policy.distribute", nodeId: rel.node_id, targetId: rel.id, decision, next: mm => mm,
+      apply: async cc => {
+        issued = await issueBundles(cc, m, release, rest, "general", d => rel.snapshot[d], req.principal);
+        await cc.query("UPDATE policy_releases SET status='published', promoted_by=$2, promoted_at=now(), promote_note=$3 WHERE id=$1", [rel.id, req.principal, note]);
+      },
+      detail: { overridden: pending.length ? pending : undefined, note }, get result() { return { id: rel.id, status: "published", issued }; } };
+  }));
+
+  app.post("/mc/api/policy-releases/:id/rollback", ...change("rollback_policy_release", "policy_release", async (req, m, c) => {
+    const { rows: [rel] } = await c.query("SELECT * FROM policy_releases WHERE id=$1 FOR UPDATE", [req.params.id]);
+    const reason = text(req.body?.reason, 500, 3);
+    if (!rel) throw new HttpError(404, "release_not_found");
+    if (!reason) throw new HttpError(400, "reason_required");
+    if (rel.status === "rolled_back") throw new HttpError(409, "already_rolled_back");
+    const decision = decideAt(m, req.principal, "policy.distribute", rel.node_id);
+    const { rows: hit } = await c.query("SELECT district_node_id, version FROM policy_bundles WHERE release_id=$1", [rel.id]);
+    // Each district goes back to what it had before this release (nothing, if this was its first).
+    const content = {};
+    for (const h0 of hit) {
+      const { rows: [prev] } = await c.query("SELECT bundle FROM policy_bundles WHERE district_node_id=$1 AND version < $2 ORDER BY version DESC LIMIT 1", [h0.district_node_id, h0.version]);
+      content[h0.district_node_id] = prev ? prev.bundle.policies : [];
+    }
+    const rid = id("rel"), districts = hit.map(x => x.district_node_id);
+    const release = { id: rid, node_id: rel.node_id, kind: "rollback", rollback_of: rel.id, effective_from: today(), catalog_version: catalog.model_version };
+    let issued = [];
+    return { capability: "policy.distribute", nodeId: rel.node_id, targetId: rel.id, decision, next: mm => mm,
+      apply: async cc => {
+        await cc.query(`INSERT INTO policy_releases(id, node_id, kind, rollback_of, effective_from, reason, target_district_ids, snapshot, catalog_version, status, created_by)
+          VALUES ($1,$2,'rollback',$3,$4,$5,$6,$7,$8,'published',$9)`, [rid, rel.node_id, rel.id, today(), reason, districts, JSON.stringify(content), catalog.model_version, req.principal]);
+        issued = await issueBundles(cc, m, release, districts, "rollback", d => content[d], req.principal);
+        await cc.query("UPDATE policy_releases SET status='rolled_back', rolled_back_by_release=$2 WHERE id=$1", [rel.id, rid]);
+      },
+      detail: { rollbackRelease: rid, districts: districts.length, reason }, get result() { return { id: rel.id, status: "rolled_back", rollbackRelease: rid, issued }; } };
+  }));
+
+  app.get("/mc/api/policy-releases", ...read(async (req, m) => {
+    const node = text(req.query.nodeId, 80);
+    if (!node || !visibleNodes(m, req.principal).has(node)) throw new HttpError(404, "node_not_found");
+    const { rows } = await db.query("SELECT * FROM policy_releases WHERE node_id=$1 OR $1 = ANY(target_district_ids) ORDER BY created_at DESC LIMIT 100", [node]);
+    const out = [];
+    for (const r of rows) {
+      const { rows: bs } = await db.query("SELECT id, district_node_id, version, stage FROM policy_bundles WHERE release_id=$1", [r.id]);
+      const acks = await Promise.all(bs.map(b => latestAck(db, b.id)));
+      out.push({ id: r.id, nodeId: r.node_id, kind: r.kind, rollbackOf: r.rollback_of, status: r.status, effectiveFrom: dateOf(r.effective_from), reason: r.reason,
+        pilot: r.pilot_district_ids, targets: r.target_district_ids.length, createdAt: r.created_at, promotedAt: r.promoted_at, rolledBackBy: r.rolled_back_by_release,
+        issued: bs.length, accepted: acks.filter(a => a?.decision === "accepted").length, objected: acks.filter(a => a?.decision === "objected").length,
+        districts: bs.map((b, i) => ({ district: b.district_node_id, version: b.version, stage: b.stage, bundleId: b.id, ack: acks[i]?.decision || null, note: acks[i]?.note || null })) });
+    }
+    return out;
+  }));
+
+  app.get("/mc/api/districts/:id/policy-bundles", ...read(async (req, m) => {
+    const n = m.nodes.find(x => x.id === req.params.id);
+    if (!n || n.kind !== "district" || !visibleNodes(m, req.principal).has(n.id)) throw new HttpError(404, "district_not_found");
+    const { rows } = await db.query("SELECT id, release_id, version, stage, sha256, issued_at, bundle->'policies' AS policies FROM policy_bundles WHERE district_node_id=$1 ORDER BY version DESC LIMIT 50", [n.id]);
+    return Promise.all(rows.map(async r => ({ id: r.id, releaseId: r.release_id, version: r.version, stage: r.stage, sha256: r.sha256, issuedAt: r.issued_at, policies: r.policies, ack: await latestAck(db, r.id) })));
+  }));
+
+  app.get("/mc/api/policy-bundles/:id/file", requireOperator, async (req, res, next) => {
+    try {
+      const m = await loadModel(db);
+      const { rows: [b] } = await db.query("SELECT district_node_id, version, bundle FROM policy_bundles WHERE id=$1", [req.params.id]);
+      if (!b || !visibleNodes(m, req.principal).has(b.district_node_id)) return res.status(404).json({ error: "bundle_not_found" });
+      await db.tx(c => appendAudit(c, { actor: req.principal, action: "download_policy_bundle", target_type: "policy_bundle", target_id: req.params.id, node_id: b.district_node_id, decision: "allowed" }));
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Disposition", `attachment; filename="policy-bundle-${b.district_node_id}-v${b.version}.json"`);
+      res.type("application/json").send(JSON.stringify(b.bundle, null, 2));
+    } catch (e) { next(e); }
+  });
+
+  // The district answers for itself: whoever holds policy.set at the district.
+  app.post("/mc/api/policy-bundles/:id/acknowledge", ...change("acknowledge_policy_bundle", "policy_bundle", async (req, m, c) => {
+    const { rows: [b] } = await c.query("SELECT id, district_node_id, release_id, version FROM policy_bundles WHERE id=$1", [req.params.id]);
+    const decisionText = req.body?.decision, note = text(req.body?.note, 1000, 3);
+    if (!b) throw new HttpError(404, "bundle_not_found");
+    if (!["accepted", "objected"].includes(decisionText) || (decisionText === "objected" && !note)) throw new HttpError(400, "decision_and_note_for_objection_required");
+    const decision = decideAt(m, req.principal, "policy.set", b.district_node_id);
+    const aid = id("ack");
+    return { capability: "policy.set", nodeId: b.district_node_id, targetId: b.id, created: true, decision, next: mm => mm,
+      apply: cc => cc.query("INSERT INTO policy_acknowledgements(id, bundle_id, district_node_id, decision, note, acknowledged_by) VALUES ($1,$2,$3,$4,$5,$6)",
+        [aid, b.id, b.district_node_id, decisionText, note, req.principal]),
+      detail: { decision: decisionText, note, version: b.version, release: b.release_id }, result: { id: aid, bundleId: b.id, decision: decisionText } };
   }));
 
   // ---- console -------------------------------------------------------------

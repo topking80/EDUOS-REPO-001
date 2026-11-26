@@ -10,3 +10,6 @@ GRANT UPDATE (last_seen_at) ON master_control.sessions TO mc_app;
 GRANT SELECT, INSERT ON master_control.audit_log TO mc_app;
 -- FED-04
 GRANT SELECT, INSERT, UPDATE ON master_control.identity_providers, master_control.invitations TO mc_app;
+-- FED-05
+GRANT SELECT, INSERT, UPDATE ON master_control.policy_releases TO mc_app;
+GRANT SELECT, INSERT ON master_control.policy_bundles, master_control.policy_acknowledgements TO mc_app;

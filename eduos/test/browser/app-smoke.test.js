@@ -220,6 +220,10 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       releases: [{ id: "r1", version: "45.20261117.3.0", stage: "canary", approved_at: now, approved_by_name: "Supt",
         gate: { ready: false, blockers: ["1 of 2 canaries healthy on it"], soaked: 0, required: 2, soakHours: 24 } },
         { id: "r0", version: "45.20261110.3.0", stage: "promoted", approved_at: now, promoted_at: now, approved_by_name: "Supt", promoted_by_name: "IT" }] } };
+    // FED-05: a policy bundle received from Master Control.
+    case "/api/district/policy-bundles": { const b = { id: "pbr1", bundleId: "pb-1", releaseId: "rel-1", version: 2, kind: "release", issuedAt: now, effectiveFrom: now,
+      issuer: "Texas Education Agency", receivedAt: now, receivedBy: "Supt One", policies: [{ id: "security.mfa.required_for_staff", value: true, locked_by: "ps-1" }, { id: "ui.default_locale", value: "en-US", locked_by: null }] };
+      return { data: { configured: true, fingerprint: "0f".repeat(16), latest: b, bundles: [b, { ...b, id: "pbr0", version: 1 }] } }; }
     case "/api/integrations/connectors": return { data: { enabled: true, schools: [{ id: "s1", name: "Maple" }],
       teachers: [{ id: "u7", name: "Teacher S1", email: "t1@d1.test", school: "Maple" }], connectors: [
       { id: "c1", kind: "oneroster", name: "District SIS", baseUrl: "https://sis.example.org/ims/oneroster/rostering/v1p2", status: "active", updatedBy: "IT", approvedBy: "Supt", canApprove: false, lastSyncAt: now, lastSyncStatus: "completed", schoolMap: [],
@@ -687,6 +691,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       let text = await page.mainText();
       if (!text.includes("students and class rosters")) failures.push("superintendent #/integrations: class rosters status is missing");
       if (!text.includes("Stop class rosters")) failures.push("superintendent #/integrations: class rosters switch is missing");
+      for (const w of ["Policies from Master Control", "Version 2", "security.mfa.required_for_staff", "Locked", "Earlier versions received: 1", "Check and keep"])
+        if (!text.includes(w)) failures.push(`superintendent #/integrations: policy bundles "${w}" is missing`);
       await page.eval(`([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Preview") || {}).click?.()`);
       for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Save teacher matches"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
       for (const want of ["Class rosters", "Classes found", "Would be added", "Would be removed", "Already on a roster entered by hand (left as is)",

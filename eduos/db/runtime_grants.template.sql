@@ -856,3 +856,8 @@ GRANT SELECT, INSERT ON history_donation_schedules TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON history_donation_schedules FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_history_donation_schedule_cancel(uuid, text), eduos_history_donation_schedules_due(date, integer),
   eduos_history_donation_schedule_charge(uuid, uuid, integer, date, text, integer, text, text) TO eduos_app;
+
+-- FED-05 (db/157): policy bundles received from Master Control (kept as
+-- received; append-only).
+GRANT SELECT, INSERT ON district_policy_bundles TO eduos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON district_policy_bundles FROM eduos_app;
