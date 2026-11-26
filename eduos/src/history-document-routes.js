@@ -74,7 +74,7 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
       const fileName = typeof requestedName === "string" ? requestedName.trim() : "";
       if (!NAME_RE.test(fileName)) return res.status(400).json({ error: "invalid_document_name" });
       const contentType = req.headers["content-type"];
-      const uploadBody = Buffer.isBuffer(uploadBody) ? uploadBody : null;
+      const uploadBody = Buffer.isBuffer(req.body) ? req.body : null;
       if (typeof contentType !== "string" || !/^text\/plain(?:\s*;\s*charset=utf-8)?$/i.test(contentType.trim()) ||
           !uploadBody || !uploadBody.length || uploadBody.length > MAX_BYTES)
         return res.status(415).json({ error: "unsupported_document_type", accepted: ["text/plain; charset=utf-8"] });
