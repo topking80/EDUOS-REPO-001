@@ -26,13 +26,12 @@ async function releasePhotos(client, contributionId) {
   ]);
   return [...photos.rows, ...documents.rows].map(r => r.storage_key);
 }
-function deleteReleased(keys) {
+async function deleteReleased(keys) {
   const { storage } = historyMedia();
   if (!storage || !keys.length) return;
-  Promise.allSettled(keys.map(k => storage.remove(k))).then(rs => {
-    const failed = rs.filter(r => r.status === "rejected").length;
-    if (failed) console.error("History photo cleanup failed", { failed });
-  });
+  const results = await Promise.allSettled(keys.map(key => storage.remove(key)));
+  const failed = results.filter(result => result.status === "rejected").length;
+  if (failed) console.error("History contribution media cleanup failed", { failed });
 }
 
 const isDistrictLead = role => role === "superintendent";
@@ -151,7 +150,7 @@ export function registerStudentHistoryContributionRoutes(app) {
           return updated;
         });
         const { released = [], ...out } = result;
-        deleteReleased(released);
+        await deleteReleased(released);
         res.setHeader("Cache-Control", "no-store");
         res.json({ data: out });
       } catch (error) { sendError(res, next, error); }
@@ -247,7 +246,7 @@ export function registerStudentHistoryContributionRoutes(app) {
           return updated;
         });
         const { released = [], ...out } = result;
-        deleteReleased(released);
+        await deleteReleased(released);
         res.setHeader("Cache-Control", "no-store");
         res.json({ data: out });
       } catch (error) { sendError(res, next, error); }
