@@ -281,3 +281,107 @@ test("SPORT-03 eligibility policy requires explicit scope and versioned authorit
   assert.ok(validateSchemaSubset({...policy, scope: []}, schema.properties.eligibility_policies.items).length > 0);
   assert.ok(validateSchemaSubset({...policy, status: "nationally_overridden"}, schema.properties.eligibility_policies.items).length > 0);
 });
+
+function sport03ReferenceErrors(data) {
+  const errors = [];
+  const organizations = new Set(data.organizations.map(item => item.id));
+  const sourceById = new Map(data.rule_sources.map(item => [item.id, item]));
+  const versionById = new Map(data.rule_versions.map(item => [item.id, item]));
+  const cycleById = new Map(data.classification_cycles.map(item => [item.id, item]));
+
+  for (const [key, records] of Object.entries({
+    rule_sources: data.rule_sources,
+    eligibility_policies: data.eligibility_policies,
+    classification_cycles: data.classification_cycles,
+    classifications: data.classifications,
+    official_credentials: data.official_credentials,
+    sanctioning_records: data.sanctioning_records
+  })) {
+    const ids = records.map(item => item.id);
+    if (new Set(ids).size !== ids.length) errors.push(key + " IDs must be unique");
+    for (const record of records) {
+      if (!organizations.has(record.organization_id)) errors.push(record.id + " references an unknown organization");
+      const from = record.effective_from ?? record.cycle_start ?? record.issued_at ?? record.decision_date;
+      const to = record.effective_to ?? record.cycle_end ?? record.expires_at;
+      if (from && to && Date.parse(from) > Date.parse(to)) errors.push(record.id + " has an inverted effective date range");
+    }
+  }
+
+  const versionIds = data.rule_versions.map(item => item.id);
+  if (new Set(versionIds).size !== versionIds.length) errors.push("rule_versions IDs must be unique");
+  for (const version of data.rule_versions) {
+    const source = sourceById.get(version.rule_source_id);
+    if (!source) errors.push(version.id + " references an unknown rule source");
+    const superseded = version.supersedes_version_id ? versionById.get(version.supersedes_version_id) : null;
+    if (version.supersedes_version_id && !superseded) errors.push(version.id + " references an unknown superseded version");
+    if (source && superseded) {
+      const supersededSource = sourceById.get(superseded.rule_source_id);
+      if (!supersededSource || supersededSource.organization_id !== source.organization_id || superseded.rule_source_id !== version.rule_source_id) {
+        errors.push(version.id + " cannot supersede a version from another rule source");
+      }
+    }
+  }
+
+  for (const policy of data.eligibility_policies) {
+    const version = versionById.get(policy.rule_version_id);
+    if (!version) errors.push(policy.id + " references an unknown rule version");
+    else {
+      const source = sourceById.get(version.rule_source_id);
+      if (!source || source.organization_id !== policy.organization_id) errors.push(policy.id + " rule version belongs to another association");
+    }
+  }
+  for (const assignment of data.classifications) {
+    const cycle = cycleById.get(assignment.cycle_id);
+    if (!cycle) errors.push(assignment.id + " references an unknown classification cycle");
+    else if (cycle.organization_id !== assignment.organization_id) errors.push(assignment.id + " classification cycle belongs to another association");
+  }
+  return errors;
+}
+
+test("SPORT-03 rejects cross-association rule, eligibility, and classification references", () => {
+  const organizations = [{ id: "association-a" }, { id: "association-b" }];
+  const valid = {
+    organizations,
+    rule_sources: [{ id: "source-a", organization_id: "association-a" }],
+    rule_versions: [{ id: "version-a", rule_source_id: "source-a" }],
+    eligibility_policies: [{ id: "policy-a", organization_id: "association-a", rule_version_id: "version-a" }],
+    classification_cycles: [{ id: "cycle-a", organization_id: "association-a", cycle_start: "2026-07-01", cycle_end: "2027-06-30" }],
+    classifications: [{ id: "assignment-a", organization_id: "association-a", cycle_id: "cycle-a", effective_from: "2026-07-01" }],
+    official_credentials: [],
+    sanctioning_records: []
+  };
+  assert.deepEqual(sport03ReferenceErrors(valid), []);
+  assert.ok(sport03ReferenceErrors({
+    ...valid,
+    eligibility_policies: [{ ...valid.eligibility_policies[0], organization_id: "association-b" }]
+  }).some(error => error.includes("belongs to another association")));
+  assert.ok(sport03ReferenceErrors({
+    ...valid,
+    classifications: [{ ...valid.classifications[0], organization_id: "association-b" }]
+  }).some(error => error.includes("belongs to another association")));
+});
+
+test("SPORT-03 rejects cross-source supersession and inverted effective dates", () => {
+  const data = {
+    organizations: [{ id: "association-a" }],
+    rule_sources: [
+      { id: "source-a", organization_id: "association-a" },
+      { id: "source-b", organization_id: "association-a" }
+    ],
+    rule_versions: [
+      { id: "version-a", rule_source_id: "source-a" },
+      { id: "version-b", rule_source_id: "source-b", supersedes_version_id: "version-a" }
+    ],
+    eligibility_policies: [],
+    classification_cycles: [],
+    classifications: [],
+    official_credentials: [],
+    sanctioning_records: []
+  };
+  assert.ok(sport03ReferenceErrors(data).some(error => error.includes("another rule source")));
+  assert.ok(sport03ReferenceErrors({
+    ...data,
+    rule_versions: [{ id: "version-a", rule_source_id: "source-a" }],
+    classification_cycles: [{ id: "cycle-a", organization_id: "association-a", cycle_start: "2027-07-01", cycle_end: "2026-06-30" }]
+  }).some(error => error.includes("inverted effective date range")));
+});
