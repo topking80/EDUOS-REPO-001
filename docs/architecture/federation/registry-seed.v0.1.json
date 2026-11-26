@@ -1646,21 +1646,30 @@
         "PIAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-PA"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "junior_high",
+          "middle_school",
+          "senior_high"
+        ],
+        "school_types": [
+          "public",
+          "charter",
+          "private"
+        ],
+        "geography": [
+          "12_administrative_districts"
         ],
         "activities": [
-          "athletics",
-          "activities"
+          "athletics"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://www.piaa.org/"
     },
@@ -1671,21 +1680,25 @@
         "RIIL"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
+      "governance_type": "voluntary_member_association",
       "legal_authority": "unverified",
       "jurisdiction_ids": [
         "US-RI"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "private",
+          "parochial"
         ],
         "activities": [
-          "athletics",
-          "activities"
+          "athletics"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://www.riil.org/"
     },
@@ -1696,21 +1709,31 @@
         "SCHSL"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
+      "governance_type": "voluntary_member_association",
       "legal_authority": "unverified",
       "jurisdiction_ids": [
         "US-SC"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "high_school",
+          "junior_high",
+          "middle_school"
+        ],
+        "school_types": [
+          "public",
+          "charter",
+          "private"
+        ],
+        "geography": [
+          "classification",
+          "region"
         ],
         "activities": [
-          "athletics",
-          "activities"
+          "athletics"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://schsl.org/"
     },
@@ -1721,21 +1744,30 @@
         "SDHSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-SD"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "private",
+          "parochial",
+          "institutional"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "speech",
+          "music",
+          "student_council",
+          "publications"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://www.sdhsaa.com/"
     },
@@ -1746,21 +1778,21 @@
         "TSSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-TN"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "middle_school",
+          "high_school"
         ],
         "activities": [
-          "athletics",
-          "activities"
+          "athletics"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://tssaa.org/"
     },
