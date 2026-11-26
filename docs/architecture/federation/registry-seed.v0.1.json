@@ -720,7 +720,19 @@
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "middle_school",
+          "junior_high",
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "nonpublic"
+        ],
+        "geography": [
+          "membership",
+          "elector_district",
+          "conference",
+          "classification"
         ],
         "activities": [
           "athletics"
@@ -728,7 +740,8 @@
       },
       "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://www.wiaawi.org/"
+      "source_url": "https://www.wiaawi.org/about-wiaa",
+      "legal_authority": "independent"
     },
     {
       "id": "us-dc-dcsaa",
@@ -1610,23 +1623,42 @@
         "OSSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-OK"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "grades_7_12"
+        ],
+        "school_types": [
+          "public",
+          "private",
+          "government_indian_service",
+          "special_state_schools"
+        ],
+        "geography": [
+          "membership",
+          "associate_membership",
+          "classification"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "fine_arts",
+          "academic_activities",
+          "speech",
+          "debate",
+          "music",
+          "drama",
+          "academic_bowl",
+          "competitive_cheer",
+          "esports"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://www.ossaa.com/"
+      "source_url": "https://www.ossba.org/services/superintendent-search-services/oklahoma-secondary-school-activities-association-executive-director-search/"
     },
     {
       "id": "us-or-osaa",
@@ -1635,23 +1667,32 @@
         "OSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-OR"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "private"
+        ],
+        "geography": [
+          "classification",
+          "district",
+          "league"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "interscholastic_activities"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://www.osaa.org/"
+      "source_url": "https://osaa.org/about"
     },
     {
       "id": "us-pa-piaa",
@@ -1816,7 +1857,7 @@
       "aliases": [
         "UIL"
       ],
-      "organization_type": "independent_association",
+      "organization_type": "university_league",
       "governance_type": "unverified",
       "legal_authority": "unverified",
       "jurisdiction_ids": [
@@ -1824,16 +1865,32 @@
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "elementary",
+          "junior_high",
+          "middle_school",
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "open_enrollment_charter",
+          "qualifying_private"
+        ],
+        "geography": [
+          "district",
+          "conference",
+          "statewide"
         ],
         "activities": [
+          "academic_competitions",
           "athletics",
-          "activities"
+          "music",
+          "spirit",
+          "elementary_and_junior_high_contests"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://www.uiltexas.org/"
+      "source_url": "https://www.uiltexas.org/policy/constitution/"
     },
     {
       "id": "us-ut-uhsaa",
@@ -1981,23 +2038,42 @@
         "WHSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-WY"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "private"
+        ],
+        "geography": [
+          "four_administrative_districts",
+          "region",
+          "classification"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "fine_arts",
+          "vocational_education",
+          "art",
+          "cheerleading",
+          "drama",
+          "journalism",
+          "music",
+          "speech",
+          "debate",
+          "student_council",
+          "career_technical_activities"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://www.whsaa.org/"
+      "source_url": "https://www.whsaa.org/whsaa/background.html"
     },
     {
       "id": "us-tx-tapps",
@@ -2006,27 +2082,32 @@
         "TAPPS"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
+      "governance_type": "voluntary_member_association",
       "legal_authority": "unverified",
       "jurisdiction_ids": [
         "US-TX"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "grades_9_12"
         ],
         "school_types": [
           "private",
           "parochial"
         ],
+        "geography": [
+          "classification",
+          "district"
+        ],
         "activities": [
+          "academics",
           "athletics",
-          "activities"
+          "fine_arts"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://tapps.biz/"
+      "source_url": "https://tapps.biz/tapps-governance/"
     },
     {
       "id": "us-nc-ncisaa",
