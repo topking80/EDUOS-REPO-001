@@ -2266,5 +2266,12 @@
   "classification_cycles": [],
   "classifications": [],
   "official_credentials": [],
-  "sanctioning_records": []
+  "sanctioning_records": [],
+  "seasons": [],
+  "competition_groupings": [],
+  "grouping_memberships": [],
+  "contests": [],
+  "contest_results": [],
+  "championships": [],
+  "championship_entries": []
 }

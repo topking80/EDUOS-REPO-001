@@ -21,7 +21,14 @@
     "classification_cycles",
     "classifications",
     "official_credentials",
-    "sanctioning_records"
+    "sanctioning_records",
+    "seasons",
+    "competition_groupings",
+    "grouping_memberships",
+    "contests",
+    "contest_results",
+    "championships",
+    "championship_entries"
   ],
   "properties": {
     "registry_version": {
@@ -1263,6 +1270,672 @@
           "verification_status": {
             "type": "string",
             "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "seasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "activity_id",
+          "school_year",
+          "start_date",
+          "end_date",
+          "status",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "activity_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "school_year": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\d{4}-\\d{2}$"
+          },
+          "level_scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "regular_season_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "postseason_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "planned",
+              "published",
+              "in_progress",
+              "completed",
+              "cancelled"
+            ]
+          },
+          "rule_version_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "competition_groupings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "grouping_type",
+          "name",
+          "activity_scope",
+          "exclusive",
+          "status",
+          "effective_from",
+          "recognition",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "grouping_type": {
+            "enum": [
+              "conference",
+              "league",
+              "region",
+              "district",
+              "section",
+              "division",
+              "subdivision"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parent_grouping_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "activity_scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "level_scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "exclusive": {
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "recognized",
+              "active",
+              "suspended",
+              "dissolved"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "recognition": {
+            "type": "object",
+            "required": [
+              "recognized_by",
+              "decision_id"
+            ],
+            "properties": {
+              "recognized_by": {
+                "type": "string",
+                "minLength": 1
+              },
+              "decision_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "classification_cycle_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "classification": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "grouping_memberships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "grouping_id",
+          "school_id",
+          "activity_id",
+          "status",
+          "effective_from",
+          "basis",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "grouping_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "school_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "activity_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "active",
+              "withdrawn",
+              "removed",
+              "expired"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "basis": {
+            "type": "object",
+            "required": [
+              "kind",
+              "reference_id"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "association_alignment",
+                  "classification",
+                  "conference_vote",
+                  "appeal_decision"
+                ]
+              },
+              "reference_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "contests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "season_id",
+          "contest_type",
+          "participant_school_ids",
+          "contest_date",
+          "status",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "season_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "contest_type": {
+            "enum": [
+              "regular_season",
+              "conference",
+              "nonconference",
+              "tournament",
+              "postseason",
+              "championship",
+              "scrimmage",
+              "invitational"
+            ]
+          },
+          "level": {
+            "type": "string",
+            "minLength": 1
+          },
+          "grouping_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "championship_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "home_school_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "participant_school_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 2,
+            "uniqueItems": true
+          },
+          "contest_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "venue_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sanction_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "postponed",
+              "completed",
+              "cancelled",
+              "forfeited",
+              "suspended"
+            ]
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "contest_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "contest_id",
+          "version",
+          "result_status",
+          "outcomes",
+          "recorded_by",
+          "recorded_at",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "contest_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "integer"
+          },
+          "result_status": {
+            "enum": [
+              "provisional",
+              "official",
+              "corrected",
+              "vacated"
+            ]
+          },
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "school_id",
+                "outcome"
+              ],
+              "properties": {
+                "school_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "outcome": {
+                  "enum": [
+                    "win",
+                    "loss",
+                    "tie",
+                    "forfeit_win",
+                    "forfeit_loss",
+                    "placed",
+                    "no_result"
+                  ]
+                },
+                "score": {
+                  "type": "number"
+                },
+                "placement": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            },
+            "minItems": 1
+          },
+          "supersedes_result_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recorded_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "decision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "championships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "season_id",
+          "activity_id",
+          "name",
+          "format",
+          "status",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "season_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "activity_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "level": {
+            "type": "string",
+            "minLength": 1
+          },
+          "classification_cycle_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "classification": {
+            "type": "string",
+            "minLength": 1
+          },
+          "division": {
+            "type": "string",
+            "minLength": 1
+          },
+          "format": {
+            "enum": [
+              "bracket",
+              "meet",
+              "series",
+              "round_robin",
+              "other"
+            ]
+          },
+          "qualification_rule_version_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "entry_limit": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "planned",
+              "qualifying",
+              "seeded",
+              "in_progress",
+              "completed",
+              "cancelled"
+            ]
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "championship_entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "championship_id",
+          "school_id",
+          "status",
+          "qualification_basis",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "championship_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "school_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "qualified",
+              "entered",
+              "withdrawn",
+              "disqualified",
+              "champion",
+              "runner_up",
+              "placed"
+            ]
+          },
+          "qualification_basis": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "automatic_bid",
+                  "at_large",
+                  "ranking",
+                  "grouping_finish",
+                  "open_entry",
+                  "appeal_decision"
+                ]
+              },
+              "reference_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "placement": {
+            "type": "integer"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
           },
           "notes": {
             "type": "string"

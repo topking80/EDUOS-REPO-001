@@ -65,7 +65,7 @@ Use opaque IDs, ISO dates, stable enumerations, and nullable fields for unknowns
 2. FED-01B: organization relationship integrity, effective-date validation, predecessor/successor cycle protection, and verified section/island/school-system/affiliate relationships.
 3. FED-01C: membership lifecycle and entitlements, with school affiliation references kept separate from education-tenant ownership.
 4. SPORT-02: association governance, delegated authority, committees, voting and appeals.
-5. SPORT-03/04: rules, classifications, alignment, seasons, brackets and results.
+5. SPORT-03/04: rules, classifications, alignment, seasons, brackets and results (SPORT-04 contract and checker: `sport-04-competition-structure.md`).
 6. FED-06/07: authorized exchange and jurisdiction/privacy controls.
 
 ## Evidence limitations
