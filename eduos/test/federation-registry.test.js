@@ -194,3 +194,50 @@ test("registry JSON Schema declares the 2020-12 contract and required arrays", (
   assert.equal(schema.properties.coverage.properties.states.const, 50);
   assert.equal(schema.properties.coverage.properties.total_jurisdictions.const, 54);
 });
+
+
+test("governance lifecycle collections are present and empty until verified records exist", () => {
+  for (const key of ["governance_bodies", "delegations", "governance_decisions", "appeals"]) {
+    assert.ok(Array.isArray(registry[key]), key + " must be an array");
+    assert.deepEqual(registry[key], [], key + " must not contain fabricated governance records");
+  }
+});
+
+test("governance records resolve organization and decision references", () => {
+  const organizationIds = new Set(registry.organizations.map(item => item.id));
+  for (const body of registry.governance_bodies) {
+    assert.ok(organizationIds.has(body.organization_id), body.id + " organization exists");
+    if (body.effective_to) assert.ok(Date.parse(body.effective_from) <= Date.parse(body.effective_to));
+  }
+  const bodyIds = new Set(registry.governance_bodies.map(item => item.id));
+  for (const decision of registry.governance_decisions) {
+    assert.ok(organizationIds.has(decision.organization_id), decision.id + " organization exists");
+    assert.ok(bodyIds.has(decision.decision_body_id), decision.id + " decision body exists");
+  }
+  const decisionIds = new Set(registry.governance_decisions.map(item => item.id));
+  for (const appeal of registry.appeals) {
+    assert.ok(organizationIds.has(appeal.organization_id), appeal.id + " organization exists");
+    assert.ok(decisionIds.has(appeal.decision_id), appeal.id + " decision exists");
+  }
+});
+
+test("delegation schema requires bounded, effective-dated authority", () => {
+  const delegation = {
+    id: "delegation-example-001",
+    organization_id: registry.organizations[0].id,
+    delegator: "governing-board",
+    delegate: "executive-director",
+    authority_scope: ["publish_calendar"],
+    decision_types: ["routine_administration"],
+    constraints: ["no_transfer_of_rulemaking_authority"],
+    status: "active",
+    effective_from: "2026-07-01",
+    effective_to: "2027-06-30",
+    approval_reference: "resolution-opaque-001",
+    verification_status: "verified",
+    source_url: "https://example.org/official-delegation"
+  };
+  assert.deepEqual(validateSchemaSubset(delegation, schema.properties.delegations.items), []);
+  assert.ok(validateSchemaSubset({...delegation, authority_scope: []}, schema.properties.delegations.items).length > 0);
+  assert.ok(validateSchemaSubset({...delegation, status: "unrestricted"}, schema.properties.delegations.items).length > 0);
+});
