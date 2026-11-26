@@ -70,12 +70,18 @@ takes over their rights (`eduos_history_own_after_transition`).
   student should decide. Until that's changed, the records office should
   handle those items for students who hold their own rights.
 * **Media files.** Student-history photos (MEDIA-01), guardian-contributed
-  family photos (MEDIA-02) and Time Capsule photos (MEDIA-03) use the private
-  S3-compatible storage and ClamAV pipeline described in
-  `eduos/docs/MEDIA-STORAGE.md`. A 60-second link can be passed on within its
-  minute; that window is the residual. Documents are not yet supported. Video
-  upload remains disabled until a sanitizing transcode adapter exists and is
-  tested; metadata alone must not be treated as proof that a video is safe.
+  family photos (MEDIA-02), Time Capsule photos (MEDIA-03), and guardian
+  plain-text `.txt` documents use the private S3-compatible storage described
+  in `eduos/docs/MEDIA-STORAGE.md`. Photos are ClamAV-scanned, decoded,
+  re-encoded and stripped of metadata; `.txt` documents are strict-UTF-8
+  validated and ClamAV-scanned, then forced to download as attachments rather
+  than rendered. Guardian document support is district-opt-in and shares the
+  student storage quota. The 60-second photo link can be passed on within its
+  minute; that window is the residual. TC-08's integrity verification and
+  restore drill are documented for photos; do not assume those checks cover
+  document objects until document-specific verification is implemented and
+  tested. PDF/DOCX and video remain unsupported; video metadata alone must
+  never be treated as proof that media is safe.
 * **Exports.** Built (db/125): per student, by the people listed above,
   logged and limited, no links. A downloaded file is outside EduOS's control
   once saved; the page says so, and records offices should treat a copy like
