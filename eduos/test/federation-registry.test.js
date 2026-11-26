@@ -92,7 +92,7 @@ function validateSchemaSubset(value, definition, path = "$") {
     if (definition.enum && !definition.enum.includes(value)) errors.push(`${path} has an unsupported value`);
     if (definition.minLength !== undefined && value.length < definition.minLength) errors.push(`${path} is too short`);
     if (definition.pattern && typeof value === "string" && !new RegExp(definition.pattern).test(value)) errors.push(`${path} has an invalid format`);
-    if (definition.format === "date" && (typeof value !== "string" || !/^\\d{4}-\\d{2}-\\d{2}$/.test(value) || Number.isNaN(Date.parse(value)))) errors.push(`${path} must be an ISO date`);
+    if (definition.format === "date" && (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)))) errors.push(`${path} must be an ISO date`);
     if (definition.format === "uri") {
       try { new URL(value); } catch { errors.push(`${path} must be a URI`); }
     }
@@ -102,7 +102,7 @@ function validateSchemaSubset(value, definition, path = "$") {
 
 test("registry seed conforms to the declared schema's structural constraints", () => {
   const errors = validateSchemaSubset(registry, schema);
-  assert.deepEqual(errors, [], errors.join("\\n"));
+  assert.deepEqual(errors, [], errors.join("\n"));
 });
 
 test("registry JSON Schema declares the 2020-12 contract and required arrays", () => {
