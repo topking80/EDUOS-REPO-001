@@ -1,0 +1,522 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EduOS education federation authority model (FED-02)",
+  "type": "object",
+  "required": [
+    "model_version",
+    "as_of",
+    "capabilities",
+    "role_definitions",
+    "nodes",
+    "role_assignments",
+    "delegations",
+    "policy_definitions",
+    "policy_settings"
+  ],
+  "properties": {
+    "model_version": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "domain",
+          "student_data",
+          "assignable_levels",
+          "reach",
+          "delegable",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z_]+(\\.[a-z_]+)+$"
+          },
+          "domain": {
+            "type": "string",
+            "minLength": 1
+          },
+          "student_data": {
+            "enum": [
+              "none",
+              "aggregate",
+              "identifiable"
+            ]
+          },
+          "assignable_levels": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "platform",
+                "state_education_authority",
+                "district",
+                "school"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "reach": {
+            "enum": [
+              "node",
+              "descendants",
+              "tenant"
+            ]
+          },
+          "delegable": {
+            "type": "boolean"
+          },
+          "district_reserved": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "role_definitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "level",
+          "name",
+          "capabilities",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9-]+$"
+          },
+          "level": {
+            "enum": [
+              "platform",
+              "state_education_authority",
+              "district",
+              "school"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "status": {
+            "enum": [
+              "active",
+              "retired"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "effective_from"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "platform",
+              "state_education_authority",
+              "district",
+              "school"
+            ]
+          },
+          "parent_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "jurisdiction_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^US-[A-Z]{2}$"
+          },
+          "tenant_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "active",
+              "suspended",
+              "revoked",
+              "expired"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "revoked_on": {
+            "type": "string",
+            "format": "date"
+          },
+          "suspended_on": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "role_assignments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "principal_id",
+          "role_id",
+          "node_id",
+          "status",
+          "effective_from",
+          "approval_reference"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "principal_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "active",
+              "suspended",
+              "revoked",
+              "expired"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "revoked_on": {
+            "type": "string",
+            "format": "date"
+          },
+          "approval_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          },
+          "suspended_on": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "delegations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "delegate_principal_id",
+          "delegate_home_node_id",
+          "node_id",
+          "capabilities",
+          "purpose",
+          "may_redelegate",
+          "status",
+          "effective_from",
+          "effective_to",
+          "approval_reference"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from_assignment_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from_delegation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "delegate_principal_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "delegate_home_node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "may_redelegate": {
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "active",
+              "suspended",
+              "revoked",
+              "expired"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "revoked_on": {
+            "type": "string",
+            "format": "date"
+          },
+          "approval_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          },
+          "suspended_on": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "policy_definitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "value_type",
+          "default",
+          "mode",
+          "settable_levels",
+          "lockable_levels",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z_]+(\\.[a-z_]+)+$"
+          },
+          "value_type": {
+            "enum": [
+              "boolean",
+              "integer",
+              "enum",
+              "string"
+            ]
+          },
+          "allowed_values": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "min": {
+            "type": "integer"
+          },
+          "max": {
+            "type": "integer"
+          },
+          "default": {},
+          "mode": {
+            "enum": [
+              "free",
+              "restrict_only",
+              "district_reserved"
+            ]
+          },
+          "stricter": {
+            "enum": [
+              "true",
+              "false",
+              "higher",
+              "lower"
+            ]
+          },
+          "settable_levels": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "platform",
+                "state_education_authority",
+                "district",
+                "school"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "lockable_levels": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "platform",
+                "state_education_authority",
+                "district",
+                "school"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "policy_settings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "policy_id",
+          "node_id",
+          "value",
+          "version",
+          "status",
+          "effective_from",
+          "set_by_assignment_id",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "policy_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {},
+          "lock_descendants": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "superseded",
+              "withdrawn"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "set_by_assignment_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
