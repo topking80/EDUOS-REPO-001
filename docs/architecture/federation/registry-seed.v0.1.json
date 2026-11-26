@@ -1334,7 +1334,7 @@
         "MHSA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
+      "governance_type": "member_governed_nonprofit",
       "legal_authority": "unverified",
       "jurisdiction_ids": [
         "US-MT"
@@ -1345,10 +1345,10 @@
         ],
         "activities": [
           "athletics",
-          "activities"
+          "fine_arts"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://www.mhsa.org/"
     },
@@ -1359,7 +1359,7 @@
         "NSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
+      "governance_type": "member_governed_nonprofit",
       "legal_authority": "unverified",
       "jurisdiction_ids": [
         "US-NE"
@@ -1370,10 +1370,10 @@
         ],
         "activities": [
           "athletics",
-          "activities"
+          "performing_arts"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://nsaahome.org/"
     },
@@ -1384,8 +1384,8 @@
         "NIAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "statutory_body",
+      "legal_authority": "statutory",
       "jurisdiction_ids": [
         "US-NV"
       ],
@@ -1398,7 +1398,7 @@
           "activities"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://niaa.com/"
     },
@@ -1434,7 +1434,7 @@
         "NJSIAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
+      "governance_type": "private_nonprofit",
       "legal_authority": "unverified",
       "jurisdiction_ids": [
         "US-NJ"
@@ -1444,11 +1444,10 @@
           "K-12"
         ],
         "activities": [
-          "athletics",
-          "activities"
+          "athletics"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://www.njsiaa.org/"
     },
