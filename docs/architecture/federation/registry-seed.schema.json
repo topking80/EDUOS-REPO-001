@@ -14,7 +14,14 @@
     "governance_bodies",
     "delegations",
     "governance_decisions",
-    "appeals"
+    "appeals",
+    "rule_sources",
+    "rule_versions",
+    "eligibility_policies",
+    "classification_cycles",
+    "classifications",
+    "official_credentials",
+    "sanctioning_records"
   ],
   "properties": {
     "registry_version": {
@@ -695,6 +702,557 @@
             "format": "date"
           },
           "outcome_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "rule_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "authority_level",
+          "document_type",
+          "title",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "authority_level": {
+            "enum": [
+              "statute",
+              "regulation",
+              "education_authority",
+              "association_constitution",
+              "association_bylaw",
+              "board_policy",
+              "sport_manual",
+              "external_rule_body",
+              "local_policy"
+            ]
+          },
+          "document_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version_label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "language": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "rule_versions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "rule_source_id",
+          "version_label",
+          "published_at",
+          "effective_from",
+          "status",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rule_source_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version_label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "approved",
+              "active",
+              "superseded",
+              "withdrawn"
+            ]
+          },
+          "supersedes_version_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "approval_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "eligibility_policies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "rule_version_id",
+          "policy_type",
+          "scope",
+          "status",
+          "effective_from",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rule_version_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "policy_type": {
+            "enum": [
+              "age",
+              "grade",
+              "enrollment",
+              "residency",
+              "transfer",
+              "academic",
+              "amateur_status",
+              "recruiting",
+              "medical_safety",
+              "hardship",
+              "other"
+            ]
+          },
+          "scope": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "active",
+              "suspended",
+              "superseded",
+              "withdrawn"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "decision_authority": {
+            "type": "string",
+            "minLength": 1
+          },
+          "appeal_route": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "classification_cycles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "name",
+          "cycle_start",
+          "cycle_end",
+          "status",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cycle_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "cycle_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "active",
+              "completed",
+              "cancelled"
+            ]
+          },
+          "activity_scope": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "methodology_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "appeal_window_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "classifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "cycle_id",
+          "school_id",
+          "activity_id",
+          "classification",
+          "effective_from",
+          "status",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cycle_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "school_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "activity_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "division": {
+            "type": "string",
+            "minLength": 1
+          },
+          "classification": {
+            "type": "string",
+            "minLength": 1
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "assigned",
+              "appealed",
+              "final",
+              "withdrawn"
+            ]
+          },
+          "appeal_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "official_credentials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "official_id",
+          "credential_type",
+          "activity_scope",
+          "status",
+          "issued_at",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "official_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "credential_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "activity_scope": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "active",
+              "suspended",
+              "expired",
+              "revoked"
+            ]
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "credential_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "verification_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "sanctioning_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "event_reference",
+          "sanction_type",
+          "status",
+          "decision_date",
+          "authority_reference",
+          "source_url",
+          "verification_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "event_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sanction_type": {
+            "enum": [
+              "event_approval",
+              "event_denial",
+              "school_warning",
+              "school_suspension",
+              "probation",
+              "other"
+            ]
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "denied",
+              "active",
+              "expired",
+              "revoked",
+              "appealed"
+            ]
+          },
+          "decision_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "appeal_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "authority_reference": {
             "type": "string",
             "minLength": 1
           },
