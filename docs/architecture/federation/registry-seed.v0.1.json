@@ -1409,7 +1409,7 @@
         "NHIAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
+      "governance_type": "voluntary_member_association",
       "legal_authority": "unverified",
       "jurisdiction_ids": [
         "US-NH"
@@ -1423,7 +1423,7 @@
           "activities"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
       "source_url": "https://www.nhiaa.org/"
     },
