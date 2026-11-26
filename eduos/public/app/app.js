@@ -4026,6 +4026,33 @@ const ROSTER_TEACHER_TEXT = { no_matching_eduos_teacher: "No EduOS teacher at th
   no_email: "Their SIS record has no email", not_in_staff_list: "Not in their staff list", matched_teacher_not_at_school: "The matched teacher doesn't teach at that school" };
 const REJECT_TEXT = { no_sis_user_id: "Canvas student without a SIS ID", no_matching_eduos_student: "No EduOS student with that SIS ID", student_not_imported: "a student in a class isn't in EduOS", student_at_another_eduos_school: "a student in a class is at another EduOS school", duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
   no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id", invalid_school_id: "invalid school id", missing_student_id: "no student id", missing_student_number: "no student number", missing_enrollment_status: "enrollment status unavailable" };
+// FED-05: signed policy bundles from Master Control, kept as received.
+// Shown for information; EduOS applies nothing from them yet.
+const PB_ERRORS = { not_a_policy_bundle: "That isn't a policy bundle file.", malformed: "The file is damaged or not in the expected format.",
+  altered: "The file was changed after Master Control signed it.", wrong_key: "It wasn't signed with the key this server trusts.",
+  bad_signature: "The signature doesn't check out.", not_for_this_district: "That bundle is for another district.",
+  older_than_received: "A newer bundle has already been received.", policy_key_not_configured: "This server has no Master Control key (MC_POLICY_PUBLIC_KEY)." };
+async function masterControlPoliciesCard() {
+  const d = (await safe(api.get("/api/district/policy-bundles")))?.data;
+  if (!d || !Array.isArray(d.bundles)) return null;
+  const file = h("input", { id: "pb-file", type: "file", accept: ".json,application/json" });
+  const latest = d.latest;
+  return h("section", { class: "card", "aria-label": "Policies from Master Control" }, h("h2", {}, "Policies from Master Control"),
+    h("p", { class: "small muted" }, "Signed policy bundles issued for this district. They're kept as received and shown here; nothing is changed in the district's settings."),
+    d.configured ? h("p", { class: "small" }, "Trusted signing key fingerprint ", h("code", {}, d.fingerprint), ". Check it matches the one Master Control shows.")
+      : h("p", { class: "notice" }, PB_ERRORS.policy_key_not_configured),
+    latest ? h("div", {}, h("h3", {}, `Version ${latest.version}${latest.kind === "rollback" ? " (rollback)" : ""}`),
+      h("p", { class: "small muted" }, `From ${latest.issuer || "Master Control"} · issued ${fmtDay(latest.issuedAt)} · in effect from ${fmtDay(latest.effectiveFrom)} · received by ${latest.receivedBy}`),
+      latest.policies.length ? h("ul", { class: "list small" }, latest.policies.map(p => h("li", { class: "row" }, h("code", { class: "grow" }, p.id),
+        h("span", {}, JSON.stringify(p.value)), p.locked_by ? chip("expected", "Locked") : null))) : h("p", { class: "small muted" }, "No policies in this version.")) : h("p", { class: "muted" }, "No bundles received yet."),
+    d.bundles.length > 1 ? h("p", { class: "small muted" }, `Earlier versions received: ${d.bundles.slice(1).map(b => b.version).join(", ")}`) : null,
+    d.configured && state.me.role === "superintendent" ? h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault();
+        const f = file.files?.[0]; if (!f) return toast("Choose the file first.");
+        let pkg; try { pkg = JSON.parse(await f.text()); } catch { return toast(PB_ERRORS.not_a_policy_bundle); }
+        try { const r = (await api.post("/api/district/policy-bundles", pkg)).data; toast(r.existing ? "Already received." : r.gap ? "Received. Some earlier versions weren't uploaded here." : "Signature checked and received."); go(state.tab, { push: false }); }
+        catch (err) { toast(PB_ERRORS[err.body?.error] || "Couldn't read that file."); } } },
+      h("div", { class: "grow" }, h("label", { for: "pb-file" }, "Bundle file from Master Control"), file), h("button", { class: "btn", type: "submit" }, "Check and keep")) : null);
+}
 VIEWS.integrations = async () => {
   const r = await api.get("/api/integrations/connectors");
   const { enabled, connectors = [], schools = [], teachers = [] } = r.data;
@@ -4034,7 +4061,8 @@ VIEWS.integrations = async () => {
     h("p", { class: "muted" }, "Connect approved SIS and Canvas services. Canvas LMS launch from the app catalog remains separate; this optional Canvas API connection stores a district administrator grant. Course, enrollment and grade sync are not enabled yet."),
     staffDistrict() ? h("section", { class: "card", "aria-label": "Payment options" }, h("h2", {}, "Payment options"),
       h("p", { class: "small muted" }, "Connect the district's PayPal, Square or BTCPay Server account for ticket and marketplace payments."),
-      h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Open payment setup")) : null];
+      h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Open payment setup")) : null,
+    ["superintendent", "it_admin"].includes(state.me.role) ? await masterControlPoliciesCard() : null];
   if (!enabled) return [...out, h("p", { class: "notice" }, "Data links are off on this server. District IT turns them on by setting INTEGRATIONS_KEY.")];
   const results = new Map(); // connector id -> last preview/apply result (this page view)
   const resultCard = (c, res) => {

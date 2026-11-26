@@ -72,6 +72,8 @@ async function nodePanel(id) {
   if (await can(roleCap) || (n.kind === "district" && await can("federation.membership.manage"))) out.push(assignForm(n));
   if (n.kind !== "school" && await can("federation.membership.manage")) out.push(childForm(n));
   out.push(await policyCard(n, await can("policy.set")));
+  if (n.kind !== "district" && n.kind !== "school" && await can("policy.distribute")) out.push(await releasesCard(n));
+  if (n.kind === "district") out.push(await bundlesCard(n, await can("policy.set")));
   if (await can("audit.view")) out.push(await auditCard(n));
   return out;
 }
@@ -148,6 +150,49 @@ async function revokeRole(a) {
 async function revokeDelegation(x) {
   const reason = prompt("Reason?"); if (!reason) return;
   try { await api("POST", `/delegations/${encodeURIComponent(x.id)}/revoke`, { reason }); me = await api("GET", "/me"); await refresh(); } catch (err) { alertCard(message(err)); }
+}
+
+// FED-05: policy releases (platform/state) and bundles (district).
+async function releasesCard(n) {
+  const releases = await api("GET", `/policy-releases?nodeId=${encodeURIComponent(n.id)}`);
+  const key = await api("GET", "/policy-signing-key");
+  const districts = nodes.filter(x => x.kind === "district" && x.status === "active");
+  const reason = h("input", { required: true }), boxes = districts.map(d => h("input", { type: "checkbox", value: d.id, "aria-label": `Pilot: ${d.name}` }));
+  return h("section", { class: "card", "aria-label": "Policy releases" }, h("h3", {}, "Policy releases"),
+    key.configured ? h("p", { class: "muted" }, "Signing key fingerprint ", h("code", {}, key.fingerprint), ". Give it to districts so their EduOS can check bundles.")
+      : h("p", { class: "bad" }, "Policy signing isn't configured on this server (MC_POLICY_SIGNING_SECRET)."),
+    releases.length ? h("table", {}, h("tr", {}, h("th", {}, "Release"), h("th", {}, "Status"), h("th", {}, "Districts"), h("th", {}, "")),
+      releases.map(r => h("tr", {}, h("td", {}, `${r.kind === "rollback" ? "Rollback · " : ""}${r.reason}`, h("br"), h("code", {}, r.id)), h("td", {}, r.status),
+        h("td", {}, `${r.issued}/${r.targets} issued · ${r.accepted} accepted · ${r.objected} objected`),
+        h("td", {}, r.status === "piloting" ? h("button", { class: "link", type: "button", onclick: () => promote(r) }, "Promote") : null, " ",
+          r.status !== "rolled_back" ? h("button", { class: "link", type: "button", onclick: () => rollback(r) }, "Roll back") : null)))) : h("p", { class: "muted" }, "No releases yet."),
+    key.configured ? h("form", { onsubmit: async e => { e.preventDefault();
+      try { await api("POST", "/policy-releases", { nodeId: n.id, reason: reason.value, pilotDistrictIds: boxes.filter(b => b.checked).map(b => b.value) }); await refresh(); }
+      catch (err) { alertCard(message(err)); } } },
+      h("h3", {}, "Release the current policies"), field("Reason", reason),
+      districts.length ? h("fieldset", {}, h("legend", {}, "Pilot districts first (optional)"), districts.map((d, i) => h("label", {}, h("span", {}, boxes[i], ` ${d.name}`)))) : null,
+      h("button", { class: "btn", type: "submit" }, "Sign and release")) : null);
+}
+async function promote(r) {
+  const note = prompt("Promote to all districts. Note (required to override pilots that haven't accepted):") || undefined;
+  try { await api("POST", `/policy-releases/${encodeURIComponent(r.id)}/promote`, { note, force: !!note }); await refresh(); } catch (err) { alertCard(message(err)); }
+}
+async function rollback(r) {
+  const reason = prompt("Roll back this release? Each district gets its previous policies again. Reason:"); if (!reason) return;
+  try { await api("POST", `/policy-releases/${encodeURIComponent(r.id)}/rollback`, { reason }); await refresh(); } catch (err) { alertCard(message(err)); }
+}
+async function bundlesCard(n, canAck) {
+  const list = await api("GET", `/districts/${encodeURIComponent(n.id)}/policy-bundles`);
+  const answer = async (b, decision) => {
+    const note = decision === "objected" ? prompt("What's the objection?") : undefined; if (decision === "objected" && !note) return;
+    try { await api("POST", `/policy-bundles/${encodeURIComponent(b.id)}/acknowledge`, { decision, note }); await refresh(); } catch (err) { alertCard(message(err)); } };
+  return h("section", { class: "card", "aria-label": "Policy bundles" }, h("h3", {}, "Policy bundles for this district"),
+    list.length ? h("table", {}, h("tr", {}, h("th", {}, "Version"), h("th", {}, "Issued"), h("th", {}, "Answer"), h("th", {}, "")),
+      list.map(b => h("tr", {}, h("td", {}, `v${b.version} · ${b.stage}`), h("td", {}, new Date(b.issuedAt).toLocaleDateString()),
+        h("td", {}, b.ack ? `${b.ack.decision}${b.ack.note ? `: ${b.ack.note}` : ""}` : "waiting"),
+        h("td", {}, h("a", { href: `/mc/api/policy-bundles/${encodeURIComponent(b.id)}/file` }, "Download"),
+          canAck ? [" ", h("button", { class: "link", type: "button", onclick: () => answer(b, "accepted") }, "Accept"), " ",
+            h("button", { class: "link", type: "button", onclick: () => answer(b, "objected") }, "Object")] : null)))) : h("p", { class: "muted" }, "No bundles yet."));
 }
 function alertCard(text) { const el = h("p", { class: "bad", role: "alert" }, text); main.prepend(el); setTimeout(() => el.remove(), 8000); }
 boot();

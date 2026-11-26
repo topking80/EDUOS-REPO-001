@@ -1,5 +1,5 @@
 {
-  "model_version": "0.3.0",
+  "model_version": "0.4.0",
   "as_of": "2026-11-26",
   "capabilities": [
     {
@@ -87,6 +87,18 @@
       "reach": "node",
       "delegable": true,
       "description": "Set a policy value at this node (inheritance rules decide what descendants may change)."
+    },
+    {
+      "id": "policy.distribute",
+      "domain": "policy",
+      "student_data": "none",
+      "assignable_levels": [
+        "platform",
+        "state_education_authority"
+      ],
+      "reach": "descendants",
+      "delegable": false,
+      "description": "Publish signed policy releases to the districts below, stage them through pilot districts, and roll them back. Districts acknowledge or object; distributing never changes a district's own settings."
     },
     {
       "id": "audit.view",
@@ -212,6 +224,7 @@
         "service.health.view",
         "security.incident.coordinate",
         "policy.set",
+        "policy.distribute",
         "audit.view"
       ],
       "status": "active"
@@ -226,6 +239,7 @@
         "federation.identity.manage",
         "security.incident.coordinate",
         "policy.set",
+        "policy.distribute",
         "audit.view",
         "reporting.aggregate.view"
       ],

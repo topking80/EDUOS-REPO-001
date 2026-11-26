@@ -2,7 +2,7 @@
 
 Status: data contract plus a tested rule engine. The running app does not use it yet; FED-03 (Master Control API and console) wires it in.
 
-- Contract: `authority-model.schema.json` (JSON Schema 2020-12) and the seed `authority-model.v0.1.json` (model 0.3.0). The catalog part (capabilities, roles, policy definitions) is also shipped with the app as `eduos/src/federation/authority-catalog.json`; a test keeps the two identical.
+- Contract: `authority-model.schema.json` (JSON Schema 2020-12) and the seed `authority-model.v0.1.json` (model 0.4.0). The catalog part (capabilities, roles, policy definitions) is also shipped with the app as `eduos/src/federation/authority-catalog.json`; a test keeps the two identical.
 - Engine: `eduos/src/federation/authority.js`, with three functions:
   - `validateAuthorityModel(model)` checks a model and lists every problem;
   - `authorize(model, {principal_id, capability_id, node_id, at, purpose?})` answers whether someone may act;
@@ -45,6 +45,7 @@ A capability is one thing someone can do. Each one says:
 | `service.health.view` | none | platform, state, district | descendants | yes |
 | `security.incident.coordinate` | none | platform, state, district | descendants | yes |
 | `policy.set` | none | all | node | yes |
+| `policy.distribute` | none | platform, state | descendants | no |
 | `audit.view` | none | all | node | yes |
 | `reporting.aggregate.view` | aggregate | state, district, school | descendants | yes |
 | `reporting.submit` | aggregate | district | node | yes |

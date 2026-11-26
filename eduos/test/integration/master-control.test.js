@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import pg from "pg";
 import { PG_URL, ROOT, startIdp, baseEnv, run, createDatabase, freePort } from "./harness.js";
+import { verifyBundle, parsePublicKey } from "../../src/federation/policy-bundle.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 
@@ -61,7 +62,7 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     const u = new URL(db.ownerUrl); u.username = mcRole; u.password = mcPw; mcUrl = u.toString();
     env = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: "development", MC_DATABASE_URL: mcUrl, MC_PUBLIC_ORIGIN: "http://localhost",
       MC_OIDC_ISSUER: idp.issuer, MC_OIDC_CLIENT_ID: "eduos-it", MC_OIDC_CLIENT_SECRET: "it-secret", MC_OIDC_REDIRECT_URI: "http://localhost/mc/auth/callback",
-      MC_IDP_SECRET_TX: "it-secret", MC_IDP_SECRET_D1: "it-secret" };
+      MC_IDP_SECRET_TX: "it-secret", MC_IDP_SECRET_D1: "it-secret", MC_POLICY_SIGNING_SECRET: crypto.randomBytes(24).toString("hex") };
     const m = await run(["src/master-control/migrate.js"], { ...env, MC_MIGRATE_DATABASE_URL: db.ownerUrl, MC_APP_ROLE: mcRole });
     assert.equal(m.code, 0, m.out);
     const b = await run(["src/master-control/bootstrap.js", "--subject", "op", "--name", "Platform Operator", "--approval", "board-2026-01"], env);
@@ -252,6 +253,62 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     const log = ok(await as("tea")("GET", `/audit?nodeId=${ids.tx}`));
     for (const a of ["register_identity_provider", "invite", "disable_operator", "enable_operator", "set_identity_provider_status", "revoke_invitation"]) assert.ok(log.some(e => e.action === a), a);
     assert.equal(ok(await as("op")("GET", "/audit/verify")).ok, false, "still shows the earlier tampering");
+  });
+
+  // ---- FED-05: signed policy distribution -----------------------------------
+  it("a state releases signed policies through a pilot district; the district answers; promotion waits for it", async () => {
+    ids.d2 = ok(await as("op")("POST", "/nodes", { parentId: ids.tx, kind: "district", name: "Hill Country ISD", jurisdictionId: "US-TX", tenantRef: "tenant-hill", approvalReference: "enrol-3" }), 201).id;
+    ok(await as("tea")("POST", "/policy-settings", { policyId: "history.retention.minimum_years", nodeId: ids.tx, value: 5, reason: "state records rule" }), 201);
+    assert.equal((await as("sup1")("POST", "/policy-releases", { nodeId: ids.tx, reason: "try" })).status, 403, "districts don't distribute");
+    const bad = await as("tea")("POST", "/policy-releases", { nodeId: ids.tx, reason: "pilot everyone", pilotDistrictIds: [ids.d1, ids.d2] });
+    assert.equal(bad.status, 422);
+    const rel = ok(await as("tea")("POST", "/policy-releases", { nodeId: ids.tx, reason: "Fall policy update", pilotDistrictIds: [ids.d1] }), 201);
+    assert.equal(rel.status, "piloting"); assert.deepEqual(rel.issued.map(x => [x.district, x.version]), [[ids.d1, 1]]);
+    ids.rel1 = rel.id;
+    const promoteEarly = await as("tea")("POST", `/policy-releases/${rel.id}/promote`, {});
+    assert.equal(promoteEarly.status, 409); assert.deepEqual(promoteEarly.body.pilots, [{ district: ids.d1, state: "no_response" }]);
+    const d1Bundles = ok(await as("sup1")("GET", `/districts/${ids.d1}/policy-bundles`));
+    assert.equal(d1Bundles.length, 1);
+    const pol = Object.fromEntries(d1Bundles[0].policies.map(p => [p.id, p]));
+    assert.equal(pol["security.mfa.required_for_staff"].value, true); assert.ok(pol["security.mfa.required_for_staff"].locked_by, "the state's lock travels with it");
+    assert.equal(pol["history.retention.minimum_years"].value, 5);
+    assert.equal(pol["student.storage_quota_mb_per_pupil"].value, 750, "the district's own quota, as the district set it");
+    assert.equal((await as("tea")("POST", `/policy-bundles/${d1Bundles[0].id}/acknowledge`, { decision: "accepted" })).status, 403, "only the district answers for itself");
+    assert.equal((await as("sup1")("POST", `/policy-bundles/${d1Bundles[0].id}/acknowledge`, { decision: "objected" })).status, 400, "an objection needs a note");
+    ok(await as("sup1")("POST", `/policy-bundles/${d1Bundles[0].id}/acknowledge`, { decision: "objected", note: "Retention conflicts with our board policy" }), 201);
+    assert.equal((await as("tea")("POST", `/policy-releases/${rel.id}/promote`, {})).body.pilots[0].state, "objected");
+    ok(await as("sup1")("POST", `/policy-bundles/${d1Bundles[0].id}/acknowledge`, { decision: "accepted", note: "Board amended its policy" }), 201);
+    const promoted = ok(await as("tea")("POST", `/policy-releases/${rel.id}/promote`, {}));
+    assert.equal(promoted.status, "published"); assert.deepEqual(promoted.issued.map(x => [x.district, x.version]), [[ids.d2, 1]]);
+  });
+
+  it("bundles are signed for their district, versions only go up, and a rollback re-issues the earlier content", async () => {
+    const key = ok(await as("op")("GET", "/policy-signing-key"));
+    assert.equal(key.configured, true);
+    const list = ok(await as("sup1")("GET", `/districts/${ids.d1}/policy-bundles`));
+    const file = await (await fetch(`${mc.base}/mc/api/policy-bundles/${list[0].id}/file`, { headers: { cookie: s.sup1.cookie } })).json();
+    const v = verifyBundle(file, parsePublicKey(key.publicKey));
+    assert.equal(v.ok, true); assert.equal(v.body.district.tenant_ref, "tenant-lakeside"); assert.equal(v.body.version, 1); assert.equal(v.body.previous_sha256, null);
+    assert.equal((await fetch(`${mc.base}/mc/api/policy-bundles/${list[0].id}/file`, { headers: { cookie: s.vp.cookie } })).status, 200, "the district's own people can fetch it");
+    // A second release, then roll it back.
+    ok(await as("tea")("POST", "/policy-settings", { policyId: "history.retention.minimum_years", nodeId: ids.tx, value: 99, reason: "typo, meant 9" }), 201);
+    const r2 = ok(await as("tea")("POST", "/policy-releases", { nodeId: ids.tx, reason: "Winter update" }), 201);
+    assert.equal(r2.status, "published"); assert.deepEqual(r2.issued.map(x => x.version), [2, 2]);
+    const back = ok(await as("tea")("POST", `/policy-releases/${r2.id}/rollback`, { reason: "retention typo" }));
+    assert.equal(back.status, "rolled_back"); assert.deepEqual(back.issued.map(x => x.version), [3, 3]);
+    const after = ok(await as("sup1")("GET", `/districts/${ids.d1}/policy-bundles`));
+    assert.deepEqual(after.map(b => [b.version, b.stage]), [[3, "rollback"], [2, "general"], [1, "pilot"]]);
+    const ret = b => b.policies.find(p => p.id === "history.retention.minimum_years").value;
+    assert.deepEqual([ret(after[2]), ret(after[1]), ret(after[0])], [5, 99, 5], "the rollback carries version 1's content");
+    const v3 = await (await fetch(`${mc.base}/mc/api/policy-bundles/${after[0].id}/file`, { headers: { cookie: s.sup1.cookie } })).json();
+    assert.equal(v3.previous_sha256, after[1].sha256, "each version points at the one before");
+    assert.equal((await as("tea")("POST", `/policy-releases/${r2.id}/rollback`, { reason: "again" })).status, 409);
+    const rels = ok(await as("tea")("GET", `/policy-releases?nodeId=${ids.tx}`));
+    assert.deepEqual(rels.map(r => [r.kind, r.status]), [["rollback", "published"], ["release", "rolled_back"], ["release", "published"]]);
+    await assert.rejects(admin.query("UPDATE master_control.policy_bundles SET version=9"), /append-only/);
+    const log = ok(await as("tea")("GET", `/audit?nodeId=${ids.tx}`));
+    for (const a of ["release_policies", "promote_policy_release", "rollback_policy_release"]) assert.ok(log.some(e => e.action === a && e.decision === "allowed"), a);
+    assert.ok(log.some(e => e.action === "release_policies" && e.decision === "denied"));
   });
 
   it("the console loads with a strict content security policy", async () => {
