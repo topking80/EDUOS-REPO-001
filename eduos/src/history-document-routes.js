@@ -74,15 +74,16 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
       const fileName = typeof requestedName === "string" ? requestedName.trim() : "";
       if (!NAME_RE.test(fileName)) return res.status(400).json({ error: "invalid_document_name" });
       const contentType = req.headers["content-type"];
-      if (typeof contentType !== "string" || !/^text\/plain(?:\\s*;\\s*charset=utf-8)?$/i.test(contentType.trim()) ||
-          !Buffer.isBuffer(req.body) || !req.body.length || req.body.length > MAX_BYTES)
+      const uploadBody = Buffer.isBuffer(uploadBody) ? uploadBody : null;
+      if (typeof contentType !== "string" || !/^text\/plain(?:\s*;\s*charset=utf-8)?$/i.test(contentType.trim()) ||
+          !uploadBody || !uploadBody.length || uploadBody.length > MAX_BYTES)
         return res.status(415).json({ error: "unsupported_document_type", accepted: ["text/plain; charset=utf-8"] });
       const suppliedKey = req.headers["idempotency-key"];
       if (suppliedKey !== undefined && (typeof suppliedKey !== "string" || !KEY_RE.test(suppliedKey)))
         return res.status(400).json({ error: "invalid_idempotency_key" });
       const key = typeof suppliedKey === "string" ? suppliedKey : null;
       try {
-        decodeText(req.body);
+        decodeText(uploadBody);
         const asset = crypto.randomUUID();
         const begun = await withTenantTransaction(req.actor, async c => {
           const matches = await one(c,`SELECT 1 FROM student_history_contributions
@@ -90,7 +91,7 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
             [contributionId,studentId,req.actor.districtId]);
           if (!matches) throw new HttpError(404,"contribution_not_found");
           const out = (await one(c,`SELECT eduos_history_contribution_document_begin($1,$2,$3,$4,$5,$6) AS out`,
-            [contributionId,asset,`history/${req.actor.districtId}/pending/${asset}.txt`,req.body.length,fileName,key || null])).out;
+            [contributionId,asset,`history/${req.actor.districtId}/pending/${asset}.txt`,uploadBody.length,fileName,key || null])).out;
           if (out.error) throw new HttpError(BEGIN_ERRORS[out.error] || 400,out.error,out);
           return out;
         });
@@ -98,7 +99,7 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
         const record = (scan,processing,extra={}) => withTenantTransaction(req.actor,c =>
           one(c,`SELECT eduos_history_contribution_document_set($1,$2,$3,$4,$5) AS ok`,
             [asset,extra.key ?? null,extra.bytes ?? null,scan,processing]));
-        const scanned = await scanner.scan(req.body);
+        const scanned = await scanner.scan(uploadBody);
         if (scanned.verdict !== "clean") {
           await record(scanned.verdict === "infected" ? "blocked" : "pending","failed");
           await withTenantTransaction(req.actor,c=>audit(c,req,"blocked","history_document",asset,
@@ -106,9 +107,9 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
           return res.status(422).json({ error: scanned.verdict === "infected" ? "document_failed_security_scan" : "security_scan_unavailable" });
         }
         const storageKey = `history/${req.actor.districtId}/${begun.studentId}/${asset}.txt`;
-        try { await storage.put(storageKey,req.body,"text/plain; charset=utf-8"); }
+        try { await storage.put(storageKey,uploadBody,"text/plain; charset=utf-8"); }
         catch(e) { await record("clean","failed"); throw e; }
-        const saved = await record("clean","processed",{key:storageKey,bytes:req.body.length});
+        const saved = await record("clean","processed",{key:storageKey,bytes:uploadBody.length});
         if (!saved?.ok) {
           await storage.remove(storageKey).catch(()=>{});
           return res.status(409).json({ error: "contribution_no_longer_pending" });
@@ -116,11 +117,11 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
         // TC-08 preservation verification uses the same SHA-256 registry for documents.
         await withTenantTransaction(req.actor,c=>c.query(
           `SELECT eduos_history_media_checksum($1,$2)`,
-          [asset,crypto.createHash("sha256").update(req.body).digest("hex")]));
+          [asset,crypto.createHash("sha256").update(uploadBody).digest("hex")]));
         await withTenantTransaction(req.actor,c=>audit(c,req,"add","history_document",asset,
-          `contribution=${contributionId};bytes=${req.body.length}`));
+          `contribution=${contributionId};bytes=${uploadBody.length}`));
         res.setHeader("Cache-Control","no-store");
-        res.status(201).json({ data: { assetId:asset,fileName,status:"processed",bytes:req.body.length } });
+        res.status(201).json({ data: { assetId:asset,fileName,status:"processed",bytes:uploadBody.length } });
       } catch(e) { sendError(res,next,e); }
     });
 
