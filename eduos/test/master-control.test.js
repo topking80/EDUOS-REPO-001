@@ -39,3 +39,31 @@ test("audit hashes are canonical and change when any field changes", () => {
   for (const [k, v] of [["actor", "op-2"], ["decision", "denied"], ["detail", { v: 2 }], ["at", "2026-11-26T15:00:01.000Z"]]) assert.notEqual(entryHash(GENESIS, { ...e, [k]: v }), h1, k);
   assert.notEqual(entryHash(h1, e), h1, "chained to the previous hash");
 });
+
+test("a rotated provider secret takes effect at once, even at the same length, and can come from a mounted file", async () => {
+  const { providerRegistry, readProviderSecret } = await import("../src/master-control/identity.js");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const path = (await import("node:path")).default;
+  const built = [];
+  const env = { MC_IDP_SECRET_TX: "aaaa-1111-secret" };
+  const reg = providerRegistry({ oidcRedirectUri: "https://mc.example/mc/auth/callback", oidcHttpTimeoutMs: 1000, nodeEnv: "test" },
+    { env, create: p => { const c = { secret: p.clientSecret, n: built.length }; built.push(c); return c; } });
+  const row = { id: "tx-idp", issuer: "https://idp.example", client_id: "eduos", scopes: ["openid"], client_secret_env: "MC_IDP_SECRET_TX" };
+  const first = reg.client(row);
+  assert.equal(reg.client(row), first, "reused while nothing changes");
+  env.MC_IDP_SECRET_TX = "bbbb-2222-secret"; // same length
+  const rotated = reg.client(row);
+  assert.notEqual(rotated, first);
+  assert.equal(rotated.secret, "bbbb-2222-secret", "the new secret is the one used");
+  assert.notEqual(reg.client({ ...row, scopes: ["openid", "email"] }), rotated, "scope changes rebuild too");
+  const dir = mkdtempSync(path.join(tmpdir(), "mc-secret-"));
+  const file = path.join(dir, "tx");
+  writeFileSync(file, "cccc-3333-secret\n");
+  env.MC_IDP_SECRET_TX_FILE = file;
+  assert.equal(reg.client(row).secret, "cccc-3333-secret", "a mounted file wins over the variable");
+  writeFileSync(file, "dddd-4444-secret\n");
+  assert.equal(reg.client(row).secret, "dddd-4444-secret", "rotated in place, no restart");
+  assert.equal(readProviderSecret("MC_MISSING", {}), null);
+  assert.throws(() => reg.client({ ...row, client_secret_env: "MC_MISSING" }), /is not set/);
+});

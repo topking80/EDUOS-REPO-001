@@ -65,7 +65,12 @@ Every step is in Master Control's hash-chained audit log: registration and statu
 
 ## Configuration
 
-For each extra provider, set its secret on the Master Control server under the name given at registration (for example `MC_IDP_SECRET_TX`). Register the redirect URI `MC_OIDC_REDIRECT_URI` (default `<origin>/mc/auth/callback`) with every provider.
+For each extra provider, set its secret on the Master Control server under the name given at registration (for example `MC_IDP_SECRET_TX`). Alternatively, set `<NAME>_FILE` to the path of a mounted secret file, which takes precedence.
+
+**Rotating a secret:**
+- The secret is read every time it's used, and a provider's client is rebuilt whenever its issuer, client ID, scopes or secret changes (compared through an HMAC with a per-process key; the secret is never logged or stored).
+- A rotated mounted file takes effect on the next sign-in, without a restart.
+- A rotated environment variable needs a restart, because environment variables only change when the process starts. Register the redirect URI `MC_OIDC_REDIRECT_URI` (default `<origin>/mc/auth/callback`) with every provider.
 
 ## Not in this slice
 
