@@ -678,20 +678,34 @@
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "middle_school",
+          "junior_high",
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "private"
+        ],
+        "geography": [
+          "six_activity_districts",
+          "member_leagues",
+          "classification"
         ],
         "activities": [
           "athletics",
+          "performing_arts",
           "cheer",
           "dance",
           "debate",
           "drama",
-          "music"
+          "music",
+          "other_activities"
         ]
       },
       "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://www.wiaa.com/"
+      "source_url": "https://www.wiaa.com/category/about-us/",
+      "legal_authority": "independent"
     },
     {
       "id": "us-wi-wiaa",
@@ -1828,23 +1842,32 @@
         "UHSAA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "private_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-UT"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "charter",
+          "private"
+        ],
+        "geography": [
+          "classification",
+          "region"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "interscholastic_activities"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://uhsaa.org/"
+      "source_url": "https://www.uhsaa.org/Publications/Handbook/Handbook.pdf"
     },
     {
       "id": "us-vt-vpa",
@@ -1853,23 +1876,33 @@
         "VPA"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "voluntary_member_association",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-VT"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "middle_school",
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "private"
+        ],
+        "geography": [
+          "voluntary_leagues",
+          "statewide_activity_governance"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "interscholastic_activities",
+          "student_activities"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://vpaonline.org/"
+      "source_url": "https://vpaonline.org/about/bylaws/"
     },
     {
       "id": "us-va-vhsl",
@@ -1878,23 +1911,32 @@
         "VHSL"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "member_governed_nonprofit",
+      "legal_authority": "independent",
       "jurisdiction_ids": [
         "US-VA"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "high_school"
+        ],
+        "school_types": [
+          "public",
+          "approved_nonboarding_nonpublic"
+        ],
+        "geography": [
+          "district",
+          "region",
+          "classification"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "student_activities"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://www.vhsl.org/"
+      "source_url": "https://www.vhsl.org/about-vhsl/"
     },
     {
       "id": "us-wv-wvssac",
@@ -1903,23 +1945,34 @@
         "WVSSAC"
       ],
       "organization_type": "independent_association",
-      "governance_type": "unverified",
-      "legal_authority": "unverified",
+      "governance_type": "delegated_authority_body",
+      "legal_authority": "delegated",
       "jurisdiction_ids": [
         "US-WV"
       ],
       "scope": {
         "levels": [
-          "K-12"
+          "secondary_school"
+        ],
+        "school_types": [
+          "public",
+          "private"
+        ],
+        "geography": [
+          "statewide",
+          "classification",
+          "regional_competition"
         ],
         "activities": [
           "athletics",
-          "activities"
+          "band",
+          "cheerleading",
+          "marching_band"
         ]
       },
-      "verification_status": "directory_seed_source_review_required",
+      "verification_status": "first_pass",
       "active": true,
-      "source_url": "https://wvssac.org/"
+      "source_url": "https://apps.sos.wv.gov/adlaw/csr/readfile.aspx?DocId=57336&Format=PDF"
     },
     {
       "id": "us-wy-whsaa",
