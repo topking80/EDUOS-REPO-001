@@ -36,7 +36,10 @@ class CredentialValidation(unittest.TestCase):
 
     def test_hash_formats(self):
         self.assertEqual(cfg.validate_hash("H", GOOD_HASH), GOOD_HASH)
-        for bad in ["", "plaintext-password", "$1$md5$deprecated", "$6$salt$short", "$6$REPLACEME$" + "a" * 86]:
+        # A real hash may contain "..." by chance; it must still pass.
+        lucky = "$6$saltsalt$" + "ab...cd" + "x" * 79
+        self.assertEqual(cfg.validate_hash("H", lucky), lucky)
+        for bad in ["", "plaintext-password", "$1$md5$deprecated", "$6$salt$short", "$6$REPLACEME$" + "a" * 86, "$6$...$..."]:
             with self.assertRaises(cfg.ConfigError, msg=bad):
                 cfg.validate_hash("H", bad)
         openssl = shutil.which("openssl")
