@@ -241,3 +241,43 @@ test("delegation schema requires bounded, effective-dated authority", () => {
   assert.ok(validateSchemaSubset({...delegation, authority_scope: []}, schema.properties.delegations.items).length > 0);
   assert.ok(validateSchemaSubset({...delegation, status: "unrestricted"}, schema.properties.delegations.items).length > 0);
 });
+
+
+test("SPORT-03 rule, eligibility, classification, official, and sanction collections are present but unseeded", () => {
+  for (const key of ["rule_sources","rule_versions","eligibility_policies","classification_cycles","classifications","official_credentials","sanctioning_records"]) {
+    assert.ok(Array.isArray(registry[key]), key + " must be an array");
+    assert.deepEqual(registry[key], [], key + " must remain empty until primary-source verification");
+  }
+});
+
+test("SPORT-03 records enforce source and organization references", () => {
+  const organizations = new Set(registry.organizations.map(item => item.id));
+  for (const key of ["rule_sources", "eligibility_policies", "classification_cycles", "classifications", "official_credentials", "sanctioning_records"]) {
+    for (const record of registry[key]) assert.ok(organizations.has(record.organization_id), record.id + " organization exists");
+  }
+  const ruleSources = new Set(registry.rule_sources.map(item => item.id));
+  for (const version of registry.rule_versions) assert.ok(ruleSources.has(version.rule_source_id), version.id + " rule source exists");
+  const ruleVersions = new Set(registry.rule_versions.map(item => item.id));
+  for (const policy of registry.eligibility_policies) assert.ok(ruleVersions.has(policy.rule_version_id), policy.id + " rule version exists");
+  const cycles = new Set(registry.classification_cycles.map(item => item.id));
+  for (const assignment of registry.classifications) assert.ok(cycles.has(assignment.cycle_id), assignment.id + " classification cycle exists");
+});
+
+test("SPORT-03 eligibility policy requires explicit scope and versioned authority", () => {
+  const policy = {
+    id: "eligibility-example-001",
+    organization_id: registry.organizations[0].id,
+    rule_version_id: "rule-version-example-001",
+    policy_type: "transfer",
+    scope: ["high_school", "basketball"],
+    status: "active",
+    effective_from: "2026-07-01",
+    decision_authority: "association-eligibility-committee",
+    appeal_route: "association-appeals-process",
+    source_url: "https://example.org/official-transfer-rule",
+    verification_status: "verified"
+  };
+  assert.deepEqual(validateSchemaSubset(policy, schema.properties.eligibility_policies.items), []);
+  assert.ok(validateSchemaSubset({...policy, scope: []}, schema.properties.eligibility_policies.items).length > 0);
+  assert.ok(validateSchemaSubset({...policy, status: "nationally_overridden"}, schema.properties.eligibility_policies.items).length > 0);
+});
