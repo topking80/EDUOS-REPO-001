@@ -73,10 +73,18 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
       const requestedName = req.query?.name;
       const fileName = typeof requestedName === "string" ? requestedName.trim() : "";
       if (!NAME_RE.test(fileName)) return res.status(400).json({ error: "invalid_document_name" });
-      const contentType = req.headers["content-type"];
-      const uploadBody = Buffer.isBuffer(req.body) ? req.body : null;
-      if (typeof contentType !== "string" || !/^text\/plain(?:\s*;\s*charset=utf-8)?$/i.test(contentType.trim()) ||
-          !uploadBody || !uploadBody.length || uploadBody.length > MAX_BYTES)
+      // Snapshot untrusted request values once. Express request fields are
+      // attacker-controlled and may be arrays/objects when query/header
+      // parameter pollution is used. Only accept primitive strings and a
+      // genuine Buffer, then copy the bytes into an application-owned Buffer.
+      const contentTypeHeader = req.headers["content-type"];
+      const contentType = typeof contentTypeHeader === "string" ? contentTypeHeader.trim() : "";
+      const requestBody = req.body;
+      if (!/^text\/plain(?:\s*;\s*charset=utf-8)?$/i.test(contentType) ||
+          !Buffer.isBuffer(requestBody))
+        return res.status(415).json({ error: "unsupported_document_type", accepted: ["text/plain; charset=utf-8"] });
+      const uploadBody = Buffer.from(requestBody);
+      if (uploadBody.length === 0 || uploadBody.length > MAX_BYTES)
         return res.status(415).json({ error: "unsupported_document_type", accepted: ["text/plain; charset=utf-8"] });
       const suppliedKey = req.headers["idempotency-key"];
       if (suppliedKey !== undefined && (typeof suppliedKey !== "string" || !KEY_RE.test(suppliedKey)))
