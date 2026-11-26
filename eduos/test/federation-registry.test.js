@@ -136,6 +136,27 @@ test("predecessor-successor relationships cannot contain directed cycles", () =>
   for (const node of graph.keys()) assert.ok(visit(node), "predecessor-successor graph must be acyclic");
 });
 
+
+test("membership records use unique IDs and reference canonical organizations", () => {
+  const organizationIds = new Set(registry.organizations.map(item => item.id));
+  const membershipIds = registry.memberships.map(item => item.id);
+  assert.equal(new Set(membershipIds).size, membershipIds.length, "membership IDs must be unique");
+  for (const membership of registry.memberships) {
+    assert.ok(organizationIds.has(membership.organization_id), membership.id + " organization exists");
+    assert.ok(membership.school_id.trim().length > 0, membership.id + " school reference is present");
+    assert.ok(membership.activity_scope.length > 0, membership.id + " activity scope is explicit");
+    if (membership.effective_to) {
+      assert.ok(Date.parse(membership.effective_from) <= Date.parse(membership.effective_to),
+        membership.id + " membership effective_from must not be after effective_to");
+    }
+  }
+});
+
+test("membership seed does not fabricate unverified school affiliations", () => {
+  assert.deepEqual(registry.memberships, [],
+    "populate memberships only from source-backed, approved school affiliation records");
+});
+
 test("registry seed conforms to the declared schema's structural constraints", () => {
   const errors = validateSchemaSubset(registry, schema);
   assert.deepEqual(errors, [], errors.join("\n"));
