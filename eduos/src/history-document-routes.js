@@ -70,8 +70,11 @@ export function registerHistoryDocumentRoutes(app, providers = historyMedia()) {
       const contributionId = typeof req.params?.contributionId === "string" ? req.params.contributionId : "";
       if (!validId(studentId) || !validId(contributionId))
         return res.status(400).json({ error: "invalid_contribution_id" });
-      const requestedName = req.query?.name;
-      const fileName = typeof requestedName === "string" ? requestedName.trim() : "";
+      // Parse the URL query ourselves so repeated name parameters cannot
+      // become an array/object through Express query-parser configuration.
+      const originalUrl = typeof req.originalUrl === "string" ? req.originalUrl : "";
+      const nameValues = new URL(originalUrl, "http://eduos.invalid").searchParams.getAll("name");
+      const fileName = nameValues.length === 1 ? nameValues[0].trim() : "";
       if (!NAME_RE.test(fileName)) return res.status(400).json({ error: "invalid_document_name" });
       // Snapshot untrusted request values once. Express request fields are
       // attacker-controlled and may be arrays/objects when query/header
