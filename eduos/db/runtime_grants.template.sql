@@ -1014,3 +1014,13 @@ GRANT SELECT, INSERT ON history_delivery_settings TO eduos_app;
 GRANT UPDATE (accepting, changed_by, changed_at) ON history_delivery_settings TO eduos_app;
 REVOKE DELETE, TRUNCATE ON history_delivery_settings FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_history_delivery_directory(), eduos_history_transfer_deliver(uuid,uuid,text,text,jsonb,jsonb,jsonb) TO eduos_app;
+
+-- 171 (LRH-01): the district learning-resource catalog (metadata only).
+GRANT SELECT, INSERT ON learning_resources, learning_resource_collections, learning_resource_collection_items, learning_resource_school_selections TO eduos_app;
+GRANT UPDATE (title, description, resource_type, source_name, source_url, license_name, license_url, license_status, license_reviewed_by, license_reviewed_at, license_note,
+  language, grade_min, grade_max, subjects, standards, audience, version, sha256, size_bytes, status, published_by, published_at, retired_by, retired_at, retire_reason) ON learning_resources TO eduos_app;
+GRANT UPDATE (name, description, review_by, status, published_by, published_at, retired_at) ON learning_resource_collections TO eduos_app;
+GRANT DELETE ON learning_resource_collection_items TO eduos_app;
+GRANT UPDATE (removed_by, removed_at) ON learning_resource_school_selections TO eduos_app;
+REVOKE DELETE, TRUNCATE ON learning_resources, learning_resource_collections, learning_resource_school_selections FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_grade_rank(text), eduos_lr_manager(), eduos_lr_school_lead(), eduos_lr_pupil_grade(), eduos_lr_visible(uuid) TO eduos_app;

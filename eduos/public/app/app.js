@@ -5273,6 +5273,79 @@ VIEWS.library = async () => {
   return out;
 };
 
+// LRH-01: the district's digital learning resources. Managers describe and
+// publish (a second person approves each licence); school leads choose
+// collections; everyone browses what their school chose, within their audience.
+const LR_TYPES = { reference: "Reference", pdf: "PDF", ebook: "E-book", offline_archive: "Offline archive", audio: "Audio", video: "Video", image: "Image", map_package: "Map package", course_package: "Course package" };
+const LR_AUDIENCE = { everyone: "Everyone", staff: "Staff", emergency_staff: "Emergency staff" };
+const LR_GRADES = ["pre_k", "k", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+const LR_ERRORS = { someone_else_reviews_the_licence: "Someone other than the person who added it reviews the licence.", licence_not_approved: "The licence hasn't been approved.",
+  checksum_required: "Add the file's SHA-256 checksum first.", publish_every_resource_first: "Publish every resource in the collection first.", collection_is_empty: "Add a resource first.",
+  only_drafts_change: "Only drafts can change. Retire it and add a new version.", invalid_resource: "Check the highlighted details.", superintendent_only: "Only the superintendent publishes." };
+const lrGrade = g => g === "pre_k" ? "Pre-K" : g === "k" ? "K" : g;
+const lrLine = r => `${LR_TYPES[r.type] || r.type} · Grades ${lrGrade(r.grades[0])}–${lrGrade(r.grades[1])} · ${LR_AUDIENCE[r.audience] || r.audience} · ${r.license.name}`;
+async function digitalResourcesCard() {
+  const role = state.me.role, box = h("section", { class: "card", "aria-label": "Digital resources" });
+  const act = async (fn, okMsg) => { try { await fn(); toast(okMsg); load(); } catch (e) { toast(LR_ERRORS[e.body?.error] || (e.body?.fields ? `Check: ${e.body.fields.join(", ")}` : "That didn't work.")); } };
+  const browse = async (q = "") => {
+    const list = (await safe(api.get(`/api/resources${q ? `?q=${encodeURIComponent(q)}` : ""}`)))?.data || [];
+    return list.length ? h("ul", { class: "list" }, list.map(r => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, r.title), h("br"), h("span", { class: "muted small" }, `${lrLine(r)} · ${r.source.name}`)),
+      h("a", { class: "btn small secondary", href: r.source.url, target: "_blank", rel: "noopener noreferrer", "aria-label": `Open ${r.title}` }, "Open")))) : empty("No digital resources here yet.");
+  };
+  const manage = async () => {
+    const d = (await safe(api.get("/api/resources/catalog")))?.data || {}, resources = Array.isArray(d.resources) ? d.resources : [], collections = Array.isArray(d.collections) ? d.collections : [];
+    const f = {}, field = (k, label, attrs = {}) => (f[k] = h("input", { class: "field", "aria-label": label, placeholder: label, ...attrs }));
+    const pick = (k, label, opts, val) => (f[k] = h("select", { class: "field", "aria-label": label }, Object.entries(opts).map(([v, t]) => h("option", { value: v, selected: v === val }, t))));
+    const grades = Object.fromEntries(LR_GRADES.map(g => [g, `Grade ${lrGrade(g)}`]));
+    const form = h("form", { class: "stack", onsubmit: e => { e.preventDefault(); act(() => api.post("/api/resources", { title: f.title.value, resourceType: f.type.value, sourceName: f.source.value, sourceUrl: f.url.value,
+        licenseName: f.lic.value, ...(f.licUrl.value ? { licenseUrl: f.licUrl.value } : {}), gradeMin: f.gmin.value, gradeMax: f.gmax.value, audience: f.aud.value, version: f.ver.value,
+        ...(f.sha.value ? { sha256: f.sha.value.trim().toLowerCase() } : {}), ...(f.subj.value ? { subjects: f.subj.value.split(",").map(s => s.trim()).filter(Boolean) } : {}) }), "Added as a draft. Someone else reviews the licence."); } },
+      field("title", "Title", { required: true }), pick("type", "Type", LR_TYPES, "pdf"), field("source", "Source (publisher)", { required: true }), field("url", "Source link (https)", { type: "url", required: true }),
+      field("lic", "Licence (e.g. CC BY 4.0)", { required: true }), field("licUrl", "Licence link (https, optional)", { type: "url" }),
+      h("div", { class: "row wrap" }, pick("gmin", "Lowest grade", grades, "k"), pick("gmax", "Highest grade", grades, "12"), pick("aud", "Who can see it", LR_AUDIENCE, "everyone")),
+      field("subj", "Subjects, comma separated (optional)"), field("ver", "Version or edition", { required: true }), field("sha", "SHA-256 checksum (needed to publish)", { pattern: "[0-9a-fA-F]{64}" }),
+      h("button", { class: "btn", type: "submit" }, "Add draft"));
+    const rRow = r => { const slot = h("span", { class: "row wrap" });
+      if (r.status === "draft" && !r.yours) slot.append(h("button", { class: "btn small", type: "button", onclick: () => reasonForm(slot, `What you checked for ${r.title}`, note => act(() => api.post(`/api/resources/${r.id}/license-review`, { decision: "approved", note }), "Licence approved.")) }, "Approve licence"),
+        h("button", { class: "btn small secondary", type: "button", onclick: () => reasonForm(slot, `Why the licence for ${r.title} doesn't work`, note => act(() => api.post(`/api/resources/${r.id}/license-review`, { decision: "rejected", note }), "Licence rejected.")) }, "Reject licence"));
+      if (r.status === "draft" && role === "superintendent" && !r.missing.length) slot.append(h("button", { class: "btn small primary", type: "button", onclick: () => act(() => api.post(`/api/resources/${r.id}/publish`, {}), "Published.") }, "Publish"));
+      if (r.status !== "retired") slot.append(h("button", { class: "btn small secondary", type: "button", onclick: () => reasonForm(slot, `Why retire ${r.title}`, reason => act(() => api.post(`/api/resources/${r.id}/retire`, { reason }), "Retired.")) }, "Retire"));
+      return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, r.title), h("br"), h("span", { class: "muted small" }, `${lrLine(r)} · licence ${r.license.status}${r.missing.length ? ` · needs ${r.missing.join(" and ")}` : ""}`)),
+        chip(r.status === "published" ? "present" : r.status === "retired" ? "absent" : "expected", r.status[0].toUpperCase() + r.status.slice(1)), slot); };
+    const published = resources.filter(r => r.status !== "retired");
+    const kRow = k => { const add = h("select", { class: "field", "aria-label": `Add a resource to ${k.name}` }, h("option", { value: "" }, "Add a resource…"), published.filter(r => !k.items.includes(r.id)).map(r => h("option", { value: r.id }, r.title)));
+      return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, k.name), h("br"), h("span", { class: "muted small" }, `${k.items.length} resources · ${k.schools} schools use it${k.reviewBy ? ` · review by ${fmtDay(k.reviewBy)}` : ""}`)),
+        chip(k.status === "published" ? "present" : k.status === "retired" ? "absent" : "expected", k.status[0].toUpperCase() + k.status.slice(1)),
+        k.status === "draft" ? h("span", { class: "row wrap" }, add, h("button", { class: "btn small", type: "button", onclick: () => add.value && act(() => api.post(`/api/resource-collections/${k.id}/items`, { resourceId: add.value }), "Added.") }, "Add"),
+          role === "superintendent" ? h("button", { class: "btn small primary", type: "button", onclick: () => act(() => api.post(`/api/resource-collections/${k.id}/publish`, {}), "Collection published. Schools can choose it now.") }, "Publish collection") : null) : null,
+        k.status !== "retired" ? h("button", { class: "btn small secondary", type: "button", onclick: () => act(() => api.post(`/api/resource-collections/${k.id}/retire`, {}), "Collection retired.") }, "Retire collection") : null); };
+    const kName = h("input", { class: "field", "aria-label": "New collection name", placeholder: "New collection name", required: true, minlength: 2 });
+    return [h("p", { class: "small muted" }, d.notice || "Nothing is published without an approved licence and a checksum."),
+      h("h4", {}, "Resources"), resources.length ? h("ul", { class: "list" }, resources.map(rRow)) : empty("No resources yet."),
+      h("details", {}, h("summary", {}, "Add a resource"), form),
+      h("h4", {}, "Collections"), collections.length ? h("ul", { class: "list" }, collections.map(kRow)) : empty("No collections yet."),
+      h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); act(() => api.post("/api/resource-collections", { name: kName.value.trim() }), "Collection created."); } }, kName, h("button", { class: "btn small", type: "submit" }, "Create collection"))];
+  };
+  const choose = async () => {
+    const list = (await safe(api.get("/api/resource-collections/available")))?.data || [];
+    return [h("h4", {}, "Collections for your school"), list.length ? h("ul", { class: "list" }, list.map(k => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, k.name), h("br"), h("span", { class: "muted small" }, `${k.items} resources${k.description ? ` · ${k.description}` : ""}`)),
+      h("button", { class: `btn small${k.selected ? " secondary" : ""}`, type: "button", "aria-pressed": String(k.selected), onclick: () => act(() => api.post(`/api/resource-collections/${k.id}/${k.selected ? "unselect" : "select"}`, {}), k.selected ? "Removed from your school." : "Your school uses it now.") }, k.selected ? "Stop using" : "Use at our school")))) : empty("The district hasn't published any collections yet.")];
+  };
+  async function load() {
+    const q = h("input", { class: "field", type: "search", "aria-label": "Search digital resources", placeholder: "Search digital resources" }), results = h("div", {}, await browse());
+    box.replaceChildren(h("h3", {}, "Digital resources"),
+      ...(["superintendent", "it_admin"].includes(role) ? await manage() : []),
+      ...(["principal", "librarian"].includes(role) ? await choose() : []),
+      h("h4", {}, "What your school offers"), h("form", { class: "row wrap", role: "search", onsubmit: async e => { e.preventDefault(); results.replaceChildren(await browse(q.value.trim())); } }, q, h("button", { class: "btn small", type: "submit" }, "Search")), results);
+  }
+  await load();
+  return box;
+}
+{
+  const base = VIEWS.library;
+  VIEWS.library = async () => [...[await base()].flat(), await digitalResourcesCard()];
+}
+
 // ---- Apps in the app (UI-01) -------------------------------------------------
 // Everyone's licensed apps, opened through the same governed launch as the full
 // site; leaders also get the decisions waiting for them and grade passback.

@@ -388,6 +388,16 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     // TC-06c: online delivery between districts on this deployment.
     case "/api/history-delivery/settings": return { data: { accepting: true } };
     case "/api/history-delivery/directory": return { data: [{ id: "d2", name: "Lakeside Unified" }] };
+    // LRH-01: the digital learning-resource catalog.
+    case "/api/resources/catalog": return { data: { notice: "Metadata only for now.", resources: [
+      { id: "lr1", title: "Fractions picture book", type: "ebook", source: { name: "Open Library", url: "https://example.org/f" }, license: { name: "CC BY 4.0", url: null, status: "approved" },
+        grades: ["2", "4"], subjects: ["Math"], audience: "everyone", version: "1", status: "published", yours: false, missing: [] },
+      { id: "lr2", title: "Evacuation procedures", type: "pdf", source: { name: "State OEM", url: "https://example.org/e" }, license: { name: "Public domain", url: null, status: "unreviewed" },
+        grades: ["k", "12"], subjects: [], audience: "emergency_staff", version: "2026", status: "draft", yours: false, missing: ["licence approval"] }],
+      collections: [{ id: "lk1", name: "Grade 3 math", description: null, reviewBy: "2027-06-30", status: "draft", items: ["lr1"], schools: 0 }] } };
+    case "/api/resource-collections/available": return { data: [{ id: "lk1", name: "Grade 3 math", description: "Picture books", reviewBy: null, items: 1, selected: false }] };
+    case "/api/resources": return { data: [{ id: "lr1", title: "Fractions picture book", type: "ebook", source: { name: "Open Library", url: "https://example.org/f" }, license: { name: "CC BY 4.0", url: null },
+      grades: ["2", "4"], subjects: ["Math"], audience: "everyone", version: "1", status: "published" }] };
     // HSP-06 part 3: districts in the learner transfer workflow.
     case "/api/transfers/settings": return { data: { enabled: true } };
     case "/api/transfers": return { data: [] };
@@ -1291,6 +1301,20 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "principal: enter figures", a11y);
       if (page.errors.length) failures.push(`principal rankings: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
+  }
+  // LRH-01: the superintendent's catalog, a principal's collection choice, a pupil's browse. All pass axe.
+  for (const [role, wants] of [["superintendent", ["Digital resources", "Evacuation procedures", "needs licence approval", "Approve licence", "Publish collection", "Fractions picture book"]],
+    ["principal", ["Collections for your school", "Use at our school", "Fractions picture book"]], ["pupil", ["Digital resources", "Fractions picture book", "E-book · Grades 2–4"]]]) {
+    state.role = role;
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/library` });
+      let text = await page.mainText();
+      for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Fractions picture book"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const w of wants) if (!text.includes(w)) failures.push(`${role} digital resources: "${w}" is missing`);
+      await axeScan(page, `${role}: digital resources`, a11y);
+      if (page.errors.length) failures.push(`${role} digital resources: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   // TC-05: the records office's privacy page; the superintendent's emergency reviews; an adult student's sharing; a counselor's emergency form. All pass axe.
   {

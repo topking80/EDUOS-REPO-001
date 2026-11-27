@@ -352,8 +352,8 @@ publication); student data leaking into a package (packages hold approved refere
 | ID | Item | Depends on |
 |---|---|---|
 | LRH-00 | This audit and Phase 0 inventory (done; ADR approval and the licence review still needed) | — |
-| LRH-01 | Resource catalog foundation: schema, forced RLS, permissions, audit, alongside the library module | LRH-00 |
-| LRH-02 | District collection governance: approve, publish, retire, school selection, policy | LRH-01 |
+| LRH-01 | Resource catalog foundation: schema, forced RLS, permissions, audit, alongside the library module (built: migration 171, `docs/LEARNING-RESOURCES.md`) | LRH-00 |
+| LRH-02 | District collection governance: approve, publish, retire, school selection, policy (approve, publish, retire and school selection arrived with LRH-01; the written district policy and collection review reminders remain) | LRH-01 |
 | LRH-03 | Provisioning: jobs, checksums, quotas, resumable transfer, rollback | LRH-01 |
 | LRH-04 | EDEN content manifests and node verification/activation | LRH-03 |
 | LRH-05 | Library experience for district, school, librarian, teacher, student and guardian | LRH-02 |
