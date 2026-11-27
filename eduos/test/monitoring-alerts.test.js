@@ -7,7 +7,7 @@ const read = path => readFile(new URL(path, import.meta.url), "utf8");
 test("queue alert rules use only metrics exported by EduOS", async () => {
   const [rules, metrics] = await Promise.all([
     read("../monitoring/eduos-alerts.yml"),
-    read("../src/metrics.js")
+    read("../src/federation/prometheus.js")
   ]);
   const metricNames = [
     "eduos_queue_backlog_up",
@@ -73,4 +73,18 @@ test("alert rules and runbook do not introduce learner or district identifiers a
   assert.match(runbook, /do not label samples by district, school, student, recipient/i);
   assert.match(runbook, /skipped.*not delivered/is);
   assert.match(runbook, /at-least-once delivery/i);
+});
+
+test("FED-09: federation alert rules use only gauges Master Control and EduOS export, and every runbook anchor exists", async () => {
+  const [rules, mc, edu, runbook] = await Promise.all([read("../monitoring/federation-alerts.yml"), read("../src/master-control/metrics.js"),
+    read("../src/federation-metrics.js"), read("../docs/OPERATIONS-FEDERATION.md")]);
+  const exprs = [...rules.matchAll(/expr: (.+)/g)].map(m => m[1]).join(" ");
+  const names = new Set([...exprs.matchAll(/\b(mc_[a-z_]+|eduos_federation_[a-z_]+)/g)].map(m => m[1]));
+  assert.ok(names.size >= 8);
+  for (const n of names) {
+    const [src, rest] = n.startsWith("mc_") ? [mc, n.slice(3)] : [edu, n.slice("eduos_federation_".length)];
+    assert.ok(src.includes(`"${rest}"`), `exported: ${n}`);
+  }
+  const anchors = new Set([...runbook.matchAll(/^###? (.+)$/gm)].map(m => m[1].toLowerCase().replace(/[^a-z0-9 -]/g, "").replace(/ /g, "-")));
+  for (const [, a] of rules.matchAll(/runbook: docs\/OPERATIONS-FEDERATION\.md#([a-z-]+)/g)) assert.ok(anchors.has(a), `runbook section: ${a}`);
 });

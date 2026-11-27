@@ -1,0 +1,142 @@
+# FED-09: unit tests for federation-alerts.yml. Run: promtool test rules monitoring/federation-alerts.test.yml
+rule_files:
+  - federation-alerts.yml
+evaluation_interval: 1m
+tests:
+  # Healthy Master Control and EduOS: nothing fires.
+  - interval: 1m
+    input_series:
+      - { series: 'up{job="master-control",instance="mc"}', values: "1x60" }
+      - { series: 'mc_federation_up{job="master-control",instance="mc"}', values: "1x60" }
+      - { series: 'mc_audit_chain_ok{job="master-control",instance="mc"}', values: "1x60" }
+      - { series: 'mc_signing_key_status{job="master-control",instance="mc",status="active"}', values: "1x60" }
+      - { series: 'mc_signing_key_status{job="master-control",instance="mc",status="revoked"}', values: "0x60" }
+      - { series: 'mc_audit_max_denials_per_operator_last_hour{job="master-control",instance="mc"}', values: "2x60" }
+      - { series: 'mc_incidents_open{job="master-control",instance="mc",severity="high"}', values: "0x60" }
+      - { series: 'mc_incidents_open{job="master-control",instance="mc",severity="low"}', values: "1x60" }
+      - { series: 'mc_policy_bundle_oldest_unacknowledged_seconds{job="master-control",instance="mc"}', values: "3600x60" }
+      - { series: 'eduos_federation_status_up{job="eduos",instance="a"}', values: "1x60" }
+      - { series: 'eduos_federation_trusted_keys{job="eduos",instance="a"}', values: "2x60" }
+      - { series: 'eduos_federation_districts{job="eduos",instance="a",bundle="in_effect"}', values: "3x60" }
+      - { series: 'eduos_federation_newest_bundle_revoked_key_districts{job="eduos",instance="a"}', values: "0x60" }
+      - { series: 'eduos_federation_residency_districts{job="eduos",instance="a",status="not_met"}', values: "0x60" }
+    alert_rule_test:
+      - { eval_time: 50m, alertname: MasterControlScrapeUnavailable, exp_alerts: [] }
+      - { eval_time: 50m, alertname: MasterControlAuditChainBroken, exp_alerts: [] }
+      - { eval_time: 50m, alertname: MasterControlRevokedSigningKeyConfigured, exp_alerts: [] }
+      - { eval_time: 50m, alertname: MasterControlRepeatedDenials, exp_alerts: [] }
+      - { eval_time: 50m, alertname: MasterControlHighSeverityIncidentOpen, exp_alerts: [] }
+      - { eval_time: 50m, alertname: MasterControlPolicyBundleUnanswered, exp_alerts: [] }
+      - { eval_time: 50m, alertname: EduOSNoTrustedMasterControlKey, exp_alerts: [] }
+      - { eval_time: 50m, alertname: EduOSBundleUnderRevokedKey, exp_alerts: [] }
+      - { eval_time: 50m, alertname: EduOSResidencyNotMet, exp_alerts: [] }
+
+  # Compromise: broken chain, revoked key configured, a critical incident, repeated refusals.
+  - interval: 1m
+    input_series:
+      - { series: 'up{job="master-control",instance="mc"}', values: "1x60" }
+      - { series: 'mc_audit_chain_ok{job="master-control",instance="mc"}', values: "1x10 0x50" }
+      - { series: 'mc_signing_key_status{job="master-control",instance="mc",status="revoked"}', values: "0x10 1x50" }
+      - { series: 'mc_audit_max_denials_per_operator_last_hour{job="master-control",instance="mc"}', values: "0x10 25x50" }
+      - { series: 'mc_incidents_open{job="master-control",instance="mc",severity="critical"}', values: "0x10 1x50" }
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: MasterControlAuditChainBroken
+        exp_alerts:
+          - exp_labels: { severity: critical, service: master-control, job: master-control, instance: mc }
+            exp_annotations:
+              summary: Master Control's audit hash chain is broken
+              description: An audit entry was removed or changed. Treat as a security incident; GET /mc/api/audit/verify shows where the chain breaks.
+              runbook: docs/OPERATIONS-FEDERATION.md#audit-chain-broken
+      - eval_time: 30m
+        alertname: MasterControlRevokedSigningKeyConfigured
+        exp_alerts:
+          - exp_labels: { severity: critical, service: master-control, job: master-control, instance: mc, status: revoked }
+            exp_annotations:
+              summary: Master Control is configured with a revoked signing key
+              description: It will refuse to sign bundles and terms until a new MC_POLICY_SIGNING_SECRET is configured. Follow the FED-08 revocation runbook.
+              runbook: docs/OPERATIONS-FEDERATION.md#revoked-signing-key
+      - eval_time: 30m
+        alertname: MasterControlRepeatedDenials
+        exp_alerts:
+          - exp_labels: { severity: warning, service: master-control, job: master-control, instance: mc }
+            exp_annotations:
+              summary: An operator is being refused repeatedly
+              description: One operator has had ten or more refusals in the last hour. GET /mc/api/security/alerts names the account; check for misuse or a misconfigured role.
+              runbook: docs/OPERATIONS-FEDERATION.md#repeated-denials
+      - eval_time: 30m
+        alertname: MasterControlHighSeverityIncidentOpen
+        exp_alerts:
+          - exp_labels: { severity: warning, service: master-control }
+            exp_annotations:
+              summary: A high or critical security incident is open
+              description: Coordinate through the incident in Master Control; exchanges under it may be frozen.
+              runbook: docs/OPERATIONS-FEDERATION.md#open-incident
+
+  # Master Control down; an EduOS following an older bundle, outside residency, with no trusted key.
+  - interval: 1m
+    input_series:
+      - { series: 'up{job="master-control",instance="mc"}', values: "0x60" }
+      - { series: 'eduos_federation_trusted_keys{job="eduos",instance="a"}', values: "0x60" }
+      - { series: 'eduos_federation_districts{job="eduos",instance="a",bundle="in_effect"}', values: "2x60" }
+      - { series: 'eduos_federation_newest_bundle_revoked_key_districts{job="eduos",instance="a"}', values: "1x60" }
+      - { series: 'eduos_federation_residency_districts{job="eduos",instance="a",status="not_met"}', values: "1x60" }
+      - { series: 'eduos_federation_status_up{job="eduos",instance="a"}', values: "0x60" }
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: MasterControlScrapeUnavailable
+        exp_alerts:
+          - exp_labels: { severity: warning, service: master-control, job: master-control, instance: mc }
+            exp_annotations:
+              summary: Master Control metrics can't be scraped
+              description: Prometheus can't reach /mc/metrics, or the target is missing. Check the service, its network path and the MC_METRICS_TOKEN credentials file.
+              runbook: docs/OPERATIONS-FEDERATION.md#master-control-unavailable
+      - eval_time: 45m
+        alertname: EduOSNoTrustedMasterControlKey
+        exp_alerts:
+          - exp_labels: { severity: warning, service: eduos, job: eduos, instance: a }
+            exp_annotations:
+              summary: EduOS has policy bundles but trusts no Master Control key
+              description: MC_POLICY_PUBLIC_KEY is empty or every key in it is revoked. New bundles and exchange terms will be refused.
+              runbook: docs/OPERATIONS-FEDERATION.md#revoked-signing-key
+      - eval_time: 45m
+        alertname: EduOSBundleUnderRevokedKey
+        exp_alerts:
+          - exp_labels: { severity: warning, service: eduos, job: eduos, instance: a }
+            exp_annotations:
+              summary: A district's newest policy bundle was signed with a revoked key
+              description: EduOS is following an older bundle for that district. Ask Master Control to issue a new release, and have the district receive it.
+              runbook: docs/OPERATIONS-FEDERATION.md#revoked-signing-key
+      - eval_time: 45m
+        alertname: EduOSResidencyNotMet
+        exp_alerts:
+          - exp_labels: { severity: warning, service: eduos, job: eduos, instance: a, status: not_met }
+            exp_annotations:
+              summary: A district's data residency rule doesn't match the declared hosting location
+              description: EDUOS_DATA_LOCATION is outside what a district's rule allows. Review the hosting declaration with the district; EduOS doesn't move data.
+              runbook: docs/OPERATIONS-FEDERATION.md#residency-not-met
+      - eval_time: 45m
+        alertname: EduOSFederationStatusUnavailable
+        exp_alerts:
+          - exp_labels: { severity: warning, service: eduos, job: eduos, instance: a }
+            exp_annotations:
+              summary: EduOS can't read district federation status
+              description: The eduos_federation_status() function failed. Check migrations and runtime grants (db/158).
+              runbook: docs/OPERATIONS-FEDERATION.md#eduos-federation-status
+
+  # A week-old unanswered bundle.
+  - interval: 1m
+    input_series:
+      - { series: 'mc_policy_bundle_oldest_unacknowledged_seconds{job="master-control",instance="mc"}', values: "600000+60x300" }
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: MasterControlPolicyBundleUnanswered
+        exp_alerts: []
+      - eval_time: 200m
+        alertname: MasterControlPolicyBundleUnanswered
+        exp_alerts:
+          - exp_labels: { severity: warning, service: master-control, job: master-control, instance: mc }
+            exp_annotations:
+              summary: A district hasn't answered its newest policy bundle for a week
+              description: GET /mc/api/policy-releases shows which. Contact the district; it may not have received the file.
+              runbook: docs/OPERATIONS-FEDERATION.md#unanswered-bundle

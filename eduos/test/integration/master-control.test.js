@@ -66,7 +66,8 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     const u = new URL(db.ownerUrl); u.username = mcRole; u.password = mcPw; mcUrl = u.toString();
     env = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: "development", MC_DATABASE_URL: mcUrl, MC_PUBLIC_ORIGIN: "http://localhost",
       MC_OIDC_ISSUER: idp.issuer, MC_OIDC_CLIENT_ID: "eduos-it", MC_OIDC_CLIENT_SECRET: "it-secret", MC_OIDC_REDIRECT_URI: "http://localhost/mc/auth/callback",
-      MC_IDP_SECRET_TX: "it-secret", MC_IDP_SECRET_D1: "it-secret", MC_POLICY_SIGNING_SECRET: crypto.randomBytes(24).toString("hex") };
+      MC_IDP_SECRET_TX: "it-secret", MC_IDP_SECRET_D1: "it-secret", MC_POLICY_SIGNING_SECRET: crypto.randomBytes(24).toString("hex"),
+      MC_METRICS_TOKEN: crypto.randomBytes(24).toString("hex") };
     const m = await run(["src/master-control/migrate.js"], { ...env, MC_MIGRATE_DATABASE_URL: db.ownerUrl, MC_APP_ROLE: mcRole });
     assert.equal(m.code, 0, m.out);
     const b = await run(["src/master-control/bootstrap.js", "--subject", "op", "--name", "Platform Operator", "--approval", "board-2026-01"], env);
@@ -491,6 +492,27 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     const check = await run(["src/master-control/security-check.js"], { ...env });
     assert.equal(check.code, 1, check.out);
     assert.ok(JSON.parse(check.out.trim().split("\n").at(-1)).alerts.some(a => a.kind === "revoked_key_configured"));
+  });
+
+  // ---- FED-09: observability ---------------------------------------------------
+  it("metrics need the token, report federation state as counts, and name nobody", async () => {
+    assert.equal((await fetch(`${mc.base}/mc/readyz`)).status, 200);
+    assert.equal((await fetch(`${mc.base}/mc/metrics`)).status, 401);
+    assert.equal((await fetch(`${mc.base}/mc/metrics`, { headers: { authorization: "Bearer wrong" } })).status, 401);
+    const res = await fetch(`${mc.base}/mc/metrics`, { headers: { authorization: `Bearer ${env.MC_METRICS_TOKEN}` } });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const v = name => Number(text.split("\n").find(l => l.startsWith(`${name} `))?.split(" ")[1]);
+    assert.equal(v("mc_federation_up"), 1);
+    assert.equal(v("mc_audit_chain_ok"), 0, "the tampering test broke it");
+    assert.ok(v("mc_audit_entries") > 50);
+    assert.equal(v('mc_signing_key_status{status="revoked"}'), 1, "FED-08 revoked the configured key");
+    assert.equal(v('mc_incidents_open{severity="high"}'), 0, "the FED-08 incident was closed");
+    assert.ok(v('mc_exchange_agreements{status="active"}') >= 1);
+    assert.ok(v("mc_sessions_active") >= 1);
+    assert.match(text, /^mc_http_requests_total\{method="GET",route="\/mc\/api\/me",status="2xx"\} \d+$/m);
+    assert.ok(!/^eduos_/m.test(text), "every name has the mc_ prefix");
+    for (const x of [ids.d1, ids.tx, ids.xconsent, "Lakeside", "tenant-lakeside", "op-"]) assert.ok(!text.includes(x), `${x} isn't in the metrics`);
   });
 
   it("the console loads with a strict content security policy", async () => {

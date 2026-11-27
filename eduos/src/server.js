@@ -109,6 +109,7 @@ import { registerEdenHub } from "./eden/hub.js";
 import { registerEdenNode, startAgent } from "./eden/node.js";
 import { parseSisCsv, isCalendarDate } from "./csv.js";
 import { metricsMiddleware, metricsHandler, cachedBacklog } from "./metrics.js";
+import { federationMetrics } from "./federation-metrics.js";
 import { pageOf, pageSql, paged } from "./paging.js";
 import { queuedAt, idempotencyKey, claimReplay } from "./offline-replay.js";
 
@@ -197,7 +198,8 @@ app.get("/health", async (_req,res)=> {
   catch { res.status(503).json({status:"unavailable"}); }
 });
 app.get("/metrics",metricsHandler({token:config.metricsToken,version:APP_VERSION,poolStats:()=>pool.stats(),
-  backlog:cachedBacklog(async()=>(await pool.query("SELECT queue,state,jobs,oldest_seconds FROM eduos_queue_backlog()")).rows)}));
+  backlog:cachedBacklog(async()=>(await pool.query("SELECT queue,state,jobs,oldest_seconds FROM eduos_queue_backlog()")).rows),
+  extra:federationMetrics((sql,params)=>pool.query(sql,params))}));
 app.get("/auth/login",loginLimiter,beginLogin);
 app.get("/auth/callback",loginLimiter,completeLogin);
 app.post("/auth/native/token",loginLimiter,exchangeNativeLogin);
