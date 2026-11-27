@@ -221,6 +221,101 @@ const VIEWS = {};
 const NO_FAMILY_BAR = ["safety", "sos", "me", "more"];
 // UI-05: every profile this person can use (role + school + district), for the
 // switcher in the header and on Account.
+
+// ---- HSP-01: homeschool family workspace --------------------------------------
+const HS_ROLE = { owner: "Owner", co_educator: "Co-educator", guardian_viewer: "Guardian (view only)", learner: "Learner" };
+const HS_AUTH = { full: "full", educational: "teaches", view: "views" };
+const HS_KINDS = { lesson: "Lesson", field_trip: "Field trip", co_op: "Co-op", appointment: "Appointment", break: "Break", other: "Other" };
+const HS_GRADES = [["pre_k", "Pre-K"], ["k", "K"], ...Array.from({ length: 12 }, (_, i) => [String(i + 1), `Grade ${i + 1}`]), ["adult", "Adult"]];
+const HS_ERRORS = { family_owner_only: "Only a family owner can do that.", family_needs_an_owner: "A family needs at least one owner. Make someone else an owner first.",
+  not_allowed: "You can't do that for this learner.", not_allowed_for_this_learner: "You can't add events for this learner.", learner_not_found: "That learner isn't in your family.",
+  invitation_for_another_email: "This invitation was sent to a different email address.", invitation_not_valid: "This invitation has expired, been used or been withdrawn.",
+  already_a_member: "You're already in this family.", verified_email_required: "Your sign-in needs a verified email for this.", family_limit_reached: "You already own the most families allowed.",
+  too_many_open_invitations: "Too many invitations are waiting. Withdraw some first." };
+const hsErr = (e, fallback) => toast(HS_ERRORS[e?.body?.error] || fallback);
+async function switchContextTo(c, message) {
+  const r = await api.post("/api/session/context", { kind: c.kind, membershipId: c.membershipId });
+  api.csrf = r.csrfToken; toast(message); state.tab = null; location.hash = ""; await boot();
+}
+async function homeschoolEntryCard() {
+  const d = (await safe(api.get("/api/session/contexts")))?.data;
+  const fams = (d?.contexts || []).filter(c => c.kind === "homeschool_family");
+  const name = h("input", { id: "hs-name", required: true, minlength: 2, maxlength: 120, placeholder: "e.g. The Ortiz Homeschool" });
+  return h("section", { class: "card", "aria-label": "Homeschool" }, h("h3", {}, "Homeschool"),
+    h("p", { class: "small muted" }, "A homeschool family is its own private space, separate from any school district: your learners, your calendar, and the adults you invite."),
+    fams.length ? h("ul", { class: "list" }, fams.map(c => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, c.label), ` · ${HS_ROLE[c.role] || c.role}`),
+      h("button", { class: "btn small", type: "button", onclick: () => switchContextTo(c, `Now in ${c.label}`).catch(e => hsErr(e, "Couldn't open it.")) }, "Open")))) : null,
+    h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault();
+        try { const r = (await api.post("/api/homeschool/families", { name: name.value.trim(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })).data;
+          await switchContextTo({ kind: "homeschool_family", membershipId: r.membershipId }, `${name.value.trim()} is ready`); } catch (err) { hsErr(err, "Couldn't create the family."); } } },
+      h("div", { class: "grow" }, h("label", { for: "hs-name" }, "Start a homeschool family"), name), h("button", { class: "btn", type: "submit" }, "Create")));
+}
+async function renderHomeschoolInvite(token) {
+  document.getElementById("top").replaceChildren(h("div", { class: "who" }, h("h1", {}, "Homeschool invitation")));
+  document.getElementById("tabs")?.replaceChildren();
+  put(h("section", { class: "card" }, h("h2", {}, "Join a homeschool family"),
+    h("p", {}, "You were invited to help with a family's homeschool. Accepting adds you with the role and learners the family chose. You can leave any time by asking the family's owner."),
+    h("div", { class: "btns" }, h("button", { class: "btn primary", type: "button", onclick: async () => {
+        try { const r = (await api.post("/api/homeschool/invitations/accept", { token })).data;
+          await switchContextTo({ kind: "homeschool_family", membershipId: r.membershipId }, "You've joined the family."); } catch (e) { hsErr(e, "Couldn't accept the invitation."); } } }, "Accept"),
+      h("button", { class: "btn", type: "button", onclick: () => { location.hash = ""; boot(); } }, "Not now"))));
+}
+async function renderHomeschool() {
+  const [meRes, cal, members, ctx] = await Promise.all([api.get("/api/homeschool/me"), safe(api.get("/api/homeschool/calendar")), safe(api.get("/api/homeschool/members")), safe(api.get("/api/session/contexts"))]);
+  const d = meRes.data, owner = d.role === "owner", reload = () => renderHomeschool();
+  const learners = d.learners, nameOf = id => learners.find(l => l.id === id)?.displayName || "Family";
+  const others = (ctx?.data?.contexts || []).filter(c => !(c.kind === "homeschool_family" && c.membershipId === ctx.data.current.membershipId));
+  const switcher = others.length ? h("select", { "aria-label": "Switch environment", onchange: e => { const c = others[Number(e.target.value)]; if (c) switchContextTo(c, `Now using ${c.label}`).catch(() => toast("Couldn't switch.")); } },
+    h("option", { value: "" }, "Switch to…"), others.map((c, i) => h("option", { value: String(i) }, `${c.kind === "district" ? "School" : "Homeschool"}: ${c.label}`))) : null;
+  document.getElementById("top").replaceChildren(h("div", { class: "who" }, h("p", { class: "school" }, `${d.family.name} · ${HS_ROLE[d.role]}`), h("h1", {}, `Hi, ${first(d.displayName)}`)),
+    h("div", { class: "row" }, switcher, h("button", { class: "btn small", type: "button", onclick: async () => { await api.post("/auth/logout", {}).catch(() => {}); location.reload(); } }, "Sign out")));
+  document.getElementById("tabs")?.replaceChildren();
+  const fmt = t => new Date(t).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const canWrite = l => owner || l?.authority === "educational";
+  // Add an event.
+  const ev = { title: h("input", { id: "hs-ev-title", required: true, maxlength: 200 }), kind: h("select", { id: "hs-ev-kind" }, Object.entries(HS_KINDS).map(([v, t]) => h("option", { value: v }, t))),
+    who: h("select", { id: "hs-ev-who" }, owner ? h("option", { value: "" }, "Whole family") : null, learners.filter(canWrite).map(l => h("option", { value: l.id }, l.displayName))),
+    start: h("input", { id: "hs-ev-start", type: "datetime-local", required: true }), mins: h("input", { id: "hs-ev-mins", type: "number", min: 5, max: 720, value: 60, required: true }) };
+  const addEvent = owner || learners.some(canWrite) ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+      const startsAt = new Date(ev.start.value); if (Number.isNaN(startsAt.getTime())) return toast("Pick a start time.");
+      try { await api.post("/api/homeschool/calendar", { title: ev.title.value.trim(), kind: ev.kind.value, learnerId: ev.who.value || undefined, startsAt: startsAt.toISOString(),
+        endsAt: new Date(startsAt.getTime() + Number(ev.mins.value) * 60000).toISOString() }); toast("Added to the calendar."); reload(); } catch (err) { hsErr(err, "Couldn't add it."); } } },
+    h("h3", {}, "Add to the calendar"), h("label", { for: "hs-ev-title" }, "What"), ev.title, h("label", { for: "hs-ev-kind" }, "Kind"), ev.kind, h("label", { for: "hs-ev-who" }, "For"), ev.who,
+    h("label", { for: "hs-ev-start" }, "Starts"), ev.start, h("label", { for: "hs-ev-mins" }, "Minutes"), ev.mins, h("button", { class: "btn", type: "submit" }, "Add")) : null;
+  // Owner: add a learner, invite an adult.
+  const ln = { name: h("input", { id: "hs-l-name", required: true, maxlength: 120 }), grade: h("select", { id: "hs-l-grade" }, HS_GRADES.map(([v, t]) => h("option", { value: v }, t))) };
+  const inv = { email: h("input", { id: "hs-i-email", type: "email", required: true }), role: h("select", { id: "hs-i-role" }, h("option", { value: "co_educator" }, "Co-educator (teaches)"), h("option", { value: "guardian_viewer" }, "Guardian (view only)")),
+    picks: learners.map(l => h("input", { type: "checkbox", value: l.id, "aria-label": `Include ${l.displayName}` })) };
+  const linkBox = h("div", {});
+  put(h("h2", {}, d.family.name),
+    h("section", { class: "card", "aria-label": "Learners" }, h("h3", {}, "Learners"),
+      learners.length ? h("ul", { class: "list" }, learners.map(l => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, l.displayName),
+        h("span", { class: "small muted" }, ` · ${HS_GRADES.find(g => g[0] === l.gradeBand)?.[1] || "No grade set"} · you ${HS_AUTH[l.authority] || l.authority}`)),
+        h("span", { class: "small" }, `${l.upcomingThisWeek} this week`)))) : h("p", { class: "muted" }, owner ? "Add your first learner below." : "No learners have been shared with you yet."),
+      d.familyEventsThisWeek ? h("p", { class: "small muted" }, `${d.familyEventsThisWeek} family events this week`) : null),
+    h("section", { class: "card", "aria-label": "Calendar" }, h("h3", {}, "Coming up"),
+      (cal?.data || []).filter(e => !e.cancelled).length ? h("ul", { class: "list" }, cal.data.filter(e => !e.cancelled).map(e => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, h("b", {}, e.title), h("span", { class: "small muted" }, ` · ${HS_KINDS[e.kind]} · ${nameOf(e.learnerId)} · ${fmt(e.startsAt)}`)),
+        owner || canWrite(learners.find(l => l.id === e.learnerId)) ? h("button", { class: "link", type: "button", onclick: async () => {
+          try { await api.post(`/api/homeschool/calendar/${e.id}/cancel`, {}); toast("Cancelled."); reload(); } catch (err) { hsErr(err, "Couldn't cancel it."); } } }, "Cancel") : null))) : h("p", { class: "muted" }, "Nothing scheduled in the next month."),
+      addEvent),
+    h("section", { class: "card", "aria-label": "Family members" }, h("h3", {}, "Family members"),
+      h("ul", { class: "list" }, (members?.data?.members || []).map(m => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, m.name), ` · ${HS_ROLE[m.role]}${m.you ? " (you)" : ""}`),
+        owner && !m.you ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why remove ${m.name}?`, async reason => {
+          try { await api.post(`/api/homeschool/members/${m.id}/revoke`, { reason }); toast(`${m.name} no longer has access.`); reload(); } catch (err) { hsErr(err, "Couldn't remove them."); } }) }, "Remove")) : null))),
+      owner && (members?.data?.invitations || []).length ? h("p", { class: "small muted" }, `Waiting: ${members.data.invitations.map(i => `${i.email} (${HS_ROLE[i.role]})`).join(", ")}`) : null,
+      owner ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+          try { const r = (await api.post("/api/homeschool/invitations", { email: inv.email.value.trim(), role: inv.role.value, learnerIds: inv.picks.filter(x => x.checked).map(x => x.value) })).data;
+            linkBox.replaceChildren(h("p", { class: "notice" }, "Send this link to that person only (it's shown once and works for 7 days): ", h("code", { class: "wrap" }, `${location.origin}${r.link}`))); }
+          catch (err) { hsErr(err, "Couldn't create the invitation."); } } },
+        h("h4", {}, "Invite an adult"), h("label", { for: "hs-i-email" }, "Their email (they accept signed in with it)"), inv.email, h("label", { for: "hs-i-role" }, "Role"), inv.role,
+        learners.length ? h("fieldset", {}, h("legend", {}, "Learners they can see"), learners.map((l, i) => h("label", { class: "check" }, inv.picks[i], ` ${l.displayName}`))) : null,
+        h("button", { class: "btn", type: "submit" }, "Create invitation link"), linkBox) : null),
+    owner ? h("section", { class: "card", "aria-label": "Add a learner" }, h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        try { await api.post("/api/homeschool/learners", { displayName: ln.name.value.trim(), gradeBand: ln.grade.value }); toast("Learner added."); reload(); } catch (err) { hsErr(err, "Couldn't add the learner."); } } },
+      h("h3", {}, "Add a learner"), h("label", { for: "hs-l-name" }, "Name"), ln.name, h("label", { for: "hs-l-grade" }, "Grade"), ln.grade, h("button", { class: "btn", type: "submit" }, "Add learner"))) : null,
+    h("p", { class: "small muted" }, "This family workspace is private to its members. Records you keep here are labeled as family records; EduOS doesn't certify them or file anything with any agency."));
+}
 async function loadProfiles() { state.profiles = (await safe(api.get("/api/memberships")))?.data || []; }
 async function loadFamily() {
   if (state.me?.role !== "parent") { state.family = null; return; }
@@ -4670,6 +4765,7 @@ VIEWS.me = async () => {
   const memberships = state.profiles;
   return [h("h2", {}, "Account"), h("section", { class: "card" }, h("h3", {}, state.me.displayName), h("p", { class: "muted" }, `${roleName()} · ${state.brand?.school?.name || state.brand?.districtName || ""}`)),
     memberships.length > 1 ? h("section", { class: "card", "aria-label": "Switch profile" }, h("h3", {}, "Switch profile"), profileList(switchProfile)) : null,
+    await homeschoolEntryCard(),
     LICENSED.includes(state.me.role) ? await licenseCard() : null,
     state.me.role === "teacher" ? h("button", { class: "btn block", type: "button", onclick: () => go("mywork") }, icon("spark"), "My work: take it with you") : null,
     ["principal", "superintendent"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("portfolioreview") }, icon("check"), "Teachers' work: rights and transfers") : null,
@@ -6818,6 +6914,10 @@ async function boot() {
   try {
     state.me = await api.get("/api/me");
   } catch (e) { if (e.status === 401) { await OQ.clear().catch(() => {}); return renderSignIn(); } put(empty(navigator.onLine ? "EduOS is unavailable right now." : "You're offline.")); return; }
+  // HSP-01: a homeschool family session has its own workspace and no district data.
+  if (state.me.tenantKind === "homeschool_family") return renderHomeschool();
+  const invite = /^#\/homeschool-invite\/([A-Za-z0-9_-]{30,100})$/.exec(location.hash);
+  if (invite) return renderHomeschoolInvite(invite[1]);
   const [brand] = await Promise.all([safe(api.get("/api/branding/current")), loadProfiles().then(loadFamily)]);
   state.brand = brand?.data || null;
   applyBranding(state.brand);

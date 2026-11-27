@@ -874,3 +874,23 @@ REVOKE DELETE, TRUNCATE ON athletic_association_agreements, athlete_association_
 GRANT SELECT ON association_reads TO eduos_app;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON association_reads FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_association_access(uuid, text, uuid) TO eduos_app;
+
+-- 160 (HSP-01): homeschool family workspace. tenants is owner-only.
+REVOKE ALL ON tenants FROM eduos_app;
+GRANT SELECT ON homeschool_families TO eduos_app;
+GRANT UPDATE (display_name, time_zone, jurisdiction_ref) ON homeschool_families TO eduos_app;
+GRANT SELECT ON family_memberships TO eduos_app;
+GRANT UPDATE (role, status, revoked_by, revoked_at, revoke_reason) ON family_memberships TO eduos_app;
+GRANT SELECT, INSERT ON family_invitations TO eduos_app;
+GRANT UPDATE (revoked_at) ON family_invitations TO eduos_app;
+GRANT SELECT, INSERT ON family_learners TO eduos_app;
+GRANT UPDATE (display_name, grade_band, birth_year, status, archived_at) ON family_learners TO eduos_app;
+GRANT SELECT, INSERT ON family_learner_relationships TO eduos_app;
+GRANT UPDATE (verification, revoked_by, revoked_at, revoke_reason) ON family_learner_relationships TO eduos_app;
+GRANT SELECT, INSERT ON family_calendar_events TO eduos_app;
+GRANT UPDATE (title, kind, starts_at, ends_at, all_day, notes, cancelled_by, cancelled_at) ON family_calendar_events TO eduos_app;
+GRANT SELECT, INSERT ON family_audit_events TO eduos_app;
+REVOKE DELETE, TRUNCATE ON homeschool_families, family_memberships, family_invitations, family_learners, family_learner_relationships, family_calendar_events, family_audit_events FROM eduos_app;
+REVOKE UPDATE ON family_audit_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_family_contexts(uuid), eduos_family_session(text,integer), eduos_create_family(uuid,text,text,text),
+  eduos_accept_family_invitation(uuid,text,text), eduos_family_role(), eduos_family_authority(uuid), eduos_ctx_family() TO eduos_app;
