@@ -15,6 +15,8 @@
     "history:preserve": "node src/history-preservation.js",
     "donations:charge": "node src/donation-schedules.js",
     "db:bootstrap": "node src/bootstrap-district.js",
+    "ps:verify": "node src/private-school-verify.js",
+    "compliance:template": "node src/compliance-template.js",
     "edal:verify": "node src/edal-verify.js",
     "test:integration": "node --test test/integration/*.test.js",
     "verify:dependencies": "node scripts/verify-dependency-registry.js",

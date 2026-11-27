@@ -142,3 +142,73 @@ export async function assertSafeRuntimeRole(db = pool) {
   if (owned.length) throw new Error(`Refusing to start: database role ${role.name} owns EduOS schema objects (${owned.slice(0, 5).join(", ")}${owned.length > 5 ? `, +${owned.length - 5} more` : ""}); use the dedicated runtime role`);
   return role.name;
 }
+
+/**
+ * HSP-01: a transaction in a homeschool family's context. app.family_id is
+ * the family; app.district_id and app.school_id are empty, so no district
+ * table's row-level security matches anything in it.
+ */
+export async function withFamilyTransaction(actor, callback) {
+  if (actor?.tenantKind !== "homeschool_family" || !actor.familyId || !actor.userId) throw new TypeError("Family transaction requires a family session");
+  const client = await pool.connect();
+  let open = false;
+  try {
+    await client.query("BEGIN");
+    open = true;
+    await client.query(
+      "SELECT set_config('app.family_id', $1, true), set_config('app.user_id', $2, true), set_config('app.role', $3, true), set_config('app.district_id', '', true), set_config('app.school_id', '', true), set_config('app.private_school_id', '', true), set_config('app.membership_role', $3, true)",
+      [String(actor.familyId), String(actor.userId), `family_${actor.familyRole}`]);
+    const result = await callback(client);
+    await client.query("COMMIT");
+    open = false;
+    return result;
+  } catch (error) {
+    if (open) { try { await client.query("ROLLBACK"); } catch (e) { error.rollbackError = e; } }
+    throw error;
+  } finally { client.release(); }
+}
+
+/** HSP-01: a transaction outside any family, as the signed-in user only (creating a family, accepting an invitation). */
+export async function withUserTransaction(actor, callback) {
+  if (!actor?.userId) throw new TypeError("User transaction requires a user");
+  const client = await pool.connect();
+  let open = false;
+  try {
+    await client.query("BEGIN");
+    open = true;
+    await client.query("SELECT set_config('app.user_id', $1, true), set_config('app.family_id', '', true), set_config('app.private_school_id', '', true), set_config('app.ps_membership_id', '', true), set_config('app.district_id', '', true), set_config('app.school_id', '', true), set_config('app.role', '', true)", [String(actor.userId)]);
+    const result = await callback(client);
+    await client.query("COMMIT");
+    open = false;
+    return result;
+  } catch (error) {
+    if (open) { try { await client.query("ROLLBACK"); } catch (e) { error.rollbackError = e; } }
+    throw error;
+  } finally { client.release(); }
+}
+
+/**
+ * HSP-03: a transaction in an independent private school's context, for the
+ * one membership the session was opened for. app.district_id, app.school_id
+ * and app.family_id are empty, so no district or family row matches.
+ */
+export async function withPrivateSchoolTransaction(actor, callback) {
+  if (actor?.tenantKind !== "private_school" || !actor.privateSchoolId || !actor.privateSchoolMembershipId || !actor.userId) throw new TypeError("Private school transaction requires a private school session");
+  const client = await pool.connect();
+  let open = false;
+  try {
+    await client.query("BEGIN");
+    open = true;
+    await client.query(
+      `SELECT set_config('app.private_school_id', $1, true), set_config('app.ps_membership_id', $2, true), set_config('app.user_id', $3, true), set_config('app.role', $4, true),
+              set_config('app.membership_role', $4, true), set_config('app.district_id', '', true), set_config('app.school_id', '', true), set_config('app.family_id', '', true)`,
+      [String(actor.privateSchoolId), String(actor.privateSchoolMembershipId), String(actor.userId), `ps_${actor.privateSchoolRole}`]);
+    const result = await callback(client);
+    await client.query("COMMIT");
+    open = false;
+    return result;
+  } catch (error) {
+    if (open) { try { await client.query("ROLLBACK"); } catch (e) { error.rollbackError = e; } }
+    throw error;
+  } finally { client.release(); }
+}

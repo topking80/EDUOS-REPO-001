@@ -144,14 +144,21 @@ export async function beginLogin(req, res, next) {
 }
 
 /** Create a session row and return the raw (cookie) token. */
-export async function createSession(db, { userId, districtId, schoolId, role, verifiedEmail = null, clientKind = null }) {
+export async function createSession(db, { userId, districtId, schoolId, role, verifiedEmail = null, clientKind = null, familyId = null, familyMembershipId = null,
+  privateSchoolId = null, privateSchoolMembershipId = null }) {
   const rawSession = randomSecret(32);
   const expiresAt = new Date(Date.now() + config.sessionTtlHours * 3600_000);
+  // HSP-01: a session is for one tenant: a district (as before) or a
+  // homeschool family (district_id NULL; db/160 checks the combination).
+  // HSP-03: or an independent private school.
+  const tenantKind = familyId ? "homeschool_family" : privateSchoolId ? "private_school" : "district";
+  const outsideDistrict = tenantKind !== "district";
   // clientKind is set only for device sign-in sessions (db/150, src/device-sign-in.js).
   await db.query(
-    `INSERT INTO sessions (token_hash,csrf_token_hash,user_id,district_id,school_id,role,expires_at,verified_email,client_kind)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [sha256(rawSession), sha256(csrfTokenFor(rawSession)), userId, districtId, schoolId, role, expiresAt, verifiedEmail, clientKind]
+    `INSERT INTO sessions (token_hash,csrf_token_hash,user_id,district_id,school_id,role,expires_at,verified_email,client_kind,tenant_kind,family_id,family_membership_id,private_school_id,private_school_membership_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    [sha256(rawSession), sha256(csrfTokenFor(rawSession)), userId, outsideDistrict ? null : districtId, outsideDistrict ? null : schoolId, role, expiresAt, verifiedEmail, clientKind,
+     tenantKind, familyId, familyMembershipId, privateSchoolId, privateSchoolMembershipId]
   );
   // Multi-session policy: keep at most SESSION_MAX_PER_USER active sessions
   // (e.g. laptop + phone); the oldest beyond the cap are revoked.
@@ -220,8 +227,16 @@ export async function completeLogin(req, res, next) {
         LIMIT 1`,
       [claims.iss, claims.sub]
     );
-    if (userResult.rowCount !== 1) return res.status(403).send("Account is not provisioned for EduOS");
-    const user = userResult.rows[0];
+    let user = userResult.rows[0];
+    if (userResult.rowCount !== 1) {
+      // HSP-01: someone who belongs only to homeschool families signs in to their first family.
+      const u = await pool.query("SELECT id FROM users WHERE oidc_issuer=$1 AND oidc_subject=$2 AND status='active'", [claims.iss, claims.sub]);
+      const fam = u.rowCount ? await pool.query("SELECT * FROM eduos_family_contexts($1) LIMIT 1", [u.rows[0].id]) : { rowCount: 0 };
+      const ps = u.rowCount && !fam.rowCount ? await pool.query("SELECT * FROM eduos_private_school_contexts($1) LIMIT 1", [u.rows[0].id]) : { rowCount: 0 };
+      if ((!fam.rowCount && !ps.rowCount) || transaction.return_path === "native") return res.status(403).send("Account is not provisioned for EduOS");
+      user = fam.rowCount ? { id: u.rows[0].id, familyId: fam.rows[0].family_id, familyMembershipId: fam.rows[0].membership_id, role: "family_member" }
+        : { id: u.rows[0].id, privateSchoolId: ps.rows[0].school_id, privateSchoolMembershipId: ps.rows[0].membership_id, role: "private_school_member" };
+    }
 
     // Native app sign-in: hand the app a single-use code bound to its PKCE
     // challenge. No session exists until the app redeems it, and nothing
@@ -251,7 +266,8 @@ export async function completeLogin(req, res, next) {
     }
     const { rawSession, expiresAt } = await createSession(pool, {
       userId: user.id, districtId: user.district_id, schoolId: user.school_id, role: user.role,
-      verifiedEmail: verifiedEmailFromClaims(claims)
+      verifiedEmail: verifiedEmailFromClaims(claims), familyId: user.familyId || null, familyMembershipId: user.familyMembershipId || null,
+      privateSchoolId: user.privateSchoolId || null, privateSchoolMembershipId: user.privateSchoolMembershipId || null
     });
     setSessionCookie(res, rawSession, expiresAt);
     // 32.4.0: bus drivers only have the mobile role app.
@@ -308,6 +324,25 @@ const sessionGuards = [];
 export function addSessionGuard(fn) { if (typeof fn === "function") sessionGuards.push(fn); }
 function guardRefusal(req) { for (const g of sessionGuards) { const code = g(req); if (code) return code; } return null; }
 
+// HSP-01: one context per session. A family session reaches only the family
+// workspace (/api/homeschool), session and sign-out routes; everything else is
+// a district route and answers district_context_required. District sessions
+// reach /api/homeschool only to create a family or accept an invitation.
+const FAMILY_PATHS = /^\/(api\/homeschool(\/|$)|api\/session\/|api\/csrf$|api\/me$|auth\/logout$)/;
+const FROM_ANY_CONTEXT = /^\/api\/homeschool\/(families|invitations\/accept)$/;
+// HSP-03: the same for an independent private school (/api/private-school).
+const PRIVATE_SCHOOL_PATHS = /^\/(api\/private-school(\/|$)|api\/session\/|api\/csrf$|api\/me$|auth\/logout$)/;
+const PS_FROM_ANY_CONTEXT = /^\/api\/private-school\/(schools|invitations\/accept)$/;
+addSessionGuard(req => {
+  const path = (req.originalUrl || req.url || "").split("?")[0];
+  const kind = req.actor?.tenantKind;
+  if (kind === "homeschool_family") return FAMILY_PATHS.test(path) || PS_FROM_ANY_CONTEXT.test(path) ? null : "district_context_required";
+  if (kind === "private_school") return PRIVATE_SCHOOL_PATHS.test(path) || FROM_ANY_CONTEXT.test(path) ? null : "district_context_required";
+  if (/^\/api\/homeschool(\/|$)/.test(path) && !FROM_ANY_CONTEXT.test(path)) return "family_context_required";
+  if (/^\/api\/private-school(\/|$)/.test(path) && !PS_FROM_ANY_CONTEXT.test(path)) return "private_school_context_required";
+  return null;
+});
+
 export async function requireSession(req, res, next) {
   try {
     const { raw, bearer } = sessionTokenFrom(req);
@@ -332,13 +367,43 @@ export async function requireSession(req, res, next) {
           AND u.status='active'`,
       [hash, config.sessionIdleMinutes]
     );
-    if (result.rowCount !== 1) return res.status(401).json({ error: "invalid_session" });
+    if (result.rowCount !== 1) {
+      // HSP-01: a homeschool family session (its membership and family re-checked).
+      const fam = await pool.query("SELECT * FROM eduos_family_session($1, $2)", [hash, config.sessionIdleMinutes]);
+      if (fam.rowCount !== 1) {
+        // HSP-03: an independent private school session.
+        const ps = await pool.query("SELECT * FROM eduos_private_school_session($1, $2)", [hash, config.sessionIdleMinutes]);
+        if (ps.rowCount !== 1) return res.status(401).json({ error: "invalid_session" });
+        const p = ps.rows[0];
+        if (p.last_seen_at && Date.now() - new Date(p.last_seen_at).getTime() > SESSION_TOUCH_INTERVAL_MS)
+          await pool.query("UPDATE sessions SET last_seen_at=now() WHERE id=$1", [p.session_id]);
+        req.actor = { userId: p.user_id, districtId: null, schoolId: null, role: "private_school_member", membershipRole: "private_school_member",
+          tenantKind: "private_school", privateSchoolId: p.school_id, privateSchoolMembershipId: p.membership_id, privateSchoolRole: p.role, privateSchoolCampusId: p.campus_id,
+          privateSchoolStatus: p.school_status, displayName: p.display_name, sessionId: p.session_id, csrfTokenHash: p.csrf_token_hash,
+          verifiedEmail: p.verified_email || null, clientKind: p.client_kind || null };
+        cacheSetSession(hash, req.actor);
+        const refused = guardRefusal(req);
+        if (refused) return res.status(403).json({ error: refused });
+        return next();
+      }
+      const f = fam.rows[0];
+      if (f.last_seen_at && Date.now() - new Date(f.last_seen_at).getTime() > SESSION_TOUCH_INTERVAL_MS)
+        await pool.query("UPDATE sessions SET last_seen_at=now() WHERE id=$1", [f.session_id]);
+      req.actor = { userId: f.user_id, districtId: null, schoolId: null, role: "family_member", membershipRole: "family_member",
+        tenantKind: "homeschool_family", familyId: f.family_id, familyMembershipId: f.family_membership_id, familyRole: f.role,
+        displayName: f.display_name, sessionId: f.session_id, csrfTokenHash: f.csrf_token_hash, verifiedEmail: f.verified_email || null, clientKind: f.client_kind || null };
+      cacheSetSession(hash, req.actor);
+      const refused = guardRefusal(req);
+      if (refused) return res.status(403).json({ error: refused });
+      return next();
+    }
     const row = result.rows[0];
     // Idle timeout: refresh last_seen_at at most once a minute per session.
     if (row.last_seen_at && Date.now() - new Date(row.last_seen_at).getTime() > SESSION_TOUCH_INTERVAL_MS) {
       await pool.query("UPDATE sessions SET last_seen_at=now() WHERE id=$1", [row.session_id]);
     }
     req.actor = {
+      tenantKind: "district",
       userId: row.user_id, districtId: row.district_id,
       schoolId: row.school_id, ...authorityRole(row.role),
       displayName: row.display_name, sessionId: row.session_id,
@@ -453,6 +518,68 @@ export async function listMemberships(req, res, next) {
  * Switch the session to another of the user's active memberships. The session
  * token is rotated (privilege change) and the old one revoked.
  */
+/**
+ * HSP-01: GET /api/session/contexts: every environment the signed-in user can
+ * switch to (district memberships and homeschool families), labels only.
+ */
+export async function listContexts(req, res, next) {
+  try {
+    const d = await pool.query(`SELECT m.id, m.role, d.name AS district, s.name AS school FROM memberships m
+        JOIN districts d ON d.id=m.district_id AND d.status='active' LEFT JOIN schools s ON s.id=m.school_id
+       WHERE m.user_id=$1 AND m.status='active' ORDER BY d.name, s.name NULLS FIRST, m.role`, [req.actor.userId]);
+    const f = await pool.query("SELECT * FROM eduos_family_contexts($1)", [req.actor.userId]);
+    const ps = await pool.query("SELECT * FROM eduos_private_school_contexts($1)", [req.actor.userId]);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ data: {
+      current: req.actor.tenantKind === "homeschool_family" ? { kind: "homeschool_family", membershipId: req.actor.familyMembershipId }
+        : req.actor.tenantKind === "private_school" ? { kind: "private_school", membershipId: req.actor.privateSchoolMembershipId } : { kind: "district" },
+      contexts: [...d.rows.map(r => ({ kind: "district", membershipId: r.id, label: [r.district, r.school].filter(Boolean).join(" · "), role: r.role })),
+        ...f.rows.map(r => ({ kind: "homeschool_family", membershipId: r.membership_id, label: r.family_name, role: r.role })),
+        ...ps.rows.map(r => ({ kind: "private_school", membershipId: r.membership_id, label: [r.school_name, r.campus_name].filter(Boolean).join(" · "), role: r.role,
+          ...(r.school_status === "pending_verification" ? { pending: true } : {}) }))] } });
+  } catch (error) { next(error); }
+}
+
+/**
+ * HSP-01: POST /api/session/context {kind, membershipId}. Opens a new session
+ * for exactly one tenant; the server looks the membership up and derives the
+ * role. A district membership goes through switchMembership.
+ */
+export async function switchContext(req, res, next) {
+  try {
+    const { kind, membershipId } = req.body || {};
+    if (kind === "district") return switchMembership(req, res, next);
+    if (!["homeschool_family", "private_school"].includes(kind) || typeof membershipId !== "string" || !/^[0-9a-f-]{36}$/i.test(membershipId))
+      return res.status(400).json({ error: "invalid_context" });
+    if (kind === "private_school") {
+      const p = await pool.query("SELECT * FROM eduos_private_school_contexts($1) WHERE membership_id=$2", [req.actor.userId, membershipId]);
+      if (!p.rowCount) return res.status(404).json({ error: "membership_not_found" });
+      const m = p.rows[0];
+      const current = await pool.query("SELECT verified_email FROM sessions WHERE id=$1", [req.actor.sessionId]);
+      await pool.query("UPDATE sessions SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL", [req.actor.sessionId]);
+      evictSession(req._sessionTokenHash);
+      const { rawSession, expiresAt } = await createSession(pool, { userId: req.actor.userId, districtId: null, schoolId: null, role: "private_school_member",
+        verifiedEmail: current.rows[0]?.verified_email || null, privateSchoolId: m.school_id, privateSchoolMembershipId: m.membership_id });
+      if (!req._sessionViaBearer) setSessionCookie(res, rawSession, expiresAt);
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({ kind: "private_school", schoolId: m.school_id, role: m.role, csrfToken: csrfTokenFor(rawSession),
+        ...(req._sessionViaBearer ? { sessionToken: rawSession, expiresAt: expiresAt.toISOString() } : {}) });
+    }
+    const f = await pool.query("SELECT * FROM eduos_family_contexts($1) WHERE membership_id=$2", [req.actor.userId, membershipId]);
+    if (!f.rowCount) return res.status(404).json({ error: "membership_not_found" });
+    const m = f.rows[0];
+    const current = await pool.query("SELECT verified_email FROM sessions WHERE id=$1", [req.actor.sessionId]);
+    await pool.query("UPDATE sessions SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL", [req.actor.sessionId]);
+    evictSession(req._sessionTokenHash);
+    const { rawSession, expiresAt } = await createSession(pool, { userId: req.actor.userId, districtId: null, schoolId: null, role: "family_member",
+      verifiedEmail: current.rows[0]?.verified_email || null, familyId: m.family_id, familyMembershipId: m.membership_id });
+    if (!req._sessionViaBearer) setSessionCookie(res, rawSession, expiresAt);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ kind: "homeschool_family", familyId: m.family_id, familyRole: m.role, csrfToken: csrfTokenFor(rawSession),
+      ...(req._sessionViaBearer ? { sessionToken: rawSession, expiresAt: expiresAt.toISOString() } : {}) });
+  } catch (error) { next(error); }
+}
+
 export async function switchMembership(req, res, next) {
   try {
     const membershipId = req.body?.membershipId;

@@ -874,3 +874,137 @@ REVOKE DELETE, TRUNCATE ON athletic_association_agreements, athlete_association_
 GRANT SELECT ON association_reads TO eduos_app;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON association_reads FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_association_access(uuid, text, uuid) TO eduos_app;
+
+-- 160 (HSP-01): homeschool family workspace. tenants is owner-only.
+REVOKE ALL ON tenants FROM eduos_app;
+GRANT SELECT ON homeschool_families TO eduos_app;
+GRANT UPDATE (display_name, time_zone, jurisdiction_ref) ON homeschool_families TO eduos_app;
+GRANT SELECT ON family_memberships TO eduos_app;
+GRANT UPDATE (role, status, revoked_by, revoked_at, revoke_reason) ON family_memberships TO eduos_app;
+GRANT SELECT, INSERT ON family_invitations TO eduos_app;
+GRANT UPDATE (revoked_at) ON family_invitations TO eduos_app;
+GRANT SELECT, INSERT ON family_learners TO eduos_app;
+GRANT UPDATE (display_name, grade_band, birth_year, status, archived_at) ON family_learners TO eduos_app;
+GRANT SELECT, INSERT ON family_learner_relationships TO eduos_app;
+GRANT UPDATE (verification, revoked_by, revoked_at, revoke_reason) ON family_learner_relationships TO eduos_app;
+GRANT SELECT, INSERT ON family_calendar_events TO eduos_app;
+GRANT UPDATE (title, kind, starts_at, ends_at, all_day, notes, cancelled_by, cancelled_at) ON family_calendar_events TO eduos_app;
+GRANT SELECT, INSERT ON family_audit_events TO eduos_app;
+REVOKE DELETE, TRUNCATE ON homeschool_families, family_memberships, family_invitations, family_learners, family_learner_relationships, family_calendar_events, family_audit_events FROM eduos_app;
+REVOKE UPDATE ON family_audit_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_family_contexts(uuid), eduos_family_session(text,integer), eduos_create_family(uuid,text,text,text),
+  eduos_accept_family_invitation(uuid,text,text), eduos_family_role(), eduos_family_authority(uuid), eduos_ctx_family() TO eduos_app;
+
+-- 161 (HSP-02): homeschool learning records. Corrections are voids, not deletes.
+GRANT SELECT, INSERT ON family_courses, family_goals, family_attendance, family_work, family_exports TO eduos_app;
+GRANT UPDATE (title, subject, description, status, final_grade, credits, completed_on) ON family_courses TO eduos_app;
+GRANT UPDATE (text, target_on, status, met_on) ON family_goals TO eduos_app;
+GRANT UPDATE (voided_by, voided_at, void_reason) ON family_attendance, family_work TO eduos_app;
+REVOKE DELETE, TRUNCATE ON family_courses, family_goals, family_attendance, family_work, family_exports FROM eduos_app;
+REVOKE UPDATE ON family_exports FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_family_can_teach(uuid) TO eduos_app;
+
+-- 162 (HSP-03): private schools. Registration, invitation acceptance and verification go through definer functions or the owner.
+GRANT SELECT ON private_schools TO eduos_app;
+GRANT UPDATE (display_name, time_zone, jurisdiction_ref, website_domain, branding, closure_requested_by, closure_requested_at) ON private_schools TO eduos_app;
+GRANT SELECT, INSERT ON private_school_campuses TO eduos_app;
+GRANT UPDATE (name, city, status) ON private_school_campuses TO eduos_app;
+GRANT SELECT ON private_school_memberships TO eduos_app;
+GRANT UPDATE (role, campus_id, status, revoked_by, revoked_at, revoke_reason) ON private_school_memberships TO eduos_app;
+GRANT SELECT, INSERT ON private_school_invitations TO eduos_app;
+GRANT UPDATE (revoked_at) ON private_school_invitations TO eduos_app;
+GRANT SELECT, INSERT ON private_school_learners TO eduos_app;
+GRANT UPDATE (display_name, grade_level, local_number, campus_id, enrollment_status, withdrawn_on, withdraw_reason) ON private_school_learners TO eduos_app;
+GRANT SELECT, INSERT ON private_school_guardian_links TO eduos_app;
+GRANT UPDATE (revoked_by, revoked_at) ON private_school_guardian_links TO eduos_app;
+GRANT SELECT, INSERT ON private_school_calendar_events TO eduos_app;
+GRANT UPDATE (title, kind, audience, starts_at, ends_at, cancelled_by, cancelled_at) ON private_school_calendar_events TO eduos_app;
+GRANT SELECT, INSERT ON private_school_audit_events TO eduos_app;
+REVOKE DELETE, TRUNCATE ON private_schools, private_school_campuses, private_school_memberships, private_school_invitations, private_school_learners,
+  private_school_guardian_links, private_school_calendar_events, private_school_audit_events FROM eduos_app;
+REVOKE UPDATE ON private_school_audit_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_private_school_contexts(uuid), eduos_private_school_session(text,integer), eduos_register_private_school(uuid,text,text,text,text,text,text),
+  eduos_accept_private_school_invitation(uuid,text,text), eduos_ps_roles(), eduos_ps_campuses(), eduos_ps_active(), eduos_ps_sees_learner(uuid), eduos_ps_has(text[]),
+  eduos_ctx_private_school(), eduos_ctx_ps_membership() TO eduos_app;
+
+-- 163 (HSP-04): private school admissions and academics. History is append-only; corrections are voids.
+GRANT SELECT, INSERT ON ps_applications, ps_application_events, ps_classes, ps_class_meetings, ps_class_rosters, ps_attendance, ps_report_cards, ps_report_card_lines TO eduos_app;
+GRANT UPDATE (campus_id, applicant_name, grade_level, guardian_name, guardian_email, status, waitlist_position, documents, notes, decided_by, decided_at, learner_id, updated_at) ON ps_applications TO eduos_app;
+GRANT UPDATE (name, subject, grade_level, term, teacher_membership_id, status) ON ps_classes TO eduos_app;
+GRANT UPDATE (removed_by, removed_on) ON ps_class_rosters TO eduos_app;
+GRANT UPDATE (voided_by, voided_at, void_reason) ON ps_attendance TO eduos_app;
+GRANT UPDATE (status, comment, published_by, published_at) ON ps_report_cards TO eduos_app;
+GRANT UPDATE (grade, comment, written_by, written_at) ON ps_report_card_lines TO eduos_app;
+GRANT DELETE ON ps_class_meetings TO eduos_app;
+REVOKE DELETE, TRUNCATE ON ps_applications, ps_application_events, ps_classes, ps_class_rosters, ps_attendance, ps_report_cards, ps_report_card_lines FROM eduos_app;
+REVOKE UPDATE ON ps_application_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_ps_teaches(uuid), eduos_ps_runs_campus(uuid), eduos_ps_class_campus(uuid), eduos_ps_learner_campus(uuid), eduos_ps_sees_class(uuid) TO eduos_app;
+
+-- 164 (HSP-05): private school billing. Payments are append-only; numbers come from eduos_ps_next_number().
+GRANT SELECT, INSERT ON ps_payment_providers, ps_billing_accounts, ps_billing_account_learners, ps_invoices, ps_invoice_lines, ps_payments, ps_refunds, ps_reconciliations TO eduos_app;
+GRANT UPDATE (status, approved_by, approved_at) ON ps_payment_providers TO eduos_app;
+GRANT UPDATE (name, status) ON ps_billing_accounts TO eduos_app;
+GRANT DELETE ON ps_billing_account_learners TO eduos_app;
+GRANT UPDATE (title, due_on, status, number, issued_by, issued_at, total_cents, voided_by, voided_at, void_reason) ON ps_invoices TO eduos_app;
+GRANT UPDATE (approved_by, approved_at) ON ps_invoice_lines TO eduos_app;
+GRANT DELETE ON ps_invoice_lines TO eduos_app;
+GRANT UPDATE (status, decided_by, decided_at) ON ps_refunds TO eduos_app;
+GRANT UPDATE (signed_off_by, signed_off_at) ON ps_reconciliations TO eduos_app;
+REVOKE ALL ON ps_invoice_counters, ps_receipt_counters FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON ps_payment_providers, ps_billing_accounts, ps_invoices, ps_payments, ps_refunds, ps_reconciliations FROM eduos_app;
+REVOKE UPDATE ON ps_payments FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_ps_finance(), eduos_ps_pays(uuid), eduos_ps_invoice_account(uuid), eduos_ps_payment_invoice(uuid), eduos_ps_billing_learners(), eduos_ps_next_number(text) TO eduos_app;
+
+-- 165 (HSP-06): learner transfers. Read-only for the runtime role; every change goes through the eduos_transfer_* functions.
+GRANT SELECT (id, source_kind, source_tenant, source_learner, source_label, purpose, note, sections, snapshot, sha256, status, prepared_by, prepared_at, released_by, released_at, expires_at,
+  receiver_kind, receiver_tenant, receiver_label, receiver_learner, decided_by, decided_at, decline_reason, revoked_by, revoked_at, revoke_reason) ON learner_transfers TO eduos_app;
+GRANT SELECT ON transferred_records TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON learner_transfers, transferred_records FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_ps_guards(uuid), eduos_transfer_side(text,uuid,uuid,text,uuid), eduos_transfer_prepare(uuid,text,text[],text,text), eduos_transfer_release(uuid,text),
+  eduos_transfer_revoke(uuid,text), eduos_transfer_preview(text), eduos_transfer_accept(text,uuid), eduos_transfer_decline(text,text), eduos_transferred_record_void(uuid,text) TO eduos_app;
+
+-- 166 (HSP-07): homeschool co-ops. Co-ops are created and joined only through eduos_coop_create() and eduos_coop_join().
+GRANT SELECT ON coops, coop_members, coop_invitations, coop_sessions, coop_signups, coop_session_attendance, coop_posts, coop_post_flags, coop_audit_events TO eduos_app;
+GRANT UPDATE (name, description, status, closed_at) ON coops TO eduos_app;
+GRANT UPDATE (role, status, ended_by, ended_at, end_reason) ON coop_members TO eduos_app;
+GRANT INSERT ON coop_invitations TO eduos_app;
+GRANT UPDATE (revoked_at) ON coop_invitations TO eduos_app;
+GRANT INSERT ON coop_sessions TO eduos_app;
+GRANT UPDATE (title, description, location, starts_at, ends_at, leader_family_id, capacity, status, cancel_reason) ON coop_sessions TO eduos_app;
+GRANT INSERT ON coop_signups TO eduos_app;
+GRANT UPDATE (status, withdrawn_at) ON coop_signups TO eduos_app;
+GRANT INSERT ON coop_session_attendance TO eduos_app;
+GRANT UPDATE (present, marked_by, marked_at) ON coop_session_attendance TO eduos_app;
+GRANT INSERT ON coop_posts TO eduos_app;
+GRANT UPDATE (status, decided_by, decided_at, decision_reason) ON coop_posts TO eduos_app;
+GRANT INSERT ON coop_post_flags TO eduos_app;
+REVOKE INSERT ON coops, coop_members, coop_audit_events FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON coops, coop_members, coop_invitations, coop_sessions, coop_signups, coop_session_attendance, coop_posts, coop_post_flags, coop_audit_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_coop_role(uuid), eduos_coop_manages(uuid), eduos_coop_leads(uuid), eduos_coop_signup(uuid), eduos_coop_create(text,text), eduos_coop_join(text),
+  eduos_coop_leave(uuid), eduos_coop_session_counts(uuid), eduos_coop_audit(uuid,text,text,text,text) TO eduos_app;
+
+-- 167 (HSP-07 part 2): homeschool reading lists; private school message threads (messages never edited or deleted, only hidden).
+GRANT SELECT, INSERT ON family_reading TO eduos_app;
+GRANT UPDATE (title, author, status, started_on, finished_on, minutes, notes, course_id) ON family_reading TO eduos_app;
+REVOKE DELETE, TRUNCATE ON family_reading FROM eduos_app;
+GRANT SELECT, INSERT ON ps_message_threads, ps_message_participants, ps_messages TO eduos_app;
+GRANT UPDATE (status, closed_by, closed_at) ON ps_message_threads TO eduos_app;
+GRANT UPDATE (last_read_at) ON ps_message_participants TO eduos_app;
+GRANT UPDATE (hidden_by, hidden_at, hide_reason) ON ps_messages TO eduos_app;
+REVOKE DELETE, TRUNCATE ON ps_message_threads, ps_message_participants, ps_messages FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_ps_contacts(uuid), eduos_ps_in_thread(uuid), eduos_ps_thread_open(uuid), eduos_ps_thread_opener(uuid), eduos_ps_thread_people(uuid) TO eduos_app;
+
+-- 168 (HSP-06 part 2): compliance profiles. Templates are published only by the platform (src/compliance-template.js).
+GRANT SELECT ON compliance_templates TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON compliance_templates FROM eduos_app;
+GRANT SELECT, INSERT ON compliance_profiles, compliance_checklist TO eduos_app;
+GRANT UPDATE (retention_years, status, ended_by, ended_at) ON compliance_profiles TO eduos_app;
+GRANT UPDATE (status, done_on, evidence_ref, note, recorded_by, recorded_at) ON compliance_checklist TO eduos_app;
+REVOKE DELETE, TRUNCATE ON compliance_profiles, compliance_checklist FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_compliance_reads(uuid,uuid), eduos_compliance_writes(uuid,uuid,boolean) TO eduos_app;
+
+-- 169 (HSP-06 part 3): districts in the learner transfer workflow; the superintendent turns it on.
+GRANT SELECT, INSERT ON district_transfer_settings TO eduos_app;
+GRANT UPDATE (enabled, changed_by, changed_at) ON district_transfer_settings TO eduos_app;
+REVOKE DELETE, TRUNCATE ON district_transfer_settings FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_district_records_office(uuid), eduos_district_guardian(uuid,uuid,uuid), eduos_district_transfers_on(uuid), eduos_transfer_accept(text,uuid) TO eduos_app;

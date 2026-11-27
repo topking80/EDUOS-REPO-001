@@ -1,0 +1,20 @@
+{
+  "_comment": "An EXAMPLE of the template format only. It describes no real jurisdiction's requirements and must not be published. Real templates are written from official sources, reviewed, and published with npm run compliance:template.",
+  "jurisdiction": "US-ZZ",
+  "appliesTo": "homeschool_family",
+  "title": "Example State homeschool planning template",
+  "version": "2026.1",
+  "authority": { "name": "Example State Department of Education", "url": "https://example.org/homeschool" },
+  "sources": [{ "title": "Example statute, section 1", "url": "https://example.org/statute" }],
+  "effectiveFrom": "2026-07-01",
+  "lastReviewedOn": "2026-11-01",
+  "reviewedBy": "Name of the reviewer and their organization",
+  "requirements": {
+    "instruction": { "days": 180, "hours": 900, "note": "Example only." },
+    "subjects": ["Reading", "Mathematics", "Science"],
+    "deadlines": [{ "key": "notice_of_intent", "label": "Notice of intent", "month": 8, "day": 15 }],
+    "documents": [{ "key": "attendance_record", "label": "Attendance record", "perLearner": true }],
+    "assessments": [{ "key": "annual_assessment", "label": "Annual assessment", "grades": ["3", "5", "8"] }],
+    "retentionYears": 3
+  }
+}

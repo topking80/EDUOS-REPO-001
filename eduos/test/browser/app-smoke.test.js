@@ -128,7 +128,73 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/apps": return { data: [{ id: "app3", name: "New LTI Tool", vendor: "Tool Co", integrationType: "lti13", registrationStatus: "pending" }] };
     case "/api/app-requests": return { data: [{ id: "r1", status: "pending" }] };
     case "/api/my/apps": return { data: [{ id: "a1", name: "Reading Room", category: "Reading", integrationType: "link" }, { id: "a2", name: "MathQuest", category: "Math", integrationType: "lti13" }] };
-    case "/api/me": return { userId: "u1", displayName: "Smoke Test", role: role === "vice_principal" ? "principal" : role, membershipRole: role, districtId: "d1", schoolId: mockSchool, memberships: [] };
+    case "/api/me": if (role === "private_school") return { userId: "u1", displayName: "Smoke Test", role: "private_school_member", membershipRole: "private_school_member", districtId: null, schoolId: null,
+        tenantKind: "private_school", privateSchoolId: "ps1", privateSchoolRole: "school_admin", privateSchoolStatus: "active" };
+      return role === "homeschool" ? { userId: "u1", displayName: "Smoke Test", role: "family_member", membershipRole: "family_member", districtId: null, schoolId: null,
+        tenantKind: "homeschool_family", familyId: "f1", familyRole: "owner" }
+      : { userId: "u1", displayName: "Smoke Test", role: role === "vice_principal" ? "principal" : role, membershipRole: role, districtId: "d1", schoolId: mockSchool, memberships: [] };
+    // HSP-03: an independent private school (school administrator).
+    case "/api/private-school/me": return { data: { school: { id: "ps1", legalName: "Hillside Academy, Inc.", displayName: "Hillside Academy", status: "active", timeZone: "America/Chicago",
+      websiteDomain: "hillside.example", domainVerified: true, branding: {} }, role: "school_admin", campus: null, displayName: "Smoke Test", learnersYouCanSee: 1, campuses: 1 } };
+    case "/api/private-school/learners": return { data: [{ id: "pl1", campusId: "pc1", displayName: "Ava Lin", gradeLevel: "4", localNumber: "H-001", enrollmentStatus: "enrolled" }] };
+    case "/api/private-school/campuses": return { data: [{ id: "pc1", name: "Main Campus", city: "Austin", status: "active" }] };
+    case "/api/private-school/members": return { data: { members: [{ id: "pm1", role: "school_admin", name: "Smoke Test", you: true }, { id: "pm2", role: "registrar", name: "Rita Registrar", you: false }], invitations: [] } };
+    case "/api/private-school/calendar": return { data: [{ id: "pe1", title: "First day of term", kind: "term_start", audience: "everyone", startsAt: now, endsAt: now }] };
+    // HSP-04: admissions, classes, report cards and the week.
+    case "/api/private-school/admissions": return { data: [{ id: "pa1", campusId: "pc1", kind: "new", applicantName: "Cy Park", gradeLevel: "4", schoolYear: "2027-2028", status: "under_review",
+      waitlistPosition: null, documents: [{ label: "Birth certificate", received: true }, { label: "Records", received: false }], next: ["offered", "waitlisted", "not_offered", "withdrawn"] }] };
+    case "/api/private-school/classes": return { data: [{ id: "pk1", campusId: "pc1", name: "Math 4", schoolYear: "2026-2027", term: "Fall", teacher: "Teacher S1", status: "active", size: 18 }] };
+    case "/api/private-school/report-cards": return { data: [{ id: "prc1", learnerId: "pl1", learner: "Ava Lin", schoolYear: "2026-2027", term: "Fall", status: "draft", lines: [] }] };
+    // HSP-06 part 2: compliance planning.
+    case "/api/homeschool/compliance": return { data: { schoolYear: "2026-2027", disclaimer: "Requirements differ by place and change. This is a planning aid, not legal advice.", canAdopt: true, canCheck: true,
+      profile: { id: "cp1", label: "Example plan (2026.1)", custom: false, retentionYears: 3, provenance: "From the platform's template, last reviewed 2026-11-01 by Reviewer.",
+        template: { authority: { name: "Example Department of Education", url: "https://example.org" }, sources: [{ title: "Example statute", url: "https://example.org/s" }], retired: false } },
+      instruction: { required: { days: 180 }, progress: [{ learnerId: "l1", learner: "Mia", days: 42, hours: 168, daysMet: false }] }, subjects: ["Reading"],
+      deadlines: [{ key: "notice", label: "Notice of intent", due: "2026-08-15", status: "done", flag: null }],
+      documents: [{ key: "att", label: "Attendance record", perLearner: [{ learnerId: "l1", learner: "Mia", status: "to_do" }] }], assessments: [] } };
+    case "/api/private-school/compliance": return { data: { schoolYear: "2026-2027", disclaimer: "Requirements differ by place and change. This is a planning aid, not legal advice.", canAdopt: true, profile: null } };
+    case "/api/private-school/compliance/templates": return { data: [] };
+    // HSP-07 part 2: reading lists and school messages.
+    case "/api/homeschool/learners/l1/reading": return { data: { canEdit: true, totals: { finishedThisSchoolYear: 3, reading: 1, minutes: 600 },
+      books: [{ id: "b1", title: "Charlotte's Web", author: "E. B. White", status: "reading", minutes: 90 }, { id: "b2", title: "Holes", author: "Louis Sachar", status: "finished", finishedOn: "2026-11-01", minutes: 300 }] } };
+    case "/api/private-school/messages": return { data: [{ id: "t1", subject: "Math homework", status: "open", learner: "Ava Lin", learnerId: "pl1", lastAt: now, unread: 2, participant: true }] };
+    case "/api/private-school/messages/contacts": return { data: [{ membershipId: "pm2", name: "Rita Registrar", role: "registrar" }] };
+    // HSP-07: co-ops.
+    case "/api/homeschool/coops": return { data: [{ id: "k1", name: "Creek Co-op", role: "organizer", families: 3 }] };
+    case "/api/homeschool/coop-attendance": return { data: [{ id: "ca1", present: true, learnerId: "l1", name: "Mia", session: "Science lab", coop: "Creek Co-op", startsAt: now, minutes: 120, logged: false }] };
+    // HSP-06: learner transfers.
+    case "/api/homeschool/transfers": return { data: [{ id: "x1", direction: "sent", learner: "Mia", from: "Ortiz Homeschool", to: "Hillside Academy", purpose: "enrollment", sections: ["courses", "work"],
+      status: "accepted", items: 4, sourceLearnerId: "l1", preparedAt: now }] };
+    case "/api/homeschool/learners/l1/transferred-records": return { data: [] };
+    case "/api/private-school/transfers": return { data: [{ id: "x2", direction: "received", learner: "Mia Ortiz", from: "Ortiz Homeschool", to: "Hillside Academy", purpose: "enrollment",
+      sections: ["courses", "attendance"], status: "accepted", items: 3, receiverLearnerId: "pl1", preparedAt: now }] };
+    // HSP-05: billing for finance and the school admin.
+    case "/api/private-school/billing/accounts": return { data: [{ id: "pba1", name: "Lin family", payer: "Gwen Lin", status: "active", balanceCents: 555000 }] };
+    case "/api/private-school/billing/learners": return { data: [{ id: "pl1", displayName: "Ava Lin", enrolled: true }] };
+    case "/api/private-school/billing/invoices": return { data: [{ id: "pbi1", accountId: "pba1", account: "Lin family", number: "INV-2026-0001", title: "Fall tuition", status: "issued", dueOn: "2027-09-01",
+      totalCents: 1155000, paidCents: 600000, refundedCents: 0, balanceCents: 555000, lines: [{ id: "pbl1", kind: "tuition", description: "Fall tuition", learner: "Ava Lin", amountCents: 1200000, needsApproval: false, approved: false },
+        { id: "pbl2", kind: "aid", description: "Sibling discount", learner: null, amountCents: -45000, needsApproval: false, approved: true }],
+      payments: [{ id: "pbp1", amountCents: 600000, method: "check", reference: "Check 1001", receivedOn: "2026-11-20", receiptNumber: "RCT-2026-0001" }],
+      refunds: [{ id: "pbr1", paymentId: "pbp1", amountCents: 25000, reason: "Activity cancelled", status: "requested" }] },
+      { id: "pbi2", accountId: "pba1", account: "Lin family", number: null, title: "Spring tuition", status: "draft", totalCents: 1000, paidCents: 0, refundedCents: 0, balanceCents: 1000,
+        lines: [{ id: "pbl3", kind: "discount", description: "Early payment", amountCents: -100, needsApproval: true, approved: false }], payments: [], refunds: [] }] };
+    case "/api/private-school/billing/providers": return { data: [{ id: "pbv1", provider: "square", label: "Square (front office)", accountReference: "sq-1", status: "proposed" }] };
+    case "/api/private-school/billing/reconciliations": return { data: [{ id: "pbc1", from: "2026-11-01", to: "2026-11-20", totals: { receivedCents: 600000, refundedCents: 0, netCents: 600000 }, preparedBy: "Fran Finance", signedOffBy: null }] };
+    case "/api/private-school/schedule": return { data: [{ classId: "pk1", name: "Math 4", weekday: 1, starts: "09:00", ends: "09:50", room: "12" }] };
+    // HSP-01: a homeschool family session (owner).
+    case "/api/homeschool/me": return { data: { family: { id: "f1", name: "Ortiz Homeschool", timeZone: "America/Chicago", jurisdiction: "US-TX" }, role: "owner", displayName: "Smoke Test",
+      learners: [{ id: "l1", displayName: "Mia", gradeBand: "3", status: "active", authority: "full", upcomingThisWeek: 2 }], familyEventsThisWeek: 1 } };
+    // HSP-02: one learner's plan, attendance and work.
+    case "/api/homeschool/learners/l1/plan": return { data: { learner: { id: "l1", displayName: "Mia", gradeBand: "3", authority: "full" }, canTeach: true,
+      courses: [{ id: "c1", title: "Algebra I", subject: "Math", schoolYear: "2026-2027", status: "active", finalGrade: null, credits: null }],
+      goals: [{ id: "g1", courseId: "c1", text: "Two-step equations", status: "open" }] } };
+    case "/api/homeschool/learners/l1/attendance": return { data: { totals: { instructionalDays: 12, absentDays: 1, minutes: 2880, hours: 48, minutesByKind: {} },
+      sessions: [{ id: "a1", day: "2026-11-25", minutes: 240, kind: "instruction", courseId: "c1", voided: false }] } };
+    case "/api/homeschool/learners/l1/work": return { data: [{ id: "w1", courseId: "c1", title: "Unit 1 test", kind: "test", doneOn: "2026-11-24", score: 18, maxScore: 20, provenance: "parent_entered", voided: false }] };
+    case "/api/homeschool/calendar": return { data: [{ id: "e1", learnerId: "l1", title: "Fractions", kind: "lesson", startsAt: now, endsAt: now, allDay: false, cancelled: false }] };
+    case "/api/homeschool/members": return { data: { members: [{ id: "m1", role: "owner", name: "Smoke Test", you: true }, { id: "m2", role: "co_educator", name: "Tutor Tess", you: false }], invitations: [] } };
+    case "/api/session/contexts": return { data: { current: role === "homeschool" ? { kind: "homeschool_family", membershipId: "m1" } : { kind: "district" },
+      contexts: [{ kind: "district", membershipId: "dm1", label: "Lakeside ISD · Maple", role: "parent" }, { kind: "homeschool_family", membershipId: "m1", label: "Ortiz Homeschool", role: "owner" }] } };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: liveLockdown ? [{ id: "inc1", schoolId: "s1", schoolName: "Maple", kind: "lockdown", label: "Lockdown", isDrill: true, status: "active",
         startedAt: now, message: "Lock doors, lights off, out of sight.", audience: "staff", instructions: null }] : [], canInitiate: sosCaps, canLead: sosCaps,
@@ -319,6 +385,9 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       { id: "tr1", receivingDistrict: "Lakeside Unified", basis: "enrollment_request", note: "Request dated Nov 20", includeFamily: true, familyDecision: "approved", status: "ready",
         requestedBy: "Principal S1", createdAt: now, readyAt: now, items: 4, downloads: 1 }] } };
     // TC-06b: a transfer file received from another district, waiting to be checked.
+    // HSP-06 part 3: districts in the learner transfer workflow.
+    case "/api/transfers/settings": return { data: { enabled: true } };
+    case "/api/transfers": return { data: [] };
     case "/api/history-imports": return { data: [{ id: "hi1", status: "received", from: { district: "Lakeside Unified", school: "Elm School" }, student: { name: "Alice A" },
       localStudent: null, items: 3, receivedAt: now }] };
     case "/api/history-imports/hi1": return { data: { id: "hi1", status: "received", from: { district: "Lakeside Unified", school: "Elm School", districtId: "x" }, addressedTo: "Maple District",
@@ -672,6 +741,10 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         const preserveExpect = { "principal/history": ["Preservation", "Maple", "failed its integrity check"],
           "superintendent/history": ["Preservation", "Preservation settings", "Legal holds (1)", "Case 26-CV-0142"] }[`${role}/${tab}`];
         for (const want of preserveExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
+        // HSP-06 part 3: the records office's switch and receiving onto an existing student.
+        const xferExpect = { "principal/history": ["Transfers with families and private schools", "Receive records", "Transfer code"],
+          "superintendent/history": ["Transfers with families and private schools", "Turn off"] }[`${role}/${tab}`];
+        for (const want of xferExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
         if (["superintendent", "it_admin"].includes(role) && tab === "payments") {
           if (!text.includes("Payment webhook operations") || !text.includes("Late payment captures needing a refund") || !text.includes("Webhook events requiring investigation"))
             failures.push(`${role} #/payments: webhook operations panel is incomplete`);
@@ -1436,6 +1509,40 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         if (!text.includes(want)) failures.push(`parent capsule detail: "${want}" is missing`);
       await axeScan(page, "parent capsule detail", a11y);
       if (page.errors.length) failures.push(`parent capsule detail: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
+  }
+  // HSP-01: a homeschool family session shows its own workspace, not district tabs.
+  state.role = "homeschool";
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
+      let text = "";
+      for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Add a learner"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
+      for (const w of ["Ortiz Homeschool", "Learners", "Mia", "2 this week", "Coming up", "Fractions", "Tutor Tess", "Invite an adult", "Add a learner", "Add to the calendar", "Receive records", "Transfer code", "Co-ops", "Creek Co-op", "Compliance planning · 2026-2027", "Mia: 42/180 days", "Notice of intent · 2026-08-15", "Example Department of Education", "not legal advice", "Organizer · 3 families", "Mia · Creek Co-op · Science lab · 120 min", "Add to log", "Start a co-op"])
+        if (!text.includes(w)) failures.push(`homeschool workspace: "${w}" is missing`);
+      await axeScan(page, "homeschool workspace", a11y);
+      await page.eval(`([...document.querySelectorAll("button")].find(b => b.getAttribute("aria-label") === "Open Mia") || {}).click?.()`);
+      for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Work and evidence"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
+      for (const w of ["Algebra I", "Two-step equations", "12 days · 48 hours · 1 absent", "Unit 1 test", "18/20", "Export transcript", "Progress report (last 90 days)", "Add a course", "Transfer records", "sent to Hillside Academy", "Reading", "3 finished this school year", "Charlotte's Web", "Add a book", "Prepare transfer", "Courses and final grades"])
+        if (!text.includes(w)) failures.push(`homeschool learner: "${w}" is missing`);
+      await axeScan(page, "homeschool learner", a11y);
+      if (page.errors.length) failures.push(`homeschool workspace: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
+  }
+  // HSP-03: a private school session shows the school workspace.
+  state.role = "private_school";
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
+      let text = "";
+      for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Export the school's records"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
+      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Billing", "INV-2026-0001", "Messages", "Math homework", "No plan for this school year yet.", "Or set your own targets", "2 new", "New conversation", "Rita Registrar (Registrar)", "Transfers", "from Ortiz Homeschool", "Send a learner's records", "Published report cards", "Receive records", "RCT-2026-0001", "needs approval", "Sign off", "Draft invoice", "Export the school's records", "Ask to close the school",
+        "Admissions", "Cy Park", "Under review", "documents 1/2", "Offered", "New inquiry", "This week's schedule", "Mon 09:00–09:50 · Math 4", "Classes", "18 learners", "Report cards", "Draft"])
+        if (!text.includes(w)) failures.push(`private school workspace: "${w}" is missing`);
+      await axeScan(page, "private school workspace", a11y);
+      if (page.errors.length) failures.push(`private school workspace: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
   // Failed queue requests must be visibly different from genuinely empty queues.

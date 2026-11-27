@@ -76,7 +76,9 @@ const api = {
   },
   get(p) { return this.req("GET", p); },
   post(p, b = {}) { return this.req("POST", p, b); },
-  put(p, b = {}) { return this.req("PUT", p, b); }
+  put(p, b = {}) { return this.req("PUT", p, b); },
+  patch(p, b = {}) { return this.req("PATCH", p, b); },
+  del(p) { return this.req("DELETE", p); }
 };
 const safe = async (p, fallback = null) => { try { return await p; } catch (e) { if (e.status === 401) throw e; return fallback; } };
 
@@ -221,6 +223,717 @@ const VIEWS = {};
 const NO_FAMILY_BAR = ["safety", "sos", "me", "more"];
 // UI-05: every profile this person can use (role + school + district), for the
 // switcher in the header and on Account.
+
+// ---- HSP-01: homeschool family workspace --------------------------------------
+const HS_ROLE = { owner: "Owner", co_educator: "Co-educator", guardian_viewer: "Guardian (view only)", learner: "Learner" };
+const HS_AUTH = { full: "full", educational: "teaches", view: "views" };
+const HS_KINDS = { lesson: "Lesson", field_trip: "Field trip", co_op: "Co-op", appointment: "Appointment", break: "Break", other: "Other" };
+const HS_GRADES = [["pre_k", "Pre-K"], ["k", "K"], ...Array.from({ length: 12 }, (_, i) => [String(i + 1), `Grade ${i + 1}`]), ["adult", "Adult"]];
+const HS_ERRORS = { family_owner_only: "Only a family owner can do that.", family_needs_an_owner: "A family needs at least one owner. Make someone else an owner first.",
+  not_allowed: "You can't do that for this learner.", not_allowed_for_this_learner: "You can't add events for this learner.", learner_not_found: "That learner isn't in your family.",
+  invitation_for_another_email: "This invitation was sent to a different email address.", invitation_not_valid: "This invitation has expired, been used or been withdrawn.",
+  already_a_member: "You're already in this family.", verified_email_required: "Your sign-in needs a verified email for this.", family_limit_reached: "You already own the most families allowed.",
+  too_many_open_invitations: "Too many invitations are waiting. Withdraw some first." };
+const hsErr = (e, fallback) => toast(HS_ERRORS[e?.body?.error] || fallback);
+async function switchContextTo(c, message) {
+  const r = await api.post("/api/session/context", { kind: c.kind, membershipId: c.membershipId });
+  api.csrf = r.csrfToken; toast(message); state.tab = null; location.hash = ""; await boot();
+}
+async function homeschoolEntryCard() {
+  const d = (await safe(api.get("/api/session/contexts")))?.data;
+  const fams = (d?.contexts || []).filter(c => c.kind === "homeschool_family");
+  const name = h("input", { id: "hs-name", required: true, minlength: 2, maxlength: 120, placeholder: "e.g. The Ortiz Homeschool" });
+  return h("section", { class: "card", "aria-label": "Homeschool" }, h("h3", {}, "Homeschool"),
+    h("p", { class: "small muted" }, "A homeschool family is its own private space, separate from any school district: your learners, your calendar, and the adults you invite."),
+    fams.length ? h("ul", { class: "list" }, fams.map(c => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, c.label), ` · ${HS_ROLE[c.role] || c.role}`),
+      h("button", { class: "btn small", type: "button", onclick: () => switchContextTo(c, `Now in ${c.label}`).catch(e => hsErr(e, "Couldn't open it.")) }, "Open")))) : null,
+    h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault();
+        try { const r = (await api.post("/api/homeschool/families", { name: name.value.trim(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })).data;
+          await switchContextTo({ kind: "homeschool_family", membershipId: r.membershipId }, `${name.value.trim()} is ready`); } catch (err) { hsErr(err, "Couldn't create the family."); } } },
+      h("div", { class: "grow" }, h("label", { for: "hs-name" }, "Start a homeschool family"), name), h("button", { class: "btn", type: "submit" }, "Create")));
+}
+async function renderHomeschoolInvite(token) {
+  document.getElementById("top").replaceChildren(h("div", { class: "who" }, h("h1", {}, "Homeschool invitation")));
+  document.getElementById("tabs")?.replaceChildren();
+  put(h("section", { class: "card" }, h("h2", {}, "Join a homeschool family"),
+    h("p", {}, "You were invited to help with a family's homeschool. Accepting adds you with the role and learners the family chose. You can leave any time by asking the family's owner."),
+    h("div", { class: "btns" }, h("button", { class: "btn primary", type: "button", onclick: async () => {
+        try { const r = (await api.post("/api/homeschool/invitations/accept", { token })).data;
+          await switchContextTo({ kind: "homeschool_family", membershipId: r.membershipId }, "You've joined the family."); } catch (e) { hsErr(e, "Couldn't accept the invitation."); } } }, "Accept"),
+      h("button", { class: "btn", type: "button", onclick: () => { location.hash = ""; boot(); } }, "Not now"))));
+}
+
+// HSP-02: one learner's plan, attendance, work and records.
+const HS_ATT = { instruction: "Instruction", field_trip: "Field trip", co_op: "Co-op", independent: "Independent study", absent: "Absent" };
+const HS_WORK = { assignment: "Assignment", project: "Project", test: "Test", reading: "Reading", activity: "Activity", certificate: "Certificate" };
+const HS_EXPORT = { progress_report: "Progress report", transcript: "Transcript", portfolio: "Portfolio" };
+Object.assign(HS_ERRORS, { export_needs_full_authority: "Only someone with full authority for this learner can export records.", invalid_attendance: "Check the date (not in the future) and minutes.",
+  invalid_work: "Check the title, date and score (a score needs its maximum).", invalid_course: "Check the title and school year (like 2026-2027)." });
+const schoolYearNow = () => { const d = new Date(), y = d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1; return `${y}-${y + 1}`; };
+const hsDay = (n = 0) => new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10);
+function hsRecordView(doc) {
+  const rows = [];
+  if (doc.kind === "transcript") for (const y of doc.years) rows.push(h("h4", {}, y.school_year), h("ul", { class: "list small" }, y.courses.map(c => h("li", {}, `${c.title}${c.subject ? ` (${c.subject})` : ""} · ${c.final_grade || "no grade"} · ${c.credits ?? 0} credits`))));
+  if (doc.kind === "transcript") rows.push(h("p", {}, h("b", {}, `Total credits: ${doc.total_credits}`)));
+  if (doc.kind === "progress_report") rows.push(h("p", {}, `${doc.attendance.instructionalDays} instructional days · ${doc.attendance.hours} hours · ${doc.attendance.absentDays} absent`),
+    h("ul", { class: "list small" }, doc.courses.map(c => h("li", {}, `${c.title} · ${c.work_items} items${c.percent != null ? ` · ${c.percent}%` : ""}${c.goals.length ? ` · goals met ${c.goals.filter(g => g.status === "met").length}/${c.goals.length}` : ""}`))));
+  if (doc.kind === "portfolio") rows.push(h("ul", { class: "list small" }, doc.items.map(i => h("li", {}, `${i.done_on} · ${i.title}${i.course ? ` (${i.course})` : ""}${i.score != null ? ` · ${i.score}/${i.max_score}` : ""} · ${i.provenance}`))));
+  return h("section", { class: "card", "aria-label": HS_EXPORT[doc.kind] }, h("h3", {}, `${HS_EXPORT[doc.kind]}: ${doc.learner.name}`),
+    h("p", { class: "small" }, `Issued by ${doc.issuer.name} on ${doc.generated.on}${doc.period ? ` · ${doc.period.from || "start"} to ${doc.period.to || "today"}` : ""}`),
+    h("p", { class: "notice small" }, doc.issuer.statement), ...rows,
+    doc.sha256 ? h("p", { class: "small muted" }, "Record fingerprint ", h("code", {}, doc.sha256.slice(0, 16))) : null,
+    h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: () => window.print() }, "Print"),
+      doc.sha256 ? h("button", { class: "btn small", type: "button", onclick: () => { const href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" }));
+        const a = h("a", { href, download: `${doc.kind}-${doc.learner.name.replace(/[^A-Za-z0-9]+/g, "-")}.json` }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(href), 10000); } }, "Download file") : null));
+}
+// ---- HSP-06: learner transfers between families and private schools -------------
+const XFER_ERRORS = { full_authority_required: "Only someone with full authority over this learner can send records.", registrar_or_admin_only: "Only a registrar or school administrator can do that.",
+  family_owner_only: "Only a family owner can receive records.", guardian_of_this_learner_only: "A school's records can only go to that learner's guardian.",
+  same_family_or_school: "That code is from your own family or school.", transfer_code_not_valid: "That code has expired, been used or been withdrawn.", invalid_code: "Check the code and try again.",
+  school_not_verified: "The platform has to verify this school first.", campus_required: "Pick a campus.", already_decided: "That transfer has already been decided.",
+  choose_what_to_send: "Choose what to send.", invalid_sections: "Those records can't be sent from here.", records_office_only: "Only the student's principal or the superintendent can do that.",
+  district_transfers_off: "The superintendent hasn't turned on transfers with families and private schools.", use_the_signed_history_transfer: "Between districts, use the signed history transfer.",
+  student_required: "Choose one of your school's students." };
+const xferErr = (e, fallback) => toast(XFER_ERRORS[e?.body?.error] || fallback);
+const XFER_SECTIONS = { courses: "Courses and final grades", attendance: "Attendance (yearly totals)", work: "Work and scores", enrollment: "Enrollment dates and grade", report_cards: "Published report cards", final_grades: "Posted final grades" };
+const XFER_PURPOSE = { enrollment: "Enrolling there", records_request: "Records request", return_to_homeschool: "Returning to homeschool", other: "Other" };
+const XFER_STATUS = { awaiting_release: "Waiting for a guardian to release it", ready: "Code issued, not yet received", accepted: "Received", declined: "Declined", revoked: "Withdrawn", expired: "Code expired" };
+const xferCode = (box, code) => box.replaceChildren(h("p", { class: "notice" }, "Give this code only to the school or family that should receive these records. It's shown once and works for 14 days: ", h("code", { class: "wrap" }, code)));
+function xferSendForm(base, sections, learnerSelect, done) {
+  const picks = sections.map(k => h("input", { type: "checkbox", value: k, checked: true, "aria-label": XFER_SECTIONS[k] }));
+  const purpose = h("select", { id: "xf-purpose" }, Object.entries(XFER_PURPOSE).map(([v, t]) => h("option", { value: v }, t))), note = h("input", { id: "xf-note", maxlength: 500 }), box = h("div", {});
+  return h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+      try { const r = (await api.post(`${base}/transfers`, { learnerId: learnerSelect(), purpose: purpose.value, sections: picks.filter(x => x.checked).map(x => x.value), note: note.value.trim() || undefined })).data;
+        if (r.code) xferCode(box, r.code); else box.replaceChildren(h("p", { class: "notice" }, `Prepared (${r.items} records). A guardian with full authority has to release it before anyone can receive it.`));
+        done?.(); } catch (err) { xferErr(err, "Couldn't prepare it."); } } },
+    h("fieldset", {}, h("legend", {}, "What to send"), sections.map((k, i) => h("label", { class: "check" }, picks[i], ` ${XFER_SECTIONS[k]}`))),
+    h("label", { for: "xf-purpose" }, "Why"), purpose, h("label", { for: "xf-note" }, "Note for the receiver (optional)"), note,
+    h("p", { class: "small muted" }, "Private notes, daily logs, goals, drafts, billing and contact details are never sent. Your records stay here."),
+    h("button", { class: "btn", type: "submit" }, "Prepare transfer"), box);
+}
+function xferReceiveCard(base, campuses, reload) {
+  const code = h("input", { id: "xr-code", required: true, maxlength: 100, autocomplete: "off" }), box = h("div", {});
+  const district = campuses === "students";
+  const campus = district ? h("select", { "aria-label": "Student these records belong to" }, h("option", { value: "" }, "Find the student first"))
+    : campuses ? h("select", { "aria-label": "Campus" }, campuses.map(c => h("option", { value: c.id }, c.name))) : null;
+  const find = district ? h("input", { "aria-label": "Student name or number", maxlength: 100, placeholder: "Name or student number" }) : null;
+  const finder = district ? h("span", { class: "row" }, find, h("button", { class: "btn small", type: "button", onclick: async () => {
+    const r = (await safe(api.get(`/api/students?q=${encodeURIComponent(find.value.trim())}&limit=20`)))?.data || [];
+    campus.replaceChildren(...(r.length ? r.map(x => h("option", { value: x.id }, `${x.display_name ?? x.displayName} · ${x.local_student_number ?? x.localStudentNumber ?? ""}`)) : [h("option", { value: "" }, "No match")])); } }, "Find")) : null;
+  const preview = p => box.replaceChildren(h("div", { class: "stack" }, h("p", {}, h("b", {}, p.learner.displayName), ` from ${p.from} · ${XFER_PURPOSE[p.purpose] || p.purpose}`), p.note ? h("p", { class: "small" }, p.note) : null,
+    h("p", { class: "small muted" }, p.provenance), h("ul", { class: "list small" }, p.items.map(i => h("li", {}, i.title))),
+    district ? h("p", { class: "small" }, "Choose the student these records belong to. Enroll a new child first; nothing is matched or created automatically.") : null,
+    h("div", { class: "row wrap" }, finder, campus, h("button", { class: "btn primary", type: "button", onclick: async () => {
+      if (district && !campus.value) return toast("Choose the student first.");
+      try { const r = (await api.post(`${base}/transfers/receive/accept`, district ? { code: code.value.trim(), studentId: campus.value } : { code: code.value.trim(), campusId: campus?.value })).data;
+        toast(district ? `Received ${r.records} records for that student.` : `Received ${r.records} records as a new learner.`); reload(); } catch (e) { xferErr(e, "Couldn't receive it."); } } }, district ? "Accept for this student" : "Accept as a new learner"),
+      h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why decline?", async reason => {
+        try { await api.post(`${base}/transfers/receive/decline`, { code: code.value.trim(), reason }); toast("Declined."); reload(); } catch (err) { xferErr(err, "Couldn't decline it."); } }) }, "Decline")))));
+  return h("section", { class: "card", "aria-label": "Receive records" }, h("h3", {}, "Receive records"),
+    h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault(); try { preview((await api.post(`${base}/transfers/receive/preview`, { code: code.value.trim() })).data); } catch (err) { xferErr(err, "Couldn't open that code."); } } },
+      h("div", { class: "grow" }, h("label", { for: "xr-code" }, "Transfer code"), code), h("button", { class: "btn", type: "submit" }, "Look")), box,
+    h("p", { class: "small muted" }, "Received records are kept as they were sent, labeled with where they came from. You can correct one by voiding it, but not edit it."));
+}
+function xferList(base, list, { canRevoke, canRelease, reload }) {
+  return h("ul", { class: "list" }, list.map(t => { const slot = h("div", {}), box = h("div", {});
+    return h("li", {}, h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, t.learner), ` · ${t.direction === "sent" ? `sent${t.to ? ` to ${t.to}` : ""}` : `from ${t.from}`} · ${XFER_STATUS[t.status] || t.status}`,
+        h("span", { class: "small muted" }, ` · ${t.sections.map(k => XFER_SECTIONS[k] || k).join(", ")} · ${t.items} records${t.declineReason ? ` · "${t.declineReason}"` : ""}`)),
+      canRelease && t.status === "awaiting_release" ? h("button", { class: "btn small primary", type: "button", onclick: async () => { try { xferCode(box, (await api.post(`${base}/transfers/${t.id}/release`, {})).data.code); } catch (e) { xferErr(e, "Couldn't release it."); } } }, "Release") : null,
+      canRevoke && t.direction === "sent" && ["awaiting_release", "ready"].includes(t.status) ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why withdraw it?", async reason => {
+        try { await api.post(`${base}/transfers/${t.id}/revoke`, { reason }); toast("Withdrawn."); reload(); } catch (err) { xferErr(err, "Couldn't withdraw it."); } }) }, "Withdraw")) : null,
+      t.receiverLearnerId ? h("button", { class: "btn small", type: "button", onclick: () => xferRecords(base, t.receiverLearnerId, slot).catch(e => xferErr(e, "Couldn't load them.")) }, "Records") : null), box, slot); }));
+}
+async function xferRecords(base, learnerId, slot) {
+  const recs = (await api.get(`${base}/${base === "/api" ? "students" : "learners"}/${learnerId}/transferred-records`)).data;
+  if (!recs.length) return slot.replaceChildren();
+  slot.replaceChildren(h("div", {}, h("p", { class: "small muted" }, recs[0].provenance), h("ul", { class: "list small" }, recs.map(r => h("li", { class: "row wrap" },
+    h("span", { class: "grow" }, `${r.title}${r.detail?.finalGrade ? ` · ${r.detail.finalGrade}` : ""}${r.detail?.letter ? ` · ${r.detail.letter}` : ""}${r.detail?.score != null ? ` · ${r.detail.score}/${r.detail.maxScore}` : ""}${r.voided ? ` · corrected (${r.voidReason})` : ""}`),
+    r.voided ? null : h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why is this being corrected?", async reason => {
+      try { await api.post(`${base}/transferred-records/${r.id}/void`, { reason }); toast("Corrected."); xferRecords(base, learnerId, slot); } catch (err) { xferErr(err, "Couldn't correct it."); } }) }, "Correct")))))));
+}
+// ---- HSP-07 part 2: reading lists ------------------------------------------------
+const READ_STATUS = { to_read: "To read", reading: "Reading", finished: "Finished", set_aside: "Set aside" };
+async function hsReadingCard(id) {
+  const r = (await safe(api.get(`/api/homeschool/learners/${id}/reading`)))?.data;
+  if (!r) return null;
+  const reload = () => renderHomeschoolLearner(id);
+  const patch = (bid, body, msg) => api.patch(`/api/homeschool/reading/${bid}`, body).then(() => { toast(msg); reload(); }).catch(e => hsErr(e, "Couldn't save it."));
+  const f = { title: h("input", { id: "hr-title", required: true, maxlength: 200 }), author: h("input", { id: "hr-author", maxlength: 120 }),
+    status: h("select", { id: "hr-status" }, Object.entries(READ_STATUS).filter(([v]) => v !== "set_aside").map(([v, t]) => h("option", { value: v }, t))) };
+  return h("section", { class: "card", "aria-label": "Reading" }, h("h3", {}, "Reading"),
+    h("p", { class: "small" }, `${r.totals.finishedThisSchoolYear} finished this school year · ${r.totals.reading} in progress · ${Math.round(r.totals.minutes / 60 * 10) / 10} hours logged`),
+    r.books.length ? h("ul", { class: "list" }, r.books.map(b => { const mins = h("input", { type: "number", min: 1, max: 1440, "aria-label": `Minutes read of ${b.title}`, placeholder: "min" });
+      return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, b.title), h("span", { class: "small muted" }, `${b.author ? ` · ${b.author}` : ""} · ${READ_STATUS[b.status]}${b.finishedOn ? ` ${b.finishedOn}` : ""}${b.minutes ? ` · ${b.minutes} min` : ""}`),
+          b.notes ? h("span", { class: "small" }, ` · ${b.notes}`) : null),
+        r.canEdit && b.status !== "finished" ? h("form", { class: "row", onsubmit: e => { e.preventDefault(); if (mins.value) patch(b.id, { minutes: Number(mins.value), status: b.status === "to_read" ? "reading" : undefined }, "Logged."); } },
+          mins, h("button", { class: "btn small", type: "submit" }, "Log")) : null,
+        r.canEdit && b.status !== "finished" ? h("button", { class: "btn small", type: "button", onclick: () => patch(b.id, { status: "finished" }, "Finished!") }, "Finished") : null); })) : h("p", { class: "muted" }, "No books yet."),
+    r.canEdit ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault();
+        api.post(`/api/homeschool/learners/${id}/reading`, { title: f.title.value.trim(), author: f.author.value.trim() || undefined, status: f.status.value }).then(() => { toast("Added."); reload(); }).catch(err => hsErr(err, "Couldn't add it.")); } },
+      h("div", { class: "grow" }, h("label", { for: "hr-title" }, "Add a book"), f.title), h("div", {}, h("label", { for: "hr-author" }, "Author"), f.author), h("div", {}, h("label", { for: "hr-status" }, "Status"), f.status),
+      h("button", { class: "btn", type: "submit" }, "Add")) : null);
+}
+async function renderHomeschoolLearner(id) {
+  const [plan, att, work] = await Promise.all([api.get(`/api/homeschool/learners/${id}/plan`), api.get(`/api/homeschool/learners/${id}/attendance?from=${hsDay(30)}&to=${hsDay(0)}`), api.get(`/api/homeschool/learners/${id}/work?from=${hsDay(90)}`)]);
+  const p = plan.data, L = p.learner, teach = p.canTeach, reload = () => renderHomeschoolLearner(id), courseName = cid => p.courses.find(c => c.id === cid)?.title;
+  const courseSelect = idAttr => h("select", { id: idAttr }, h("option", { value: "" }, "No course"), p.courses.filter(c => c.status === "active").map(c => h("option", { value: c.id }, c.title)));
+  const post = (path, body, msg) => api.post(path, body).then(() => { toast(msg); reload(); }).catch(e => hsErr(e, "Couldn't save it."));
+  const voidBtn = path => h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why is this being corrected?", reason => post(path, { reason }, "Corrected.")) }, "Correct"));
+  const c = { title: h("input", { id: "hc-title", required: true, maxlength: 160 }), subject: h("input", { id: "hc-subject", maxlength: 80 }), year: h("input", { id: "hc-year", value: schoolYearNow(), pattern: "[0-9]{4}-[0-9]{4}", required: true }) };
+  const g = { text: h("input", { id: "hg-text", required: true, maxlength: 500 }), course: courseSelect("hg-course") };
+  const a = { day: h("input", { id: "ha-day", type: "date", value: hsDay(0), max: hsDay(0), required: true }), minutes: h("input", { id: "ha-min", type: "number", min: 0, max: 1440, value: 240, required: true }),
+    kind: h("select", { id: "ha-kind" }, Object.entries(HS_ATT).map(([v, t]) => h("option", { value: v }, t))), course: courseSelect("ha-course") };
+  const w = { title: h("input", { id: "hw-title", required: true, maxlength: 200 }), kind: h("select", { id: "hw-kind" }, Object.entries(HS_WORK).map(([v, t]) => h("option", { value: v }, t))),
+    day: h("input", { id: "hw-day", type: "date", value: hsDay(0), max: hsDay(0), required: true }), course: courseSelect("hw-course"),
+    score: h("input", { id: "hw-score", type: "number", min: 0, step: "any" }), max: h("input", { id: "hw-max", type: "number", min: 0, step: "any" }), source: h("input", { id: "hw-source", maxlength: 200, placeholder: "Leave blank if you made it" }) };
+  const out = h("div", {});
+  const t = att.data.totals;
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: () => renderHomeschool() }, "← Family")), h("h2", {}, L.displayName),
+    h("section", { class: "card", "aria-label": "Plan" }, h("h3", {}, "Plan"),
+      p.courses.length ? h("ul", { class: "list" }, p.courses.map(k => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, k.title), h("span", { class: "small muted" }, ` · ${k.schoolYear}${k.subject ? ` · ${k.subject}` : ""} · ${k.status}${k.finalGrade ? ` · ${k.finalGrade}` : ""}${k.credits != null ? ` · ${k.credits} cr` : ""}`)),
+        teach && k.status === "active" ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => { const slot = e.target.parentNode, grade = h("input", { "aria-label": "Final grade", maxlength: 20, placeholder: "Final grade" }),
+          cr = h("input", { "aria-label": "Credits", type: "number", min: 0, max: 10, step: "0.25", placeholder: "Credits" });
+          slot.replaceChildren(h("form", { class: "row wrap", onsubmit: ev => { ev.preventDefault(); api.patch(`/api/homeschool/courses/${k.id}`, { status: "completed", finalGrade: grade.value.trim() || null, credits: cr.value === "" ? null : Number(cr.value) })
+            .then(() => { toast("Course completed."); reload(); }).catch(err => hsErr(err, "Couldn't save it.")); } }, grade, cr, h("button", { class: "btn small", type: "submit" }, "Complete"))); } }, "Complete")) : null))) : h("p", { class: "muted" }, "No courses yet."),
+      p.goals.length ? h("ul", { class: "list small" }, p.goals.map(x => h("li", { class: "row" }, h("span", { class: "grow" }, `${x.status === "met" ? "✓ " : ""}${x.text}${x.courseId ? ` (${courseName(x.courseId)})` : ""}`),
+        teach && x.status === "open" ? h("button", { class: "link", type: "button", onclick: () => api.patch(`/api/homeschool/goals/${x.id}`, { status: "met" }).then(() => { toast("Goal met."); reload(); }).catch(e => hsErr(e, "Couldn't save it.")) }, "Met") : null))) : null,
+      teach ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/learners/${id}/courses`, { title: c.title.value.trim(), subject: c.subject.value.trim() || undefined, schoolYear: c.year.value.trim() }, "Course added."); } },
+        h("h4", {}, "Add a course"), h("label", { for: "hc-title" }, "Course"), c.title, h("label", { for: "hc-subject" }, "Subject"), c.subject, h("label", { for: "hc-year" }, "School year"), c.year, h("button", { class: "btn", type: "submit" }, "Add course")) : null,
+      teach ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/learners/${id}/goals`, { text: g.text.value.trim(), courseId: g.course.value || undefined }, "Goal added."); } },
+        h("div", { class: "grow" }, h("label", { for: "hg-text" }, "Add a goal"), g.text), h("div", {}, h("label", { for: "hg-course" }, "Course"), g.course), h("button", { class: "btn", type: "submit" }, "Add")) : null),
+    h("section", { class: "card", "aria-label": "Attendance" }, h("h3", {}, "Attendance and instructional time"),
+      h("p", {}, `Last 30 days: ${t.instructionalDays} days · ${t.hours} hours · ${t.absentDays} absent`),
+      teach ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/learners/${id}/attendance`, { day: a.day.value, minutes: a.kind.value === "absent" ? 0 : Number(a.minutes.value), kind: a.kind.value, courseId: a.course.value || undefined }, "Recorded."); } },
+        h("div", {}, h("label", { for: "ha-day" }, "Day"), a.day), h("div", {}, h("label", { for: "ha-min" }, "Minutes"), a.minutes), h("div", {}, h("label", { for: "ha-kind" }, "Kind"), a.kind), h("div", {}, h("label", { for: "ha-course" }, "Course"), a.course),
+        h("button", { class: "btn", type: "submit" }, "Record")) : null,
+      h("ul", { class: "list small" }, att.data.sessions.slice(0, 20).map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${x.day} · ${HS_ATT[x.kind]} · ${x.minutes} min${x.courseId ? ` · ${courseName(x.courseId)}` : ""}${x.voided ? ` · corrected (${x.voidReason})` : ""}`),
+        teach && !x.voided ? voidBtn(`/api/homeschool/attendance/${x.id}/void`) : null)))),
+    h("section", { class: "card", "aria-label": "Work" }, h("h3", {}, "Work and evidence"),
+      teach ? h("form", { class: "stack", onsubmit: e => { e.preventDefault();
+          post(`/api/homeschool/learners/${id}/work`, { title: w.title.value.trim(), kind: w.kind.value, doneOn: w.day.value, courseId: w.course.value || undefined,
+            score: w.score.value === "" ? undefined : Number(w.score.value), maxScore: w.max.value === "" ? undefined : Number(w.max.value), source: w.source.value.trim() || undefined }, "Saved."); } },
+        h("label", { for: "hw-title" }, "What"), w.title, h("label", { for: "hw-kind" }, "Kind"), w.kind, h("label", { for: "hw-day" }, "Done on"), w.day, h("label", { for: "hw-course" }, "Course"), w.course,
+        h("div", { class: "row" }, h("div", {}, h("label", { for: "hw-score" }, "Score"), w.score), h("div", {}, h("label", { for: "hw-max" }, "Out of"), w.max)),
+        h("label", { for: "hw-source" }, "From an outside course or program"), w.source, h("button", { class: "btn", type: "submit" }, "Save work")) : null,
+      h("ul", { class: "list small" }, work.data.slice(0, 30).map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${x.doneOn} · ${x.title} · ${HS_WORK[x.kind]}${x.score != null ? ` · ${x.score}/${x.maxScore}` : ""}${x.source ? ` · from ${x.source}` : ""}${x.voided ? ` · corrected (${x.voidReason})` : ""}`),
+        teach && !x.voided ? voidBtn(`/api/homeschool/work/${x.id}/void`) : null)))),
+    await hsReadingCard(id),
+    h("section", { class: "card", "aria-label": "Records" }, h("h3", {}, "Reports and records"),
+      h("p", { class: "small muted" }, "Family records are labeled as entered by your family. EduOS doesn't verify or accredit them, and files nothing with any agency."),
+      h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: async () => { try { out.replaceChildren(hsRecordView((await api.get(`/api/homeschool/learners/${id}/progress?from=${hsDay(90)}`)).data)); } catch (e) { hsErr(e, "Couldn't build it."); } } }, "Progress report (last 90 days)"),
+        L.authority === "full" ? Object.entries(HS_EXPORT).map(([k, label]) => h("button", { class: "btn small", type: "button", onclick: async () => {
+          try { out.replaceChildren(hsRecordView((await api.post(`/api/homeschool/learners/${id}/exports`, { kind: k, ...(k === "transcript" ? {} : { from: hsDay(365) }) })).data)); toast(`${label} exported and logged.`); } catch (e) { hsErr(e, "Couldn't export it."); } } }, `Export ${label.toLowerCase()}`)) : null),
+      out),
+    L.authority === "full" ? await (async () => { const all = (await safe(api.get("/api/homeschool/transfers")))?.data || [], recSlot = h("div", {});
+      await xferRecords("/api/homeschool", id, recSlot).catch(() => {});
+      return h("section", { class: "card", "aria-label": "Transfer records" }, h("h3", {}, "Transfer records"), recSlot,
+        xferList("/api/homeschool", all.filter(t => t.sourceLearnerId === id), { canRevoke: true, reload }),
+        xferSendForm("/api/homeschool", ["courses", "attendance", "work"], () => id, null)); })() : null);
+}
+// ---- HSP-07: homeschool co-ops ---------------------------------------------------
+const COOP_ROLE = { organizer: "Organizer", moderator: "Moderator", member: "Member" };
+Object.assign(HS_ERRORS, { organizer_only: "Only an organizer can do that.", organizer_or_moderator_only: "Only an organizer or moderator can do that.", session_full: "That session is full.",
+  already_signed_up: "Already signed up.", session_not_open: "Sign-ups are closed for that session.", make_another_organizer_first: "Make another family an organizer first.",
+  already_logged: "Already in your attendance log.", invitation_not_valid: "That code has expired, been used or been withdrawn.", already_a_member: "Your family is already in that co-op.",
+  invalid_post: "Add a title, and an https link or text for a resource.", decide_another_familys_post: "Another organizer or moderator has to decide your family's post.",
+  coop_limit_reached: "Your family is already in 10 co-ops.", invalid_session_time: "Pick a future start, ending within 12 hours.", invalid_code: "Check the code and try again." });
+const confirmBtn = (label, confirmLabel, onConfirm) => h("span", {}, h("button", { class: "link", type: "button", onclick: e => { const slot = e.target.parentNode;
+  slot.replaceChildren(h("button", { class: "btn small", type: "button", onclick: onConfirm }, confirmLabel), h("button", { class: "link", type: "button", onclick: () => slot.replaceChildren(e.target) }, "Cancel")); } }, label));
+async function homeschoolCoopsCard(owner, reload) {
+  const [list, att] = await Promise.all([safe(api.get("/api/homeschool/coops")), safe(api.get("/api/homeschool/coop-attendance"))]);
+  const coops = list?.data || [], toLog = (att?.data || []).filter(a => a.present && !a.logged);
+  const name = h("input", { id: "co-name", required: true, maxlength: 120 }), code = h("input", { id: "co-code", required: true, maxlength: 100, autocomplete: "off" });
+  return h("section", { class: "card", "aria-label": "Co-ops" }, h("h3", {}, "Co-ops"),
+    coops.length ? h("ul", { class: "list" }, coops.map(k => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, k.name), h("span", { class: "small muted" }, ` · ${COOP_ROLE[k.role]} · ${k.families} families`)),
+      h("button", { class: "btn small", type: "button", "aria-label": `Open ${k.name}`, onclick: () => renderHomeschoolCoop(k.id).catch(e => hsErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, "Your family isn't in a co-op."),
+    toLog.length ? [h("h4", {}, "Co-op attendance to add to your log"), h("ul", { class: "list small" }, toLog.map(a => h("li", { class: "row" }, h("span", { class: "grow" }, `${a.name} · ${a.coop} · ${a.session} · ${a.minutes} min`),
+      h("button", { class: "btn small", type: "button", onclick: () => api.post(`/api/homeschool/coop-attendance/${a.id}/log`, {}).then(() => { toast("Added to your attendance log."); reload(); }).catch(e => hsErr(e, "Couldn't add it.")) }, "Add to log"))))] : null,
+    owner ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.post("/api/homeschool/coops/join", { code: code.value.trim() }).then(() => { toast("Joined."); reload(); }).catch(err => hsErr(err, "Couldn't join.")); } },
+      h("div", { class: "grow" }, h("label", { for: "co-code" }, "Join with a code from an organizer"), code), h("button", { class: "btn", type: "submit" }, "Join")) : null,
+    owner ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.post("/api/homeschool/coops", { name: name.value.trim() }).then(r => renderHomeschoolCoop(r.data.id)).catch(err => hsErr(err, "Couldn't start it.")); } },
+      h("div", { class: "grow" }, h("label", { for: "co-name" }, "Start a co-op"), name), h("button", { class: "btn", type: "submit" }, "Start")) : null,
+    h("p", { class: "small muted" }, "Co-ops are invite-only and for adults. There's no messaging with children; posts go to the whole co-op and are moderated."));
+}
+async function renderHomeschoolCoop(id) {
+  const [kr, me] = await Promise.all([api.get(`/api/homeschool/coops/${id}`), api.get("/api/homeschool/me")]);
+  const k = kr.data, mgr = ["organizer", "moderator"].includes(k.yourRole), org = k.yourRole === "organizer", act = k.canAct, reload = () => renderHomeschoolCoop(id);
+  const post = (path, body, msg) => api.post(path, body).then(() => { toast(msg); reload(); }).catch(e => hsErr(e, "Couldn't save it."));
+  const learners = (me.data.learners || []).filter(l => l.status === "active" || !l.status);
+  const fmt = t => new Date(t).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const inviteBox = h("div", {}), inv = h("input", { id: "co-inv", required: true, maxlength: 120, placeholder: "Family name" });
+  const ss = { title: h("input", { id: "cs-title", required: true, maxlength: 160 }), start: h("input", { id: "cs-start", type: "datetime-local", required: true }), mins: h("input", { id: "cs-mins", type: "number", min: 15, max: 720, value: 120 }),
+    where: h("input", { id: "cs-where", maxlength: 200 }), leader: h("select", { id: "cs-leader" }, h("option", { value: "" }, "No leading family"), k.members.map(m => h("option", { value: m.familyId }, m.family))),
+    cap: h("input", { id: "cs-cap", type: "number", min: 1, max: 500 }) };
+  const np = { kind: h("select", { id: "cp-kind" }, h("option", { value: "announcement" }, "Announcement"), h("option", { value: "resource" }, "Resource")), title: h("input", { id: "cp-title", required: true, maxlength: 160 }),
+    body: h("textarea", { id: "cp-body", maxlength: 4000, rows: 3 }), url: h("input", { id: "cp-url", type: "url", maxlength: 500, placeholder: "https://" }) };
+  const rosterView = async (sid, slot, started) => { try { const r = (await api.get(`/api/homeschool/coop-sessions/${sid}/roster`)).data;
+      const picks = r.map(x => h("input", { type: "checkbox", checked: x.present !== false, "aria-label": `${x.name} was there` }));
+      slot.replaceChildren(r.length ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/coop-sessions/${sid}/attendance`, { marks: r.map((x, i) => ({ signupId: x.signupId, present: picks[i].checked })) }, "Attendance saved."); } },
+        h("ul", { class: "list small" }, r.map((x, i) => h("li", {}, started && act ? h("label", { class: "check" }, picks[i], ` ${x.name} (${x.family})`) : `${x.name} (${x.family})${x.present != null ? (x.present ? " · there" : " · absent") : ""}`))),
+        started && act ? h("button", { class: "btn small", type: "submit" }, "Save attendance") : null) : h("p", { class: "muted small" }, "No one signed up yet.")); } catch (e) { hsErr(e, "Couldn't load the roster."); } };
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: () => renderHomeschool() }, "← Family")), h("h2", {}, k.name),
+    k.description ? h("p", {}, k.description) : null, h("p", { class: "small muted" }, `Your family: ${COOP_ROLE[k.yourRole]}${act ? "" : " · view only"}`),
+    h("section", { class: "card", "aria-label": "Sessions" }, h("h3", {}, "Sessions"),
+      k.sessions.length ? h("ul", { class: "list" }, k.sessions.map(x => { const slot = h("div", {}), started = new Date(x.startsAt) <= new Date(), pick = h("select", { "aria-label": `Learner for ${x.title}` }, learners.map(l => h("option", { value: l.id }, l.displayName)));
+        return h("li", {}, h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, x.title), h("span", { class: "small muted" }, ` · ${fmt(x.startsAt)}${x.location ? ` · ${x.location}` : ""}${x.leader ? ` · led by ${x.leader}` : ""} · ${x.signedUp}${x.capacity ? `/${x.capacity}` : ""} signed up${x.status === "cancelled" ? ` · cancelled (${x.cancelReason})` : ""}`)),
+            x.canSeeRoster ? h("button", { class: "btn small", type: "button", onclick: () => rosterView(x.id, slot, started) }, "Roster") : null,
+            mgr && act && x.status === "scheduled" && !started ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why cancel?", reason => post(`/api/homeschool/coop-sessions/${x.id}/cancel`, { reason }, "Cancelled.")) }, "Cancel")) : null),
+          x.yours.length ? h("ul", { class: "list small" }, x.yours.map(y => h("li", { class: "row" }, h("span", { class: "grow" }, `${y.name} is signed up`),
+            act && !started ? h("button", { class: "link", type: "button", onclick: () => post(`/api/homeschool/coop-signups/${y.signupId}/withdraw`, {}, "Withdrawn.") }, "Withdraw") : null))) : null,
+          act && x.status === "scheduled" && !started && learners.length ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/coop-sessions/${x.id}/signups`, { learnerId: pick.value }, "Signed up."); } },
+            pick, h("button", { class: "btn small", type: "submit" }, "Sign up")) : null, slot); })) : h("p", { class: "muted" }, "No sessions scheduled."),
+      mgr && act ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); const st = new Date(ss.start.value); if (Number.isNaN(st.getTime())) return toast("Pick a start time.");
+          post(`/api/homeschool/coops/${id}/sessions`, { title: ss.title.value.trim(), startsAt: st.toISOString(), endsAt: new Date(st.getTime() + Number(ss.mins.value || 60) * 60000).toISOString(),
+            location: ss.where.value.trim() || undefined, leaderFamilyId: ss.leader.value || undefined, capacity: ss.cap.value ? Number(ss.cap.value) : undefined }, "Scheduled."); } },
+        h("h4", {}, "Schedule a session"), h("label", { for: "cs-title" }, "What"), ss.title, h("label", { for: "cs-start" }, "Starts"), ss.start, h("label", { for: "cs-mins" }, "Minutes"), ss.mins,
+        h("label", { for: "cs-where" }, "Where"), ss.where, h("label", { for: "cs-leader" }, "Leading family"), ss.leader, h("label", { for: "cs-cap" }, "Places (optional)"), ss.cap, h("button", { class: "btn", type: "submit" }, "Schedule")) : null),
+    h("section", { class: "card", "aria-label": "Announcements and resources" }, h("h3", {}, "Announcements and resources"),
+      k.posts.length ? h("ul", { class: "list" }, k.posts.map(p => h("li", {}, h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, p.title), h("span", { class: "small muted" }, ` · ${p.kind} · ${p.by}${p.status === "pending" ? " · waiting for approval" : ""}${p.flags ? ` · flagged ${p.flags}× (${p.flagReasons.join("; ")})` : ""}`)),
+          mgr && act && p.status === "pending" && !p.yours ? [h("button", { class: "btn small", type: "button", onclick: () => post(`/api/homeschool/coop-posts/${p.id}/decide`, { publish: true }, "Published.") }, "Approve"),
+            h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why not?", reason => post(`/api/homeschool/coop-posts/${p.id}/decide`, { publish: false, reason }, "Rejected.")) }, "Reject"))] : null,
+          mgr && act && p.status === "published" ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why remove it?", reason => post(`/api/homeschool/coop-posts/${p.id}/remove`, { reason }, "Removed.")) }, "Remove")) : null,
+          act && p.status === "published" && !p.yours ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "What's wrong with it?", reason => post(`/api/homeschool/coop-posts/${p.id}/flag`, { reason }, "Flagged for the moderators.")) }, "Flag")) : null),
+        p.body ? h("p", { class: "small" }, p.body) : null, p.url ? h("p", { class: "small" }, h("a", { href: p.url, target: "_blank", rel: "noopener noreferrer nofollow" }, p.url)) : null))) : h("p", { class: "muted" }, "Nothing posted yet."),
+      act ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/coops/${id}/posts`, { kind: np.kind.value, title: np.title.value.trim(), body: np.body.value.trim() || undefined, url: np.url.value.trim() || undefined },
+          mgr ? "Posted." : "Sent to the moderators for approval."); } },
+        h("h4", {}, "Post to the co-op"), h("label", { for: "cp-kind" }, "Kind"), np.kind, h("label", { for: "cp-title" }, "Title"), np.title, h("label", { for: "cp-body" }, "Text"), np.body, h("label", { for: "cp-url" }, "Link (https)"), np.url,
+        h("button", { class: "btn", type: "submit" }, mgr ? "Post" : "Send for approval")) : null),
+    h("section", { class: "card", "aria-label": "Families" }, h("h3", {}, "Families"),
+      h("ul", { class: "list" }, k.members.map(m => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, m.family), ` · ${COOP_ROLE[m.role]}${m.you ? " (yours)" : ""}`),
+        org && act && !m.you ? h("select", { "aria-label": `Role for ${m.family}`, onchange: e => post(`/api/homeschool/coops/${id}/members/${m.id}/role`, { role: e.target.value }, "Role changed.") },
+          Object.entries(COOP_ROLE).map(([v, t]) => h("option", { value: v, selected: v === m.role }, t))) : null,
+        org && act && !m.you ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why remove ${m.family}?`, reason => post(`/api/homeschool/coops/${id}/members/${m.id}/remove`, { reason }, "Removed.")) }, "Remove")) : null))),
+      org && k.invitations.length ? h("p", { class: "small muted" }, `Codes not yet used: ${k.invitations.map(i => i.label).join(", ")}`) : null,
+      org && act ? h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault(); try { const r = (await api.post(`/api/homeschool/coops/${id}/invitations`, { label: inv.value.trim() })).data;
+          inviteBox.replaceChildren(h("p", { class: "notice" }, "Give this code to that family's owner yourself. It's shown once and works for 14 days: ", h("code", { class: "wrap" }, r.code))); } catch (err) { hsErr(err, "Couldn't create it."); } } },
+        h("div", { class: "grow" }, h("label", { for: "co-inv" }, "Invite a family"), inv), h("button", { class: "btn", type: "submit" }, "Create code")) : null, inviteBox,
+      act ? h("p", {}, confirmBtn("Leave this co-op", "Yes, leave", () => api.post(`/api/homeschool/coops/${id}/leave`, {}).then(() => { toast("Your family left the co-op."); renderHomeschool(); }).catch(e => hsErr(e, "Couldn't leave.")))) : null));
+}
+// ---- HSP-06 part 2: compliance planning ------------------------------------------
+const CMP_STATUS = { done: "Done", not_applicable: "Doesn't apply", to_do: "To do" };
+Object.assign(HS_ERRORS, { already_have_a_profile_for_that_year: "There's already a plan for that school year.", learner_required: "Pick a learner.", invalid_requirements: "Check the requirements." });
+async function complianceCard(base, err, reload) {
+  const c = (await safe(api.get(`${base}/compliance`)))?.data;
+  if (!c) return null;
+  const sec = (...kids) => h("section", { class: "card", "aria-label": "Compliance planning" }, h("h3", {}, `Compliance planning · ${c.schoolYear}`), ...kids, h("p", { class: "small muted" }, c.disclaimer));
+  const post = (path, body, msg, method = "post") => api[method](path, body).then(() => { toast(msg); reload(); }).catch(e => err(e, "Couldn't save it."));
+  if (!c.profile) {
+    const tpl = (await safe(api.get(`${base}/compliance/templates`)))?.data || [];
+    const lbl = h("input", { id: "cmp-label", maxlength: 200, placeholder: "e.g. Our plan for this year" }), days = h("input", { id: "cmp-days", type: "number", min: 1, max: 366 }), hours = h("input", { id: "cmp-hours", type: "number", min: 1, max: 2000 });
+    return sec(h("p", {}, "No plan for this school year yet."),
+      tpl.length ? h("ul", { class: "list" }, tpl.map(t => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, t.title), h("span", { class: "small muted" }, ` · ${t.jurisdiction} · ${t.version} · reviewed ${t.lastReviewedOn} by ${t.reviewedBy}`)),
+        c.canAdopt ? h("button", { class: "btn small", type: "button", onclick: () => post(`${base}/compliance`, { schoolYear: c.schoolYear, templateId: t.id }, "Plan adopted.") }, "Use this") : null))) : h("p", { class: "small muted" }, "The platform hasn't published a reviewed template for you yet."),
+      c.canAdopt ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const instruction = {}; if (days.value) instruction.days = Number(days.value); if (hours.value) instruction.hours = Number(hours.value);
+          post(`${base}/compliance`, { schoolYear: c.schoolYear, label: lbl.value.trim() || "Our plan", requirements: Object.keys(instruction).length ? { instruction } : {} }, "Plan saved."); } },
+        h("div", { class: "grow" }, h("label", { for: "cmp-label" }, "Or set your own targets"), lbl), h("div", {}, h("label", { for: "cmp-days" }, "Days"), days), h("div", {}, h("label", { for: "cmp-hours" }, "Hours"), hours),
+        h("button", { class: "btn", type: "submit" }, "Save")) : null);
+  }
+  const P = c.profile, can = c.canCheck;
+  const mark = (key, status, learnerId) => post(`${base}/compliance/${P.id}/checklist/${key}`, { status, learnerId }, "Updated.", "put");
+  const pickStatus = (key, cur, learnerId, label) => can ? h("select", { "aria-label": label, onchange: e => mark(key, e.target.value, learnerId) }, Object.entries(CMP_STATUS).map(([v, t]) => h("option", { value: v, selected: v === cur }, t))) : h("span", { class: "small" }, CMP_STATUS[cur]);
+  const prog = c.instruction.progress, req = c.instruction.required;
+  return sec(h("p", {}, h("b", {}, P.label)), h("p", { class: "small muted" }, P.provenance),
+    P.template ? h("p", { class: "small" }, "Official source: ", h("a", { href: P.template.authority.url, target: "_blank", rel: "noopener noreferrer" }, P.template.authority.name),
+      P.template.sources.map(x => [" · ", h("a", { href: x.url, target: "_blank", rel: "noopener noreferrer" }, x.title)]), P.template.retired ? " · this template has since been retired; check for a newer one" : "") : null,
+    h("h4", {}, "Instruction"), h("ul", { class: "list small" }, prog.map(x => h("li", {}, `${x.learner}: ${x.days}${req?.days ? `/${req.days}` : ""} days${x.hours != null ? ` · ${x.hours}${req?.hours ? `/${req.hours}` : ""} hours` : ""}${x.daysMet ? " ✓" : ""}`))),
+    c.deadlines.length ? [h("h4", {}, "Dates"), h("ul", { class: "list small" }, c.deadlines.map(d => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${d.label} · ${d.due}${d.flag === "overdue" ? " · past due" : d.flag === "due_soon" ? " · coming up" : ""}`), pickStatus(d.key, d.status, undefined, d.label))))] : null,
+    c.documents.length ? [h("h4", {}, "Documents"), h("ul", { class: "list small" }, c.documents.map(d => d.perLearner ? d.perLearner.map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${d.label} · ${x.learner}${x.evidenceRef ? ` · kept: ${x.evidenceRef}` : ""}`), pickStatus(d.key, x.status, x.learnerId, `${d.label} for ${x.learner}`)))
+      : h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${d.label}${d.evidenceRef ? ` · kept: ${d.evidenceRef}` : ""}`), pickStatus(d.key, d.status, undefined, d.label))))] : null,
+    c.assessments.length ? [h("h4", {}, "Assessments"), h("ul", { class: "list small" }, c.assessments.map(a => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${a.label}${a.grades ? ` · grades ${a.grades.join(", ")}` : ""}`), pickStatus(a.key, a.status, undefined, a.label))))] : null,
+    c.subjects.length ? h("p", { class: "small" }, `Subjects: ${c.subjects.join(", ")}`) : null,
+    h("p", { class: "small" }, `Keep records for: ${P.retentionYears ? `${P.retentionYears} years` : "not set"}. EduOS doesn't delete anything on this schedule; it's your reminder.`));
+}
+async function renderHomeschool() {
+  const [meRes, cal, members, ctx] = await Promise.all([api.get("/api/homeschool/me"), safe(api.get("/api/homeschool/calendar")), safe(api.get("/api/homeschool/members")), safe(api.get("/api/session/contexts"))]);
+  const d = meRes.data, owner = d.role === "owner", reload = () => renderHomeschool();
+  const learners = d.learners, nameOf = id => learners.find(l => l.id === id)?.displayName || "Family";
+  const others = (ctx?.data?.contexts || []).filter(c => !(c.kind === "homeschool_family" && c.membershipId === ctx.data.current.membershipId));
+  const switcher = others.length ? h("select", { "aria-label": "Switch environment", onchange: e => { const c = others[Number(e.target.value)]; if (c) switchContextTo(c, `Now using ${c.label}`).catch(() => toast("Couldn't switch.")); } },
+    h("option", { value: "" }, "Switch to…"), others.map((c, i) => h("option", { value: String(i) }, `${c.kind === "district" ? "School district" : c.kind === "private_school" ? "Private school" : "Homeschool"}: ${c.label}`))) : null;
+  document.getElementById("top").replaceChildren(h("div", { class: "who" }, h("p", { class: "school" }, `${d.family.name} · ${HS_ROLE[d.role]}`), h("h1", {}, `Hi, ${first(d.displayName)}`)),
+    h("div", { class: "row" }, switcher, h("button", { class: "btn small", type: "button", onclick: async () => { await api.post("/auth/logout", {}).catch(() => {}); location.reload(); } }, "Sign out")));
+  document.getElementById("tabs")?.replaceChildren();
+  const fmt = t => new Date(t).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const canWrite = l => owner || l?.authority === "educational";
+  // Add an event.
+  const ev = { title: h("input", { id: "hs-ev-title", required: true, maxlength: 200 }), kind: h("select", { id: "hs-ev-kind" }, Object.entries(HS_KINDS).map(([v, t]) => h("option", { value: v }, t))),
+    who: h("select", { id: "hs-ev-who" }, owner ? h("option", { value: "" }, "Whole family") : null, learners.filter(canWrite).map(l => h("option", { value: l.id }, l.displayName))),
+    start: h("input", { id: "hs-ev-start", type: "datetime-local", required: true }), mins: h("input", { id: "hs-ev-mins", type: "number", min: 5, max: 720, value: 60, required: true }) };
+  const addEvent = owner || learners.some(canWrite) ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+      const startsAt = new Date(ev.start.value); if (Number.isNaN(startsAt.getTime())) return toast("Pick a start time.");
+      try { await api.post("/api/homeschool/calendar", { title: ev.title.value.trim(), kind: ev.kind.value, learnerId: ev.who.value || undefined, startsAt: startsAt.toISOString(),
+        endsAt: new Date(startsAt.getTime() + Number(ev.mins.value) * 60000).toISOString() }); toast("Added to the calendar."); reload(); } catch (err) { hsErr(err, "Couldn't add it."); } } },
+    h("h3", {}, "Add to the calendar"), h("label", { for: "hs-ev-title" }, "What"), ev.title, h("label", { for: "hs-ev-kind" }, "Kind"), ev.kind, h("label", { for: "hs-ev-who" }, "For"), ev.who,
+    h("label", { for: "hs-ev-start" }, "Starts"), ev.start, h("label", { for: "hs-ev-mins" }, "Minutes"), ev.mins, h("button", { class: "btn", type: "submit" }, "Add")) : null;
+  // Owner: add a learner, invite an adult.
+  const ln = { name: h("input", { id: "hs-l-name", required: true, maxlength: 120 }), grade: h("select", { id: "hs-l-grade" }, HS_GRADES.map(([v, t]) => h("option", { value: v }, t))) };
+  const inv = { email: h("input", { id: "hs-i-email", type: "email", required: true }), role: h("select", { id: "hs-i-role" }, h("option", { value: "co_educator" }, "Co-educator (teaches)"), h("option", { value: "guardian_viewer" }, "Guardian (view only)")),
+    picks: learners.map(l => h("input", { type: "checkbox", value: l.id, "aria-label": `Include ${l.displayName}` })) };
+  const linkBox = h("div", {});
+  put(h("h2", {}, d.family.name),
+    h("section", { class: "card", "aria-label": "Learners" }, h("h3", {}, "Learners"),
+      learners.length ? h("ul", { class: "list" }, learners.map(l => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, l.displayName),
+        h("span", { class: "small muted" }, ` · ${HS_GRADES.find(g => g[0] === l.gradeBand)?.[1] || "No grade set"} · you ${HS_AUTH[l.authority] || l.authority}`)),
+        h("span", { class: "small" }, `${l.upcomingThisWeek} this week`), " ",
+        h("button", { class: "btn small", type: "button", "aria-label": `Open ${l.displayName}`, onclick: () => renderHomeschoolLearner(l.id).catch(e => hsErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, owner ? "Add your first learner below." : "No learners have been shared with you yet."),
+      d.familyEventsThisWeek ? h("p", { class: "small muted" }, `${d.familyEventsThisWeek} family events this week`) : null),
+    h("section", { class: "card", "aria-label": "Calendar" }, h("h3", {}, "Coming up"),
+      (cal?.data || []).filter(e => !e.cancelled).length ? h("ul", { class: "list" }, cal.data.filter(e => !e.cancelled).map(e => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, h("b", {}, e.title), h("span", { class: "small muted" }, ` · ${HS_KINDS[e.kind]} · ${nameOf(e.learnerId)} · ${fmt(e.startsAt)}`)),
+        owner || canWrite(learners.find(l => l.id === e.learnerId)) ? h("button", { class: "link", type: "button", onclick: async () => {
+          try { await api.post(`/api/homeschool/calendar/${e.id}/cancel`, {}); toast("Cancelled."); reload(); } catch (err) { hsErr(err, "Couldn't cancel it."); } } }, "Cancel") : null))) : h("p", { class: "muted" }, "Nothing scheduled in the next month."),
+      addEvent),
+    h("section", { class: "card", "aria-label": "Family members" }, h("h3", {}, "Family members"),
+      h("ul", { class: "list" }, (members?.data?.members || []).map(m => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, m.name), ` · ${HS_ROLE[m.role]}${m.you ? " (you)" : ""}`),
+        owner && !m.you ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why remove ${m.name}?`, async reason => {
+          try { await api.post(`/api/homeschool/members/${m.id}/revoke`, { reason }); toast(`${m.name} no longer has access.`); reload(); } catch (err) { hsErr(err, "Couldn't remove them."); } }) }, "Remove")) : null))),
+      owner && (members?.data?.invitations || []).length ? h("p", { class: "small muted" }, `Waiting: ${members.data.invitations.map(i => `${i.email} (${HS_ROLE[i.role]})`).join(", ")}`) : null,
+      owner ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+          try { const r = (await api.post("/api/homeschool/invitations", { email: inv.email.value.trim(), role: inv.role.value, learnerIds: inv.picks.filter(x => x.checked).map(x => x.value) })).data;
+            linkBox.replaceChildren(h("p", { class: "notice" }, "Send this link to that person only (it's shown once and works for 7 days): ", h("code", { class: "wrap" }, `${location.origin}${r.link}`))); }
+          catch (err) { hsErr(err, "Couldn't create the invitation."); } } },
+        h("h4", {}, "Invite an adult"), h("label", { for: "hs-i-email" }, "Their email (they accept signed in with it)"), inv.email, h("label", { for: "hs-i-role" }, "Role"), inv.role,
+        learners.length ? h("fieldset", {}, h("legend", {}, "Learners they can see"), learners.map((l, i) => h("label", { class: "check" }, inv.picks[i], ` ${l.displayName}`))) : null,
+        h("button", { class: "btn", type: "submit" }, "Create invitation link"), linkBox) : null),
+    d.role === "learner" || d.role === "guardian_viewer" ? null : await homeschoolCoopsCard(owner, reload),
+    ["owner", "co_educator"].includes(d.role) ? await complianceCard("/api/homeschool", hsErr, reload) : null,
+    owner ? xferReceiveCard("/api/homeschool", null, reload) : null,
+    owner ? h("section", { class: "card", "aria-label": "Add a learner" }, h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        try { await api.post("/api/homeschool/learners", { displayName: ln.name.value.trim(), gradeBand: ln.grade.value }); toast("Learner added."); reload(); } catch (err) { hsErr(err, "Couldn't add the learner."); } } },
+      h("h3", {}, "Add a learner"), h("label", { for: "hs-l-name" }, "Name"), ln.name, h("label", { for: "hs-l-grade" }, "Grade"), ln.grade, h("button", { class: "btn", type: "submit" }, "Add learner"))) : null,
+    h("p", { class: "small muted" }, "This family workspace is private to its members. Records you keep here are labeled as family records; EduOS doesn't certify them or file anything with any agency."));
+}
+
+// ---- HSP-03: independent private school ----------------------------------------
+const PS_ROLE = { school_admin: "School administrator", campus_admin: "Campus administrator", registrar: "Registrar", finance: "Finance", teacher: "Teacher", staff: "Staff", guardian: "Guardian" };
+const PS_STATUS = { pending_verification: "Waiting for verification", active: "Verified", suspended: "Suspended", closing: "Closing", closed: "Closed" };
+const PS_KINDS = { event: "Event", holiday: "Holiday", term_start: "Term starts", term_end: "Term ends", closure: "Closure", meeting: "Meeting" };
+const PS_GRADES = [["pre_k", "Pre-K"], ["k", "K"], ...Array.from({ length: 12 }, (_, i) => [String(i + 1), `Grade ${i + 1}`])];
+const PS_ERRORS = { school_not_verified: "The platform hasn't verified this school yet, so learner records can't be added.", school_admin_only: "Only a school administrator can do that.",
+  not_allowed: "Your role can't do that.", school_needs_an_admin: "A school needs at least one school administrator.", campus_required_for_campus_roles: "Pick a campus for that role.",
+  local_number_in_use: "Another learner already has that number.", invitation_for_another_email: "This invitation was sent to a different email address.",
+  invitation_not_valid: "This invitation has expired, been used or been withdrawn.", already_a_member: "You already have that role here.", pending_limit_reached: "You already have schools waiting for verification.",
+  campus_has_learners: "Move or withdraw the campus's learners first.", verified_email_required: "Your sign-in needs a verified email for this." };
+const psErr = (e, fallback) => toast(PS_ERRORS[e?.body?.error] || fallback);
+async function privateSchoolEntryCard() {
+  const d = (await safe(api.get("/api/session/contexts")))?.data;
+  const mine = (d?.contexts || []).filter(c => c.kind === "private_school");
+  const f = { legal: h("input", { id: "ps-legal", required: true, minlength: 2, maxlength: 200 }), name: h("input", { id: "ps-name", required: true, minlength: 2, maxlength: 120 }),
+    campus: h("input", { id: "ps-campus", required: true, maxlength: 120, value: "Main campus" }), domain: h("input", { id: "ps-domain", maxlength: 253, placeholder: "example.org (optional)" }) };
+  return h("section", { class: "card", "aria-label": "Private school" }, h("h3", {}, "Independent private school"),
+    h("p", { class: "small muted" }, "A private school is its own organization in EduOS, separate from any district. The platform verifies the school before learner records can be added."),
+    mine.length ? h("ul", { class: "list" }, mine.map(c => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, c.label), ` · ${PS_ROLE[c.role] || c.role}${c.pending ? " · waiting for verification" : ""}`),
+      h("button", { class: "btn small", type: "button", onclick: () => switchContextTo(c, `Now in ${c.label}`).catch(e => psErr(e, "Couldn't open it.")) }, "Open")))) : null,
+    h("details", {}, h("summary", {}, "Register a school"), h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        try { const r = (await api.post("/api/private-school/schools", { legalName: f.legal.value.trim(), displayName: f.name.value.trim(), campusName: f.campus.value.trim(),
+            websiteDomain: f.domain.value.trim() || undefined, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })).data;
+          await switchContextTo({ kind: "private_school", membershipId: r.membershipId }, "Registered. The platform will verify the school."); } catch (err) { psErr(err, "Couldn't register the school."); } } },
+      h("label", { for: "ps-legal" }, "Legal name"), f.legal, h("label", { for: "ps-name" }, "Name families see"), f.name, h("label", { for: "ps-campus" }, "First campus"), f.campus,
+      h("label", { for: "ps-domain" }, "Website domain"), f.domain, h("button", { class: "btn", type: "submit" }, "Register"))));
+}
+async function renderPrivateSchoolInvite(token) {
+  document.getElementById("top").replaceChildren(h("div", { class: "who" }, h("h1", {}, "School invitation")));
+  document.getElementById("tabs")?.replaceChildren();
+  put(h("section", { class: "card" }, h("h2", {}, "Join a private school"), h("p", {}, "Accepting adds you to the school with the role it chose."),
+    h("div", { class: "btns" }, h("button", { class: "btn primary", type: "button", onclick: async () => {
+        try { const r = (await api.post("/api/private-school/invitations/accept", { token })).data;
+          await switchContextTo({ kind: "private_school", membershipId: r.membershipId }, "You've joined the school."); } catch (e) { psErr(e, "Couldn't accept the invitation."); } } }, "Accept"),
+      h("button", { class: "btn", type: "button", onclick: () => { location.hash = ""; boot(); } }, "Not now"))));
+}
+
+// ---- HSP-04: admissions, classes, attendance, report cards -----------------------
+const PS_APP = { inquiry: "Inquiry", applied: "Applied", under_review: "Under review", offered: "Offered", waitlisted: "Waitlisted", accepted: "Accepted", declined: "Declined",
+  withdrawn: "Withdrawn", not_offered: "Not offered", enrolled: "Enrolled" };
+const PS_MARK = { present: "Present", tardy: "Tardy", absent: "Absent", excused: "Excused" };
+const WEEKDAY = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+Object.assign(PS_ERRORS, { not_a_next_step: "That isn't the next step for this application.", not_accepted: "Only an accepted applicant can be enrolled.", not_your_class: "That isn't your class.",
+  learner_on_another_campus: "That learner is on another campus.", already_on_roster: "Already in the class.", report_card_exists: "That learner already has a report card for that term.",
+  report_card_published: "That report card is already published.", teacher_not_on_campus: "Pick a teacher from the class's campus.", already_applied_for_that_year: "There's already an application for that year." });
+function psAcademics(x) {
+  const { r, active, enrolls, camps, campName, learnerList, apps, classes, cards, week, members, post } = x;
+  const out = [];
+  const year = schoolYearNow();
+  if (enrolls && active) {
+    const f = { name: h("input", { id: "pa-name", required: true, maxlength: 120 }), grade: h("select", { id: "pa-grade" }, PS_GRADES.map(([v, t]) => h("option", { value: v }, t))),
+      year: h("input", { id: "pa-year", value: year.replace(/^(\d{4})-(\d{4})$/, (m, a, b) => `${+a + 1}-${+b + 1}`), pattern: "[0-9]{4}-[0-9]{4}", required: true }),
+      campus: h("select", { id: "pa-campus" }, camps.map(c => h("option", { value: c.id }, c.name))), gname: h("input", { id: "pa-gname", maxlength: 120 }), gemail: h("input", { id: "pa-gemail", type: "email" }) };
+    out.push(h("section", { class: "card", "aria-label": "Admissions" }, h("h3", {}, "Admissions"),
+      apps.length ? h("ul", { class: "list" }, apps.map(a => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, a.applicantName),
+        h("span", { class: "small muted" }, ` · ${a.schoolYear} · ${PS_APP[a.status]}${a.waitlistPosition ? ` #${a.waitlistPosition}` : ""}${a.kind === "re_enrollment" ? " · re-enrollment" : ""} · ${campName(a.campusId)}`),
+        a.documents?.length ? h("span", { class: "small muted" }, ` · documents ${a.documents.filter(d => d.received).length}/${a.documents.length}`) : null),
+        ...a.next.map(n => h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/admissions/${a.id}/status`, { status: n }, `${a.applicantName}: ${PS_APP[n]}.`) }, PS_APP[n])),
+        a.status === "accepted" ? h("button", { class: "btn small primary", type: "button", onclick: () => post(`/api/private-school/admissions/${a.id}/enroll`, {}, `${a.applicantName} is enrolled.`) }, "Enroll") : null))) : h("p", { class: "muted" }, "No applications yet."),
+      h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post("/api/private-school/admissions", { applicantName: f.name.value.trim(), gradeLevel: f.grade.value, schoolYear: f.year.value.trim(),
+          campusId: f.campus.value, guardianName: f.gname.value.trim() || undefined, guardianEmail: f.gemail.value.trim() || undefined, documents: ["Birth certificate", "Prior school records"] }, "Inquiry added."); } },
+        h("h4", {}, "New inquiry"), h("label", { for: "pa-name" }, "Applicant"), f.name, h("label", { for: "pa-grade" }, "Grade"), f.grade, h("label", { for: "pa-year" }, "School year"), f.year,
+        h("label", { for: "pa-campus" }, "Campus"), f.campus, h("label", { for: "pa-gname" }, "Guardian name"), f.gname, h("label", { for: "pa-gemail" }, "Guardian email"), f.gemail, h("button", { class: "btn", type: "submit" }, "Add inquiry"))));
+  }
+  if (week.length) out.push(h("section", { class: "card", "aria-label": "This week" }, h("h3", {}, r === "guardian" ? "Your children's week" : r === "teacher" ? "Your week" : "This week's schedule"),
+    h("ul", { class: "list small" }, week.map(m => h("li", {}, `${WEEKDAY[m.weekday]} ${m.starts}–${m.ends} · ${m.name}${m.room ? ` · room ${m.room}` : ""}`)))));
+  if (r !== "finance") {
+    const teachers = members.filter(m => m.role === "teacher");
+    const f = { name: h("input", { id: "pk-name", required: true, maxlength: 120 }), campus: h("select", { id: "pk-campus" }, camps.map(c => h("option", { value: c.id }, c.name))),
+      teacher: h("select", { id: "pk-teacher" }, h("option", { value: "" }, "No teacher yet"), teachers.map(t => h("option", { value: t.id }, `${t.name} · ${campName(t.campusId)}`))),
+      term: h("input", { id: "pk-term", value: "Fall", maxlength: 40, required: true }) };
+    out.push(h("section", { class: "card", "aria-label": "Classes" }, h("h3", {}, "Classes"),
+      classes.length ? h("ul", { class: "list" }, classes.map(k => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, k.name),
+        h("span", { class: "small muted" }, ` · ${k.schoolYear} ${k.term} · ${campName(k.campusId)}${k.teacher ? ` · ${k.teacher}` : ""} · ${k.size} learners${k.status === "ended" ? " · ended" : ""}`)),
+        h("button", { class: "btn small", type: "button", "aria-label": `Open ${k.name}`, onclick: () => renderPsClass(k.id).catch(e => psErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, "No classes."),
+      enrolls ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post("/api/private-school/classes", { name: f.name.value.trim(), campusId: f.campus.value, schoolYear: year, term: f.term.value.trim(),
+          teacherMembershipId: f.teacher.value || undefined }, "Class added."); } },
+        h("div", { class: "grow" }, h("label", { for: "pk-name" }, "New class"), f.name), h("div", {}, h("label", { for: "pk-campus" }, "Campus"), f.campus), h("div", {}, h("label", { for: "pk-term" }, "Term"), f.term),
+        h("div", {}, h("label", { for: "pk-teacher" }, "Teacher"), f.teacher), h("button", { class: "btn", type: "submit" }, "Add")) : null));
+  }
+  if (r !== "finance" && (cards.length || enrolls)) {
+    const f = { learner: h("select", { id: "prc-learner" }, learnerList.filter(l => l.enrollmentStatus === "enrolled").map(l => h("option", { value: l.id }, l.displayName))), term: h("input", { id: "prc-term", value: "Fall", required: true, maxlength: 40 }) };
+    out.push(h("section", { class: "card", "aria-label": "Report cards" }, h("h3", {}, "Report cards"),
+      cards.length ? h("ul", { class: "list" }, cards.map(c => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, c.learner), h("span", { class: "small muted" }, ` · ${c.schoolYear} ${c.term} · ${c.status === "published" ? "Published" : "Draft"}`)),
+        h("button", { class: "btn small", type: "button", "aria-label": `Open report card for ${c.learner}`, onclick: () => renderPsCard(c.id).catch(e => psErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, r === "guardian" ? "No report cards published yet." : "No report cards yet."),
+      enrolls && active && learnerList.length ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post("/api/private-school/report-cards", { learnerId: f.learner.value, schoolYear: year, term: f.term.value.trim() }, "Report card started."); } },
+        h("div", { class: "grow" }, h("label", { for: "prc-learner" }, "Start a report card for"), f.learner), h("div", {}, h("label", { for: "prc-term" }, "Term"), f.term), h("button", { class: "btn", type: "submit" }, "Start")) : null));
+  }
+  return out;
+}
+async function renderPsClass(id) {
+  const k = (await api.get(`/api/private-school/classes/${id}`)).data, back = () => renderPrivateSchool(), reload = () => renderPsClass(id);
+  const day = h("input", { id: "pcl-day", type: "date", value: hsDay(0), max: hsDay(0) });
+  const sheet = (await safe(api.get(`/api/private-school/attendance?classId=${id}&day=${hsDay(0)}`)))?.data;
+  const picks = (sheet?.learners || []).map(l => h("select", { "aria-label": `Attendance for ${l.displayName}` }, h("option", { value: "" }, "—"), Object.entries(PS_MARK).map(([v, t]) => h("option", { value: v, selected: l.status === v }, t))));
+  const learners = (await safe(api.get("/api/private-school/learners")))?.data || [];
+  const add = h("select", { id: "pcl-add" }, learners.filter(l => l.enrollmentStatus === "enrolled" && l.campusId === k.campusId && !k.roster.some(x => x.id === l.id)).map(l => h("option", { value: l.id }, l.displayName)));
+  const meet = { weekday: h("select", { id: "pcl-wd" }, WEEKDAY.slice(1).map((d, i) => h("option", { value: String(i + 1) }, d))), starts: h("input", { id: "pcl-st", type: "time", value: "09:00" }), ends: h("input", { id: "pcl-en", type: "time", value: "09:50" }) };
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: back }, "← School")), h("h2", {}, k.name),
+    h("p", { class: "small muted" }, `${k.schoolYear} ${k.term}${k.teacher ? ` · ${k.teacher}` : ""}`),
+    h("section", { class: "card", "aria-label": "Schedule" }, h("h3", {}, "Schedule"),
+      k.meetings.length ? h("ul", { class: "list small" }, k.meetings.map(m => h("li", {}, `${WEEKDAY[m.weekday]} ${m.starts}–${m.ends}${m.room ? ` · room ${m.room}` : ""}`))) : h("p", { class: "muted" }, "No meeting times yet."),
+      k.canRun ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.put(`/api/private-school/classes/${id}/meetings`, [...k.meetings, { weekday: Number(meet.weekday.value), starts: meet.starts.value, ends: meet.ends.value }])
+          .then(() => { toast("Schedule saved."); reload(); }).catch(err => psErr(err, "Couldn't save it.")); } },
+        h("div", {}, h("label", { for: "pcl-wd" }, "Day"), meet.weekday), h("div", {}, h("label", { for: "pcl-st" }, "Starts"), meet.starts), h("div", {}, h("label", { for: "pcl-en" }, "Ends"), meet.ends), h("button", { class: "btn", type: "submit" }, "Add time")) : null),
+    h("section", { class: "card", "aria-label": "Roster" }, h("h3", {}, `Roster (${k.roster.length})`),
+      h("ul", { class: "list small" }, k.roster.map(l => h("li", { class: "row" }, h("span", { class: "grow" }, l.displayName),
+        k.canRun ? h("button", { class: "link", type: "button", onclick: () => api.post(`/api/private-school/classes/${id}/roster/${l.id}/remove`, {}).then(() => { toast("Removed."); reload(); }).catch(e => psErr(e, "Couldn't remove.")) }, "Remove") : null))),
+      k.canRun && add.options.length ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.post(`/api/private-school/classes/${id}/roster`, { learnerId: add.value }).then(() => { toast("Added."); reload(); }).catch(err => psErr(err, "Couldn't add.")); } },
+        h("div", { class: "grow" }, h("label", { for: "pcl-add" }, "Add a learner"), add), h("button", { class: "btn", type: "submit" }, "Add")) : null),
+    (k.youTeach || k.canRun) && sheet?.learners?.length ? h("section", { class: "card", "aria-label": "Attendance" }, h("h3", {}, "Attendance"),
+      h("form", { class: "stack", onsubmit: e => { e.preventDefault(); const marks = sheet.learners.map((l, i) => ({ learnerId: l.id, status: picks[i].value })).filter(m => m.status);
+          if (!marks.length) return toast("Mark at least one learner.");
+          api.post("/api/private-school/attendance", { day: day.value, classId: id, marks }).then(r => toast(`Saved ${r.data.recorded} marks.`)).catch(err => psErr(err, "Couldn't save attendance.")); } },
+        h("label", { for: "pcl-day" }, "Day"), day, h("ul", { class: "list" }, sheet.learners.map((l, i) => h("li", { class: "row" }, h("span", { class: "grow" }, l.displayName), picks[i]))),
+        h("button", { class: "btn", type: "submit" }, "Save attendance"))) : null);
+}
+async function renderPsCard(id) {
+  const c = (await api.get(`/api/private-school/report-cards/${id}`)).data, me = (await api.get("/api/private-school/me")).data, reload = () => renderPsCard(id);
+  const runs = ["school_admin", "registrar", "campus_admin"].includes(me.role), draft = c.status === "draft";
+  const lineForm = cls => { const g = h("input", { "aria-label": `Grade for ${cls.class}`, maxlength: 20, value: cls.grade || "" }), m = h("input", { "aria-label": `Comment for ${cls.class}`, maxlength: 1000, value: cls.comment || "" });
+    return h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.put(`/api/private-school/report-cards/${id}/lines/${cls.classId}`, { grade: g.value.trim() || null, comment: m.value.trim() || null })
+      .then(() => { toast("Saved."); reload(); }).catch(err => psErr(err, "Couldn't save it.")); } }, h("b", { class: "grow" }, cls.class), g, m, h("button", { class: "btn small", type: "submit" }, "Save")); };
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: () => renderPrivateSchool() }, "← School")), h("h2", {}, `${c.learner} · ${c.schoolYear} ${c.term}`),
+    h("section", { class: "card", "aria-label": "Report card" }, h("p", {}, draft ? "Draft: families can't see it yet." : `Published ${new Date(c.publishedAt).toLocaleDateString()}`),
+      h("ul", { class: "list" }, c.lines.map(l => h("li", {}, draft && me.role !== "guardian" ? lineForm(l) : [h("b", {}, l.class), ` · ${l.grade || "—"}`, l.comment ? h("p", { class: "small" }, l.comment) : null]))),
+      draft && c.missing?.length && me.role !== "guardian" ? [h("h4", {}, "Classes still to write"), ...c.missing.map(lineForm)] : null,
+      c.comment ? h("p", {}, h("i", {}, c.comment)) : null,
+      draft && runs ? h("button", { class: "btn primary", type: "button", onclick: () => api.post(`/api/private-school/report-cards/${id}/publish`, {}).then(() => { toast("Published. Families can see it now."); reload(); }).catch(e => psErr(e, "Couldn't publish it.")) }, "Publish") : null,
+      !draft ? h("button", { class: "btn small", type: "button", onclick: () => window.print() }, "Print") : null));
+}
+const PS_LINE = { tuition: "Tuition", fee: "Fee", aid: "Aid", discount: "Discount", credit: "Credit" };
+Object.assign(PS_ERRORS, { aid_needs_approval: "A school admin has to approve the aid and discounts first.", approve_someone_elses_line: "Someone else has to approve aid you added.",
+  approve_someone_elses_proposal: "Someone else has to approve a provider you proposed.", decide_someone_elses_request: "Someone else has to decide a refund you requested.",
+  sign_off_someone_elses_reconciliation: "Someone else has to sign off a reconciliation you prepared.", more_than_the_balance: "That's more than the balance.", more_than_the_payment: "That's more than the payment.",
+  refund_payments_first: "Refund the payments before voiding.", payer_must_be_a_guardian: "The payer has to be a guardian at the school.", totals_changed_since_prepared: "The totals changed. Prepare it again.",
+  refunds_awaiting_a_decision: "Decide the pending refunds first.", provider_not_approved: "That provider isn't approved yet.", invoice_not_draft: "Only drafts can change." });
+async function psBilling(r, members, post) {
+  if (r === "guardian") {
+    const mine = (await safe(api.get("/api/private-school/billing/mine")))?.data || [];
+    if (!mine.length) return null;
+    return h("section", { class: "card", "aria-label": "Billing" }, h("h3", {}, "Billing"), mine.map(a => [h("p", {}, h("b", {}, a.name), ` · balance ${money(a.balanceCents)}`),
+      a.invoices.length ? h("ul", { class: "list" }, a.invoices.map(i => h("li", {}, h("b", {}, `${i.number} · ${i.title}`), h("span", { class: "small muted" }, ` · ${i.status === "void" ? "void" : `${money(i.totalCents)}, ${money(i.balanceCents)} due${i.dueOn ? ` by ${i.dueOn}` : ""}`}`),
+        h("ul", { class: "list small" }, i.lines.map(l => h("li", {}, `${PS_LINE[l.kind]}: ${l.description}${l.learner ? ` (${l.learner})` : ""} · ${money(l.amountCents)}`)),
+          i.payments.map(p => h("li", {}, `Paid ${money(p.amountCents)} on ${p.receivedOn} · receipt ${p.receiptNumber}`)),
+          i.refunds.filter(x => x.status === "approved").map(x => h("li", {}, `Refunded ${money(x.amountCents)}`)))))) : h("p", { class: "muted" }, "No invoices yet.")]),
+      h("p", { class: "small muted" }, "EduOS keeps no card or bank details. Ask the school about payment options."));
+  }
+  if (!["finance", "school_admin"].includes(r)) return null;
+  const admin = r === "school_admin";
+  const [acc, invs, provs, recs, lrn] = await Promise.all(["accounts", "invoices", "providers", "reconciliations", "learners"].map(x => safe(api.get(`/api/private-school/billing/${x}`))));
+  const accounts = acc?.data || [], invoices = invs?.data || [], providers = provs?.data || [], recons = recs?.data || [], learners = lrn?.data || [];
+  const guardians = members.filter(m => m.role === "guardian"), day = hsDay(0);
+  const af = { name: h("input", { id: "pb-a-name", required: true, maxlength: 120 }), payer: h("select", { id: "pb-a-payer" }, guardians.map(g => h("option", { value: g.id }, g.name))),
+    picks: learners.filter(l => l.enrolled).map(l => h("input", { type: "checkbox", value: l.id, "aria-label": `Bill ${l.displayName} to this account` })) };
+  const nf = { account: h("select", { id: "pb-i-acc" }, accounts.map(a => h("option", { value: a.id }, a.name))), title: h("input", { id: "pb-i-title", required: true, maxlength: 160, value: "Tuition" }),
+    due: h("input", { id: "pb-i-due", type: "date" }), amount: h("input", { id: "pb-i-amt", type: "number", min: "0.01", step: "0.01", required: true }) };
+  const pf = { provider: h("select", { id: "pb-p-kind" }, ["manual", "paypal", "square", "btcpay", "other"].map(v => h("option", { value: v }, v))), label: h("input", { id: "pb-p-label", required: true, maxlength: 80 }),
+    ref: h("input", { id: "pb-p-ref", maxlength: 120 }) };
+  const toCents = v => Math.round(Number(v) * 100);
+  const lineForm = i => { const k = h("select", { "aria-label": "Line kind" }, Object.entries(PS_LINE).map(([v, t]) => h("option", { value: v }, t))), dsc = h("input", { "aria-label": "Description", required: true, maxlength: 200 }),
+      amt = h("input", { "aria-label": "Amount", type: "number", min: "0.01", step: "0.01", required: true });
+    return h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const c = toCents(amt.value); post(`/api/private-school/billing/invoices/${i.id}/lines`, { kind: k.value, description: dsc.value.trim(),
+      amountCents: ["tuition", "fee"].includes(k.value) ? c : -c }, "Line added."); } }, k, dsc, amt, h("button", { class: "btn small", type: "submit" }, "Add line")); };
+  const payForm = i => { const amt = h("input", { "aria-label": "Amount paid", type: "number", min: "0.01", step: "0.01", required: true, value: (i.balanceCents / 100).toFixed(2) }),
+      m = h("select", { "aria-label": "Method" }, [["check", "Check"], ["ach", "ACH"], ["cash", "Cash"], ...providers.filter(p => p.status === "approved").map(p => [`p:${p.id}`, p.label]), ["other", "Other"]].map(([v, t]) => h("option", { value: v }, t))),
+      ref = h("input", { "aria-label": "Reference", maxlength: 120 }), on = h("input", { "aria-label": "Received on", type: "date", value: day, max: day, required: true });
+    return h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const pv = m.value.startsWith("p:") ? m.value.slice(2) : null;
+      post(`/api/private-school/billing/invoices/${i.id}/payments`, { amountCents: toCents(amt.value), method: pv ? "provider" : m.value, providerId: pv || undefined, reference: ref.value.trim() || undefined, receivedOn: on.value }, "Payment recorded."); } },
+      amt, m, ref, on, h("button", { class: "btn small", type: "submit" }, "Record payment")); };
+  const invoiceItem = i => h("li", {}, h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, i.number || "Draft"), ` · ${i.account} · ${i.title}`,
+      h("span", { class: "small muted" }, ` · ${i.status} · ${money(i.totalCents)}${i.status === "issued" ? ` · ${money(i.balanceCents)} due` : ""}`)),
+      i.status === "draft" ? h("button", { class: "btn small primary", type: "button", onclick: () => post(`/api/private-school/billing/invoices/${i.id}/issue`, {}, "Issued. The family can see it now.") }, "Issue") : null,
+      i.status !== "void" ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why void this invoice?", reason => post(`/api/private-school/billing/invoices/${i.id}/void`, { reason }, "Voided.")) }, "Void")) : null),
+    h("ul", { class: "list small" }, i.lines.map(l => h("li", { class: "row" }, h("span", { class: "grow" }, `${PS_LINE[l.kind]}: ${l.description}${l.learner ? ` (${l.learner})` : ""} · ${money(l.amountCents)}${l.needsApproval ? " · needs approval" : ""}`),
+        admin && l.needsApproval ? h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/invoice-lines/${l.id}/approve`, {}, "Approved.") }, "Approve") : null,
+        i.status === "draft" ? h("button", { class: "link", type: "button", onclick: () => api.del(`/api/private-school/billing/invoices/${i.id}/lines/${l.id}`).then(() => { toast("Removed."); renderPrivateSchool(); }).catch(e => psErr(e, "Couldn't remove it.")) }, "Remove") : null)),
+      i.payments.map(p => h("li", { class: "row" }, h("span", { class: "grow" }, `Paid ${money(p.amountCents)} · ${p.method}${p.reference ? ` · ${p.reference}` : ""} · ${p.receivedOn} · ${p.receiptNumber}`),
+        h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why refund ${p.receiptNumber}? (full amount)`,
+          reason => post(`/api/private-school/billing/payments/${p.id}/refunds`, { amountCents: p.amountCents - i.refunds.filter(x => x.paymentId === p.id && x.status !== "rejected").reduce((n, x) => n + x.amountCents, 0), reason }, "Refund requested.")) }, "Refund")))),
+      i.refunds.map(x => h("li", { class: "row" }, h("span", { class: "grow" }, `Refund ${money(x.amountCents)} · ${x.status} · ${x.reason}`),
+        admin && x.status === "requested" ? [h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/refunds/${x.id}/decide`, { approve: true }, "Refund approved.") }, "Approve"),
+          h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/refunds/${x.id}/decide`, { approve: false }, "Refund rejected.") }, "Reject")] : null))),
+    i.status === "draft" ? lineForm(i) : null, i.status === "issued" && i.balanceCents > 0 ? payForm(i) : null);
+  return h("section", { class: "card", "aria-label": "Billing" }, h("h3", {}, "Billing"),
+    h("h4", {}, "Accounts"), accounts.length ? h("ul", { class: "list small" }, accounts.map(a => h("li", {}, `${a.name} · payer ${a.payer} · balance ${money(a.balanceCents)}`))) : h("p", { class: "muted" }, "No billing accounts yet."),
+    guardians.length ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post("/api/private-school/billing/accounts", { name: af.name.value.trim(), payerMembershipId: af.payer.value, learnerIds: af.picks.filter(x => x.checked).map(x => x.value) }, "Account added."); } },
+      h("label", { for: "pb-a-name" }, "New account (family name)"), af.name, h("label", { for: "pb-a-payer" }, "Payer (a guardian)"), af.payer,
+      af.picks.length ? h("fieldset", {}, h("legend", {}, "Learners billed here"), learners.filter(l => l.enrolled).map((l, n) => h("label", { class: "check" }, af.picks[n], ` ${l.displayName}`))) : null,
+      h("button", { class: "btn", type: "submit" }, "Add account")) : h("p", { class: "small muted" }, "Invite a guardian before opening a billing account."),
+    h("h4", {}, "Invoices"), invoices.length ? h("ul", { class: "list" }, invoices.map(invoiceItem)) : h("p", { class: "muted" }, "No invoices yet."),
+    accounts.length ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post("/api/private-school/billing/invoices", { accountId: nf.account.value, title: nf.title.value.trim(), dueOn: nf.due.value || undefined,
+        lines: [{ kind: "tuition", description: nf.title.value.trim(), amountCents: toCents(nf.amount.value) }] }, "Draft invoice added."); } },
+      h("div", {}, h("label", { for: "pb-i-acc" }, "Account"), nf.account), h("div", { class: "grow" }, h("label", { for: "pb-i-title" }, "Title"), nf.title),
+      h("div", {}, h("label", { for: "pb-i-amt" }, "Tuition ($)"), nf.amount), h("div", {}, h("label", { for: "pb-i-due" }, "Due"), nf.due), h("button", { class: "btn", type: "submit" }, "Draft invoice")) : null,
+    h("h4", {}, "Payment providers"), providers.length ? h("ul", { class: "list small" }, providers.map(p => h("li", { class: "row" }, h("span", { class: "grow" }, `${p.label} · ${p.provider} · ${p.status}`),
+      admin && p.status === "proposed" ? h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/providers/${p.id}/approve`, {}, "Approved.") }, "Approve") : null,
+      admin && p.status !== "disabled" ? h("button", { class: "link", type: "button", onclick: () => post(`/api/private-school/billing/providers/${p.id}/disable`, {}, "Disabled.") }, "Disable") : null))) : h("p", { class: "muted" }, "No providers. Payments can still be recorded by check, ACH or cash."),
+    h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post("/api/private-school/billing/providers", { provider: pf.provider.value, label: pf.label.value.trim(), accountReference: pf.ref.value.trim() || undefined }, "Proposed. Another school admin approves it."); } },
+      h("div", {}, h("label", { for: "pb-p-kind" }, "Provider"), pf.provider), h("div", { class: "grow" }, h("label", { for: "pb-p-label" }, "Label"), pf.label), h("div", {}, h("label", { for: "pb-p-ref" }, "Account reference"), pf.ref),
+      h("button", { class: "btn", type: "submit" }, "Propose")),
+    h("h4", {}, "Reconciliation"), recons.length ? h("ul", { class: "list small" }, recons.map(x => h("li", { class: "row" }, h("span", { class: "grow" }, `${x.from}–${x.to} · received ${money(x.totals.receivedCents)}, refunded ${money(x.totals.refundedCents)}, net ${money(x.totals.netCents)} · prepared by ${x.preparedBy}${x.signedOffBy ? ` · signed off by ${x.signedOffBy}` : ""}`),
+      admin && !x.signedOffBy ? h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/reconciliations/${x.id}/sign-off`, {}, "Signed off.") }, "Sign off") : null))) : h("p", { class: "muted" }, "No reconciliations yet."),
+    h("button", { class: "btn small", type: "button", onclick: () => post("/api/private-school/billing/reconciliations", { from: `${day.slice(0, 8)}01`, to: day }, "Prepared. Someone else signs it off.") }, "Prepare this month so far"),
+    h("p", { class: "small muted" }, "Aid, refunds, providers and reconciliations need a second person. EduOS keeps no card or bank details."));
+}
+// ---- HSP-07 part 2: private school messages --------------------------------------
+Object.assign(PS_ERRORS, { not_an_allowed_contact: "You can only include this learner's guardians or the staff who work with them.", thread_closed: "That conversation is closed.",
+  not_a_guardian_or_staff_for_this_learner: "You can only message about learners you're a guardian of or work with.", not_in_this_thread: "You're not in that conversation." });
+async function psMessagesCard(r, learnerList) {
+  if (r === "finance") return null;
+  const list = (await safe(api.get("/api/private-school/messages")))?.data || [];
+  const learners = learnerList.filter(l => l.enrollmentStatus === "enrolled");
+  const who = h("fieldset", {}, h("legend", {}, "Include")), subject = h("input", { id: "pm-subject", required: true, maxlength: 160 }), body = h("textarea", { id: "pm-body", required: true, maxlength: 4000, rows: 3 });
+  let picks = [];
+  const pick = h("select", { id: "pm-learner", onchange: () => loadContacts() }, learners.map(l => h("option", { value: l.id }, l.displayName)));
+  const loadContacts = async () => { const c = (await safe(api.get(`/api/private-school/messages/contacts?learnerId=${pick.value}`)))?.data || [];
+    picks = c.map(x => h("input", { type: "checkbox", value: x.membershipId, "aria-label": `Include ${x.name}` }));
+    who.replaceChildren(h("legend", {}, "Include"), ...(c.length ? c.map((x, i) => h("label", { class: "check" }, picks[i], ` ${x.name} (${PS_ROLE[x.role]})`)) : [h("p", { class: "small muted" }, "No one to message about this learner.")])); };
+  if (learners.length) await loadContacts();
+  return h("section", { class: "card", "aria-label": "Messages" }, h("h3", {}, "Messages"),
+    list.length ? h("ul", { class: "list" }, list.map(t => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, t.subject), h("span", { class: "small muted" }, ` · ${t.learner || ""}${t.status === "closed" ? " · closed" : ""}${t.participant ? "" : " · oversight"}`),
+        t.unread ? h("span", { class: "badge" }, ` ${t.unread} new`) : null),
+      h("button", { class: "btn small", type: "button", "aria-label": `Open ${t.subject}`, onclick: () => renderPsThread(t.id).catch(e => psErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, "No conversations yet."),
+    learners.length ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault(); const ids = picks.filter(x => x.checked).map(x => x.value);
+        if (!ids.length) return toast("Choose who to include.");
+        try { const t = (await api.post("/api/private-school/messages", { learnerId: pick.value, subject: subject.value.trim(), body: body.value.trim(), membershipIds: ids })).data; renderPsThread(t.id); } catch (err) { psErr(err, "Couldn't send it."); } } },
+      h("h4", {}, "New conversation"), h("label", { for: "pm-learner" }, "About"), pick, who, h("label", { for: "pm-subject" }, "Subject"), subject, h("label", { for: "pm-body" }, "Message"), body,
+      h("button", { class: "btn", type: "submit" }, "Send")) : null,
+    h("p", { class: "small muted" }, "Conversations are between a learner's guardians and the staff who work with them. School administrators can read them, and messages can't be edited or deleted."));
+}
+async function renderPsThread(id) {
+  const t = (await api.get(`/api/private-school/messages/${id}`)).data, reload = () => renderPsThread(id);
+  const reply = h("textarea", { id: "pt-reply", required: true, maxlength: 4000, rows: 3 });
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: () => renderPrivateSchool() }, "← School")), h("h2", {}, t.subject),
+    h("p", { class: "small muted" }, `About ${t.learner || "a learner"} · ${t.people.map(p => `${p.name} (${PS_ROLE[p.role]})${p.you ? " — you" : ""}`).join(", ")}`),
+    t.oversight ? h("p", { class: "notice" }, t.oversight) : null,
+    h("section", { class: "card", "aria-label": "Conversation" }, h("ul", { class: "list" }, t.messages.map(m => h("li", {}, h("p", { class: "small muted" }, `${m.from}${m.role ? ` · ${PS_ROLE[m.role]}` : ""} · ${new Date(m.sentAt).toLocaleString()}`),
+        m.hidden ? h("p", { class: "small muted" }, `Hidden by a school administrator: ${m.hideReason}`) : null, m.body != null ? h("p", {}, m.body) : null,
+        t.canHide && !m.hidden ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why hide it?", reason =>
+          api.post(`/api/private-school/messages/${id}/messages/${m.id}/hide`, { reason }).then(() => { toast("Hidden."); reload(); }).catch(err => psErr(err, "Couldn't hide it."))) }, "Hide")) : null))),
+      t.participant && t.status === "open" ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); api.post(`/api/private-school/messages/${id}/reply`, { body: reply.value.trim() }).then(reload).catch(err => psErr(err, "Couldn't send it.")); } },
+        h("label", { for: "pt-reply" }, "Reply"), reply, h("button", { class: "btn", type: "submit" }, "Send")) : null,
+      t.status === "open" && (t.participant || t.canHide) ? h("button", { class: "btn small", type: "button", onclick: () => api.post(`/api/private-school/messages/${id}/close`, {}).then(() => { toast("Closed."); reload(); }).catch(e => psErr(e, "Couldn't close it.")) }, "Close conversation")
+        : t.status === "closed" ? h("p", { class: "small muted" }, "This conversation is closed.") : null));
+}
+async function renderPrivateSchool() {
+  const [meRes, learners, campuses, members, cal, ctx, apps, classes, cards, week] = await Promise.all([api.get("/api/private-school/me"), safe(api.get("/api/private-school/learners")), safe(api.get("/api/private-school/campuses")),
+    safe(api.get("/api/private-school/members")), safe(api.get("/api/private-school/calendar")), safe(api.get("/api/session/contexts")),
+    safe(api.get("/api/private-school/admissions")), safe(api.get("/api/private-school/classes")), safe(api.get("/api/private-school/report-cards")), safe(api.get("/api/private-school/schedule"))]);
+  const d = meRes.data, r = d.role, sch = d.school, reload = () => renderPrivateSchool(), active = sch.status === "active";
+  const admin = r === "school_admin", enrolls = ["school_admin", "registrar", "campus_admin"].includes(r), staff = r !== "guardian";
+  const camps = (campuses?.data || []).filter(c => c.status === "active"), campName = id => camps.find(c => c.id === id)?.name || "";
+  const others = (ctx?.data?.contexts || []).filter(c => !(c.kind === "private_school" && c.membershipId === ctx.data.current.membershipId));
+  document.getElementById("top").replaceChildren(h("div", { class: "who" }, h("p", { class: "school" }, `${sch.displayName} · ${PS_ROLE[r]}${d.campus ? ` · ${d.campus.name}` : ""}`), h("h1", {}, `Hi, ${first(d.displayName)}`)),
+    h("div", { class: "row" }, others.length ? h("select", { "aria-label": "Switch environment", onchange: e => { const c = others[Number(e.target.value)]; if (c) switchContextTo(c, `Now using ${c.label}`).catch(() => toast("Couldn't switch.")); } },
+      h("option", { value: "" }, "Switch to…"), others.map((c, i) => h("option", { value: String(i) }, `${c.kind === "district" ? "School district" : c.kind === "homeschool_family" ? "Homeschool" : "Private school"}: ${c.label}`))) : null,
+      h("button", { class: "btn small", type: "button", onclick: async () => { await api.post("/auth/logout", {}).catch(() => {}); location.reload(); } }, "Sign out")));
+  document.getElementById("tabs")?.replaceChildren();
+  const fmt = t => new Date(t).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const post = (path, body, msg) => api.post(path, body).then(() => { toast(msg); reload(); }).catch(e => psErr(e, "Couldn't save it."));
+  const campusSelect = id => h("select", { id }, camps.map(c => h("option", { value: c.id }, c.name)));
+  const ln = { name: h("input", { id: "ps-l-name", required: true, maxlength: 120 }), grade: h("select", { id: "ps-l-grade" }, PS_GRADES.map(([v, t]) => h("option", { value: v }, t))),
+    campus: r === "campus_admin" ? null : campusSelect("ps-l-campus"), number: h("input", { id: "ps-l-number", maxlength: 40 }) };
+  const inv = { email: h("input", { id: "ps-i-email", type: "email", required: true }), role: h("select", { id: "ps-i-role" }, (admin ? Object.entries(PS_ROLE) : [["guardian", "Guardian"]]).map(([v, t]) => h("option", { value: v }, t))),
+    campus: campusSelect("ps-i-campus"), picks: (learners?.data || []).filter(l => l.enrollmentStatus === "enrolled").map(l => h("input", { type: "checkbox", value: l.id, "aria-label": `Guardian of ${l.displayName}` })) };
+  const ev = { title: h("input", { id: "ps-e-title", required: true, maxlength: 200 }), kind: h("select", { id: "ps-e-kind" }, Object.entries(PS_KINDS).map(([v, t]) => h("option", { value: v }, t))),
+    audience: h("select", { id: "ps-e-aud" }, h("option", { value: "everyone" }, "Everyone"), h("option", { value: "staff" }, "Staff only")), day: h("input", { id: "ps-e-day", type: "date", required: true }) };
+  const linkBox = h("div", {});
+  const learnerList = learners?.data || [];
+  const billing = active ? await psBilling(r, members?.data?.members || [], post).catch(() => null) : null;
+  const xfers = ["school_admin", "registrar", "guardian"].includes(r) ? (await safe(api.get("/api/private-school/transfers")))?.data || [] : [];
+  const xferPick = h("select", { id: "xf-learner", "aria-label": "Learner" }, learnerList.map(l => h("option", { value: l.id }, l.displayName)));
+  const transfers = ["school_admin", "registrar"].includes(r) && active ? h("section", { class: "card", "aria-label": "Transfers" }, h("h3", {}, "Transfers"),
+      xfers.length ? xferList("/api/private-school", xfers, { canRevoke: true, reload }) : h("p", { class: "muted" }, "No transfers yet."),
+      learnerList.length ? [h("h4", {}, "Send a learner's records"), h("label", { for: "xf-learner" }, "Learner"), xferPick,
+        xferSendForm("/api/private-school", ["enrollment", "report_cards", "attendance"], () => xferPick.value, null)] : null)
+    : r === "guardian" && xfers.length ? h("section", { class: "card", "aria-label": "Transfers" }, h("h3", {}, "Records transfers"),
+      h("p", { class: "small muted" }, "The school has prepared these. Release one to get a code you give to the next school or your homeschool."),
+      xferList("/api/private-school", xfers, { canRelease: true, reload })) : null;
+  const receive = ["school_admin", "registrar"].includes(r) && active ? xferReceiveCard("/api/private-school", camps, reload) : null;
+  const messages = active ? await psMessagesCard(r, learnerList).catch(() => null) : null;
+  const compliance = ["school_admin", "registrar", "campus_admin"].includes(r) ? await complianceCard("/api/private-school", psErr, reload).catch(() => null) : null;
+  put(h("h2", {}, sch.displayName),
+    sch.status !== "active" ? h("p", { class: "notice" }, `${PS_STATUS[sch.status]}. ${sch.status === "pending_verification" ? "You can set up campuses and staff now; learner records can be added once the platform has verified the school." : ""}`) : null,
+    h("section", { class: "card", "aria-label": r === "guardian" ? "Your children" : "Learners" }, h("h3", {}, r === "guardian" ? "Your children" : "Learners"),
+      learnerList.length ? h("ul", { class: "list" }, learnerList.map(l => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, l.displayName),
+        h("span", { class: "small muted" }, ` · ${PS_GRADES.find(g => g[0] === l.gradeLevel)?.[1] || "No grade"} · ${campName(l.campusId)}${l.localNumber ? ` · #${l.localNumber}` : ""}${l.enrollmentStatus === "withdrawn" ? " · withdrawn" : ""}`)),
+        enrolls && l.enrollmentStatus === "enrolled" ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why is ${l.displayName} leaving?`,
+          reason => post(`/api/private-school/learners/${l.id}/withdraw`, { reason }, "Withdrawn.")) }, "Withdraw")) : null))) : h("p", { class: "muted" }, r === "finance" ? "Finance doesn't see learner records." : "No learners yet."),
+      enrolls && active ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post("/api/private-school/learners", { displayName: ln.name.value.trim(), gradeLevel: ln.grade.value,
+          campusId: ln.campus ? ln.campus.value : d.campus?.id, localNumber: ln.number.value.trim() || undefined }, "Enrolled."); } },
+        h("h4", {}, "Enroll a learner"), h("label", { for: "ps-l-name" }, "Name"), ln.name, h("label", { for: "ps-l-grade" }, "Grade"), ln.grade,
+        ln.campus ? [h("label", { for: "ps-l-campus" }, "Campus"), ln.campus] : null, h("label", { for: "ps-l-number" }, "Student number (optional)"), ln.number, h("button", { class: "btn", type: "submit" }, "Enroll")) : null),
+    psAcademics({ r, active, enrolls, camps, campName, learnerList, apps: apps?.data || [], classes: classes?.data || [], cards: cards?.data || [], week: week?.data || [], members: members?.data?.members || [], post }),
+    messages, billing, transfers, receive, compliance,
+    h("section", { class: "card", "aria-label": "Calendar" }, h("h3", {}, "Calendar"),
+      (cal?.data || []).length ? h("ul", { class: "list" }, cal.data.map(e => h("li", {}, h("b", {}, e.title), h("span", { class: "small muted" }, ` · ${PS_KINDS[e.kind]} · ${fmt(e.startsAt)}${e.campus ? ` · ${e.campus}` : ""}${e.audience === "staff" ? " · staff only" : ""}`)))) : h("p", { class: "muted" }, "Nothing scheduled."),
+      ["school_admin", "campus_admin"].includes(r) ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const day = new Date(`${ev.day.value}T08:00:00`);
+          post("/api/private-school/calendar", { title: ev.title.value.trim(), kind: ev.kind.value, audience: ev.audience.value, startsAt: day.toISOString(), endsAt: new Date(day.getTime() + 8 * 3600_000).toISOString() }, "Added."); } },
+        h("div", { class: "grow" }, h("label", { for: "ps-e-title" }, "Add to the calendar"), ev.title), h("div", {}, h("label", { for: "ps-e-kind" }, "Kind"), ev.kind),
+        h("div", {}, h("label", { for: "ps-e-aud" }, "For"), ev.audience), h("div", {}, h("label", { for: "ps-e-day" }, "Day"), ev.day), h("button", { class: "btn", type: "submit" }, "Add")) : null),
+    staff ? h("section", { class: "card", "aria-label": "Staff" }, h("h3", {}, "People"),
+      h("ul", { class: "list" }, (members?.data?.members || []).map(m => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, m.name), ` · ${PS_ROLE[m.role]}${m.campusId ? ` · ${campName(m.campusId)}` : ""}${m.you ? " (you)" : ""}`),
+        admin && !m.you ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why remove ${m.name}?`,
+          reason => post(`/api/private-school/members/${m.id}/revoke`, { reason }, `${m.name} no longer has access.`)) }, "Remove")) : null))),
+      (members?.data?.invitations || []).length ? h("p", { class: "small muted" }, `Waiting: ${members.data.invitations.map(i => `${i.email} (${PS_ROLE[i.role]})`).join(", ")}`) : null,
+      ["school_admin", "registrar", "campus_admin"].includes(r) ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+          const body = { email: inv.email.value.trim(), role: inv.role.value };
+          if (["campus_admin", "teacher", "staff"].includes(body.role)) body.campusId = inv.campus.value;
+          if (body.role === "guardian") body.learnerIds = inv.picks.filter(x => x.checked).map(x => x.value);
+          try { const x = (await api.post("/api/private-school/invitations", body)).data;
+            linkBox.replaceChildren(h("p", { class: "notice" }, "Send this link to that person only (shown once, works for 7 days): ", h("code", { class: "wrap" }, `${location.origin}${x.link}`))); }
+          catch (err) { psErr(err, "Couldn't create the invitation."); } } },
+        h("h4", {}, "Invite someone"), h("label", { for: "ps-i-email" }, "Their email"), inv.email, h("label", { for: "ps-i-role" }, "Role"), inv.role,
+        h("label", { for: "ps-i-campus" }, "Campus (campus staff)"), inv.campus,
+        inv.picks.length ? h("fieldset", {}, h("legend", {}, "Their children (guardians)"), learnerList.filter(l => l.enrollmentStatus === "enrolled").map((l, i) => h("label", { class: "check" }, inv.picks[i], ` ${l.displayName}`))) : null,
+        h("button", { class: "btn", type: "submit" }, "Create invitation link"), linkBox) : null) : null,
+    admin ? h("section", { class: "card", "aria-label": "School" }, h("h3", {}, "School"),
+      h("p", { class: "small" }, `${sch.legalName} · ${PS_STATUS[sch.status]}${sch.websiteDomain ? ` · ${sch.websiteDomain} ${sch.domainVerified ? "(verified)" : "(not verified)"}` : ""}`),
+      h("ul", { class: "list small" }, camps.map(c => h("li", {}, `${c.name}${c.city ? ` · ${c.city}` : ""}`))),
+      h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const n = e.target.querySelector("input"); post("/api/private-school/campuses", { name: n.value.trim() }, "Campus added."); } },
+        h("div", { class: "grow" }, h("label", { for: "ps-c-name" }, "Add a campus"), h("input", { id: "ps-c-name", required: true, maxlength: 120 })), h("button", { class: "btn", type: "submit" }, "Add")),
+      h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: async () => { try { const x = (await api.get("/api/private-school/export")).data;
+          const href = URL.createObjectURL(new Blob([JSON.stringify(x, null, 2)], { type: "application/json" })); const a = h("a", { href, download: `${sch.displayName.replace(/[^A-Za-z0-9]+/g, "-")}-export.json` });
+          document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(href), 10000); toast("Exported."); } catch (e) { psErr(e, "Couldn't export."); } } }, "Export the school's records"),
+        sch.closureRequestedAt ? h("span", { class: "small muted" }, "Closure requested") : h("span", {}, h("button", { class: "btn small", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why close the school?",
+          reason => post("/api/private-school/closure", { reason }, "Closure requested. The platform will confirm with you.")) }, "Ask to close the school")))) : null,
+    h("p", { class: "small muted" }, "This school's records are separate from any district's. EduOS doesn't accredit schools or file anything with any agency."));
+}
 async function loadProfiles() { state.profiles = (await safe(api.get("/api/memberships")))?.data || []; }
 async function loadFamily() {
   if (state.me?.role !== "parent") { state.family = null; return; }
@@ -1759,6 +2472,7 @@ VIEWS.portfolio = async () => {
     cursor ? more : null,
     historyDownloadCard(first.student.id, role),
     ["parent", "pupil"].includes(role) ? await familyTransferCard(first.student.id) : null,
+    role === "parent" ? await parentXferCard(first.student.id) : null,
     await familyStorageCard(first.student.id, role),
     await donationCard(role),
     await studentSharingCard(first.student.id)];
@@ -2197,7 +2911,7 @@ VIEWS.history = async () => {
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
   const teacher = await teacherReviewSection();
-  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard(), await donationSettingsCard(), await fundSettingsCard()] : null, await preservationCard()] : null;
+  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), await districtXferOfficeCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard(), await donationSettingsCard(), await fundSettingsCard()] : null, await preservationCard()] : null;
   const accounts = ["parent", "pupil"].includes(state.me.role) ? null : [await fundApprovalsCard(), await donationAccountsCard(), await fundDisbursementsCard()];
   return [privacy, accounts, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
@@ -4670,6 +5384,8 @@ VIEWS.me = async () => {
   const memberships = state.profiles;
   return [h("h2", {}, "Account"), h("section", { class: "card" }, h("h3", {}, state.me.displayName), h("p", { class: "muted" }, `${roleName()} · ${state.brand?.school?.name || state.brand?.districtName || ""}`)),
     memberships.length > 1 ? h("section", { class: "card", "aria-label": "Switch profile" }, h("h3", {}, "Switch profile"), profileList(switchProfile)) : null,
+    await homeschoolEntryCard(),
+    await privateSchoolEntryCard(),
     LICENSED.includes(state.me.role) ? await licenseCard() : null,
     state.me.role === "teacher" ? h("button", { class: "btn block", type: "button", onclick: () => go("mywork") }, icon("spark"), "My work: take it with you") : null,
     ["principal", "superintendent"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("portfolioreview") }, icon("check"), "Teachers' work: rights and transfers") : null,
@@ -5589,6 +6305,36 @@ function historyDownloadCard(studentId, role) {
     h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: () => get("html") }, "Web page (to read or print)"),
       h("button", { class: "btn small", type: "button", onclick: () => get("json") }, "Data file (JSON)")));
 }
+// ---- HSP-06 part 3: districts and the learner transfer workflow -------------------
+async function districtXferCard(student) {
+  const on = (await safe(api.get("/api/transfers/settings")))?.data?.enabled;
+  if (on == null) return null;
+  const all = (await safe(api.get("/api/transfers")))?.data || [], mine = all.filter(t => t.sourceLearnerId === student.id), recSlot = h("div", {});
+  await xferRecords("/api", student.id, recSlot).catch(() => {});
+  const reload = () => go("historyprivacy", { push: false });
+  return h("section", { class: "card", "aria-label": "Records for a family or private school" }, h("h3", {}, "Records for a family or private school"), recSlot,
+    mine.length ? xferList("/api", mine, { canRevoke: true, reload }) : null,
+    on ? [h("p", { class: "small muted" }, "For a family taking the student to homeschool, or a private school. A guardian releases it and gives the code to the receiver. Between districts, use the signed history transfer above."),
+      xferSendForm("/api", ["enrollment", "final_grades", "attendance"], () => student.id, null)]
+      : h("p", { class: "small muted" }, "Transfers with families and private schools are off. The superintendent can turn them on."));
+}
+async function districtXferOfficeCard() {
+  const on = (await safe(api.get("/api/transfers/settings")))?.data?.enabled;
+  if (on == null) return null;
+  const reload = () => go("history", { push: false });
+  const sup = state.me.role === "superintendent";
+  return [h("section", { class: "card", "aria-label": "Transfers with families and private schools" }, h("h3", {}, "Transfers with families and private schools"),
+      h("p", { class: "small" }, on ? "On. Principals can send a student's records to a family or private school (a guardian releases them) and receive records for students they already have." : "Off."),
+      sup ? h("button", { class: "btn small", type: "button", onclick: () => api.put("/api/transfers/settings", { enabled: !on }).then(() => { toast(on ? "Turned off." : "Turned on."); reload(); }).catch(e => xferErr(e, "Couldn't change it.")) }, on ? "Turn off" : "Turn on") : null),
+    on ? xferReceiveCard("/api", "students", reload) : null];
+}
+async function parentXferCard(studentId) {
+  const list = ((await safe(api.get("/api/transfers")))?.data || []).filter(t => t.sourceLearnerId === studentId && t.status === "awaiting_release");
+  if (!list.length) return null;
+  return h("section", { class: "card", "aria-label": "Records to release" }, h("h3", {}, "Records waiting for you to release"),
+    h("p", { class: "small muted" }, "The school has prepared these records for a homeschool or private school. Release one to get a code you give to whoever should receive them."),
+    xferList("/api", list, { canRelease: true, reload: () => go(state.tab, { push: false }) }));
+}
 // ---- TC-06: sending a student's history to another district ----------------
 const TRANSFER_BASIS = { enrollment_request: "The new district asked (enrollment)", records_request: "A records request", family_request: "The family asked", other: "Other" };
 const TRANSFER_STATUS = { awaiting_family: "Waiting for the family", ready: "Ready to send", cancelled: "Cancelled" };
@@ -5782,7 +6528,7 @@ VIEWS.historyprivacy = async () => {
       d.grants.length ? h("p", { class: "small" }, `Shared: ${d.grants.filter(g => !g.revoked).map(g => `${g.grantee} (${g.classifications.map(c => CLASS_TEXT[c]).join(", ")})`).join("; ") || "nothing now"}`) : null),
     d.emergency.length ? h("section", { class: "card", "aria-label": "Emergency access" }, h("h3", {}, "Emergency access"),
       h("ul", { class: "list small" }, d.emergency.map(a => h("li", {}, `${a.person} (${a.role}) · ${new Date(a.openedAt).toLocaleString()} · ${a.reason}${a.reviewed ? " · reviewed" : " · not reviewed yet"}`)))) : null,
-    await transferCard(d.student), await legalHoldCard(d.student), accessLogCard(log)];
+    await transferCard(d.student), await districtXferCard(d.student), await legalHoldCard(d.student), accessLogCard(log)];
 };
 // ---- TC-08: preservation (capacity, integrity, legal holds) ----------------
 const fmtBytes = n => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`;
@@ -6818,6 +7564,13 @@ async function boot() {
   try {
     state.me = await api.get("/api/me");
   } catch (e) { if (e.status === 401) { await OQ.clear().catch(() => {}); return renderSignIn(); } put(empty(navigator.onLine ? "EduOS is unavailable right now." : "You're offline.")); return; }
+  // HSP-01: a homeschool family session has its own workspace and no district data.
+  if (state.me.tenantKind === "homeschool_family") return renderHomeschool();
+  if (state.me.tenantKind === "private_school") return renderPrivateSchool();
+  const psInvite = /^#\/private-school-invite\/([A-Za-z0-9_-]{30,100})$/.exec(location.hash);
+  if (psInvite) return renderPrivateSchoolInvite(psInvite[1]);
+  const invite = /^#\/homeschool-invite\/([A-Za-z0-9_-]{30,100})$/.exec(location.hash);
+  if (invite) return renderHomeschoolInvite(invite[1]);
   const [brand] = await Promise.all([safe(api.get("/api/branding/current")), loadProfiles().then(loadFamily)]);
   state.brand = brand?.data || null;
   applyBranding(state.brand);
