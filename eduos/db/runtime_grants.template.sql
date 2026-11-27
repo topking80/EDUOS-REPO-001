@@ -962,3 +962,23 @@ GRANT SELECT ON transferred_records TO eduos_app;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON learner_transfers, transferred_records FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_ps_guards(uuid), eduos_transfer_side(text,uuid,uuid,text,uuid), eduos_transfer_prepare(uuid,text,text[],text,text), eduos_transfer_release(uuid,text),
   eduos_transfer_revoke(uuid,text), eduos_transfer_preview(text), eduos_transfer_accept(text,uuid), eduos_transfer_decline(text,text), eduos_transferred_record_void(uuid,text) TO eduos_app;
+
+-- 166 (HSP-07): homeschool co-ops. Co-ops are created and joined only through eduos_coop_create() and eduos_coop_join().
+GRANT SELECT ON coops, coop_members, coop_invitations, coop_sessions, coop_signups, coop_session_attendance, coop_posts, coop_post_flags, coop_audit_events TO eduos_app;
+GRANT UPDATE (name, description, status, closed_at) ON coops TO eduos_app;
+GRANT UPDATE (role, status, ended_by, ended_at, end_reason) ON coop_members TO eduos_app;
+GRANT INSERT ON coop_invitations TO eduos_app;
+GRANT UPDATE (revoked_at) ON coop_invitations TO eduos_app;
+GRANT INSERT ON coop_sessions TO eduos_app;
+GRANT UPDATE (title, description, location, starts_at, ends_at, leader_family_id, capacity, status, cancel_reason) ON coop_sessions TO eduos_app;
+GRANT INSERT ON coop_signups TO eduos_app;
+GRANT UPDATE (status, withdrawn_at) ON coop_signups TO eduos_app;
+GRANT INSERT ON coop_session_attendance TO eduos_app;
+GRANT UPDATE (present, marked_by, marked_at) ON coop_session_attendance TO eduos_app;
+GRANT INSERT ON coop_posts TO eduos_app;
+GRANT UPDATE (status, decided_by, decided_at, decision_reason) ON coop_posts TO eduos_app;
+GRANT INSERT ON coop_post_flags TO eduos_app;
+REVOKE INSERT ON coops, coop_members, coop_audit_events FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON coops, coop_members, coop_invitations, coop_sessions, coop_signups, coop_session_attendance, coop_posts, coop_post_flags, coop_audit_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_coop_role(uuid), eduos_coop_manages(uuid), eduos_coop_leads(uuid), eduos_coop_signup(uuid), eduos_coop_create(text,text), eduos_coop_join(text),
+  eduos_coop_leave(uuid), eduos_coop_session_counts(uuid), eduos_coop_audit(uuid,text,text,text,text) TO eduos_app;

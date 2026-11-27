@@ -396,6 +396,85 @@ async function renderHomeschoolLearner(id) {
         xferList("/api/homeschool", all.filter(t => t.sourceLearnerId === id), { canRevoke: true, reload }),
         xferSendForm("/api/homeschool", ["courses", "attendance", "work"], () => id, null)); })() : null);
 }
+// ---- HSP-07: homeschool co-ops ---------------------------------------------------
+const COOP_ROLE = { organizer: "Organizer", moderator: "Moderator", member: "Member" };
+Object.assign(HS_ERRORS, { organizer_only: "Only an organizer can do that.", organizer_or_moderator_only: "Only an organizer or moderator can do that.", session_full: "That session is full.",
+  already_signed_up: "Already signed up.", session_not_open: "Sign-ups are closed for that session.", make_another_organizer_first: "Make another family an organizer first.",
+  already_logged: "Already in your attendance log.", invitation_not_valid: "That code has expired, been used or been withdrawn.", already_a_member: "Your family is already in that co-op.",
+  invalid_post: "Add a title, and an https link or text for a resource.", decide_another_familys_post: "Another organizer or moderator has to decide your family's post.",
+  coop_limit_reached: "Your family is already in 10 co-ops.", invalid_session_time: "Pick a future start, ending within 12 hours.", invalid_code: "Check the code and try again." });
+const confirmBtn = (label, confirmLabel, onConfirm) => h("span", {}, h("button", { class: "link", type: "button", onclick: e => { const slot = e.target.parentNode;
+  slot.replaceChildren(h("button", { class: "btn small", type: "button", onclick: onConfirm }, confirmLabel), h("button", { class: "link", type: "button", onclick: () => slot.replaceChildren(e.target) }, "Cancel")); } }, label));
+async function homeschoolCoopsCard(owner, reload) {
+  const [list, att] = await Promise.all([safe(api.get("/api/homeschool/coops")), safe(api.get("/api/homeschool/coop-attendance"))]);
+  const coops = list?.data || [], toLog = (att?.data || []).filter(a => a.present && !a.logged);
+  const name = h("input", { id: "co-name", required: true, maxlength: 120 }), code = h("input", { id: "co-code", required: true, maxlength: 100, autocomplete: "off" });
+  return h("section", { class: "card", "aria-label": "Co-ops" }, h("h3", {}, "Co-ops"),
+    coops.length ? h("ul", { class: "list" }, coops.map(k => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, k.name), h("span", { class: "small muted" }, ` · ${COOP_ROLE[k.role]} · ${k.families} families`)),
+      h("button", { class: "btn small", type: "button", "aria-label": `Open ${k.name}`, onclick: () => renderHomeschoolCoop(k.id).catch(e => hsErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, "Your family isn't in a co-op."),
+    toLog.length ? [h("h4", {}, "Co-op attendance to add to your log"), h("ul", { class: "list small" }, toLog.map(a => h("li", { class: "row" }, h("span", { class: "grow" }, `${a.name} · ${a.coop} · ${a.session} · ${a.minutes} min`),
+      h("button", { class: "btn small", type: "button", onclick: () => api.post(`/api/homeschool/coop-attendance/${a.id}/log`, {}).then(() => { toast("Added to your attendance log."); reload(); }).catch(e => hsErr(e, "Couldn't add it.")) }, "Add to log"))))] : null,
+    owner ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.post("/api/homeschool/coops/join", { code: code.value.trim() }).then(() => { toast("Joined."); reload(); }).catch(err => hsErr(err, "Couldn't join.")); } },
+      h("div", { class: "grow" }, h("label", { for: "co-code" }, "Join with a code from an organizer"), code), h("button", { class: "btn", type: "submit" }, "Join")) : null,
+    owner ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.post("/api/homeschool/coops", { name: name.value.trim() }).then(r => renderHomeschoolCoop(r.data.id)).catch(err => hsErr(err, "Couldn't start it.")); } },
+      h("div", { class: "grow" }, h("label", { for: "co-name" }, "Start a co-op"), name), h("button", { class: "btn", type: "submit" }, "Start")) : null,
+    h("p", { class: "small muted" }, "Co-ops are invite-only and for adults. There's no messaging with children; posts go to the whole co-op and are moderated."));
+}
+async function renderHomeschoolCoop(id) {
+  const [kr, me] = await Promise.all([api.get(`/api/homeschool/coops/${id}`), api.get("/api/homeschool/me")]);
+  const k = kr.data, mgr = ["organizer", "moderator"].includes(k.yourRole), org = k.yourRole === "organizer", act = k.canAct, reload = () => renderHomeschoolCoop(id);
+  const post = (path, body, msg) => api.post(path, body).then(() => { toast(msg); reload(); }).catch(e => hsErr(e, "Couldn't save it."));
+  const learners = (me.data.learners || []).filter(l => l.status === "active" || !l.status);
+  const fmt = t => new Date(t).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const inviteBox = h("div", {}), inv = h("input", { id: "co-inv", required: true, maxlength: 120, placeholder: "Family name" });
+  const ss = { title: h("input", { id: "cs-title", required: true, maxlength: 160 }), start: h("input", { id: "cs-start", type: "datetime-local", required: true }), mins: h("input", { id: "cs-mins", type: "number", min: 15, max: 720, value: 120 }),
+    where: h("input", { id: "cs-where", maxlength: 200 }), leader: h("select", { id: "cs-leader" }, h("option", { value: "" }, "No leading family"), k.members.map(m => h("option", { value: m.familyId }, m.family))),
+    cap: h("input", { id: "cs-cap", type: "number", min: 1, max: 500 }) };
+  const np = { kind: h("select", { id: "cp-kind" }, h("option", { value: "announcement" }, "Announcement"), h("option", { value: "resource" }, "Resource")), title: h("input", { id: "cp-title", required: true, maxlength: 160 }),
+    body: h("textarea", { id: "cp-body", maxlength: 4000, rows: 3 }), url: h("input", { id: "cp-url", type: "url", maxlength: 500, placeholder: "https://" }) };
+  const rosterView = async (sid, slot, started) => { try { const r = (await api.get(`/api/homeschool/coop-sessions/${sid}/roster`)).data;
+      const picks = r.map(x => h("input", { type: "checkbox", checked: x.present !== false, "aria-label": `${x.name} was there` }));
+      slot.replaceChildren(r.length ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/coop-sessions/${sid}/attendance`, { marks: r.map((x, i) => ({ signupId: x.signupId, present: picks[i].checked })) }, "Attendance saved."); } },
+        h("ul", { class: "list small" }, r.map((x, i) => h("li", {}, started && act ? h("label", { class: "check" }, picks[i], ` ${x.name} (${x.family})`) : `${x.name} (${x.family})${x.present != null ? (x.present ? " · there" : " · absent") : ""}`))),
+        started && act ? h("button", { class: "btn small", type: "submit" }, "Save attendance") : null) : h("p", { class: "muted small" }, "No one signed up yet.")); } catch (e) { hsErr(e, "Couldn't load the roster."); } };
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: () => renderHomeschool() }, "← Family")), h("h2", {}, k.name),
+    k.description ? h("p", {}, k.description) : null, h("p", { class: "small muted" }, `Your family: ${COOP_ROLE[k.yourRole]}${act ? "" : " · view only"}`),
+    h("section", { class: "card", "aria-label": "Sessions" }, h("h3", {}, "Sessions"),
+      k.sessions.length ? h("ul", { class: "list" }, k.sessions.map(x => { const slot = h("div", {}), started = new Date(x.startsAt) <= new Date(), pick = h("select", { "aria-label": `Learner for ${x.title}` }, learners.map(l => h("option", { value: l.id }, l.displayName)));
+        return h("li", {}, h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, x.title), h("span", { class: "small muted" }, ` · ${fmt(x.startsAt)}${x.location ? ` · ${x.location}` : ""}${x.leader ? ` · led by ${x.leader}` : ""} · ${x.signedUp}${x.capacity ? `/${x.capacity}` : ""} signed up${x.status === "cancelled" ? ` · cancelled (${x.cancelReason})` : ""}`)),
+            x.canSeeRoster ? h("button", { class: "btn small", type: "button", onclick: () => rosterView(x.id, slot, started) }, "Roster") : null,
+            mgr && act && x.status === "scheduled" && !started ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why cancel?", reason => post(`/api/homeschool/coop-sessions/${x.id}/cancel`, { reason }, "Cancelled.")) }, "Cancel")) : null),
+          x.yours.length ? h("ul", { class: "list small" }, x.yours.map(y => h("li", { class: "row" }, h("span", { class: "grow" }, `${y.name} is signed up`),
+            act && !started ? h("button", { class: "link", type: "button", onclick: () => post(`/api/homeschool/coop-signups/${y.signupId}/withdraw`, {}, "Withdrawn.") }, "Withdraw") : null))) : null,
+          act && x.status === "scheduled" && !started && learners.length ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/coop-sessions/${x.id}/signups`, { learnerId: pick.value }, "Signed up."); } },
+            pick, h("button", { class: "btn small", type: "submit" }, "Sign up")) : null, slot); })) : h("p", { class: "muted" }, "No sessions scheduled."),
+      mgr && act ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); const st = new Date(ss.start.value); if (Number.isNaN(st.getTime())) return toast("Pick a start time.");
+          post(`/api/homeschool/coops/${id}/sessions`, { title: ss.title.value.trim(), startsAt: st.toISOString(), endsAt: new Date(st.getTime() + Number(ss.mins.value || 60) * 60000).toISOString(),
+            location: ss.where.value.trim() || undefined, leaderFamilyId: ss.leader.value || undefined, capacity: ss.cap.value ? Number(ss.cap.value) : undefined }, "Scheduled."); } },
+        h("h4", {}, "Schedule a session"), h("label", { for: "cs-title" }, "What"), ss.title, h("label", { for: "cs-start" }, "Starts"), ss.start, h("label", { for: "cs-mins" }, "Minutes"), ss.mins,
+        h("label", { for: "cs-where" }, "Where"), ss.where, h("label", { for: "cs-leader" }, "Leading family"), ss.leader, h("label", { for: "cs-cap" }, "Places (optional)"), ss.cap, h("button", { class: "btn", type: "submit" }, "Schedule")) : null),
+    h("section", { class: "card", "aria-label": "Announcements and resources" }, h("h3", {}, "Announcements and resources"),
+      k.posts.length ? h("ul", { class: "list" }, k.posts.map(p => h("li", {}, h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, p.title), h("span", { class: "small muted" }, ` · ${p.kind} · ${p.by}${p.status === "pending" ? " · waiting for approval" : ""}${p.flags ? ` · flagged ${p.flags}× (${p.flagReasons.join("; ")})` : ""}`)),
+          mgr && act && p.status === "pending" && !p.yours ? [h("button", { class: "btn small", type: "button", onclick: () => post(`/api/homeschool/coop-posts/${p.id}/decide`, { publish: true }, "Published.") }, "Approve"),
+            h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why not?", reason => post(`/api/homeschool/coop-posts/${p.id}/decide`, { publish: false, reason }, "Rejected.")) }, "Reject"))] : null,
+          mgr && act && p.status === "published" ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why remove it?", reason => post(`/api/homeschool/coop-posts/${p.id}/remove`, { reason }, "Removed.")) }, "Remove")) : null,
+          act && p.status === "published" && !p.yours ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "What's wrong with it?", reason => post(`/api/homeschool/coop-posts/${p.id}/flag`, { reason }, "Flagged for the moderators.")) }, "Flag")) : null),
+        p.body ? h("p", { class: "small" }, p.body) : null, p.url ? h("p", { class: "small" }, h("a", { href: p.url, target: "_blank", rel: "noopener noreferrer nofollow" }, p.url)) : null))) : h("p", { class: "muted" }, "Nothing posted yet."),
+      act ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/coops/${id}/posts`, { kind: np.kind.value, title: np.title.value.trim(), body: np.body.value.trim() || undefined, url: np.url.value.trim() || undefined },
+          mgr ? "Posted." : "Sent to the moderators for approval."); } },
+        h("h4", {}, "Post to the co-op"), h("label", { for: "cp-kind" }, "Kind"), np.kind, h("label", { for: "cp-title" }, "Title"), np.title, h("label", { for: "cp-body" }, "Text"), np.body, h("label", { for: "cp-url" }, "Link (https)"), np.url,
+        h("button", { class: "btn", type: "submit" }, mgr ? "Post" : "Send for approval")) : null),
+    h("section", { class: "card", "aria-label": "Families" }, h("h3", {}, "Families"),
+      h("ul", { class: "list" }, k.members.map(m => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, m.family), ` · ${COOP_ROLE[m.role]}${m.you ? " (yours)" : ""}`),
+        org && act && !m.you ? h("select", { "aria-label": `Role for ${m.family}`, onchange: e => post(`/api/homeschool/coops/${id}/members/${m.id}/role`, { role: e.target.value }, "Role changed.") },
+          Object.entries(COOP_ROLE).map(([v, t]) => h("option", { value: v, selected: v === m.role }, t))) : null,
+        org && act && !m.you ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why remove ${m.family}?`, reason => post(`/api/homeschool/coops/${id}/members/${m.id}/remove`, { reason }, "Removed.")) }, "Remove")) : null))),
+      org && k.invitations.length ? h("p", { class: "small muted" }, `Codes not yet used: ${k.invitations.map(i => i.label).join(", ")}`) : null,
+      org && act ? h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault(); try { const r = (await api.post(`/api/homeschool/coops/${id}/invitations`, { label: inv.value.trim() })).data;
+          inviteBox.replaceChildren(h("p", { class: "notice" }, "Give this code to that family's owner yourself. It's shown once and works for 14 days: ", h("code", { class: "wrap" }, r.code))); } catch (err) { hsErr(err, "Couldn't create it."); } } },
+        h("div", { class: "grow" }, h("label", { for: "co-inv" }, "Invite a family"), inv), h("button", { class: "btn", type: "submit" }, "Create code")) : null, inviteBox,
+      act ? h("p", {}, confirmBtn("Leave this co-op", "Yes, leave", () => api.post(`/api/homeschool/coops/${id}/leave`, {}).then(() => { toast("Your family left the co-op."); renderHomeschool(); }).catch(e => hsErr(e, "Couldn't leave.")))) : null));
+}
 async function renderHomeschool() {
   const [meRes, cal, members, ctx] = await Promise.all([api.get("/api/homeschool/me"), safe(api.get("/api/homeschool/calendar")), safe(api.get("/api/homeschool/members")), safe(api.get("/api/session/contexts"))]);
   const d = meRes.data, owner = d.role === "owner", reload = () => renderHomeschool();
@@ -448,6 +527,7 @@ async function renderHomeschool() {
         h("h4", {}, "Invite an adult"), h("label", { for: "hs-i-email" }, "Their email (they accept signed in with it)"), inv.email, h("label", { for: "hs-i-role" }, "Role"), inv.role,
         learners.length ? h("fieldset", {}, h("legend", {}, "Learners they can see"), learners.map((l, i) => h("label", { class: "check" }, inv.picks[i], ` ${l.displayName}`))) : null,
         h("button", { class: "btn", type: "submit" }, "Create invitation link"), linkBox) : null),
+    d.role === "learner" || d.role === "guardian_viewer" ? null : await homeschoolCoopsCard(owner, reload),
     owner ? xferReceiveCard("/api/homeschool", null, reload) : null,
     owner ? h("section", { class: "card", "aria-label": "Add a learner" }, h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
         try { await api.post("/api/homeschool/learners", { displayName: ln.name.value.trim(), gradeBand: ln.grade.value }); toast("Learner added."); reload(); } catch (err) { hsErr(err, "Couldn't add the learner."); } } },
