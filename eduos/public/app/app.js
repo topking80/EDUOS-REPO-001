@@ -137,7 +137,7 @@ function applyBranding(b) {
 
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
-  pupil: [["home", "Home", "home"], ["schedule", "Schedule", "calendar"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
+  pupil: [["home", "Home", "home"], ["schedule", "Schedule", "calendar"], ["progress", "Grades", "check"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
   teacher: [["dashboard", "Dashboard", "home"], ["classes", "Classes", "grid"], ["schoolday", "School day", "bus"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["mediacenter", "Media center", "check"], ["messages", "Messages", "chat"]],
@@ -4310,6 +4310,13 @@ VIEWS.mastery = async () => {
     h("p", { class: "notice" }, `The rules: the ${m.rules.window} newest pieces of evidence count, each one ${Math.round(m.rules.decay * 100)}% as much as the next newer one. Quizzes and graded work count fully; Christie practice counts half. "Mastered" needs ${m.rules.masteredAt}%+, at least ${m.rules.minEvidence} pieces of evidence and one quiz or graded task. It describes work done, nothing more: no predictions or rankings.`)];
 };
 
+// Student app Phase C: one place for grades, mastery, returned work and
+// feedback. Each kind of number says what it is: an official final grade, a
+// current grade calculated from graded work, standards mastery from evidence,
+// or a practice estimate from Christie that is not part of any grade.
+const WORK_STATUS = { graded: ["present", "Graded"], submitted: ["expected", "Turned in · waiting"], needs_review: ["expected", "Waiting for your teacher"],
+  in_progress: ["expected", "Started"], not_started: ["expected", "Not started"] };
+const RETAKE_TEXT = { highest: "your best attempt counts", latest: "your latest attempt counts", average: "your attempts are averaged" };
 VIEWS.progress = async () => {
   if (state.me.role === "parent" && state.childId) state.learnerId = state.childId;
   if (state.me.role === "parent" && !state.learnerId) {
@@ -4318,29 +4325,60 @@ VIEWS.progress = async () => {
     state.learnerId = kids[0].id;
   }
   const p = (await api.get(`/api/learning/progress${learnerQuery()}`)).data;
-  return [state.me.role === "parent" ? back("children", "Children") : null,
-    h("h2", {}, `Grades & progress · ${first(p.learner.name)}`),
-    ...p.courses.map(c => h("section", { class: "card", "aria-label": c.title },
+  const name = state.me.role === "pupil" ? "you" : first(p.learner.name);
+  const finals = Array.isArray(p.finalGrades) ? p.finalGrades : [], practice = Array.isArray(p.practice) ? p.practice : [];
+  const workRow = (c, w) => h("li", { class: "stack" },
+    h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, w.title), h("br"),
+      h("span", { class: "muted small" }, [w.kind === "quiz" ? "Quiz" : w.category, w.dueAt ? `due ${fmtDay(w.dueAt)}` : null,
+        w.kind === "quiz" && w.maxAttempts ? `attempt ${w.attempts} of ${w.maxAttempts} · ${RETAKE_TEXT[w.retakePolicy] || w.retakePolicy}` : null].filter(Boolean).join(" · "))),
+      w.counted ? h("span", { "aria-label": `${w.earned} of ${w.points} points` }, `${w.earned}/${w.points}`) : null,
+      w.missing ? chip("absent", "Missing · not counted yet") : chip(...(WORK_STATUS[w.status] || ["expected", w.status]))),
+    w.feedback ? h("p", { class: "small feedback" }, `Teacher: ${w.feedback}`) : null,
+    h("div", { class: "btns" }, w.kind === "quiz"
+      ? (t => h("button", { class: "btn small-btn", type: "button", "aria-label": `${t}: ${w.title}`, onclick: () => openView("quiz", { assignmentId: w.id, courseId: c.id }) }, t))(w.canRetake && state.me.role === "pupil" ? "Open or retake" : "Open")
+      : h("button", { class: "btn small-btn", type: "button", "aria-label": `Open course: ${c.title}, for ${w.title}`, onclick: () => openView("course", { courseId: c.id }) }, "Open course")));
+  const courseCard = c => {
+    const n = c.counts || {};
+    return h("section", { class: "card", "aria-label": c.title },
       h("div", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, c.title), h("p", { class: "small muted" }, `${c.teacher} · ${c.term}`)),
-        h("span", { class: "grade", "aria-label": `Grade ${gradeText(c.grade)}` }, c.grade?.letter || "–")),
-      h("p", { class: "small" }, `${gradeText(c.grade)}${c.missing ? ` · ${c.missing} missing` : ""}`),
+        h("span", { class: "grade", "aria-label": `Current grade ${gradeText(c.grade)}` }, c.grade?.letter || "–")),
+      h("p", { class: "small" }, h("b", {}, "Current grade: "), gradeText(c.grade), h("span", { class: "muted" }, " · calculated from graded work, so it can change")),
+      c.counts ? h("p", { class: "small muted" }, [`${n.graded} graded`, n.waiting ? `${n.waiting} waiting for grading` : null, n.inProgress ? `${n.inProgress} started` : null,
+        n.missing ? `${n.missing} missing` : null, n.notStarted ? `${n.notStarted} still to do` : null].filter(Boolean).join(" · ") + ". Work that isn't graded doesn't count toward the grade.") : null,
       c.grade?.categories?.length ? h("p", { class: "small muted" }, c.grade.categories.map(k => `${k.name} ${k.percent == null ? "–" : `${k.percent}%`} (weight ${k.weight}${k.used ? "" : ", not counted yet"})`).join(" · ")) : null,
-      h("h4", {}, `Standards: ${c.mastery.mastered} of ${c.mastery.total} mastered`),
+      h("h4", {}, `Standards mastery: ${c.mastery.mastered} of ${c.mastery.total} mastered`),
       h("ul", { class: "list" }, c.standards.map(s => h("li", { class: "row" }, h("div", { class: "grow" }, h("p", { class: "small" }, h("b", {}, s.code), ` ${s.description.replace(/^Summary: /, "")}`)),
         levelChip(s.level, s.mastery != null ? ` ${s.mastery}%` : ""),
         s.mastery != null ? h("button", { class: "btn small-btn", type: "button", "aria-label": `Why? ${s.code} shows ${s.mastery}%`, onclick: () => openView("mastery", { masteryStd: s.id, courseId: null }) }, "Why?") : null))),
-      c.recent.length ? [h("h4", {}, "Recently graded"), h("ul", { class: "list" }, c.recent.map(r => h("li", {}, h("div", { class: "row" }, h("span", { class: "grow" }, r.title), h("span", {}, `${r.earned}/${r.points}`)),
-        r.feedback ? h("p", { class: "small feedback" }, `Teacher: ${r.feedback}`) : null)))] : null,
-      h("button", { class: "btn block", type: "button", onclick: () => openView("course", { courseId: c.id }) }, "Open course"))),
+      Array.isArray(c.work) && c.work.length ? h("details", { open: c.work.some(w => w.missing || w.feedback) }, h("summary", {}, `All work and feedback (${c.work.length})`), h("ul", { class: "list" }, c.work.map(w => workRow(c, w))))
+        : c.recent?.length ? [h("h4", {}, "Recently graded"), h("ul", { class: "list" }, c.recent.map(r => h("li", {}, h("div", { class: "row" }, h("span", { class: "grow" }, r.title), h("span", {}, `${r.earned}/${r.points}`)),
+          r.feedback ? h("p", { class: "small feedback" }, `Teacher: ${r.feedback}`) : null)))] : null,
+      h("button", { class: "btn block", type: "button", onclick: () => openView("course", { courseId: c.id }) }, "Open course"));
+  };
+  const finalRow = f => h("li", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, `${f.course}: ${f.letter} (${f.percent}%)`),
+      h("p", { class: "small muted" }, [f.term, f.course_status === "archived" ? "past course" : null, `posted ${fmtDay(f.posted_at)}`].filter(Boolean).join(" · ")),
+      f.supersedes ? h("p", { class: "small" }, `Corrected${f.replaced_letter ? ` from ${f.replaced_letter} (${f.replaced_percent}%)` : ""}${f.reason ? `: ${f.reason}` : ""}`) : null),
+    f.edal_entry_id ? h("button", { class: "btn small-btn", type: "button", "aria-label": `Check record: ${f.course}`, onclick: () => openView("proof", { edalEntry: f.edal_entry_id }) }, "Check record") : null);
+  return [state.me.role === "parent" ? back("children", "Children") : null,
+    h("h2", {}, state.me.role === "pupil" ? "My grades & progress" : `Grades & progress · ${first(p.learner.name)}`),
+    h("section", { class: "card", "aria-label": "How to read this" }, h("h3", {}, "How to read this"), h("ul", { class: "list small" },
+      h("li", {}, h("b", {}, "Final grade: "), "official, posted by the school at the end of a course. A correction always shows what it replaced."),
+      h("li", {}, h("b", {}, "Current grade: "), "calculated from work that's been graded so far. It changes as more work is graded."),
+      h("li", {}, h("b", {}, "Standards mastery: "), "how securely each skill is shown across quizzes, rubrics and practice. Tap Why? to see the evidence."),
+      h("li", {}, h("b", {}, "Practice estimate: "), "from practice with Christie only. It isn't part of any grade."))),
+    ...(p.courses.length ? p.courses.map(courseCard) : [h("section", { class: "card" }, empty("No current courses."))]),
     h("section", { class: "card", "aria-label": "Final grades and credentials" }, h("h2", {}, "Final grades & credentials"),
-      p.finalGrades.length || p.credentials.length ? h("ul", { class: "list" },
-        p.finalGrades.map(f => h("li", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, `${f.course}: ${f.letter} (${f.percent}%)`), h("p", { class: "small muted" }, `Posted ${fmtDay(f.posted_at)}${f.supersedes ? " · corrected" : ""}`)),
-          f.edal_entry_id ? h("button", { class: "btn small-btn", type: "button", "aria-label": `Check record: ${f.course}`, onclick: () => openView("proof", { edalEntry: f.edal_entry_id }) }, "Check record") : null)),
+      finals.length || p.credentials.length ? h("ul", { class: "list" }, finals.map(finalRow),
         p.credentials.map(c => h("li", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, c.title), h("p", { class: "small muted" }, `${c.revoked_at ? "Revoked" : "Issued"} ${fmtDay(c.revoked_at || c.issued_at)}`)),
           c.edal_entry_id ? h("button", { class: "btn small-btn", type: "button", "aria-label": `Check record: ${c.title}`, onclick: () => openView("proof", { edalEntry: c.edal_entry_id }) }, "Check record") : null))) : empty("None yet."),
       p.fundFootnote ? h("p", { class: "small muted fund-footnote", role: "note" }, `* ${p.fundFootnote.fundName}: ${money(p.fundFootnote.givenCents)} given and ${money(p.fundFootnote.spentCents)} spent on district-wide preservation so far. Totals only; no donor names.`) : null),
+    practice.length ? h("section", { class: "card", "aria-label": "Practice estimates" }, h("h2", {}, "Practice estimates"),
+      h("p", { class: "small muted" }, "From practice with Christie on skills that aren't tied to a standard. Not part of any grade."),
+      h("ul", { class: "list" }, practice.map(k => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, k.title), h("span", { class: "muted small" }, ` · ${k.subject} · ${k.attempts} tries`)),
+        h("span", {}, k.estimate == null ? "–" : `about ${k.estimate}%`))))) : null,
     p.accommodations ? h("p", { class: "small muted" }, `Accommodations on file: ${p.accommodations.extraTimePct ? `+${p.accommodations.extraTimePct}% quiz time` : "standard time"}${p.accommodations.readAloud ? ", read-aloud" : ""}.`) : null,
-    h("p", { class: "notice" }, `Only ${first(p.learner.name)}'s family, ${first(p.learner.name)} and school staff who teach or lead at the school can see this. Every view is logged.`)];
+    h("p", { class: "notice" }, state.me.role === "pupil" ? "Only you, your family and school staff who teach or lead at your school can see this. Every view is logged."
+      : `Only ${name}'s family, ${name} and school staff who teach or lead at the school can see this. Every view is logged.`)];
 };
 
 VIEWS.proof = async () => {

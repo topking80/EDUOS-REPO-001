@@ -183,6 +183,39 @@ void main() {
     expect(find.textContaining('Grade 4 Math'), findsNothing);
   });
 
+  testWidgets('Grades says what each number is; missing and ungraded work is listed but not counted', (tester) async {
+    final fake = FakeServer({
+      'GET /api/learning/progress': (_) => {'data': {
+        'learner': {'id': 'c1', 'name': 'Ada', 'grade': '4'},
+        'courses': [{'id': course, 'title': 'Grade 4 Math', 'teacher': 'Ms. Rivera', 'term': 'Fall',
+          'grade': {'percent': 88, 'letter': 'B'}, 'mastery': {'mastered': 2, 'total': 5},
+          'counts': {'graded': 1, 'waiting': 1, 'inProgress': 0, 'missing': 1, 'notStarted': 0},
+          'work': [
+            {'id': 'w1', 'title': 'Poster', 'kind': 'work', 'category': 'Classwork', 'points': 4, 'status': 'graded', 'earned': 4, 'feedback': 'Lovely poster.', 'missing': false, 'counted': true},
+            {'id': 'w2', 'title': 'Reading log', 'kind': 'work', 'category': 'Classwork', 'points': 10, 'status': 'not_started', 'earned': null, 'feedback': null, 'missing': true, 'counted': false},
+            {'id': quiz, 'title': 'Fractions quiz', 'kind': 'quiz', 'points': 5, 'status': 'needs_review', 'missing': false, 'counted': false, 'attempts': 1, 'maxAttempts': 2, 'retakePolicy': 'highest', 'canRetake': true},
+          ]}],
+        'finalGrades': [{'id': 'f2', 'course': 'Math 3', 'term': 'Spring', 'course_status': 'archived', 'percent': 88, 'letter': 'B', 'posted_at': '2026-06-01T12:00:00Z',
+          'reason': 'Late work policy applied.', 'supersedes': 'f1', 'replaced_letter': 'A', 'replaced_percent': 92}],
+        'credentials': [], 'practice': [{'skillId': 'sk1', 'title': 'Skip counting', 'subject': 'Math', 'estimate': 62, 'attempts': 4}],
+      }},
+    });
+    await launch(tester, fake);
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Grades'));
+    await tester.pumpAndSettle();
+    expect(find.text('Current grade: B · 88%'), findsOneWidget);
+    expect(find.textContaining('1 missing'), findsOneWidget);
+    expect(find.text('Missing · not counted yet'), findsOneWidget);
+    expect(find.text('Teacher: Lovely poster.'), findsOneWidget);
+    expect(find.text('4 / 4 points'), findsOneWidget);
+    expect(find.text('Quiz · attempt 1 of 2 · your best attempt counts'), findsOneWidget);
+    expect(find.text('Corrected from A (92%): Late work policy applied.'), findsOneWidget);
+    expect(find.textContaining('past course'), findsOneWidget);
+    expect(find.text('about 62%'), findsOneWidget);
+  });
+
   testWidgets('practising with Christie: start, answer, ask, and finish', (tester) async {
     final fake = FakeServer({
       'POST /api/christie/sessions': (_) => {'data': {'session': {'id': session}, 'resumed': false}},

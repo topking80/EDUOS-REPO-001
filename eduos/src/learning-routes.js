@@ -646,13 +646,31 @@ export function registerLearningRoutes(app) {
       const mine = g.byStudent.get(learner.id);
       c.grade = mine.grade; c.missing = mine.missing;
       c.recent = g.work.map((w, i) => ({ id: w.id, title: w.title, kind: w.kind, points: w.points, ...mine.cells[i] })).filter(x => x.status === "graded").slice(-4).reverse();
+      // Student app Phase C: every piece of published work with where it stands,
+      // so ungraded and missing work is shown without counting as zero.
+      c.work = g.work.map((w, i) => {
+        const x = mine.cells[i];
+        return { id: w.id, title: w.title, kind: w.kind, category: w.category || "Classwork", points: w.points, dueAt: w.due_at, status: x.status, earned: x.earned,
+          feedback: x.feedback ?? null, missing: Boolean(x.missing), counted: x.earned != null,
+          ...(w.kind === "quiz" ? { attempts: x.attempts, maxAttempts: w.max_attempts, retakePolicy: w.retake_policy || "highest",
+            canRetake: x.attempts < (w.max_attempts || 1) && x.status !== "in_progress" } : {}) };
+      });
+      c.counts = { graded: c.work.filter(w => w.status === "graded").length, waiting: c.work.filter(w => ["submitted", "needs_review"].includes(w.status)).length,
+        inProgress: c.work.filter(w => w.status === "in_progress").length, missing: c.work.filter(w => w.missing).length,
+        notStarted: c.work.filter(w => w.status === "not_started" && !w.missing).length };
       const stds = await courseStandards(client, c.id);
       const m = await learnerStandardMastery(client, learner.id, stds.map(s => s.id));
       c.standards = stds.map(s => ({ id: s.id, code: s.code, description: s.description, mastery: m.get(s.id)?.mastery ?? null, level: m.get(s.id)?.level ?? "not_started" }));
       c.mastery = courseMastery(stds.map(s => s.id), m);
     }
-    const finals = await rows(client, `SELECT f.id,f.course_id,c.title AS course,f.percent::float8 AS percent,f.letter,f.posted_at,f.reason,f.supersedes,f.edal_entry_id
-        FROM course_final_grades f JOIN courses c ON c.id=f.course_id WHERE f.student_id=$1 ORDER BY f.posted_at DESC`, [learner.id]);
+    const finals = await rows(client, `SELECT f.id,f.course_id,c.title AS course,c.term,c.status AS course_status,f.percent::float8 AS percent,f.letter,f.posted_at,f.reason,f.supersedes,f.edal_entry_id,
+          p.letter AS replaced_letter,p.percent::float8 AS replaced_percent,p.posted_at AS replaced_posted_at
+        FROM course_final_grades f JOIN courses c ON c.id=f.course_id LEFT JOIN course_final_grades p ON p.id=f.supersedes
+        WHERE f.student_id=$1 ORDER BY f.posted_at DESC`, [learner.id]);
+    // Practice estimates from Christie for skills not tied to a standard: shown
+    // apart from grades and mastery because they come from practice only.
+    const practice = await rows(client, `SELECT k.id,k.title,k.subject,m.mastery::float8 AS estimate,m.attempts FROM student_skill_mastery m JOIN christie_skills k ON k.id=m.skill_id
+        WHERE m.student_id=$1 AND k.standard_id IS NULL AND m.attempts > 0 ORDER BY k.subject,k.title`, [learner.id]);
     const creds = await rows(client, `SELECT id,kind,title,description,issued_at,revoked_at,edal_entry_id FROM credentials WHERE student_id=$1 ORDER BY issued_at DESC`, [learner.id]);
     const acc = await one(client, `SELECT extra_time_pct,read_aloud FROM student_accommodations WHERE student_id=$1`, [learner.id]);
     // TC-12: the district preservation fund's totals as a grade-card footnote
@@ -663,7 +681,8 @@ export function registerLearningRoutes(app) {
     await audit(client, req, "read", "learning_progress", learner.id);
     return { learner: { id: learner.id, name: learner.display_name, grade: learner.grade_level }, courses, fundFootnote,
       finalGrades: finals.filter(f => !finals.some(n => n.supersedes === f.id)), corrections: finals.filter(f => f.supersedes).length,
-      credentials: creds, accommodations: acc ? { extraTimePct: acc.extra_time_pct, readAloud: acc.read_aloud } : null };
+      credentials: creds, accommodations: acc ? { extraTimePct: acc.extra_time_pct, readAloud: acc.read_aloud } : null,
+      practice: practice.map(k => ({ skillId: k.id, title: k.title, subject: k.subject, estimate: k.estimate == null ? null : Math.round(k.estimate), attempts: k.attempts })) };
   }));
   app.get("/api/learning/mastery/:standardId", ...read, wrap(async (client, req) => {
     if (!validId(req.params.standardId)) throw new HttpError(400, "invalid_standard_id");

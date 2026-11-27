@@ -271,7 +271,16 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       { name: "Bob B", grade: "3" }
     ] : [], released: [], blocked: 0, denied: 0, earlyDismissals: [] } };
     case "/api/learning/review": return { data: { attempts: [] } };
-    case "/api/learning/progress": return { data: { children: [] } };
+    // Student app Phase C: a learner's grades and progress.
+    case "/api/learning/progress": return role !== "pupil" ? { data: { children: [] } } : { data: { learner: { id: "c1", name: "Alice A", grade: "3" }, fundFootnote: null, corrections: 1, accommodations: { extraTimePct: 25, readAloud: false },
+      courses: [{ id: "k1", title: "Math 3", subject: "Math", term: "Fall", teacher: "Teacher S1", missing: 1, grade: { percent: 88, letter: "B", categories: [{ name: "Classwork", weight: 40, percent: 90, used: true }, { name: "Quizzes", weight: 60, percent: null, used: false }] },
+        mastery: { mastered: 1, total: 2, average: 70 }, standards: [{ id: "st1", code: "4.NF.A.1", description: "Summary: equivalent fractions", mastery: 84, level: "mastered" }], recent: [],
+        counts: { graded: 1, waiting: 1, inProgress: 0, missing: 1, notStarted: 0 },
+        work: [{ id: "w1", title: "Poster", kind: "work", category: "Classwork", points: 4, dueAt: now, status: "graded", earned: 4, feedback: "Lovely poster.", missing: false, counted: true },
+          { id: "w2", title: "Reading log", kind: "work", category: "Classwork", points: 10, dueAt: now, status: "not_started", earned: null, feedback: null, missing: true, counted: false },
+          { id: "q1", title: "Fractions quiz", kind: "quiz", category: "Quizzes", points: 5, dueAt: null, status: "needs_review", earned: null, feedback: null, missing: false, counted: false, attempts: 1, maxAttempts: 2, retakePolicy: "highest", canRetake: true }] }],
+      finalGrades: [{ id: "f2", course_id: "k0", course: "Math 2", term: "Spring", course_status: "archived", percent: 88, letter: "B", posted_at: now, reason: "Late work policy applied after review.", supersedes: "f1", edal_entry_id: null, replaced_letter: "A", replaced_percent: 92 }],
+      credentials: [], practice: [{ skillId: "sk1", title: "Skip counting", subject: "Math", estimate: 62, attempts: 4 }] } };
     case "/api/notifications": return { data: { unread: 0, items: [] } };
     case "/api/ai/status": return { data: { provider: "local", budget: { district: { used: 100, cap: 200000 }, you: { used: 50, cap: 20000 } },
       usecases: [{ id: "lesson_draft", label: "Lesson draft", enabled: true, input: { min: 3, max: 500 } }, { id: "ops_brief", label: "Operations brief", enabled: true, input: null }] } };
@@ -1311,6 +1320,21 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "principal: enter figures", a11y);
       if (page.errors.length) failures.push(`principal rankings: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
+  }
+  // Student app Phase C: a pupil's grades say which kind of number each is. Passes axe.
+  {
+    state.role = "pupil";
+    const page = await Page.open(chrome.port);
+    const wants = ["My grades & progress", "How to read this", "Current grade:", "calculated from graded work", "Missing · not counted yet", "Teacher: Lovely poster.",
+      "attempt 1 of 2 · your best attempt counts", "Corrected from A (92%)", "past course", "Practice estimates", "about 62%", "Not part of any grade"];
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/progress` });
+      let text = await page.mainText();
+      for (const end = Date.now() + 5000; Date.now() < end && !wants.every(w => text.includes(w)); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const w of wants) if (!text.includes(w)) failures.push(`pupil progress: "${w}" is missing`);
+      await axeScan(page, "pupil: grades and progress", a11y);
+      if (page.errors.length) failures.push(`pupil progress: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   // Student app Phase B: a pupil's week, a teacher's class times, the principal's calendar. All pass axe.
   for (const [role, path, wants] of [["pupil", "schedule", ["My schedule", "09:00–09:50 Math 3", "Library visit", "Robotics build night", "No school: Teacher workday", "America/New_York"]],
