@@ -113,6 +113,39 @@ void main() {
     }
   });
 
+  testWidgets('My Work combines due work, submissions and graded results across courses', (tester) async {
+    final fake = FakeServer({
+      'GET /api/learning/courses/$course': (_) => {'data': {
+        'id': course, 'title': 'Grade 4 Math',
+        'assignments': [
+          {'id': 'w1', 'title': 'Fractions practice', 'kind': 'work', 'points': 10, 'due_at': '2099-05-01T15:00:00.000Z',
+            'mine': {'status': 'not_started', 'missing': false}},
+          {'id': 'w2', 'title': 'Vocabulary review', 'kind': 'work', 'points': 5, 'due_at': '2099-05-02T15:00:00.000Z',
+            'mine': {'status': 'submitted', 'missing': false}},
+          {'id': 'w3', 'title': 'Unit check', 'kind': 'quiz', 'points': 20, 'due_at': '2099-04-30T15:00:00.000Z',
+            'mine': {'status': 'graded', 'earned': 18, 'missing': false}},
+        ],
+      }},
+    });
+    await launch(tester, fake);
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('My work'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Fractions practice'), findsOneWidget);
+    expect(find.text('Vocabulary review'), findsOneWidget);
+    expect(find.text('Unit check'), findsOneWidget);
+    expect(find.text('18 / 20 points'), findsOneWidget);
+    expect(find.text('To do'), findsOneWidget);
+    expect(find.text('Turned in'), findsOneWidget);
+    expect(find.text('Graded'), findsOneWidget);
+
+    await tester.tap(find.text('Fractions practice'));
+    await tester.pumpAndSettle();
+    expect(fake.sent('GET', '/api/learning/courses/$course').length, greaterThanOrEqualTo(2));
+  });
+
   testWidgets('practising with Christie: start, answer, ask, and finish', (tester) async {
     final fake = FakeServer({
       'POST /api/christie/sessions': (_) => {'data': {'session': {'id': session}, 'resumed': false}},
