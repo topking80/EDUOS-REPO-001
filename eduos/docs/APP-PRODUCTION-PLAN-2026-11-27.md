@@ -251,3 +251,277 @@ EduOS is ready for a production release only when the selected release scope has
 - completed pilot sign-off and published release notes.
 
 This plan deliberately separates **production planning** from **production certification**. No app or release is certified by this document alone.
+
+
+---
+
+# Execution Edition — Delivery Control and App Release Contracts
+
+The sections below convert the strategy into a delivery system. They are normative for this production program and take precedence over vague statements such as "finish the app" or "run testing."
+
+## 10. Delivery model: one platform, independently releasable app groups
+
+Do not attempt a single all-app launch. Deliver vertical slices that can be enabled and supported independently while sharing a common security and operations foundation.
+
+### Release waves
+
+| Wave | Release group | Included apps | Why this order | Exit decision |
+|---|---|---|---|---|
+| 0 — Release foundation | Platform controls | Identity/context, authorization, RLS, audit, deployment, CI, monitoring, backup/restore | Every app depends on these controls | Foundation gate signed |
+| 1 — Core school day | Core learning and family | Student, guardian, teacher | Highest daily usage and strongest dependency links | Core-school pilot approved |
+| 2 — School command | Leadership and front office | Principal, vice principal, superintendent/district admin, office | Depends on Wave 0 and core school data/workflows | School operations pilot approved |
+| 3 — Campus operations | Facilities and transport | Maintenance, bus driver, transport, arrival/pickup | Operationally important; must prove offline and safety boundaries | Operations pilot approved |
+| 4 — Safety and specialist | Safety and support | SRO, librarian, counselor, coach, lunchroom, nurse operational shell | Requires especially strict role separation and training | Per-role restricted approval |
+| 5 — Alternate education | Non-district contexts | Homeschool, private school | Separate authority, billing, campus/family boundaries | Separate tenant-context pilot |
+| 6 — Distributed platform | Federation and local continuity | Master Control, EDEN school nodes, Roku | Requires separate trust, hardware, and recovery proof | Deployment-class certification |
+
+Waves may overlap only when they do not share an unresolved P0 dependency. An app may be marked "pilot-ready" without being GA-ready, but its limitations and feature flags must be explicit.
+
+## 11. Critical dependency graph
+
+```mermaid
+flowchart TD
+  A[Release inventory and ownership] --> B[Identity and tenant context]
+  B --> C[Role and permission matrix]
+  C --> D[Forced RLS and runtime grants]
+  D --> E[API authorization and audit]
+  E --> F[App workflow completion]
+  F --> G[Web and Flutter acceptance]
+  G --> H[Staging and operational rehearsal]
+  H --> I[Limited pilot]
+  I --> J[Pilot exit review]
+  J --> K[General availability]
+  L[Grade-return privacy fix] --> F
+  M[assignment_submissions student RLS] --> D
+  N[CI required checks and security scans] --> H
+  O[Backup restore and rollback proof] --> H
+  P[Accessibility review] --> G
+```
+
+**Hard sequencing rules**
+- Do not expand the Grades audience until both grade-return visibility and student-level database authorization are fixed and tested.
+- Do not treat UI role hiding as a substitute for server authorization or RLS.
+- Do not begin a district-wide pilot before staging restore, rollback, alerting, and support escalation have been rehearsed.
+- Do not combine district, homeschool, and private-school data contexts in one pilot gate; prove each context independently.
+- Do not certify EDEN based only on simulation; require supported hardware evidence.
+- Do not add GPS or device-location tracking to bus-driver experiences. The accepted transport model is assigned route/stop sequence plus manual rider check-ins and operational status.
+
+## 12. Work packages and PR sequence
+
+Each package should be a small PR against current `main`, with one accountable owner, a defined acceptance test, and no unrelated refactors. Names below are work-package identifiers, not existing PR numbers.
+
+| ID | Package | Scope / deliverable | Depends on | Priority |
+|---|---|---|---|---|
+| RP-00 | Production inventory | Enumerate every role app, client surface, owner, maturity, critical journeys, dependencies, open defects, and release state | None | P0 |
+| RP-01 | Grade privacy correction | Enforce `returnToStudent:false` consistently in student and guardian API/view paths; regression tests | Current Grades implementation | P0 |
+| RP-02 | Submission row security | Student-specific `assignment_submissions` RLS, grants, indexes if needed, real PostgreSQL tests as runtime role | Schema review | P0 |
+| RP-03 | Cross-context authorization | Test district/school/family/private-school context switching, revoked roles, stale sessions, IDOR, export and attachments | RP-00 | P0 |
+| RP-04 | Release pipeline verification | Confirm required branch protection checks, immutable build artifact, migration ordering, secret injection, release provenance | CI configuration | P0 |
+| RP-05 | Staging environment | Reproducible deployment, synthetic seed data, smoke suite, safe reset, isolated secrets | RP-04 | P0 |
+| RP-06 | Release observability | Health/readiness, API/database metrics, queue age, notification failures, client crashes, audit/security signals | RP-05 | P0 |
+| RP-07 | Backup and recovery | Encrypted backup, restore into isolated environment, data integrity checks, rollback/forward-fix playbook | RP-05 | P0 |
+| RP-10 | Student/guardian journeys | Student and parent critical journeys, child-link revocation, grades policy, schedule, attendance and messages | RP-01–03 | P1 |
+| RP-11 | Teacher operations | Class day, roster, attendance, grading, communications, coverage, approvals and consent-aware contributions | RP-03 | P1 |
+| RP-12 | Leadership and office | Principal/VP authority split, approvals, staffing, arrival, pickup, visitor and reunification journeys | RP-03, RP-06 | P1 |
+| RP-13 | Facilities operations | Work order assignment, lifecycle, due dates, inspections, evidence, escalation and audit | RP-03, RP-06 | P1 |
+| RP-14 | Driver operations | Route assignment, stop workflow, manual check-ins, offline retry, vehicle checks and exception communications; no GPS | RP-03, RP-07 | P1 |
+| RP-15 | SRO access and safety | Membership lifecycle, incident assignment, status/acknowledgement, revocation and negative permission tests | RP-03, RP-06 | P1 |
+| RP-16 | Specialist role completion | Librarian, counselor, coach, lunchroom and other staff journeys, each with its own role matrix | RP-03 | P1 |
+| RP-17 | Homeschool context | Adult authority, learner profiles, family records, attendance, progress, co-op boundaries and transfer flow | RP-03, RP-05 | P1 |
+| RP-18 | Private-school context | School verification, campus boundary, enrollment, attendance, report cards, guardian access and finance dual control | RP-03, RP-05 | P1 |
+| RP-19 | Cross-platform acceptance | Web/PWA browser matrix, Flutter device matrix, accessibility and upgrade tests | RP-10–18 | P1 |
+| RP-20 | Pilot readiness | Training, support rota, incident rehearsal, district sign-off, success thresholds, rollback switch | RP-06–07, RP-19 | P1 |
+| RP-30 | Federation certification | Delegation, signed bundles, aggregate egress, revocation and audit-chain verification | RP-03, RP-06–07 | P2 |
+| RP-31 | EDEN hardware certification | Supported hardware, boot/restart, WAN-loss, replay, failover, handback, purge and restore evidence | RP-07, RP-30 | P2 |
+| RP-32 | Roku release verification | Household authorization, read-only access, token revocation, device compatibility | RP-03, RP-19 | P2 |
+| HOLD-01 | Clinical Health Office | Separate clinical architecture, clinical governance, qualified review, access model and operational safety case | Separate approval | HOLD |
+
+**PR completion rule:** every implementation PR must state the package ID, acceptance criteria, tests run with exact outcomes, tests not run, migration/rollback impact, security/privacy impact, and screenshots or recordings for material UI changes. A green unit suite alone does not satisfy the package.
+
+## 13. App-by-app release contracts
+
+Each app must satisfy the universal gates and its own contract below. "Pass" means evidence is attached to the release record, not merely asserted in a PR description.
+
+### Student app
+- Sign in, select the correct school context, navigate core learning, open and submit work, receive teacher feedback, view only returned grades, and handle expired sessions.
+- Verify direct API calls cannot reveal unreturned grades, another learner's submissions, private teacher notes, or another school’s records.
+- Test accessible navigation, readable status labels, low-bandwidth loading, and supported phone/tablet layouts.
+- Blocker: grade-return privacy and student-specific submission RLS findings are closed with real PostgreSQL tests.
+
+### Parent / guardian app
+- Link and switch between authorized children; view only the linked child's allowed progress, schedule, attendance, pickup and transport events.
+- Revoke or change a guardian relationship and prove access stops immediately, including cached/deep-linked/API paths.
+- Test consent withdrawal, media visibility, message recipients, notification redaction and custody/do-not-release restrictions.
+- Blocker: any child-scope leakage or stale guardian access.
+
+### Teacher app
+- Complete a school day: roster, attendance, assignments, grading, feedback, communications and handoff/coverage.
+- Verify teachers cannot access unassigned classes, other schools, private student records, or grades outside their assigned courses.
+- Test grade publication/return transitions, accommodations, duplicate submissions, offline-safe operations and media consent.
+- Blocker: authorization gaps, grade state inconsistency, or missing audit for sensitive changes.
+
+### Principal / vice principal / superintendent / IT
+- Verify the authority matrix for each role and every approval/action, including acting/temporary assignments and revocation.
+- Prove school leaders cannot cross school scope unless an explicit district permission allows it.
+- Prove IT administration does not imply access to student records.
+- Test command-center accuracy, escalation, staffing, emergency status, export and audit history.
+- Blocker: role overlap that grants unapproved power or inaccurate operational state.
+
+### Maintenance / facilities
+- Submit, triage, assign, start, pause, complete, reopen or cancel work under explicit policy.
+- Capture location as a room/building asset reference only where needed; this is not person tracking.
+- Test priority, due dates, overdue escalation, duplicate requests, photo evidence scanning, school scope and audit.
+- Blocker: lost work orders, untracked state changes, or unauthorized access to another school's facilities records.
+
+### Bus driver / transport
+- Driver sees only assigned run/route/stop and minimum rider information required for the assigned trip.
+- Record boarding, not-riding/no-show and alighting events with timestamps and safe retry/idempotency.
+- Validate run start/end, route reassignment, substitute driver, device offline queue, reconnect replay, and dispatch exception communication.
+- Guardian view is limited to their own child's permitted check-in/status; it does not expose a fleet view.
+- **GPS prohibition:** no driver GPS permission, background location service, device-location collection, live tracking, geofence, GPS-derived ETA, or location history. Static route/stop instructions and manually reported operational status are acceptable.
+- Blocker: any persistent location collection, cross-route rider exposure, or unrecoverable check-in loss.
+
+### SRO / safety
+- Provision only after district/school authorization and active school membership; revoke immediately on role/membership end.
+- Test incident-specific assignment, acknowledgement/decline, status changes, audit and no-cache behavior.
+- Prove SRO cannot query general student records, grades, attendance, pickup, transport or discipline by default.
+- No dispatch, CAD/RMS, 911 or automatic police action in this release scope.
+- Blocker: broad student access, stale access after revocation, or unreviewed agency integration.
+
+### Nurse / health office
+- Release only the current approved operational shell and explicitly documented non-clinical tasks.
+- Do not imply clinical charting, diagnosis, medication administration, treatment or medical advice capability.
+- Clinical workflows remain a separate hold requiring clinical governance and qualified review.
+
+### Librarian / counselor / coach / lunchroom / office / specialist roles
+- Define role-specific allowed actions, records, student relationship scope, retention and sensitive fields.
+- Test normal workflow, denied workflow, substitute/temporary assignment, revocation, export and audit.
+- No role is approved by copying another role's permissions without review.
+
+### Homeschool hub
+- Adult authority and family context are verified before learner access.
+- Distinguish family-maintained records from district-issued records and official credentials.
+- Test co-op invitation/moderation, adult-only boundaries, consent, learner transfer, export and family dissolution/authority changes.
+- Blocker: any cross-family learner disclosure or misleading official-record status.
+
+### Private-school hub
+- Verify school and campus membership; isolate campuses and schools according to policy.
+- Test admissions/enrollment, attendance, report cards, guardian messaging, transfer acceptance and tuition dual control.
+- Ensure one actor cannot unilaterally complete a restricted financial action where dual control is required.
+- Blocker: cross-school/campus disclosure, unauthorized guardian access or financial control bypass.
+
+### Master Control / federation / EDEN
+- Validate signed identity and policy bundles, authorization expiry, replay protection, revocation and tamper-evident audit.
+- Verify aggregate-only egress, minimum cell thresholds and complementary suppression at both egress and hub.
+- Prove school-node local workflows and WAN recovery on supported hardware; simulation evidence is labeled simulation.
+- Blocker: identifiable student egress outside approved transfer process, invalid signature acceptance, or untested failover.
+
+### Web / PWA / Flutter / Roku
+- Web/PWA: supported browser matrix, keyboard and screen reader, responsive breakpoints, install/update and session behavior.
+- Flutter: pinned SDK, analyzer, unit/widget/integration tests, supported device smoke, permissions, deep links, crash reporting and upgrade.
+- Roku: read-only authorization, household scope, token expiry/revocation and device compatibility.
+- A backend pass does not substitute for client acceptance; a UI pass does not substitute for backend authorization.
+
+## 14. Test evidence standard
+
+For each app, maintain a release evidence bundle containing:
+
+1. **Build identity:** commit SHA, version, build artifact digest, environment and configuration version.
+2. **Test report:** exact commands, test counts, pass/fail/skip, duration, logs and linked CI run.
+3. **Security evidence:** runtime DB role identity, RLS enabled/forced assertions, cross-tenant and IDOR negative results, dependency/container/source scan results.
+4. **Journey evidence:** scripted user journey results for each role, browser/device version and redacted screenshots/video where useful.
+5. **Resilience evidence:** offline/retry/replay, backup restore, rollback/forward-fix and provider outage outcomes.
+6. **Accessibility evidence:** automated scan plus documented manual keyboard/screen-reader review.
+7. **Operations evidence:** dashboard links, alert test, runbook, support owner, escalation and restore record.
+8. **Sign-offs:** engineering, security/privacy reviewer, product owner, operations owner and pilot district approver.
+
+Use four explicit evidence labels:
+- **Code-reviewed:** source inspected; runtime behavior not yet proven.
+- **Automated-tested:** specified automated tests passed in a named environment.
+- **Staging-verified:** workflow exercised against deployed staging services and real database.
+- **Pilot-validated:** trained users completed the workflow in the approved pilot scope.
+
+Never promote a claim from one evidence level to the next without the corresponding run.
+
+## 15. Release gates and decision authority
+
+| Decision | Required approvers | Must answer |
+|---|---|---|
+| Design ready | Product owner + engineering lead + security/privacy reviewer | Is the workflow in scope, governed, threat-modeled and testable? |
+| Code ready | Engineering reviewer + test owner | Are changes reviewed, tests passing and migrations safe? |
+| Staging ready | Release manager + operations owner + security reviewer | Is the exact build deployable, observable, restorable and reversible? |
+| Pilot ready | Product owner + district sponsor + support lead + security/privacy reviewer | Are users trained, scope limited, stop conditions and support defined? |
+| GA ready | Release manager + accountable product executive + operations/security sign-off | Are all blockers closed, pilot outcomes accepted and recovery proven? |
+
+Any approver may block a release within their area of responsibility. Risk acceptance must identify the risk owner, affected scope, compensating control, expiry date and remediation PR. No risk acceptance may waive tenant isolation, forced RLS, student safety boundaries, the no-GPS driver requirement, or a known critical data-loss defect.
+
+## 16. Pilot design and quantitative decision rules
+
+Before inviting pilot users, record baseline and target values. Do not invent success thresholds after the pilot begins.
+
+**Pilot cohort**
+- One district/school with an executive sponsor, principal, teacher, office staff, transport representative, family representative and technical administrator.
+- Synthetic data in pre-pilot rehearsal; approved minimum live data in the actual pilot.
+- Separate homeschool and private-school cohorts with their own authority and data-boundary validation.
+- Named support coverage during every pilot operating window.
+
+**Minimum measures**
+- Critical journey completion rate by role.
+- Failed/duplicate/lost writes and offline queue recovery.
+- Authentication and authorization failures, including denied cross-scope probes.
+- API availability, latency and error rate under pilot load.
+- Mobile crash-free sessions and supported-device defects.
+- Notification delivery and stale/incorrect notification rate.
+- Support tickets per active user and time to resolve.
+- Accessibility blockers and task completion with assistive technology.
+- Data import reconciliation variance and unresolved record mismatches.
+
+**Automatic stop conditions**
+- Confirmed cross-tenant, cross-school, cross-family or unauthorized guardian disclosure.
+- Grade or sensitive record exposed before authorized release.
+- Lost or duplicated safety/transport event that changes an operational decision.
+- RLS or authorization bypass, compromised signing key, or invalid federation bundle accepted.
+- Unrecoverable data loss, failed restore, or inability to roll back/disable the release.
+- No staffed incident response during the pilot window.
+
+A stop condition pauses the affected feature or pilot immediately, preserves evidence, triggers the incident playbook and requires a documented restart decision.
+
+## 17. Delivery cadence and management rhythm
+
+Use a two-week planning/review rhythm as a default, not as a promise of completion dates:
+
+- **Start of cycle:** select a small set of PR work packages whose dependencies are clear; assign one directly responsible owner per package.
+- **Daily:** review blocked PRs, CI failures, production-impacting defects and dependency changes.
+- **Mid-cycle:** demonstrate completed user journeys on a deployed environment, not slides or isolated screens.
+- **End of cycle:** review merged code, exact test evidence, unresolved risks, updated app readiness states and next-cycle dependencies.
+- **Before every release:** run the go/no-go meeting against the gates in Section 15 and attach the evidence bundle.
+
+### Required weekly report
+
+| Field | Required content |
+|---|---|
+| App / work package | Exact role app and RP/HOLD identifier |
+| State | Not started / in progress / blocked / code-reviewed / automated-tested / staging-verified / pilot-validated / GA |
+| This cycle | Merged PRs and completed user journeys |
+| Next | One concrete next deliverable |
+| Blockers | Defect, dependency, owner and decision needed |
+| Evidence | CI run, staging result, security test and review links |
+| Risk | Severity, scope, mitigation, expiry or stop condition |
+
+### Current baseline and immediate execution order
+
+At plan creation, the repository inventory shows:
+- PR #228 is the Student Grades implementation and contains known grade-return privacy and student-specific submission RLS findings that must be rechecked before broad release.
+- PRs #229, #230 and #231 are role-app audit documents. They are evidence inputs, not app-completion work and not release approvals.
+- The repository README documents required CI checks and the governance baseline; actual branch-protection enforcement and a full production staging rehearsal still need explicit verification.
+- The transport product rule is no GPS/location tracking for bus drivers.
+
+**Next executable sequence**
+1. Recheck PR #228 against current `main`; split the grade-return behavior and RLS remediation if they are not already addressed.
+2. Create RP-00 inventory from the current code and the three audit documents; classify each app as code-reviewed, automated-tested, staging-verified, pilot-validated or GA.
+3. Implement RP-01 and RP-02 as separate, reviewable P0 PRs with real PostgreSQL runtime-role tests.
+4. Verify required CI branch protection, then establish staging, restore, monitoring and rollback evidence (RP-04 through RP-07).
+5. Start Wave 1 student/guardian/teacher acceptance; do not start broad Wave 1 pilot until the P0 gates pass.
+6. Run subsequent app waves using the app contracts in Section 13 and record each release decision.
+
+**This execution edition does not claim that any app has passed these gates.** It defines the work and the evidence required to make that determination.
