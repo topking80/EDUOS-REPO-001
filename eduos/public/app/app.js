@@ -632,7 +632,45 @@ function eligibilityPanel(activity) {
           h("span", { class: "small" }, ELIG_LABEL[s.status] || s.status)),
         actList(s.reasons).map(x => h("p", { class: "small muted" }, x.text))))) : h("p", { class: "muted" }, "No one is on the active roster yet."));
   }).catch(() => box.replaceChildren(h("p", { class: "muted small" }, "Eligibility is visible to the team's coach and the athletic director only.")));
-  return h("section", { class: "card" }, h("h3", {}, `Eligibility · ${activity.title}`), box);
+  const certify = h("div", { class: "stack" });
+  attestationPanel(activity, certify);
+  return h("section", { class: "card" }, h("h3", {}, `Eligibility · ${activity.title}`), box, certify);
+}
+
+// A short inline "why" form (no browser dialogs): replaces `slot` until submitted or cancelled.
+function reasonForm(slot, label, onReason) {
+  const input = h("input", { "aria-label": label, required: true, minlength: 3, maxlength: 500, placeholder: label });
+  const back = slot.cloneNode(false); back.replaceChildren(...slot.childNodes);
+  slot.replaceChildren(h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault(); if (input.value.trim().length >= 3) await onReason(input.value.trim()); } },
+    input, h("button", { class: "btn small", type: "submit" }, "Confirm"), h("button", { class: "link", type: "button", onclick: () => slot.replaceChildren(...back.childNodes) }, "Cancel")));
+  input.focus();
+}
+// SPORT-05: the athletic director certifies the team to the state athletic
+// association: consented athletes only; name, grade and status; signed.
+const ATT_ERRORS = { exchange_signing_not_configured: "This server has no signing key (EXCHANGE_SIGNING_SECRET).", agreement_not_in_force: "That association agreement isn't in force.",
+  athletic_director_only: "Only the school's athletic director can do this." };
+function attestationPanel(activity, box) {
+  const load = () => api.get(`/api/activities/${activity.id}/attestations`).then(r => {
+    const d = r.data || {};
+    if (!actList(d.agreements).length && !actList(d.attestations).length) return box.replaceChildren();
+    const nameOf = id => d.agreements.find(a => a.id === id)?.associationName || "association";
+    box.replaceChildren(h("h4", {}, "Certify to the athletic association"),
+      h("p", { class: "small muted" }, "Lists only athletes whose family agreed, with name, grade and eligible, not eligible or pending. No grades, attendance or reasons. The association can read it until it expires."),
+      ...actList(d.agreements).map(a => h("div", { class: "row wrap" }, h("span", { class: "grow small" }, h("b", {}, a.associationName), ` · ${a.consented} of ${a.rosterSize} on the roster agreed`),
+        h("button", { class: "btn small", type: "button", disabled: !d.signingConfigured, onclick: async () => {
+          try {
+            const res = await fetch(`/api/activities/${activity.id}/attestations`, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "x-csrf-token": api.csrf || "" }, body: JSON.stringify({ agreementId: a.id }) });
+            if (!res.ok) { const j = await res.json().catch(() => ({})); return toast(ATT_ERRORS[j.error] || "Couldn't certify the team."); }
+            const href = URL.createObjectURL(await res.blob()); const link = h("a", { href, download: `eligibility-${activity.title.replace(/[^A-Za-z0-9]+/g, "-")}.json` });
+            document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(href), 10_000);
+            toast("Certified and signed. The association can read it now."); load();
+          } catch { toast("Couldn't certify the team."); } } }, "Certify eligibility"))),
+      actList(d.attestations).length ? h("ul", { class: "list small" }, d.attestations.slice(0, 5).map(x => h("li", { class: "row wrap" },
+        h("span", { class: "grow" }, `${nameOf(x.agreementId)} · ${fmtDay(x.asOf)} · ${x.athletes} athletes, ${x.withheld} not shared · ${x.withdrawnAt ? `withdrawn (${x.withdrawReason})` : `until ${fmtDay(x.expiresOn)}`}`),
+        x.withdrawnAt ? null : h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why withdraw this certification?", async reason => {
+          try { await api.post(`/api/attestations/${x.id}/withdraw`, { reason }); toast("Withdrawn. The association can't read it any more."); load(); } catch (err) { actErr(err, "Couldn't withdraw it."); } }) }, "Withdraw"))))) : null);
+  }).catch(() => box.replaceChildren());
+  load();
 }
 
 // Clubs & sports operations (db/152): attendance at recent meetings, practices
@@ -951,6 +989,7 @@ async function activitiesLiveView() {
     family ? familySlipsCard(actList(slips?.data), role === "parent") : null,
     family ? familyClubApprovalsCard(actList(clubApprovals?.data), role === "parent") : null,
     role === "parent" ? await familySharingCard() : null,
+    role === "parent" ? await familyAssociationCard() : null,
     ["principal", "vice_principal"].includes(role) || my.athleticDirector ? await connectorsCard() : null,
     ["principal", "vice_principal", "superintendent"].includes(role) || my.athleticDirector || coachOf.size ? schedulingOfficialsCard() : null,
     activities.length ? h("div", { class: "grid" }, activities.map(card)) : h("section", { class: "card" }, h("p", { class: "muted" }, "No clubs or teams are published yet.")),
@@ -4086,6 +4125,34 @@ async function jurisdictionRulesCard() {
       h("dt", {}, "Student history kept at least"), h("dd", {}, yrs(d.historyYears)),
       h("dt", {}, "Exchanges need a recorded consent"), h("dd", {}, d.consentRequired ? "Yes" : "No")));
 }
+// SPORT-05: the district's agreements with athletic associations.
+async function associationAgreementsCard() {
+  const d = (await safe(api.get("/api/district/athletic-associations")))?.data;
+  if (!d || !Array.isArray(d.agreements)) return null;
+  const f = { ref: h("input", { id: "aa-ref", placeholder: "e.g. uil-tx", pattern: "[a-z0-9][a-z0-9-]{1,79}", required: true }), name: h("input", { id: "aa-name", required: true }),
+    basis: h("input", { id: "aa-basis", required: true }), to: h("input", { id: "aa-to", type: "date", required: true }) };
+  const tokenBox = h("div", {});
+  return h("section", { class: "card", "aria-label": "Athletic associations" }, h("h2", {}, "Athletic associations"),
+    h("p", { class: "small muted" }, "An agreement lets a state athletic association read the eligibility your athletic directors certify, for athletes whose families agreed, until the end date. Every read is logged here."),
+    d.signingConfigured ? null : h("p", { class: "notice" }, "This server has no signing key (EXCHANGE_SIGNING_SECRET), so teams can't be certified yet."),
+    d.agreements.length ? h("ul", { class: "list" }, d.agreements.map(a => h("li", {}, h("div", { class: "row wrap" }, h("b", { class: "grow" }, a.associationName),
+        chip(a.inForce ? "present" : "absent", a.status === "revoked" ? "Revoked" : a.inForce ? "In force" : "Not in force")),
+      h("p", { class: "small muted" }, `${a.legalBasis} · ${fmtDay(a.effectiveFrom)} to ${fmtDay(a.effectiveTo)} · ${a.consents} families agreed`),
+      a.reads.length ? h("p", { class: "small muted" }, `Last read: ${a.reads[0].action} ${a.reads[0].outcome}${a.reads[0].reason ? ` (${a.reads[0].reason})` : ""}, ${new Date(a.reads[0].at).toLocaleString()} · ${a.reads.length} recent`) : h("p", { class: "small muted" }, "Not read yet."),
+      a.status === "active" ? h("div", { class: "btns" },
+        h("button", { class: "btn small", type: "button", onclick: async () => { try { const r = (await api.post(`/api/district/athletic-associations/${a.id}/token`, {})).data;
+          tokenBox.replaceChildren(h("p", { class: "notice" }, "New access token (shown once; the old one no longer works): ", h("code", { class: "wrap" }, r.accessToken))); } catch { toast("Couldn't replace the token."); } } }, "New access token"),
+        h("span", {}, h("button", { class: "btn small", type: "button", onclick: e => reasonForm(e.target.parentNode, "Reason for revoking", async reason => {
+          try { await api.post(`/api/district/athletic-associations/${a.id}/revoke`, { reason }); go(state.tab, { push: false }); } catch { toast("Couldn't revoke it."); } }) }, "Revoke"))) : null))) : null,
+    tokenBox,
+    h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        try { const r = (await api.post("/api/district/athletic-associations", { associationRef: f.ref.value.trim(), associationName: f.name.value.trim(), legalBasis: f.basis.value.trim(), effectiveTo: f.to.value })).data;
+          tokenBox.replaceChildren(h("p", { class: "notice" }, `Agreement with ${r.associationName} in force. Give the association this access token once, securely: `, h("code", { class: "wrap" }, r.accessToken))); }
+        catch { toast("Check the fields: an id like uil-tx, the name, the legal basis and an end date."); } } },
+      h("h3", {}, "New agreement"), h("label", { for: "aa-ref" }, "Association id"), f.ref, h("label", { for: "aa-name" }, "Association name"), f.name,
+      h("label", { for: "aa-basis" }, "Legal basis (rule, statute or board approval)"), f.basis, h("label", { for: "aa-to" }, "Ends on"), f.to,
+      h("button", { class: "btn", type: "submit" }, "Approve agreement")));
+}
 async function masterControlPoliciesCard() {
   const d = (await safe(api.get("/api/district/policy-bundles")))?.data;
   if (!d || !Array.isArray(d.bundles)) return null;
@@ -4121,7 +4188,8 @@ VIEWS.integrations = async () => {
       h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Open payment setup")) : null,
     ["superintendent", "it_admin"].includes(state.me.role) ? await masterControlPoliciesCard() : null,
     ["superintendent", "it_admin"].includes(state.me.role) ? await jurisdictionRulesCard() : null,
-    state.me.role === "superintendent" ? await exchangeCard() : null];
+    state.me.role === "superintendent" ? await exchangeCard() : null,
+    state.me.role === "superintendent" ? await associationAgreementsCard() : null];
   if (!enabled) return [...out, h("p", { class: "notice" }, "Data links are off on this server. District IT turns them on by setting INTEGRATIONS_KEY.")];
   const results = new Map(); // connector id -> last preview/apply result (this page view)
   const resultCard = (c, res) => {
@@ -5288,6 +5356,19 @@ async function sportsShareDialog(a, manages) {
           h("button", { class: "btn small", type: "button", "aria-label": `${name} schedule file`, onclick: () => download(sv, "schedule") }, `${name} schedule file`)))),
       sum?.log?.length ? h("p", { class: "small muted" }, `Last file: ${sum.log[0].by}, ${new Date(sum.log[0].at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`) : null
     ] : null], value: () => undefined }), null);
+}
+// SPORT-05: a parent's yes or no to the state athletic association.
+async function familyAssociationCard() {
+  const d = (await safe(api.get("/api/family/association-consents")))?.data;
+  if (!d || !actList(d.agreements).length || !actList(d.students).some(k => k.teams.length)) return null;
+  return h("section", { class: "card", "aria-label": "Eligibility and the athletic association" }, h("h3", {}, "Eligibility and the athletic association"),
+    h("p", { class: "small muted" }, d.shares), h("p", { class: "small muted" }, "You can change this any time. Saying no later withdraws anything already sent that lists your child."),
+    h("ul", { class: "list" }, d.students.filter(k => k.teams.length).map(k => h("li", {}, h("b", {}, k.name), h("span", { class: "small muted" }, ` · ${k.teams.join(", ")}`),
+      h("div", { class: "btns" }, d.agreements.map(a => h("label", { class: "check" },
+        h("input", { type: "checkbox", checked: Boolean(k.consents[a.id]), onchange: async e => {
+          try { await api.put(`/api/family/association-consents/${k.studentId}`, { agreementId: a.id, share: e.target.checked });
+            toast(e.target.checked ? `The school can confirm ${first(k.name)}'s eligibility to ${a.associationName}.` : `${first(k.name)} won't be included for ${a.associationName}.`); }
+          catch { e.target.checked = !e.target.checked; toast("Couldn't save it."); } } }), ` Share eligibility with ${a.associationName}`)))))));
 }
 async function familySharingCard() {
   const kids = (await safe(api.get("/api/family/sports-sharing")))?.data || [];
