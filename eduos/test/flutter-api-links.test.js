@@ -86,3 +86,13 @@ test("every server path the Flutter app calls exists", () => {
   const missing = [...client].filter(([p]) => !variants(p).every(v => routes.some(r => r.test(v.replaceAll(":p", "X1"))))).map(([p, f]) => `${p} (${f})`);
   assert.deepEqual(missing, []);
 });
+
+test("the Flutter app's Arbiter links are the web app's", () => {
+  const web = /const ARBITER_LINKS = \[([\s\S]*?)\];/.exec(fs.readFileSync(path.join(ROOT, "public/app/app.js"), "utf8"))[1];
+  const dart = /const arbiterLinks = \[([\s\S]*?)\];/.exec(fs.readFileSync(path.join(ROOT, "mobile/flutter/lib/ui/arbiter_links.dart"), "utf8"))[1];
+  const pairs = (src, re) => [...src.matchAll(re)].map(m => [m[1], m[2]]);
+  const w = pairs(web, /\["([^"]+)", "([^"]+)"\]/g), d = pairs(dart, /\('([^']+)', '([^']+)'\)/g);
+  assert.equal(w.length, 3);
+  assert.deepEqual(d.map(([l, u]) => [l.replace(/\\'/g, "'"), u]), w);
+  for (const [, u] of w) assert.match(u, /^https:\/\/arbiter\.io\//);
+});

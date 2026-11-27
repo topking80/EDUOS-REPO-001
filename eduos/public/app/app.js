@@ -1656,11 +1656,11 @@ VIEWS.teams = async () => {
 };
 // Game scheduling and officials assigning happen in Arbiter, which many
 // state associations and conferences use. Plain links: EduOS sends nothing
-// to Arbiter.
+// to Arbiter. The Flutter app has the same list (mobile/flutter/lib/ui/arbiter_links.dart).
 const ARBITER_LINKS = [
-  ["Arbiter: sign in", "https://www.arbitersports.com/"],
+  ["Arbiter: sign in", "https://arbiter.io/"],
   ["Game and event scheduling", "https://arbiter.io/products/scheduling/"],
-  ["Officials assigning", "https://arbiter.io/products/assigning/"]];
+  ["Officials assigning", "https://arbiter.io/products/assigningsoftware/"]];
 function schedulingOfficialsCard() {
   return h("section", { class: "card", "aria-label": "Scheduling and officials" }, h("h3", {}, "Scheduling & officials"),
     h("p", { class: "small muted" }, "Game schedules and officials' assignments are managed in Arbiter (opens in a new tab). EduOS doesn't send your schedules, rosters or student information there."),
