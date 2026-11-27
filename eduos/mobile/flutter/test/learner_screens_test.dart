@@ -128,9 +128,7 @@ void main() {
       }},
     });
     await launch(tester, fake);
-    await tester.tap(find.text('More'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('My work'));
+    await tester.tap(find.text('My work').first);
     await tester.pumpAndSettle();
 
     expect(find.text('Fractions practice'), findsOneWidget);
