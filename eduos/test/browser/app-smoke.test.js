@@ -385,6 +385,9 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       { id: "tr1", receivingDistrict: "Lakeside Unified", basis: "enrollment_request", note: "Request dated Nov 20", includeFamily: true, familyDecision: "approved", status: "ready",
         requestedBy: "Principal S1", createdAt: now, readyAt: now, items: 4, downloads: 1 }] } };
     // TC-06b: a transfer file received from another district, waiting to be checked.
+    // TC-06c: online delivery between districts on this deployment.
+    case "/api/history-delivery/settings": return { data: { accepting: true } };
+    case "/api/history-delivery/directory": return { data: [{ id: "d2", name: "Lakeside Unified" }] };
     // HSP-06 part 3: districts in the learner transfer workflow.
     case "/api/transfers/settings": return { data: { enabled: true } };
     case "/api/transfers": return { data: [] };
@@ -743,7 +746,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         for (const want of preserveExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
         // HSP-06 part 3: the records office's switch and receiving onto an existing student.
         const xferExpect = { "principal/history": ["Transfers with families and private schools", "Receive records", "Transfer code"],
-          "superintendent/history": ["Transfers with families and private schools", "Turn off"] }[`${role}/${tab}`];
+          "superintendent/history": ["Transfers with families and private schools", "Turn off", "Districts on this EduOS can deliver transfers here online", "Stop online deliveries"] }[`${role}/${tab}`];
         for (const want of xferExpect || []) if (!text.includes(want)) failures.push(`${role} #/${tab}: "${want}" is missing`);
         if (["superintendent", "it_admin"].includes(role) && tab === "payments") {
           if (!text.includes("Payment webhook operations") || !text.includes("Late payment captures needing a refund") || !text.includes("Webhook events requiring investigation"))

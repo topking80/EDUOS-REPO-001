@@ -1008,3 +1008,9 @@ GRANT SELECT, INSERT ON district_transfer_settings TO eduos_app;
 GRANT UPDATE (enabled, changed_by, changed_at) ON district_transfer_settings TO eduos_app;
 REVOKE DELETE, TRUNCATE ON district_transfer_settings FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_district_records_office(uuid), eduos_district_guardian(uuid,uuid,uuid), eduos_district_transfers_on(uuid), eduos_transfer_accept(text,uuid) TO eduos_app;
+
+-- 170 (TC-06c): online delivery of a history transfer to another district on this deployment.
+GRANT SELECT, INSERT ON history_delivery_settings TO eduos_app;
+GRANT UPDATE (accepting, changed_by, changed_at) ON history_delivery_settings TO eduos_app;
+REVOKE DELETE, TRUNCATE ON history_delivery_settings FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_history_delivery_directory(), eduos_history_transfer_deliver(uuid,uuid,text,text,jsonb,jsonb,jsonb) TO eduos_app;

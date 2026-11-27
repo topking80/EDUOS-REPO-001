@@ -6348,6 +6348,7 @@ async function downloadFile(url, fallback) {
 async function transferCard(student) {
   const d = (await safe(api.get(`/api/students/${student.id}/history-transfers`)))?.data;
   if (!d) return null;
+  const directory = (await safe(api.get("/api/history-delivery/directory")))?.data || [];
   const reload = () => go("historyprivacy", { push: false });
   const to = h("input", { id: "tr-to", maxlength: 200, placeholder: "e.g. Lakeside Unified School District" });
   const basis = h("select", { id: "tr-basis" }, Object.entries(TRANSFER_BASIS).map(([k, t]) => h("option", { value: k }, t)));
@@ -6359,13 +6360,17 @@ async function transferCard(student) {
       : h("p", { class: "small" }, `This district's signing fingerprint: `, h("code", {}, d.keyFingerprint), ". Give it to the receiving district so they can confirm the file came from you."),
     d.transfers.length ? h("ul", { class: "list" }, d.transfers.map(t => h("li", {},
       h("div", { class: "row wrap" }, h("b", { class: "grow" }, t.receivingDistrict), chip(t.status === "ready" ? "present" : t.status === "cancelled" ? "absent" : "expected", TRANSFER_STATUS[t.status])),
-      h("p", { class: "small muted" }, `${TRANSFER_BASIS[t.basis]}: ${t.note} · by ${t.requestedBy} · ${fmtDay(t.createdAt)}${t.includeFamily ? ` · family items: ${t.familyDecision === "approved" ? "agreed" : t.familyDecision === "declined" ? "declined (records only)" : "waiting"}` : ""}${t.items !== null ? ` · ${t.items} items` : ""}${t.downloads ? ` · downloaded ${t.downloads}×` : ""}`),
+      h("p", { class: "small muted" }, `${TRANSFER_BASIS[t.basis]}: ${t.note} · by ${t.requestedBy} · ${fmtDay(t.createdAt)}${t.includeFamily ? ` · family items: ${t.familyDecision === "approved" ? "agreed" : t.familyDecision === "declined" ? "declined (records only)" : "waiting"}` : ""}${t.items !== null ? ` · ${t.items} items` : ""}${t.downloads ? ` · downloaded ${t.downloads}×` : ""}${t.deliveredTo ? ` · delivered online to ${t.deliveredTo} ${fmtDay(t.deliveredAt)}` : ""}`),
       t.status === "ready" ? h("div", { class: "btns" },
         h("button", { class: "btn small", type: "button", "aria-label": `Download transfer file: ${t.receivingDistrict}`, onclick: async () => {
           try { await downloadFile(`/api/history-transfers/${t.id}/package`, "history-transfer.json"); toast("Downloaded. Send it through your records channel."); reload(); } catch { toast("Couldn't make the file."); } } }, "Download transfer file"),
+        !t.deliveredTo && directory.length ? (() => { const sel = h("select", { "aria-label": `District to deliver to: ${t.receivingDistrict}` }, directory.map(x => h("option", { value: x.id, selected: x.name === t.receivingDistrict }, x.name)));
+          return h("span", { class: "row" }, sel, h("button", { class: "btn small primary", type: "button", onclick: async () => {
+            try { await api.post(`/api/history-transfers/${t.id}/deliver`, { districtId: sel.value }); toast("Delivered. Their records office still chooses the student and accepts each item."); reload(); }
+            catch (err) { toast({ already_received_there: "That district already has this file.", district_not_receiving: "That district doesn't take online deliveries." }[err.code || err.body?.error] || "Couldn't deliver it."); } } }, "Deliver online")); })() : null,
         h("button", { class: "btn small", type: "button", "aria-label": `Cancel transfer: ${t.receivingDistrict}`, onclick: async () => {
           const n = await ask({ title: "Cancel this transfer?", label: "Why", confirm: "Cancel transfer" }); if (!n) return;
-          try { await api.post(`/api/history-transfers/${t.id}/cancel`, { note: n }); toast("Cancelled."); reload(); } catch { toast("Couldn't cancel it."); } } }, "Cancel")) : null))) : null,
+          try { const r = (await api.post(`/api/history-transfers/${t.id}/cancel`, { note: n })).data; toast(r.deliveryWithdrawn ? "Cancelled, and the online delivery was withdrawn." : t.deliveredTo ? "Cancelled. They'd already started on it: tell their records office." : "Cancelled."); reload(); } catch { toast("Couldn't cancel it."); } } }, "Cancel")) : null))) : null,
     d.signingReady ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
         try { await api.post(`/api/students/${student.id}/history-transfers`, { receivingDistrict: to.value.trim(), basis: basis.value, note: note.value.trim(), includeFamilyItems: fam.checked });
           toast(fam.checked ? "Started. The family has been asked about their items." : "Ready to download."); reload(); }
@@ -6391,11 +6396,13 @@ const IMPORT_ERRORS = { not_a_transfer_package: "That isn't a history transfer f
 async function incomingTransfersCard() {
   const list = (await safe(api.get("/api/history-imports")))?.data;
   if (!list) return null;
+  const online = (await safe(api.get("/api/history-delivery/settings")))?.data;
+  const sup = state.me.role === "superintendent";
   const file = h("input", { id: "hi-file", type: "file", accept: ".json,application/json" });
   return h("section", { class: "card", "aria-label": "Records from other districts" }, h("h3", {}, "Records from other districts"),
     h("p", { class: "small muted" }, "Upload a signed history transfer file you received from a student's previous district. Nothing is added until you confirm who sent it, choose the student and accept each item."),
     list.length ? h("ul", { class: "list" }, list.slice(0, 20).map(i => h("li", { class: "row wrap" },
-      h("span", { class: "grow" }, h("b", {}, i.student.name), h("span", { class: "small muted" }, ` · from ${i.from.district} · ${fmtDay(i.receivedAt)} · ${i.items} items${i.localStudent ? ` · for ${i.localStudent.name}` : ""}`)),
+      h("span", { class: "grow" }, h("b", {}, i.student.name), h("span", { class: "small muted" }, ` · from ${i.from.district}${i.deliveredOnline ? " (online)" : ""} · ${fmtDay(i.receivedAt)} · ${i.items} items${i.localStudent ? ` · for ${i.localStudent.name}` : ""}${i.withdrawn ? " · withdrawn by the sender" : ""}`)),
       chip(...IMPORT_STATUS[i.status]),
       h("button", { class: "btn small", type: "button", "aria-label": `Open transfer: ${i.student.name}`, onclick: () => openView("historyimport", { historyImportId: i.id }) }, "Open")))) : null,
     h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault();
@@ -6404,7 +6411,11 @@ async function incomingTransfersCard() {
         let pkg; try { pkg = JSON.parse(await f.text()); } catch { return toast(IMPORT_ERRORS.not_a_transfer_package); }
         try { const d = (await api.post("/api/history-imports", pkg)).data; toast(d.existing ? "You've already received this file." : "Signature checked."); openView("historyimport", { historyImportId: d.id }); }
         catch (err) { toast(IMPORT_ERRORS[err.code || err.body?.error] || "Couldn't read that file."); } } },
-      h("div", { class: "grow" }, h("label", { for: "hi-file" }, "Transfer file"), file), h("button", { class: "btn", type: "submit" }, "Check file")));
+      h("div", { class: "grow" }, h("label", { for: "hi-file" }, "Transfer file"), file), h("button", { class: "btn", type: "submit" }, "Check file")),
+    online ? h("p", { class: "small" }, online.accepting ? "Districts on this EduOS can deliver transfers here online. They still wait for you to choose the student and accept each item." : "Online deliveries from other districts on this EduOS are off.",
+      sup ? [" ", h("button", { class: "btn small", type: "button", onclick: () => api.put("/api/history-delivery/settings", { accepting: !online.accepting })
+        .then(() => { toast(online.accepting ? "Online deliveries stopped." : "Other districts on this EduOS can now deliver here."); go("history", { push: false }); }).catch(() => toast("Couldn't change it.")) },
+        online.accepting ? "Stop online deliveries" : "Receive online deliveries")] : null) : null);
 }
 VIEWS.historyimport = async () => {
   if (!state.historyImportId) return VIEWS.history();
@@ -6438,15 +6449,16 @@ VIEWS.historyimport = async () => {
           results.replaceChildren(...found.map(option)); } },
         h("div", { class: "grow" }, h("label", { for: "hi-q" }, "Find a student"), q), h("button", { class: "btn", type: "submit" }, "Search")));
     step = h("section", { class: "card", "aria-label": "Check and choose the student" }, h("h3", {}, "1. Check who sent it"),
+      d.deliveredOnline ? h("p", { class: "small" }, `Delivered online by ${d.from.district}, a district on this EduOS. EduOS confirmed who sent it, so there's no fingerprint to check.`) : [
       h("p", { class: "small" }, `The file is signed with fingerprint `, h("code", {}, d.fingerprint), `. Get ${d.from.district}'s signing fingerprint from them another way (a phone call to their records office, or their letterhead) and type it here. Don't copy it from the file.`),
       d.knownFingerprints.length ? h("p", { class: "small" }, d.knownFingerprints.some(k => k.fingerprint === d.fingerprint)
         ? `You confirmed this same fingerprint for ${d.from.district} on ${fmtDay(d.knownFingerprints.find(k => k.fingerprint === d.fingerprint).confirmedAt)}.`
         : `Careful: earlier files from ${d.from.district} had a different fingerprint. Check with them before going on.`) : null,
-      h("label", { for: "hi-fp" }, "Fingerprint from the sending district"), fp,
+      h("label", { for: "hi-fp" }, "Fingerprint from the sending district"), fp],
       h("h3", {}, "2. Choose the student"), pickBox,
       h("div", { class: "btns" }, h("button", { class: "btn primary", type: "button", onclick: async () => {
           if (!chosen) return toast("Choose the student first.");
-          try { await api.post(`/api/history-imports/${d.id}/confirm`, { fingerprint: fp.value.trim(), studentId: chosen.id }); toast(`Checked. Now choose what to add to ${chosen.name}'s history.`); reload(); }
+          try { await api.post(`/api/history-imports/${d.id}/confirm`, d.deliveredOnline ? { studentId: chosen.id } : { fingerprint: fp.value.trim(), studentId: chosen.id }); toast(`Checked. Now choose what to add to ${chosen.name}'s history.`); reload(); }
           catch (err) { toast((err.code || err.body?.error) === "fingerprint_mismatch" ? "That fingerprint doesn't match the file. Don't go on until you've checked with the sending district." : "Couldn't save it."); } } }, "Confirm"),
         closeBtn("Reject the whole file", "Reject this whole file?")));
   }

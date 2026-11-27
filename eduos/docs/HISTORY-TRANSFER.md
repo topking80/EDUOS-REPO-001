@@ -74,3 +74,27 @@ are audited.
 Another school in the district can't see or take a file one school received;
 the district office sees all of them. Nothing here changes grades, enrollment
 or any other record.
+
+## Online delivery between districts on the same EduOS (TC-06c)
+
+When both districts run on the same EduOS deployment, the records office can deliver a ready transfer online
+instead of downloading the file and sending it.
+
+* **The receiving district opts in.** Its superintendent turns on **Receive online deliveries** under
+  Records from other districts. Only districts that have done so are offered as destinations, and a district
+  can't deliver to itself.
+* **Delivering.** On the student's records page, a ready transfer (the family's decision already made, if one
+  was asked for) shows **Deliver online** with the districts that receive. The records office (principal, a
+  vice principal acting as one, or the superintendent) delivers it. It's the same signed file a download gives;
+  it's logged under "Who looked" for the student and audited in both districts. A transfer is delivered once.
+* **Receiving.** The delivery lands in the receiving district's **Records from other districts**, marked
+  *online*, for the district office (the superintendent) first, as an upload by them would. Nothing is added to
+  any history on delivery. The receiving records office still chooses the student and accepts or rejects each
+  item, as in TC-06b. Because EduOS knows which district delivered it, there's **no fingerprint to check** for
+  an online delivery. Uploaded files still need the fingerprint.
+* **Cancelling.** Cancelling the transfer before the receiver has chosen a student also **withdraws the
+  delivery**: the receiver sees it as withdrawn by the sender and can't go on. After that, nothing is recalled
+  automatically; tell the receiving district's records office.
+
+**Other deployments.** Deliveries to a district on another EduOS deployment still go as files. The federation
+(Master Control) carries aggregate reports only, and this doesn't change that.
