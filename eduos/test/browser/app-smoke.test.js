@@ -140,6 +140,12 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/private-school/campuses": return { data: [{ id: "pc1", name: "Main Campus", city: "Austin", status: "active" }] };
     case "/api/private-school/members": return { data: { members: [{ id: "pm1", role: "school_admin", name: "Smoke Test", you: true }, { id: "pm2", role: "registrar", name: "Rita Registrar", you: false }], invitations: [] } };
     case "/api/private-school/calendar": return { data: [{ id: "pe1", title: "First day of term", kind: "term_start", audience: "everyone", startsAt: now, endsAt: now }] };
+    // HSP-04: admissions, classes, report cards and the week.
+    case "/api/private-school/admissions": return { data: [{ id: "pa1", campusId: "pc1", kind: "new", applicantName: "Cy Park", gradeLevel: "4", schoolYear: "2027-2028", status: "under_review",
+      waitlistPosition: null, documents: [{ label: "Birth certificate", received: true }, { label: "Records", received: false }], next: ["offered", "waitlisted", "not_offered", "withdrawn"] }] };
+    case "/api/private-school/classes": return { data: [{ id: "pk1", campusId: "pc1", name: "Math 4", schoolYear: "2026-2027", term: "Fall", teacher: "Teacher S1", status: "active", size: 18 }] };
+    case "/api/private-school/report-cards": return { data: [{ id: "prc1", learnerId: "pl1", learner: "Ava Lin", schoolYear: "2026-2027", term: "Fall", status: "draft", lines: [] }] };
+    case "/api/private-school/schedule": return { data: [{ classId: "pk1", name: "Math 4", weekday: 1, starts: "09:00", ends: "09:50", room: "12" }] };
     // HSP-01: a homeschool family session (owner).
     case "/api/homeschool/me": return { data: { family: { id: "f1", name: "Ortiz Homeschool", timeZone: "America/Chicago", jurisdiction: "US-TX" }, role: "owner", displayName: "Smoke Test",
       learners: [{ id: "l1", displayName: "Mia", gradeBand: "3", status: "active", authority: "full", upcomingThisWeek: 2 }], familyEventsThisWeek: 1 } };
@@ -1490,7 +1496,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
       let text = "";
       for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Export the school's records"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
-      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Export the school's records", "Ask to close the school"])
+      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Export the school's records", "Ask to close the school",
+        "Admissions", "Cy Park", "Under review", "documents 1/2", "Offered", "New inquiry", "This week's schedule", "Mon 09:00–09:50 · Math 4", "Classes", "18 learners", "Report cards", "Draft"])
         if (!text.includes(w)) failures.push(`private school workspace: "${w}" is missing`);
       await axeScan(page, "private school workspace", a11y);
       if (page.errors.length) failures.push(`private school workspace: ${page.errors[0].split("\n")[0]}`);

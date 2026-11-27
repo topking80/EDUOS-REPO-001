@@ -54,6 +54,7 @@ import { registerAssociationAttestationRoutes } from "./association-attestation-
 import { registerHomeschoolRoutes } from "./homeschool-routes.js";
 import { registerHomeschoolLearningRoutes } from "./homeschool-learning-routes.js";
 import { registerPrivateSchoolRoutes } from "./private-school-routes.js";
+import { registerPrivateSchoolAcademicsRoutes } from "./private-school-academics-routes.js";
 import { registerSportsConnectorRoutes } from "./sports-connector-routes.js";
 import { registerRankingRoutes } from "./ranking-routes.js";
 import { registerHistoryPrivacyRoutes } from "./history-privacy-routes.js";
@@ -2067,6 +2068,7 @@ registerAssociationAttestationRoutes(app);
 registerHomeschoolRoutes(app);
 registerHomeschoolLearningRoutes(app);
 registerPrivateSchoolRoutes(app);
+registerPrivateSchoolAcademicsRoutes(app);
 registerSportsConnectorRoutes(app);
 registerRankingRoutes(app);
 registerHistoryPrivacyRoutes(app);

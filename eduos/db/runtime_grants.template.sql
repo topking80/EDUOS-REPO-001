@@ -926,3 +926,16 @@ REVOKE UPDATE ON private_school_audit_events FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_private_school_contexts(uuid), eduos_private_school_session(text,integer), eduos_register_private_school(uuid,text,text,text,text,text,text),
   eduos_accept_private_school_invitation(uuid,text,text), eduos_ps_roles(), eduos_ps_campuses(), eduos_ps_active(), eduos_ps_sees_learner(uuid), eduos_ps_has(text[]),
   eduos_ctx_private_school(), eduos_ctx_ps_membership() TO eduos_app;
+
+-- 163 (HSP-04): private school admissions and academics. History is append-only; corrections are voids.
+GRANT SELECT, INSERT ON ps_applications, ps_application_events, ps_classes, ps_class_meetings, ps_class_rosters, ps_attendance, ps_report_cards, ps_report_card_lines TO eduos_app;
+GRANT UPDATE (campus_id, applicant_name, grade_level, guardian_name, guardian_email, status, waitlist_position, documents, notes, decided_by, decided_at, learner_id, updated_at) ON ps_applications TO eduos_app;
+GRANT UPDATE (name, subject, grade_level, term, teacher_membership_id, status) ON ps_classes TO eduos_app;
+GRANT UPDATE (removed_by, removed_on) ON ps_class_rosters TO eduos_app;
+GRANT UPDATE (voided_by, voided_at, void_reason) ON ps_attendance TO eduos_app;
+GRANT UPDATE (status, comment, published_by, published_at) ON ps_report_cards TO eduos_app;
+GRANT UPDATE (grade, comment, written_by, written_at) ON ps_report_card_lines TO eduos_app;
+GRANT DELETE ON ps_class_meetings TO eduos_app;
+REVOKE DELETE, TRUNCATE ON ps_applications, ps_application_events, ps_classes, ps_class_rosters, ps_attendance, ps_report_cards, ps_report_card_lines FROM eduos_app;
+REVOKE UPDATE ON ps_application_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_ps_teaches(uuid), eduos_ps_runs_campus(uuid), eduos_ps_class_campus(uuid), eduos_ps_learner_campus(uuid), eduos_ps_sees_class(uuid) TO eduos_app;
