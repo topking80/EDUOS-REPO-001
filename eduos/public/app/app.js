@@ -77,7 +77,8 @@ const api = {
   get(p) { return this.req("GET", p); },
   post(p, b = {}) { return this.req("POST", p, b); },
   put(p, b = {}) { return this.req("PUT", p, b); },
-  patch(p, b = {}) { return this.req("PATCH", p, b); }
+  patch(p, b = {}) { return this.req("PATCH", p, b); },
+  del(p) { return this.req("DELETE", p); }
 };
 const safe = async (p, fallback = null) => { try { return await p; } catch (e) { if (e.status === 401) throw e; return fallback; } };
 
@@ -525,6 +526,81 @@ async function renderPsCard(id) {
       draft && runs ? h("button", { class: "btn primary", type: "button", onclick: () => api.post(`/api/private-school/report-cards/${id}/publish`, {}).then(() => { toast("Published. Families can see it now."); reload(); }).catch(e => psErr(e, "Couldn't publish it.")) }, "Publish") : null,
       !draft ? h("button", { class: "btn small", type: "button", onclick: () => window.print() }, "Print") : null));
 }
+const PS_LINE = { tuition: "Tuition", fee: "Fee", aid: "Aid", discount: "Discount", credit: "Credit" };
+Object.assign(PS_ERRORS, { aid_needs_approval: "A school admin has to approve the aid and discounts first.", approve_someone_elses_line: "Someone else has to approve aid you added.",
+  approve_someone_elses_proposal: "Someone else has to approve a provider you proposed.", decide_someone_elses_request: "Someone else has to decide a refund you requested.",
+  sign_off_someone_elses_reconciliation: "Someone else has to sign off a reconciliation you prepared.", more_than_the_balance: "That's more than the balance.", more_than_the_payment: "That's more than the payment.",
+  refund_payments_first: "Refund the payments before voiding.", payer_must_be_a_guardian: "The payer has to be a guardian at the school.", totals_changed_since_prepared: "The totals changed. Prepare it again.",
+  refunds_awaiting_a_decision: "Decide the pending refunds first.", provider_not_approved: "That provider isn't approved yet.", invoice_not_draft: "Only drafts can change." });
+async function psBilling(r, members, post) {
+  if (r === "guardian") {
+    const mine = (await safe(api.get("/api/private-school/billing/mine")))?.data || [];
+    if (!mine.length) return null;
+    return h("section", { class: "card", "aria-label": "Billing" }, h("h3", {}, "Billing"), mine.map(a => [h("p", {}, h("b", {}, a.name), ` · balance ${money(a.balanceCents)}`),
+      a.invoices.length ? h("ul", { class: "list" }, a.invoices.map(i => h("li", {}, h("b", {}, `${i.number} · ${i.title}`), h("span", { class: "small muted" }, ` · ${i.status === "void" ? "void" : `${money(i.totalCents)}, ${money(i.balanceCents)} due${i.dueOn ? ` by ${i.dueOn}` : ""}`}`),
+        h("ul", { class: "list small" }, i.lines.map(l => h("li", {}, `${PS_LINE[l.kind]}: ${l.description}${l.learner ? ` (${l.learner})` : ""} · ${money(l.amountCents)}`)),
+          i.payments.map(p => h("li", {}, `Paid ${money(p.amountCents)} on ${p.receivedOn} · receipt ${p.receiptNumber}`)),
+          i.refunds.filter(x => x.status === "approved").map(x => h("li", {}, `Refunded ${money(x.amountCents)}`)))))) : h("p", { class: "muted" }, "No invoices yet.")]),
+      h("p", { class: "small muted" }, "EduOS keeps no card or bank details. Ask the school about payment options."));
+  }
+  if (!["finance", "school_admin"].includes(r)) return null;
+  const admin = r === "school_admin";
+  const [acc, invs, provs, recs, lrn] = await Promise.all(["accounts", "invoices", "providers", "reconciliations", "learners"].map(x => safe(api.get(`/api/private-school/billing/${x}`))));
+  const accounts = acc?.data || [], invoices = invs?.data || [], providers = provs?.data || [], recons = recs?.data || [], learners = lrn?.data || [];
+  const guardians = members.filter(m => m.role === "guardian"), day = hsDay(0);
+  const af = { name: h("input", { id: "pb-a-name", required: true, maxlength: 120 }), payer: h("select", { id: "pb-a-payer" }, guardians.map(g => h("option", { value: g.id }, g.name))),
+    picks: learners.filter(l => l.enrolled).map(l => h("input", { type: "checkbox", value: l.id, "aria-label": `Bill ${l.displayName} to this account` })) };
+  const nf = { account: h("select", { id: "pb-i-acc" }, accounts.map(a => h("option", { value: a.id }, a.name))), title: h("input", { id: "pb-i-title", required: true, maxlength: 160, value: "Tuition" }),
+    due: h("input", { id: "pb-i-due", type: "date" }), amount: h("input", { id: "pb-i-amt", type: "number", min: "0.01", step: "0.01", required: true }) };
+  const pf = { provider: h("select", { id: "pb-p-kind" }, ["manual", "paypal", "square", "btcpay", "other"].map(v => h("option", { value: v }, v))), label: h("input", { id: "pb-p-label", required: true, maxlength: 80 }),
+    ref: h("input", { id: "pb-p-ref", maxlength: 120 }) };
+  const toCents = v => Math.round(Number(v) * 100);
+  const lineForm = i => { const k = h("select", { "aria-label": "Line kind" }, Object.entries(PS_LINE).map(([v, t]) => h("option", { value: v }, t))), dsc = h("input", { "aria-label": "Description", required: true, maxlength: 200 }),
+      amt = h("input", { "aria-label": "Amount", type: "number", min: "0.01", step: "0.01", required: true });
+    return h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const c = toCents(amt.value); post(`/api/private-school/billing/invoices/${i.id}/lines`, { kind: k.value, description: dsc.value.trim(),
+      amountCents: ["tuition", "fee"].includes(k.value) ? c : -c }, "Line added."); } }, k, dsc, amt, h("button", { class: "btn small", type: "submit" }, "Add line")); };
+  const payForm = i => { const amt = h("input", { "aria-label": "Amount paid", type: "number", min: "0.01", step: "0.01", required: true, value: (i.balanceCents / 100).toFixed(2) }),
+      m = h("select", { "aria-label": "Method" }, [["check", "Check"], ["ach", "ACH"], ["cash", "Cash"], ...providers.filter(p => p.status === "approved").map(p => [`p:${p.id}`, p.label]), ["other", "Other"]].map(([v, t]) => h("option", { value: v }, t))),
+      ref = h("input", { "aria-label": "Reference", maxlength: 120 }), on = h("input", { "aria-label": "Received on", type: "date", value: day, max: day, required: true });
+    return h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const pv = m.value.startsWith("p:") ? m.value.slice(2) : null;
+      post(`/api/private-school/billing/invoices/${i.id}/payments`, { amountCents: toCents(amt.value), method: pv ? "provider" : m.value, providerId: pv || undefined, reference: ref.value.trim() || undefined, receivedOn: on.value }, "Payment recorded."); } },
+      amt, m, ref, on, h("button", { class: "btn small", type: "submit" }, "Record payment")); };
+  const invoiceItem = i => h("li", {}, h("div", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, i.number || "Draft"), ` · ${i.account} · ${i.title}`,
+      h("span", { class: "small muted" }, ` · ${i.status} · ${money(i.totalCents)}${i.status === "issued" ? ` · ${money(i.balanceCents)} due` : ""}`)),
+      i.status === "draft" ? h("button", { class: "btn small primary", type: "button", onclick: () => post(`/api/private-school/billing/invoices/${i.id}/issue`, {}, "Issued. The family can see it now.") }, "Issue") : null,
+      i.status !== "void" ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why void this invoice?", reason => post(`/api/private-school/billing/invoices/${i.id}/void`, { reason }, "Voided.")) }, "Void")) : null),
+    h("ul", { class: "list small" }, i.lines.map(l => h("li", { class: "row" }, h("span", { class: "grow" }, `${PS_LINE[l.kind]}: ${l.description}${l.learner ? ` (${l.learner})` : ""} · ${money(l.amountCents)}${l.needsApproval ? " · needs approval" : ""}`),
+        admin && l.needsApproval ? h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/invoice-lines/${l.id}/approve`, {}, "Approved.") }, "Approve") : null,
+        i.status === "draft" ? h("button", { class: "link", type: "button", onclick: () => api.del(`/api/private-school/billing/invoices/${i.id}/lines/${l.id}`).then(() => { toast("Removed."); renderPrivateSchool(); }).catch(e => psErr(e, "Couldn't remove it.")) }, "Remove") : null)),
+      i.payments.map(p => h("li", { class: "row" }, h("span", { class: "grow" }, `Paid ${money(p.amountCents)} · ${p.method}${p.reference ? ` · ${p.reference}` : ""} · ${p.receivedOn} · ${p.receiptNumber}`),
+        h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why refund ${p.receiptNumber}? (full amount)`,
+          reason => post(`/api/private-school/billing/payments/${p.id}/refunds`, { amountCents: p.amountCents - i.refunds.filter(x => x.paymentId === p.id && x.status !== "rejected").reduce((n, x) => n + x.amountCents, 0), reason }, "Refund requested.")) }, "Refund")))),
+      i.refunds.map(x => h("li", { class: "row" }, h("span", { class: "grow" }, `Refund ${money(x.amountCents)} · ${x.status} · ${x.reason}`),
+        admin && x.status === "requested" ? [h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/refunds/${x.id}/decide`, { approve: true }, "Refund approved.") }, "Approve"),
+          h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/refunds/${x.id}/decide`, { approve: false }, "Refund rejected.") }, "Reject")] : null))),
+    i.status === "draft" ? lineForm(i) : null, i.status === "issued" && i.balanceCents > 0 ? payForm(i) : null);
+  return h("section", { class: "card", "aria-label": "Billing" }, h("h3", {}, "Billing"),
+    h("h4", {}, "Accounts"), accounts.length ? h("ul", { class: "list small" }, accounts.map(a => h("li", {}, `${a.name} · payer ${a.payer} · balance ${money(a.balanceCents)}`))) : h("p", { class: "muted" }, "No billing accounts yet."),
+    guardians.length ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post("/api/private-school/billing/accounts", { name: af.name.value.trim(), payerMembershipId: af.payer.value, learnerIds: af.picks.filter(x => x.checked).map(x => x.value) }, "Account added."); } },
+      h("label", { for: "pb-a-name" }, "New account (family name)"), af.name, h("label", { for: "pb-a-payer" }, "Payer (a guardian)"), af.payer,
+      af.picks.length ? h("fieldset", {}, h("legend", {}, "Learners billed here"), learners.filter(l => l.enrolled).map((l, n) => h("label", { class: "check" }, af.picks[n], ` ${l.displayName}`))) : null,
+      h("button", { class: "btn", type: "submit" }, "Add account")) : h("p", { class: "small muted" }, "Invite a guardian before opening a billing account."),
+    h("h4", {}, "Invoices"), invoices.length ? h("ul", { class: "list" }, invoices.map(invoiceItem)) : h("p", { class: "muted" }, "No invoices yet."),
+    accounts.length ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post("/api/private-school/billing/invoices", { accountId: nf.account.value, title: nf.title.value.trim(), dueOn: nf.due.value || undefined,
+        lines: [{ kind: "tuition", description: nf.title.value.trim(), amountCents: toCents(nf.amount.value) }] }, "Draft invoice added."); } },
+      h("div", {}, h("label", { for: "pb-i-acc" }, "Account"), nf.account), h("div", { class: "grow" }, h("label", { for: "pb-i-title" }, "Title"), nf.title),
+      h("div", {}, h("label", { for: "pb-i-amt" }, "Tuition ($)"), nf.amount), h("div", {}, h("label", { for: "pb-i-due" }, "Due"), nf.due), h("button", { class: "btn", type: "submit" }, "Draft invoice")) : null,
+    h("h4", {}, "Payment providers"), providers.length ? h("ul", { class: "list small" }, providers.map(p => h("li", { class: "row" }, h("span", { class: "grow" }, `${p.label} · ${p.provider} · ${p.status}`),
+      admin && p.status === "proposed" ? h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/providers/${p.id}/approve`, {}, "Approved.") }, "Approve") : null,
+      admin && p.status !== "disabled" ? h("button", { class: "link", type: "button", onclick: () => post(`/api/private-school/billing/providers/${p.id}/disable`, {}, "Disabled.") }, "Disable") : null))) : h("p", { class: "muted" }, "No providers. Payments can still be recorded by check, ACH or cash."),
+    h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post("/api/private-school/billing/providers", { provider: pf.provider.value, label: pf.label.value.trim(), accountReference: pf.ref.value.trim() || undefined }, "Proposed. Another school admin approves it."); } },
+      h("div", {}, h("label", { for: "pb-p-kind" }, "Provider"), pf.provider), h("div", { class: "grow" }, h("label", { for: "pb-p-label" }, "Label"), pf.label), h("div", {}, h("label", { for: "pb-p-ref" }, "Account reference"), pf.ref),
+      h("button", { class: "btn", type: "submit" }, "Propose")),
+    h("h4", {}, "Reconciliation"), recons.length ? h("ul", { class: "list small" }, recons.map(x => h("li", { class: "row" }, h("span", { class: "grow" }, `${x.from}–${x.to} · received ${money(x.totals.receivedCents)}, refunded ${money(x.totals.refundedCents)}, net ${money(x.totals.netCents)} · prepared by ${x.preparedBy}${x.signedOffBy ? ` · signed off by ${x.signedOffBy}` : ""}`),
+      admin && !x.signedOffBy ? h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/billing/reconciliations/${x.id}/sign-off`, {}, "Signed off.") }, "Sign off") : null))) : h("p", { class: "muted" }, "No reconciliations yet."),
+    h("button", { class: "btn small", type: "button", onclick: () => post("/api/private-school/billing/reconciliations", { from: `${day.slice(0, 8)}01`, to: day }, "Prepared. Someone else signs it off.") }, "Prepare this month so far"),
+    h("p", { class: "small muted" }, "Aid, refunds, providers and reconciliations need a second person. EduOS keeps no card or bank details."));
+}
 async function renderPrivateSchool() {
   const [meRes, learners, campuses, members, cal, ctx, apps, classes, cards, week] = await Promise.all([api.get("/api/private-school/me"), safe(api.get("/api/private-school/learners")), safe(api.get("/api/private-school/campuses")),
     safe(api.get("/api/private-school/members")), safe(api.get("/api/private-school/calendar")), safe(api.get("/api/session/contexts")),
@@ -549,6 +625,7 @@ async function renderPrivateSchool() {
     audience: h("select", { id: "ps-e-aud" }, h("option", { value: "everyone" }, "Everyone"), h("option", { value: "staff" }, "Staff only")), day: h("input", { id: "ps-e-day", type: "date", required: true }) };
   const linkBox = h("div", {});
   const learnerList = learners?.data || [];
+  const billing = active ? await psBilling(r, members?.data?.members || [], post).catch(() => null) : null;
   put(h("h2", {}, sch.displayName),
     sch.status !== "active" ? h("p", { class: "notice" }, `${PS_STATUS[sch.status]}. ${sch.status === "pending_verification" ? "You can set up campuses and staff now; learner records can be added once the platform has verified the school." : ""}`) : null,
     h("section", { class: "card", "aria-label": r === "guardian" ? "Your children" : "Learners" }, h("h3", {}, r === "guardian" ? "Your children" : "Learners"),
@@ -561,6 +638,7 @@ async function renderPrivateSchool() {
         h("h4", {}, "Enroll a learner"), h("label", { for: "ps-l-name" }, "Name"), ln.name, h("label", { for: "ps-l-grade" }, "Grade"), ln.grade,
         ln.campus ? [h("label", { for: "ps-l-campus" }, "Campus"), ln.campus] : null, h("label", { for: "ps-l-number" }, "Student number (optional)"), ln.number, h("button", { class: "btn", type: "submit" }, "Enroll")) : null),
     psAcademics({ r, active, enrolls, camps, campName, learnerList, apps: apps?.data || [], classes: classes?.data || [], cards: cards?.data || [], week: week?.data || [], members: members?.data?.members || [], post }),
+    billing,
     h("section", { class: "card", "aria-label": "Calendar" }, h("h3", {}, "Calendar"),
       (cal?.data || []).length ? h("ul", { class: "list" }, cal.data.map(e => h("li", {}, h("b", {}, e.title), h("span", { class: "small muted" }, ` · ${PS_KINDS[e.kind]} · ${fmt(e.startsAt)}${e.campus ? ` · ${e.campus}` : ""}${e.audience === "staff" ? " · staff only" : ""}`)))) : h("p", { class: "muted" }, "Nothing scheduled."),
       ["school_admin", "campus_admin"].includes(r) ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const day = new Date(`${ev.day.value}T08:00:00`);

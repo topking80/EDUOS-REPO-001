@@ -145,6 +145,18 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       waitlistPosition: null, documents: [{ label: "Birth certificate", received: true }, { label: "Records", received: false }], next: ["offered", "waitlisted", "not_offered", "withdrawn"] }] };
     case "/api/private-school/classes": return { data: [{ id: "pk1", campusId: "pc1", name: "Math 4", schoolYear: "2026-2027", term: "Fall", teacher: "Teacher S1", status: "active", size: 18 }] };
     case "/api/private-school/report-cards": return { data: [{ id: "prc1", learnerId: "pl1", learner: "Ava Lin", schoolYear: "2026-2027", term: "Fall", status: "draft", lines: [] }] };
+    // HSP-05: billing for finance and the school admin.
+    case "/api/private-school/billing/accounts": return { data: [{ id: "pba1", name: "Lin family", payer: "Gwen Lin", status: "active", balanceCents: 555000 }] };
+    case "/api/private-school/billing/learners": return { data: [{ id: "pl1", displayName: "Ava Lin", enrolled: true }] };
+    case "/api/private-school/billing/invoices": return { data: [{ id: "pbi1", accountId: "pba1", account: "Lin family", number: "INV-2026-0001", title: "Fall tuition", status: "issued", dueOn: "2027-09-01",
+      totalCents: 1155000, paidCents: 600000, refundedCents: 0, balanceCents: 555000, lines: [{ id: "pbl1", kind: "tuition", description: "Fall tuition", learner: "Ava Lin", amountCents: 1200000, needsApproval: false, approved: false },
+        { id: "pbl2", kind: "aid", description: "Sibling discount", learner: null, amountCents: -45000, needsApproval: false, approved: true }],
+      payments: [{ id: "pbp1", amountCents: 600000, method: "check", reference: "Check 1001", receivedOn: "2026-11-20", receiptNumber: "RCT-2026-0001" }],
+      refunds: [{ id: "pbr1", paymentId: "pbp1", amountCents: 25000, reason: "Activity cancelled", status: "requested" }] },
+      { id: "pbi2", accountId: "pba1", account: "Lin family", number: null, title: "Spring tuition", status: "draft", totalCents: 1000, paidCents: 0, refundedCents: 0, balanceCents: 1000,
+        lines: [{ id: "pbl3", kind: "discount", description: "Early payment", amountCents: -100, needsApproval: true, approved: false }], payments: [], refunds: [] }] };
+    case "/api/private-school/billing/providers": return { data: [{ id: "pbv1", provider: "square", label: "Square (front office)", accountReference: "sq-1", status: "proposed" }] };
+    case "/api/private-school/billing/reconciliations": return { data: [{ id: "pbc1", from: "2026-11-01", to: "2026-11-20", totals: { receivedCents: 600000, refundedCents: 0, netCents: 600000 }, preparedBy: "Fran Finance", signedOffBy: null }] };
     case "/api/private-school/schedule": return { data: [{ classId: "pk1", name: "Math 4", weekday: 1, starts: "09:00", ends: "09:50", room: "12" }] };
     // HSP-01: a homeschool family session (owner).
     case "/api/homeschool/me": return { data: { family: { id: "f1", name: "Ortiz Homeschool", timeZone: "America/Chicago", jurisdiction: "US-TX" }, role: "owner", displayName: "Smoke Test",
@@ -1496,7 +1508,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
       let text = "";
       for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Export the school's records"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
-      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Export the school's records", "Ask to close the school",
+      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Billing", "INV-2026-0001", "RCT-2026-0001", "needs approval", "Sign off", "Draft invoice", "Export the school's records", "Ask to close the school",
         "Admissions", "Cy Park", "Under review", "documents 1/2", "Offered", "New inquiry", "This week's schedule", "Mon 09:00–09:50 · Math 4", "Classes", "18 learners", "Report cards", "Draft"])
         if (!text.includes(w)) failures.push(`private school workspace: "${w}" is missing`);
       await axeScan(page, "private school workspace", a11y);

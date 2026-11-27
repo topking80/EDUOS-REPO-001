@@ -92,7 +92,7 @@ Education requirements differ by jurisdiction and can change. Build a configurab
 - **HSP-02 — Homeschool learning operations:** individualized plans, attendance sessions and instructional time, parent-authored evidence, progress reports and transcript/portfolio exports. Built: `docs/product/hsp-02-homeschool-learning.md`.
 - **HSP-03 — Private school foundation:** verified organization/campus onboarding, roles, branding, calendar, staff and student enrollment. Built: `docs/product/hsp-03-private-school-foundation.md`.
 - **HSP-04 — Private school admissions and academics:** admissions lifecycle, rosters, schedules, attendance, learning and report-card workflows. Built: `docs/product/hsp-04-private-school-academics.md`.
-- **HSP-05 — Tuition and school finance:** provider configuration, invoices, aid/credits, receipts, refunds, reconciliation, separation of duties.
+- **HSP-05 — Tuition and school finance:** provider configuration, invoices, aid/credits, receipts, refunds, reconciliation, separation of duties. Built: `docs/product/hsp-05-tuition-and-finance.md`
 - **HSP-06 — Controlled portability and compliance profiles:** family/school/district transfer, provenance, jurisdictional templates, retention and audit.
 - **HSP-07 — Co-ops and shared services:** supervised co-op groups, approved resource sharing, library and family communication integrations.
 

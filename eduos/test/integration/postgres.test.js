@@ -87,7 +87,9 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
       // TC-09 (migration 135): acknowledgement numbers are issued only by eduos_history_donation_record().
       "history_donation_counters", "student_history_contribution_documents",
       // HSP-01 (migration 160): the tenant registry is owner-only; families are created by eduos_create_family().
-      "tenants"];
+      "tenants",
+      // HSP-05 (migration 164): invoice and receipt numbers come only from eduos_ps_next_number().
+      "ps_invoice_counters", "ps_receipt_counters"];
     assert.deepEqual(r.rows.map(x => x.tablename).filter(t => !definerOnly.includes(t)), []);
     for (const fn of ["eduos_webhook_slot_acquire(integer,integer)", "eduos_webhook_slot_release(uuid)", "eduos_webhook_slots_free(integer)"])
       assert.ok((await sql("SELECT has_function_privilege($1,$2,'EXECUTE') AS ok", [db.names.app, fn])).rows[0].ok, fn);

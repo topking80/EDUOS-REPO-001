@@ -939,3 +939,18 @@ GRANT DELETE ON ps_class_meetings TO eduos_app;
 REVOKE DELETE, TRUNCATE ON ps_applications, ps_application_events, ps_classes, ps_class_rosters, ps_attendance, ps_report_cards, ps_report_card_lines FROM eduos_app;
 REVOKE UPDATE ON ps_application_events FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_ps_teaches(uuid), eduos_ps_runs_campus(uuid), eduos_ps_class_campus(uuid), eduos_ps_learner_campus(uuid), eduos_ps_sees_class(uuid) TO eduos_app;
+
+-- 164 (HSP-05): private school billing. Payments are append-only; numbers come from eduos_ps_next_number().
+GRANT SELECT, INSERT ON ps_payment_providers, ps_billing_accounts, ps_billing_account_learners, ps_invoices, ps_invoice_lines, ps_payments, ps_refunds, ps_reconciliations TO eduos_app;
+GRANT UPDATE (status, approved_by, approved_at) ON ps_payment_providers TO eduos_app;
+GRANT UPDATE (name, status) ON ps_billing_accounts TO eduos_app;
+GRANT DELETE ON ps_billing_account_learners TO eduos_app;
+GRANT UPDATE (title, due_on, status, number, issued_by, issued_at, total_cents, voided_by, voided_at, void_reason) ON ps_invoices TO eduos_app;
+GRANT UPDATE (approved_by, approved_at) ON ps_invoice_lines TO eduos_app;
+GRANT DELETE ON ps_invoice_lines TO eduos_app;
+GRANT UPDATE (status, decided_by, decided_at) ON ps_refunds TO eduos_app;
+GRANT UPDATE (signed_off_by, signed_off_at) ON ps_reconciliations TO eduos_app;
+REVOKE ALL ON ps_invoice_counters, ps_receipt_counters FROM eduos_app;
+REVOKE DELETE, TRUNCATE ON ps_payment_providers, ps_billing_accounts, ps_invoices, ps_payments, ps_refunds, ps_reconciliations FROM eduos_app;
+REVOKE UPDATE ON ps_payments FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_ps_finance(), eduos_ps_pays(uuid), eduos_ps_invoice_account(uuid), eduos_ps_payment_invoice(uuid), eduos_ps_billing_learners(), eduos_ps_next_number(text) TO eduos_app;
