@@ -11,6 +11,8 @@
 //
 // Nothing is added until a person confirms the sender's fingerprint (got from
 // the sending district another way), chooses the student and accepts items.
+// Online deliveries from a district on this deployment (TC-06c) arrive here
+// too; EduOS attests their sender, so no fingerprint is typed for them.
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { requireSession, requireCsrf } from "./auth.js";
@@ -26,10 +28,11 @@ const summary = i => ({ id: i.id, status: i.status, from: { district: i.source_d
   student: { name: i.student_name, number: i.student_number, grade: i.student_grade }, localStudent: i.student_id ? { id: i.student_id, name: i.local_name } : null,
   fingerprint: i.sender_fingerprint, packageSha256: i.package_sha256, packagedAt: i.packaged_at, items: i.item_count,
   accepted: i.accepted ?? null, rejected: i.rejected ?? null, receivedBy: i.received_by_name, receivedAt: i.received_at,
-  confirmedBy: i.confirmed_by_name || null, confirmedAt: i.confirmed_at, closedAt: i.closed_at, closeNote: i.close_note });
+  confirmedBy: i.confirmed_by_name || null, confirmedAt: i.confirmed_at, closedAt: i.closed_at, closeNote: i.close_note,
+  deliveredOnline: !!i.delivered_from, withdrawn: !!i.withdrawn_at });
 const SELECT = `SELECT i.id, i.status, i.source_district_name, i.source_school_name, i.source_district_id, i.addressed_to, i.basis, i.basis_note, i.includes_family,
     i.student_name, i.student_number, i.student_grade, i.student_id, s.display_name AS local_name, i.sender_fingerprint, i.package_sha256, i.packaged_at, i.item_count,
-    i.received_at, ru.display_name AS received_by_name, i.confirmed_at, cu.display_name AS confirmed_by_name, i.closed_at, i.close_note,
+    i.received_at, ru.display_name AS received_by_name, i.delivered_from, i.withdrawn_at, i.confirmed_at, cu.display_name AS confirmed_by_name, i.closed_at, i.close_note,
     (SELECT count(*)::int FROM history_import_items x WHERE x.import_id=i.id AND x.decision='accepted') AS accepted,
     (SELECT count(*)::int FROM history_import_items x WHERE x.import_id=i.id AND x.decision='rejected') AS rejected
   FROM history_imports i JOIN users ru ON ru.id=i.received_by LEFT JOIN users cu ON cu.id=i.confirmed_by LEFT JOIN students s ON s.id=i.student_id`;
@@ -95,8 +98,9 @@ export function registerHistoryImportRoutes(app) {
 
   app.post("/api/history-imports/:id/confirm", limiter, requireSession, requireCsrf, office, run(async (c, req) => {
     const b = req.body || {};
-    if (!validId(req.params.id) || !cleanText(b.fingerprint, 100, 8) || !validId(b.studentId)) throw new HttpError(400, "fingerprint_and_student_required");
-    const r = (await one(c, `SELECT eduos_history_import_confirm($1,$2,$3) AS s`, [req.params.id, b.fingerprint, b.studentId])).s;
+    // An online delivery (TC-06c) needs no fingerprint: EduOS attests the sender. The database enforces it for files.
+    if (!validId(req.params.id) || !validId(b.studentId) || (b.fingerprint != null && !cleanText(b.fingerprint, 100, 8))) throw new HttpError(400, "fingerprint_and_student_required");
+    const r = (await one(c, `SELECT eduos_history_import_confirm($1,$2,$3) AS s`, [req.params.id, b.fingerprint ?? null, b.studentId])).s;
     if (r !== "reviewing") throw new HttpError({ not_found: 404, student_not_found: 404, fingerprint_mismatch: 422 }[r] || 409, r);
     await audit(c, req, "confirm", "history_import", req.params.id, `student=${b.studentId}`);
     return summary(await load(c, req.params.id));
