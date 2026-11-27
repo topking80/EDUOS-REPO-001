@@ -3,12 +3,15 @@
 //   POST /api/district/policy-bundles   superintendent: the bundle file, as issued
 // Bundles are checked (signature against MC_POLICY_PUBLIC_KEY, addressed to
 // this district, newer than any received) and kept as received. Nothing is
-// applied: no district setting changes.
+// applied: no district setting changes, except that EduOS follows the
+// jurisdiction rules in the newest bundle in force (FED-07):
+//   GET  /api/district/jurisdiction-rules  superintendent, IT administrator
 import rateLimit from "express-rate-limit";
 import { requireSession, requireCsrf } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, HttpError, sendError } from "./role-app-util.js";
 import { parsePublicKey, verifyBundle } from "./federation/policy-bundle.js";
+import { rulesInForce, residencyStatus } from "./jurisdiction-rules.js";
 
 const trusted = () => parsePublicKey(process.env.MC_POLICY_PUBLIC_KEY || "");
 const view = r => ({ id: r.id, bundleId: r.bundle_id, releaseId: r.release_id, version: r.version, sha256: r.sha256, kind: r.bundle.kind,
@@ -28,6 +31,11 @@ export function registerPolicyBundleRoutes(app) {
     const key = trusted();
     const list = (await rows(c, `${SELECT} ORDER BY b.version DESC LIMIT 50`)).map(view);
     return { data: { configured: !!key, fingerprint: key?.fingerprint || null, latest: list[0] || null, bundles: list } };
+  }));
+
+  app.get("/api/district/jurisdiction-rules", requireSession, roles(["superintendent", "it_admin"]), run(async c => {
+    const rules = await rulesInForce(c);
+    return { data: { ...rules, residency: residencyStatus(rules) } };
   }));
 
   app.post("/api/district/policy-bundles", limiter, requireSession, requireCsrf, roles(["superintendent"]), run(async (c, req) => {

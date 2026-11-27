@@ -4034,6 +4034,8 @@ const XR_ERRORS = { exchange_signing_not_configured: "This server has no exchang
   not_exchange_terms: "That isn't an agreement terms file from Master Control.", altered: "The terms file was changed after Master Control signed it.",
   wrong_key: "The terms weren't signed with the Master Control key this server trusts.", bad_signature: "The signature on the terms doesn't check out.",
   malformed: "The terms file is damaged or not in the expected format.", not_for_this_district: "Those terms are for another district.",
+  consent_reference_required: "The district's rules need a recorded consent or authorization, and this agreement has none. Approve it again in Master Control with one.",
+  recipient_outside_residency: "The district's residency rule doesn't allow sending data to this recipient.",
   agreement_not_started: "This agreement hasn't started yet.", agreement_ended: "This agreement has ended." };
 async function exchangeCard() {
   const d = (await safe(api.get("/api/district/exchange")))?.data;
@@ -4062,13 +4064,33 @@ const PB_ERRORS = { not_a_policy_bundle: "That isn't a policy bundle file.", mal
   altered: "The file was changed after Master Control signed it.", wrong_key: "It wasn't signed with the key this server trusts.",
   bad_signature: "The signature doesn't check out.", not_for_this_district: "That bundle is for another district.",
   older_than_received: "A newer bundle has already been received.", policy_key_not_configured: "This server has no Master Control key (MC_POLICY_PUBLIC_KEY)." };
+// FED-07: the jurisdiction rules EduOS follows, from the newest policy bundle in effect.
+const RESIDENCY_SCOPE = { any: "No restriction", us: "In the United States", in_state: "In the district's state" };
+const RESIDENCY_STATUS = { met: ["present", "Meets the rule (as declared)"], not_met: ["absent", "Doesn't meet the rule"], undeclared: ["expected", "Hosting location not declared"] };
+async function jurisdictionRulesCard() {
+  const d = (await safe(api.get("/api/district/jurisdiction-rules")))?.data;
+  if (!d || !d.residency) return null;
+  const yrs = n => n ? `${n} year${n === 1 ? "" : "s"}` : "No minimum";
+  const [tone, label] = RESIDENCY_STATUS[d.residency.status] || RESIDENCY_STATUS.undeclared;
+  return h("section", { class: "card", "aria-label": "Jurisdiction rules" }, h("h2", {}, "Jurisdiction rules"),
+    h("p", { class: "small muted" }, d.bundleVersion ? `From policy bundle version ${d.bundleVersion}${d.jurisdictionId ? ` (${d.jurisdictionId})` : ""}, in effect from ${fmtDay(d.effectiveFrom)}.` : "No policy bundle in effect yet, so every rule is at its default."),
+    d.legalHold ? h("p", { class: "notice" }, "Legal hold: no district records are deleted by the retention schedule, and student records can't be deleted.") : null,
+    h("dl", { class: "small" },
+      h("dt", {}, "Data residency"), h("dd", {}, RESIDENCY_SCOPE[d.residency.scope] || d.residency.scope, " · ", chip(tone, label),
+        d.residency.declaredLocation ? h("span", { class: "muted" }, ` Hosting declared as ${d.residency.declaredLocation} by this server's operator.`) : null),
+      h("dt", {}, "Audit records kept at least"), h("dd", {}, yrs(d.auditYears)),
+      h("dt", {}, "Closed cases kept at least"), h("dd", {}, yrs(d.closedCaseYears)),
+      h("dt", {}, "Safety records kept at least"), h("dd", {}, yrs(d.safetyYears)),
+      h("dt", {}, "Student history kept at least"), h("dd", {}, yrs(d.historyYears)),
+      h("dt", {}, "Exchanges need a recorded consent"), h("dd", {}, d.consentRequired ? "Yes" : "No")));
+}
 async function masterControlPoliciesCard() {
   const d = (await safe(api.get("/api/district/policy-bundles")))?.data;
   if (!d || !Array.isArray(d.bundles)) return null;
   const file = h("input", { id: "pb-file", type: "file", accept: ".json,application/json" });
   const latest = d.latest;
   return h("section", { class: "card", "aria-label": "Policies from Master Control" }, h("h2", {}, "Policies from Master Control"),
-    h("p", { class: "small muted" }, "Signed policy bundles issued for this district. They're kept as received and shown here; nothing is changed in the district's settings."),
+    h("p", { class: "small muted" }, "Signed policy bundles issued for this district, kept as received. EduOS follows the jurisdiction rules in the newest one in effect (below); nothing else in the district's settings changes."),
     d.configured ? h("p", { class: "small" }, "Trusted signing key fingerprint ", h("code", {}, d.fingerprint), ". Check it matches the one Master Control shows.")
       : h("p", { class: "notice" }, PB_ERRORS.policy_key_not_configured),
     latest ? h("div", {}, h("h3", {}, `Version ${latest.version}${latest.kind === "rollback" ? " (rollback)" : ""}`),
@@ -4093,6 +4115,7 @@ VIEWS.integrations = async () => {
       h("p", { class: "small muted" }, "Connect the district's PayPal, Square or BTCPay Server account for ticket and marketplace payments."),
       h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Open payment setup")) : null,
     ["superintendent", "it_admin"].includes(state.me.role) ? await masterControlPoliciesCard() : null,
+    ["superintendent", "it_admin"].includes(state.me.role) ? await jurisdictionRulesCard() : null,
     state.me.role === "superintendent" ? await exchangeCard() : null];
   if (!enabled) return [...out, h("p", { class: "notice" }, "Data links are off on this server. District IT turns them on by setting INTEGRATIONS_KEY.")];
   const results = new Map(); // connector id -> last preview/apply result (this page view)

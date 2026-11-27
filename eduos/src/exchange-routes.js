@@ -17,6 +17,7 @@ import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, HttpError, sendError } from "./role-app-util.js";
 import { DATASETS, PURPOSES, MIN_CELL_FLOOR, DEFAULT_MIN_CELL, ENVELOPE_FORMAT, minimize, exchangeKeys, signEnvelope, verifyTerms } from "./federation/exchange.js";
 import { parsePublicKey } from "./federation/policy-bundle.js";
+import { rulesInForce, recipientAllowed } from "./jurisdiction-rules.js";
 
 function secret() {
   const file = process.env.EXCHANGE_SIGNING_SECRET_FILE;
@@ -57,6 +58,10 @@ export function registerExchangeRoutes(app) {
       if (!t.ok) throw new HttpError(t.reason.startsWith("agreement_") ? 409 : 400, t.reason);
       const terms = t.terms, ds = DATASETS[terms.dataset], fields = terms.fields, minCell = terms.min_cell_size, asOf = today();
       const env = await withTenantTransaction(req.actor, async c => {
+        // FED-07: the district's own jurisdiction rules, from its policy bundles.
+        const rules = await rulesInForce(c, asOf);
+        if (rules.consentRequired && !terms.consent_reference) throw new HttpError(409, "consent_reference_required");
+        if (!recipientAllowed(rules, terms.recipient?.jurisdiction_id)) throw new HttpError(409, "recipient_outside_residency");
         const district = await one(c, "SELECT name FROM districts WHERE id=$1", [req.actor.districtId]);
         const raw = await rows(c, QUERIES[terms.dataset], [req.actor.districtId]);
         const minimized = minimize(terms.dataset, raw, fields, minCell);

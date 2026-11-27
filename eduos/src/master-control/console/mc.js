@@ -209,7 +209,10 @@ async function exchangeCard(n, isProducer) {
         h("td", {}, a.status), h("td", {}, String(a.deliveries)),
         h("td", {}, a.status === "proposed" ? h("button", { class: "link", type: "button", onclick: () => {
             const publicKey = a.producerNodeId === n.id && isProducer && !a.producerApprovedAt ? prompt("Paste the district EduOS exchange public key:") : undefined;
-            if (publicKey === null) return; act(a, "approve", publicKey ? { publicKey } : {}); } }, "Approve") : null, " ",
+            if (publicKey === null) return;
+            const consentReference = publicKey ? prompt("Consent or authorization this relies on (board resolution, consent process, statute). Required where the district's rules say so; leave blank otherwise:") : undefined;
+            if (consentReference === null) return;
+            act(a, "approve", publicKey ? { publicKey, ...(consentReference && { consentReference }) } : {}); } }, "Approve") : null, " ",
           a.status === "active" && a.producerNodeId === n.id && isProducer ? [h("a", { href: `/mc/api/exchange-agreements/${encodeURIComponent(a.id)}/terms` }, "Terms file"), " ",
             h("button", { class: "link", type: "button", onclick: () => deliver(a) }, "Deliver report"), " "] : null,
           a.status !== "revoked" ? h("button", { class: "link", type: "button", onclick: () => { const reason = prompt("Reason for revoking?"); if (reason) act(a, "revoke", { reason }); } }, "Revoke") : null)))) : h("p", { class: "muted" }, "No agreements."));

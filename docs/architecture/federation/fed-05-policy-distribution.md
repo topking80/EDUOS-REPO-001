@@ -63,7 +63,7 @@ Rolling back a release creates a **new release** (kind `rollback`) for every dis
 - **The same file again** opens the same record.
 - **Skipped versions:** a gap (versions skipped) is accepted and flagged.
 - **Shown:** the superintendent and IT administrator see the latest version's policies (with locks), who issued it and who received it.
-- **Not applied:** nothing is applied, and district settings are unchanged.
+- **Not applied:** district settings are unchanged. Since FED-07, EduOS follows the jurisdiction rules in the newest bundle in effect (see `fed-07-jurisdiction-rules.md`); nothing else is applied.
 - **Records:** bundles are append-only and audited.
 
 ## Not in this slice

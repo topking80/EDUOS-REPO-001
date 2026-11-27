@@ -228,6 +228,9 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/district/policy-bundles": { const b = { id: "pbr1", bundleId: "pb-1", releaseId: "rel-1", version: 2, kind: "release", issuedAt: now, effectiveFrom: now,
       issuer: "Texas Education Agency", receivedAt: now, receivedBy: "Supt One", policies: [{ id: "security.mfa.required_for_staff", value: true, locked_by: "ps-1" }, { id: "ui.default_locale", value: "en-US", locked_by: null }] };
       return { data: { configured: true, fingerprint: "0f".repeat(16), latest: b, bundles: [b, { ...b, id: "pbr0", version: 1 }] } }; }
+    // FED-07: the jurisdiction rules in force, under a state legal hold.
+    case "/api/district/jurisdiction-rules": return { data: { bundleVersion: 2, jurisdictionId: "US-TX", effectiveFrom: now, auditYears: 7, closedCaseYears: 0, safetyYears: 5, historyYears: 10,
+      legalHold: true, consentRequired: true, residency: { scope: "in_state", status: "met", declaredLocation: "US-TX", jurisdictionId: "US-TX" } } };
     case "/api/integrations/connectors": return { data: { enabled: true, schools: [{ id: "s1", name: "Maple" }],
       teachers: [{ id: "u7", name: "Teacher S1", email: "t1@d1.test", school: "Maple" }], connectors: [
       { id: "c1", kind: "oneroster", name: "District SIS", baseUrl: "https://sis.example.org/ims/oneroster/rostering/v1p2", status: "active", updatedBy: "IT", approvedBy: "Supt", canApprove: false, lastSyncAt: now, lastSyncStatus: "completed", schoolMap: [],
@@ -699,6 +702,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         if (!text.includes(w)) failures.push(`superintendent #/integrations: exchange "${w}" is missing`);
       for (const w of ["Policies from Master Control", "Version 2", "security.mfa.required_for_staff", "Locked", "Earlier versions received: 1", "Check and keep"])
         if (!text.includes(w)) failures.push(`superintendent #/integrations: policy bundles "${w}" is missing`);
+      for (const w of ["Jurisdiction rules", "Legal hold: no district records", "In the district's state", "Meets the rule (as declared)", "7 years", "Exchanges need a recorded consent"])
+        if (!text.includes(w)) failures.push(`superintendent #/integrations: jurisdiction rules "${w}" is missing`);
       await page.eval(`([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Preview") || {}).click?.()`);
       for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Save teacher matches"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
       for (const want of ["Class rosters", "Classes found", "Would be added", "Would be removed", "Already on a roster entered by hand (left as is)",
