@@ -322,7 +322,9 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       unmatchedTeachers: [{ externalId: "tch-2", reason: "no_matching_eduos_teacher", name: "New Hire", email: "new.hire@d1.test" }] } };
     // 37.7.0 commerce (sandbox) screens.
     // COACH-01: a team the teacher coaches; the coach workspace; its staff list.
-    case "/api/activities": return { data: [{ id: "a1", school_id: "s1", kind: "sport", title: "Falcons Soccer", description: "", grade_min: null, grade_max: null, meeting_details: "Mon/Wed 3:30", status: "published", member_count: 2, school_name: "Maple" }] };
+    case "/api/activities": return { data: [{ id: "a1", school_id: "s1", kind: "sport", title: "Falcons Soccer", description: "", grade_min: null, grade_max: null, meeting_details: "Mon/Wed 3:30", status: "published", member_count: 2, school_name: "Maple", ...(role === "pupil" ? { myStatus: "active" } : {}) }] };
+    // Student app Phase D: a learner's own loans for the Today card.
+    case "/api/library/my-loans": return { data: role === "pupil" ? [{ id: "ln1", title: "Charlotte's Web", due_at: now, returned_at: null, overdue: true, status: "checked_out" }] : [] };
     case "/api/sports/my-roles": return { data: { athleticDirector: false, coachOf: role === "teacher" || role === "coach" ? ["a1"] : [] } };
     case "/api/activities/a1/staff": return { data: [{ user_id: "u7", name: "Teacher Two", staff_role: "coach", home_school: "Oak Middle", visiting: true }] };
     case "/api/coach/teams": return { data: { teams: [{ id: "a1", kind: "sport", title: "Falcons Soccer", role: "coach", meetingDetails: "Mon/Wed 3:30", status: "published",
@@ -1320,6 +1322,20 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "principal: enter figures", a11y);
       if (page.errors.length) failures.push(`principal rankings: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
+  }
+  // Student app Phase D: a pupil's Home leads with Today at school. Passes axe.
+  {
+    state.role = "pupil";
+    const page = await Page.open(chrome.port);
+    const wants = ["Today at school", "09:00 Math 3", "Room 202", "Library visit", "18:00 Robotics build night", "Library books", "Charlotte's Web", "Overdue", "My clubs & teams", "Falcons Soccer", "My week"];
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/home` });
+      let text = await page.mainText();
+      for (const end = Date.now() + 5000; Date.now() < end && !wants.every(w => text.includes(w)); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const w of wants) if (!text.includes(w)) failures.push(`pupil today: "${w}" is missing`);
+      await axeScan(page, "pupil: today at school", a11y);
+      if (page.errors.length) failures.push(`pupil today: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   // Student app Phase C: a pupil's grades say which kind of number each is. Passes axe.
   {
