@@ -76,7 +76,8 @@ const api = {
   },
   get(p) { return this.req("GET", p); },
   post(p, b = {}) { return this.req("POST", p, b); },
-  put(p, b = {}) { return this.req("PUT", p, b); }
+  put(p, b = {}) { return this.req("PUT", p, b); },
+  patch(p, b = {}) { return this.req("PATCH", p, b); }
 };
 const safe = async (p, fallback = null) => { try { return await p; } catch (e) { if (e.status === 401) throw e; return fallback; } };
 
@@ -260,6 +261,81 @@ async function renderHomeschoolInvite(token) {
           await switchContextTo({ kind: "homeschool_family", membershipId: r.membershipId }, "You've joined the family."); } catch (e) { hsErr(e, "Couldn't accept the invitation."); } } }, "Accept"),
       h("button", { class: "btn", type: "button", onclick: () => { location.hash = ""; boot(); } }, "Not now"))));
 }
+
+// HSP-02: one learner's plan, attendance, work and records.
+const HS_ATT = { instruction: "Instruction", field_trip: "Field trip", co_op: "Co-op", independent: "Independent study", absent: "Absent" };
+const HS_WORK = { assignment: "Assignment", project: "Project", test: "Test", reading: "Reading", activity: "Activity", certificate: "Certificate" };
+const HS_EXPORT = { progress_report: "Progress report", transcript: "Transcript", portfolio: "Portfolio" };
+Object.assign(HS_ERRORS, { export_needs_full_authority: "Only someone with full authority for this learner can export records.", invalid_attendance: "Check the date (not in the future) and minutes.",
+  invalid_work: "Check the title, date and score (a score needs its maximum).", invalid_course: "Check the title and school year (like 2026-2027)." });
+const schoolYearNow = () => { const d = new Date(), y = d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1; return `${y}-${y + 1}`; };
+const hsDay = (n = 0) => new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10);
+function hsRecordView(doc) {
+  const rows = [];
+  if (doc.kind === "transcript") for (const y of doc.years) rows.push(h("h4", {}, y.school_year), h("ul", { class: "list small" }, y.courses.map(c => h("li", {}, `${c.title}${c.subject ? ` (${c.subject})` : ""} · ${c.final_grade || "no grade"} · ${c.credits ?? 0} credits`))));
+  if (doc.kind === "transcript") rows.push(h("p", {}, h("b", {}, `Total credits: ${doc.total_credits}`)));
+  if (doc.kind === "progress_report") rows.push(h("p", {}, `${doc.attendance.instructionalDays} instructional days · ${doc.attendance.hours} hours · ${doc.attendance.absentDays} absent`),
+    h("ul", { class: "list small" }, doc.courses.map(c => h("li", {}, `${c.title} · ${c.work_items} items${c.percent != null ? ` · ${c.percent}%` : ""}${c.goals.length ? ` · goals met ${c.goals.filter(g => g.status === "met").length}/${c.goals.length}` : ""}`))));
+  if (doc.kind === "portfolio") rows.push(h("ul", { class: "list small" }, doc.items.map(i => h("li", {}, `${i.done_on} · ${i.title}${i.course ? ` (${i.course})` : ""}${i.score != null ? ` · ${i.score}/${i.max_score}` : ""} · ${i.provenance}`))));
+  return h("section", { class: "card", "aria-label": HS_EXPORT[doc.kind] }, h("h3", {}, `${HS_EXPORT[doc.kind]}: ${doc.learner.name}`),
+    h("p", { class: "small" }, `Issued by ${doc.issuer.name} on ${doc.generated.on}${doc.period ? ` · ${doc.period.from || "start"} to ${doc.period.to || "today"}` : ""}`),
+    h("p", { class: "notice small" }, doc.issuer.statement), ...rows,
+    doc.sha256 ? h("p", { class: "small muted" }, "Record fingerprint ", h("code", {}, doc.sha256.slice(0, 16))) : null,
+    h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: () => window.print() }, "Print"),
+      doc.sha256 ? h("button", { class: "btn small", type: "button", onclick: () => { const href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" }));
+        const a = h("a", { href, download: `${doc.kind}-${doc.learner.name.replace(/[^A-Za-z0-9]+/g, "-")}.json` }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(href), 10000); } }, "Download file") : null));
+}
+async function renderHomeschoolLearner(id) {
+  const [plan, att, work] = await Promise.all([api.get(`/api/homeschool/learners/${id}/plan`), api.get(`/api/homeschool/learners/${id}/attendance?from=${hsDay(30)}&to=${hsDay(0)}`), api.get(`/api/homeschool/learners/${id}/work?from=${hsDay(90)}`)]);
+  const p = plan.data, L = p.learner, teach = p.canTeach, reload = () => renderHomeschoolLearner(id), courseName = cid => p.courses.find(c => c.id === cid)?.title;
+  const courseSelect = idAttr => h("select", { id: idAttr }, h("option", { value: "" }, "No course"), p.courses.filter(c => c.status === "active").map(c => h("option", { value: c.id }, c.title)));
+  const post = (path, body, msg) => api.post(path, body).then(() => { toast(msg); reload(); }).catch(e => hsErr(e, "Couldn't save it."));
+  const voidBtn = path => h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why is this being corrected?", reason => post(path, { reason }, "Corrected.")) }, "Correct"));
+  const c = { title: h("input", { id: "hc-title", required: true, maxlength: 160 }), subject: h("input", { id: "hc-subject", maxlength: 80 }), year: h("input", { id: "hc-year", value: schoolYearNow(), pattern: "[0-9]{4}-[0-9]{4}", required: true }) };
+  const g = { text: h("input", { id: "hg-text", required: true, maxlength: 500 }), course: courseSelect("hg-course") };
+  const a = { day: h("input", { id: "ha-day", type: "date", value: hsDay(0), max: hsDay(0), required: true }), minutes: h("input", { id: "ha-min", type: "number", min: 0, max: 1440, value: 240, required: true }),
+    kind: h("select", { id: "ha-kind" }, Object.entries(HS_ATT).map(([v, t]) => h("option", { value: v }, t))), course: courseSelect("ha-course") };
+  const w = { title: h("input", { id: "hw-title", required: true, maxlength: 200 }), kind: h("select", { id: "hw-kind" }, Object.entries(HS_WORK).map(([v, t]) => h("option", { value: v }, t))),
+    day: h("input", { id: "hw-day", type: "date", value: hsDay(0), max: hsDay(0), required: true }), course: courseSelect("hw-course"),
+    score: h("input", { id: "hw-score", type: "number", min: 0, step: "any" }), max: h("input", { id: "hw-max", type: "number", min: 0, step: "any" }), source: h("input", { id: "hw-source", maxlength: 200, placeholder: "Leave blank if you made it" }) };
+  const out = h("div", {});
+  const t = att.data.totals;
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: () => renderHomeschool() }, "← Family")), h("h2", {}, L.displayName),
+    h("section", { class: "card", "aria-label": "Plan" }, h("h3", {}, "Plan"),
+      p.courses.length ? h("ul", { class: "list" }, p.courses.map(k => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, k.title), h("span", { class: "small muted" }, ` · ${k.schoolYear}${k.subject ? ` · ${k.subject}` : ""} · ${k.status}${k.finalGrade ? ` · ${k.finalGrade}` : ""}${k.credits != null ? ` · ${k.credits} cr` : ""}`)),
+        teach && k.status === "active" ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => { const slot = e.target.parentNode, grade = h("input", { "aria-label": "Final grade", maxlength: 20, placeholder: "Final grade" }),
+          cr = h("input", { "aria-label": "Credits", type: "number", min: 0, max: 10, step: "0.25", placeholder: "Credits" });
+          slot.replaceChildren(h("form", { class: "row wrap", onsubmit: ev => { ev.preventDefault(); api.patch(`/api/homeschool/courses/${k.id}`, { status: "completed", finalGrade: grade.value.trim() || null, credits: cr.value === "" ? null : Number(cr.value) })
+            .then(() => { toast("Course completed."); reload(); }).catch(err => hsErr(err, "Couldn't save it.")); } }, grade, cr, h("button", { class: "btn small", type: "submit" }, "Complete"))); } }, "Complete")) : null))) : h("p", { class: "muted" }, "No courses yet."),
+      p.goals.length ? h("ul", { class: "list small" }, p.goals.map(x => h("li", { class: "row" }, h("span", { class: "grow" }, `${x.status === "met" ? "✓ " : ""}${x.text}${x.courseId ? ` (${courseName(x.courseId)})` : ""}`),
+        teach && x.status === "open" ? h("button", { class: "link", type: "button", onclick: () => api.patch(`/api/homeschool/goals/${x.id}`, { status: "met" }).then(() => { toast("Goal met."); reload(); }).catch(e => hsErr(e, "Couldn't save it.")) }, "Met") : null))) : null,
+      teach ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/learners/${id}/courses`, { title: c.title.value.trim(), subject: c.subject.value.trim() || undefined, schoolYear: c.year.value.trim() }, "Course added."); } },
+        h("h4", {}, "Add a course"), h("label", { for: "hc-title" }, "Course"), c.title, h("label", { for: "hc-subject" }, "Subject"), c.subject, h("label", { for: "hc-year" }, "School year"), c.year, h("button", { class: "btn", type: "submit" }, "Add course")) : null,
+      teach ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/learners/${id}/goals`, { text: g.text.value.trim(), courseId: g.course.value || undefined }, "Goal added."); } },
+        h("div", { class: "grow" }, h("label", { for: "hg-text" }, "Add a goal"), g.text), h("div", {}, h("label", { for: "hg-course" }, "Course"), g.course), h("button", { class: "btn", type: "submit" }, "Add")) : null),
+    h("section", { class: "card", "aria-label": "Attendance" }, h("h3", {}, "Attendance and instructional time"),
+      h("p", {}, `Last 30 days: ${t.instructionalDays} days · ${t.hours} hours · ${t.absentDays} absent`),
+      teach ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post(`/api/homeschool/learners/${id}/attendance`, { day: a.day.value, minutes: a.kind.value === "absent" ? 0 : Number(a.minutes.value), kind: a.kind.value, courseId: a.course.value || undefined }, "Recorded."); } },
+        h("div", {}, h("label", { for: "ha-day" }, "Day"), a.day), h("div", {}, h("label", { for: "ha-min" }, "Minutes"), a.minutes), h("div", {}, h("label", { for: "ha-kind" }, "Kind"), a.kind), h("div", {}, h("label", { for: "ha-course" }, "Course"), a.course),
+        h("button", { class: "btn", type: "submit" }, "Record")) : null,
+      h("ul", { class: "list small" }, att.data.sessions.slice(0, 20).map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${x.day} · ${HS_ATT[x.kind]} · ${x.minutes} min${x.courseId ? ` · ${courseName(x.courseId)}` : ""}${x.voided ? ` · corrected (${x.voidReason})` : ""}`),
+        teach && !x.voided ? voidBtn(`/api/homeschool/attendance/${x.id}/void`) : null)))),
+    h("section", { class: "card", "aria-label": "Work" }, h("h3", {}, "Work and evidence"),
+      teach ? h("form", { class: "stack", onsubmit: e => { e.preventDefault();
+          post(`/api/homeschool/learners/${id}/work`, { title: w.title.value.trim(), kind: w.kind.value, doneOn: w.day.value, courseId: w.course.value || undefined,
+            score: w.score.value === "" ? undefined : Number(w.score.value), maxScore: w.max.value === "" ? undefined : Number(w.max.value), source: w.source.value.trim() || undefined }, "Saved."); } },
+        h("label", { for: "hw-title" }, "What"), w.title, h("label", { for: "hw-kind" }, "Kind"), w.kind, h("label", { for: "hw-day" }, "Done on"), w.day, h("label", { for: "hw-course" }, "Course"), w.course,
+        h("div", { class: "row" }, h("div", {}, h("label", { for: "hw-score" }, "Score"), w.score), h("div", {}, h("label", { for: "hw-max" }, "Out of"), w.max)),
+        h("label", { for: "hw-source" }, "From an outside course or program"), w.source, h("button", { class: "btn", type: "submit" }, "Save work")) : null,
+      h("ul", { class: "list small" }, work.data.slice(0, 30).map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${x.doneOn} · ${x.title} · ${HS_WORK[x.kind]}${x.score != null ? ` · ${x.score}/${x.maxScore}` : ""}${x.source ? ` · from ${x.source}` : ""}${x.voided ? ` · corrected (${x.voidReason})` : ""}`),
+        teach && !x.voided ? voidBtn(`/api/homeschool/work/${x.id}/void`) : null)))),
+    h("section", { class: "card", "aria-label": "Records" }, h("h3", {}, "Reports and records"),
+      h("p", { class: "small muted" }, "Family records are labeled as entered by your family. EduOS doesn't verify or accredit them, and files nothing with any agency."),
+      h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: async () => { try { out.replaceChildren(hsRecordView((await api.get(`/api/homeschool/learners/${id}/progress?from=${hsDay(90)}`)).data)); } catch (e) { hsErr(e, "Couldn't build it."); } } }, "Progress report (last 90 days)"),
+        L.authority === "full" ? Object.entries(HS_EXPORT).map(([k, label]) => h("button", { class: "btn small", type: "button", onclick: async () => {
+          try { out.replaceChildren(hsRecordView((await api.post(`/api/homeschool/learners/${id}/exports`, { kind: k, ...(k === "transcript" ? {} : { from: hsDay(365) }) })).data)); toast(`${label} exported and logged.`); } catch (e) { hsErr(e, "Couldn't export it."); } } }, `Export ${label.toLowerCase()}`)) : null),
+      out));
+}
 async function renderHomeschool() {
   const [meRes, cal, members, ctx] = await Promise.all([api.get("/api/homeschool/me"), safe(api.get("/api/homeschool/calendar")), safe(api.get("/api/homeschool/members")), safe(api.get("/api/session/contexts"))]);
   const d = meRes.data, owner = d.role === "owner", reload = () => renderHomeschool();
@@ -291,7 +367,8 @@ async function renderHomeschool() {
     h("section", { class: "card", "aria-label": "Learners" }, h("h3", {}, "Learners"),
       learners.length ? h("ul", { class: "list" }, learners.map(l => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, l.displayName),
         h("span", { class: "small muted" }, ` · ${HS_GRADES.find(g => g[0] === l.gradeBand)?.[1] || "No grade set"} · you ${HS_AUTH[l.authority] || l.authority}`)),
-        h("span", { class: "small" }, `${l.upcomingThisWeek} this week`)))) : h("p", { class: "muted" }, owner ? "Add your first learner below." : "No learners have been shared with you yet."),
+        h("span", { class: "small" }, `${l.upcomingThisWeek} this week`), " ",
+        h("button", { class: "btn small", type: "button", "aria-label": `Open ${l.displayName}`, onclick: () => renderHomeschoolLearner(l.id).catch(e => hsErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, owner ? "Add your first learner below." : "No learners have been shared with you yet."),
       d.familyEventsThisWeek ? h("p", { class: "small muted" }, `${d.familyEventsThisWeek} family events this week`) : null),
     h("section", { class: "card", "aria-label": "Calendar" }, h("h3", {}, "Coming up"),
       (cal?.data || []).filter(e => !e.cancelled).length ? h("ul", { class: "list" }, cal.data.filter(e => !e.cancelled).map(e => h("li", { class: "row wrap" },
