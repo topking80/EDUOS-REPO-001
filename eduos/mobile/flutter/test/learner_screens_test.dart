@@ -108,7 +108,7 @@ void main() {
     expect(find.text('Route 7 · Bus 12'), findsOneWidget);
     expect(find.text('Picture day'), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
-    for (final t in ['Home', 'My library', 'Courses', 'Christie', 'More']) {
+    for (final t in ['Home', 'My work', 'My library', 'Courses', 'More']) {
       expect(find.descendant(of: find.byType(NavigationBar), matching: find.text(t)), findsOneWidget, reason: t);
     }
   });
@@ -137,7 +137,7 @@ void main() {
     expect(find.text('18 / 20 points'), findsOneWidget);
     expect(find.text('To do'), findsOneWidget);
     expect(find.text('Turned in'), findsOneWidget);
-    expect(find.text('Graded'), findsOneWidget);
+    expect(find.text('Graded'), findsNWidgets(2));
 
     await tester.tap(find.text('Fractions practice'));
     await tester.pumpAndSettle();
