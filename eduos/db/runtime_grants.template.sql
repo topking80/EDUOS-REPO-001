@@ -993,3 +993,12 @@ GRANT UPDATE (last_read_at) ON ps_message_participants TO eduos_app;
 GRANT UPDATE (hidden_by, hidden_at, hide_reason) ON ps_messages TO eduos_app;
 REVOKE DELETE, TRUNCATE ON ps_message_threads, ps_message_participants, ps_messages FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_ps_contacts(uuid), eduos_ps_in_thread(uuid), eduos_ps_thread_open(uuid), eduos_ps_thread_opener(uuid), eduos_ps_thread_people(uuid) TO eduos_app;
+
+-- 168 (HSP-06 part 2): compliance profiles. Templates are published only by the platform (src/compliance-template.js).
+GRANT SELECT ON compliance_templates TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON compliance_templates FROM eduos_app;
+GRANT SELECT, INSERT ON compliance_profiles, compliance_checklist TO eduos_app;
+GRANT UPDATE (retention_years, status, ended_by, ended_at) ON compliance_profiles TO eduos_app;
+GRANT UPDATE (status, done_on, evidence_ref, note, recorded_by, recorded_at) ON compliance_checklist TO eduos_app;
+REVOKE DELETE, TRUNCATE ON compliance_profiles, compliance_checklist FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_compliance_reads(uuid,uuid), eduos_compliance_writes(uuid,uuid,boolean) TO eduos_app;
