@@ -10,7 +10,10 @@ import { spawn } from "node:child_process";
 import pg from "pg";
 import { PG_URL, ROOT, startIdp, baseEnv, run, createDatabase, freePort } from "./harness.js";
 import { verifyBundle, parsePublicKey } from "../../src/federation/policy-bundle.js";
+import { ENVELOPE_FORMAT, DATASETS, minimize, exchangeKeys, signEnvelope, verifyTerms } from "../../src/federation/exchange.js";
 
+const TODAY = new Date().toISOString().slice(0, 10);
+const resign = (env, over, keys) => { const { signature, ...body } = env; return signEnvelope({ ...body, ...over }, keys); };
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 
 describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
@@ -309,6 +312,95 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     const log = ok(await as("tea")("GET", `/audit?nodeId=${ids.tx}`));
     for (const a of ["release_policies", "promote_policy_release", "rollback_policy_release"]) assert.ok(log.some(e => e.action === a && e.decision === "allowed"), a);
     assert.ok(log.some(e => e.action === "release_policies" && e.decision === "denied"));
+  });
+
+  // ---- FED-06: exchange gateway (aggregates only) ---------------------------
+  it("an aggregate exchange needs both sides' approval, the district's key, and only minimized data", async () => {
+    const xkeys = exchangeKeys(crypto.randomBytes(24).toString("hex"));
+    const propose = (who, extra = {}) => as(who)("POST", "/exchange-agreements", { producerNodeId: ids.d1, recipientNodeId: ids.tx, dataset: "enrollment_by_grade",
+      purpose: "state_reporting", legalBasis: "State education code reporting requirement", minCellSize: 10, effectiveTo: "2099-12-31", ...extra });
+    assert.equal((await propose("tea", { producerNodeId: ids.tx })).status, 422, "only a district produces");
+    assert.match((await propose("tea", { minCellSize: 3 })).body.errors.join(";"), /at least 5/);
+    assert.match((await propose("tea", { fields: ["school_id", "student_id"] })).body.errors.join(";"), /fields outside/);
+    assert.equal((await propose("op")).status, 403, "the platform can't ask for a district's data");
+    const ag = ok(await propose("tea"), 201);
+    ids.xa = ag.id;
+    assert.equal((await as("sup1")("POST", `/exchange-agreements/${ag.id}/approve`, {})).status, 422, "the district supplies its EduOS key");
+    ok(await as("sup1")("POST", `/exchange-agreements/${ag.id}/approve`, { publicKey: xkeys.public }));
+    assert.equal(ok(await as("tea")("POST", `/exchange-agreements/${ag.id}/approve`, {})).status, "active");
+    const raw = [{ school_id: "s1", school_name: "Elm", grade_level: "3", student_count: 42 }, { school_id: "s1", school_name: "Elm", grade_level: "4", student_count: 6 },
+      { school_id: "s1", school_name: "Elm", grade_level: "5", student_count: 25 }];
+    const env = rows => signEnvelope({ format: ENVELOPE_FORMAT, agreement_id: ag.id, producer: { tenant_ref: "tenant-lakeside", name: "Lakeside ISD" }, dataset: "enrollment_by_grade",
+      fields: DATASETS.enrollment_by_grade.fields, purpose: "state_reporting", snapshot: true, as_of: TODAY, period: { from: TODAY, to: TODAY },
+      suppression: { min_cell_size: 10, suppressed_cells: rows.filter(r => r.suppressed).length, secondary: true }, generated_at: TODAY, rows }, xkeys);
+    ids.xkeys = xkeys; ids.xenv = () => env(minimize("enrollment_by_grade", raw, DATASETS.enrollment_by_grade.fields, 10));
+    const past = resign(ids.xenv(), { period: { from: "2025-08-01", to: TODAY } }, xkeys);
+    assert.equal((await as("sup1")("POST", `/exchange-agreements/${ag.id}/deliveries`, past)).body.error, "not_a_snapshot", "today's counts can't be labelled as an earlier period");
+    const unmin = await as("sup1")("POST", `/exchange-agreements/${ag.id}/deliveries`, env(raw));
+    assert.equal(unmin.status, 422); assert.equal(unmin.body.error, "not_minimized");
+    assert.equal((await as("vp")("POST", `/exchange-agreements/${ag.id}/deliveries`, env(minimize("enrollment_by_grade", raw, DATASETS.enrollment_by_grade.fields, 10)))).status, 403, "only whoever shares for the district delivers");
+    const d1 = ok(await as("sup1")("POST", `/exchange-agreements/${ag.id}/deliveries`, env(minimize("enrollment_by_grade", raw, DATASETS.enrollment_by_grade.fields, 10))), 201);
+    assert.deepEqual([d1.version, d1.rows, d1.suppressed], [1, 3, 2]);
+    assert.equal((await as("sup1")("POST", `/exchange-agreements/${ag.id}/deliveries`, env(minimize("enrollment_by_grade", raw, DATASETS.enrollment_by_grade.fields, 10)))).body.error, "already_delivered");
+    const corrected = raw.map(r => ({ ...r, student_count: r.student_count + 10 }));
+    const d2 = ok(await as("sup1")("POST", `/exchange-agreements/${ag.id}/deliveries`, env(minimize("enrollment_by_grade", corrected, DATASETS.enrollment_by_grade.fields, 10))), 201);
+    assert.equal(d2.version, 2, "a correction for the same period is a new version");
+    ids.xd = d2.id;
+  });
+
+  it("signed terms carry exactly the agreed fields, only for the producing district's sharer", async () => {
+    const partial = ok(await as("tea")("POST", "/exchange-agreements", { producerNodeId: ids.d1, recipientNodeId: ids.tx, dataset: "enrollment_by_grade",
+      fields: ["school_id", "grade_level", "student_count"], purpose: "operations_planning", legalBasis: "State education code reporting requirement", minCellSize: 12, effectiveTo: "2099-12-31" }), 201);
+    assert.equal((await as("sup1")("GET", `/exchange-agreements/${partial.id}/terms`)).body.error, "agreement_proposed", "no terms before both sides approve");
+    ok(await as("sup1")("POST", `/exchange-agreements/${partial.id}/approve`, { publicKey: ids.xkeys.public }));
+    ok(await as("tea")("POST", `/exchange-agreements/${partial.id}/approve`, {}));
+    assert.equal((await as("tea")("GET", `/exchange-agreements/${partial.id}/terms`)).status, 403, "the recipient can't issue the producer's terms");
+    assert.equal((await as("vp")("GET", `/exchange-agreements/${partial.id}/terms`)).status, 403);
+    const t = await as("sup1")("GET", `/exchange-agreements/${partial.id}/terms`);
+    assert.equal(t.status, 200);
+    const key = ok(await as("op")("GET", "/policy-signing-key"));
+    const v = verifyTerms(t.body, parsePublicKey(key.publicKey), "tenant-lakeside", TODAY);
+    assert.equal(v.ok, true, v.reason);
+    assert.deepEqual([v.terms.agreement_id, v.terms.fields, v.terms.purpose, v.terms.min_cell_size], [partial.id, ["school_id", "grade_level", "student_count"], "operations_planning", 12]);
+    // A report with every field is refused for an agreement that approved fewer.
+    const all = resign(ids.xenv(), { agreement_id: partial.id, purpose: "operations_planning" }, ids.xkeys);
+    assert.equal((await as("sup1")("POST", `/exchange-agreements/${partial.id}/deliveries`, all)).body.error, "wrong_fields");
+  });
+
+  it("an agreement that hasn't started can't take deliveries, be read, or issue terms", async () => {
+    const later = ok(await as("tea")("POST", "/exchange-agreements", { producerNodeId: ids.d1, recipientNodeId: ids.tx, dataset: "enrollment_by_grade",
+      purpose: "state_reporting", legalBasis: "State education code reporting requirement", minCellSize: 10, effectiveFrom: "2099-01-01", effectiveTo: "2099-12-31" }), 201);
+    ok(await as("sup1")("POST", `/exchange-agreements/${later.id}/approve`, { publicKey: ids.xkeys.public }));
+    assert.equal(ok(await as("tea")("POST", `/exchange-agreements/${later.id}/approve`, {})).status, "active");
+    const env = resign(ids.xenv(), { agreement_id: later.id }, ids.xkeys);
+    assert.equal((await as("sup1")("POST", `/exchange-agreements/${later.id}/deliveries`, env)).body.error, "agreement_not_started");
+    assert.equal((await as("sup1")("GET", `/exchange-agreements/${later.id}/terms`)).body.error, "agreement_not_started");
+    // A delivery that exists (made while it was in force) still can't be read before the start date.
+    const now = ok(await as("tea")("POST", "/exchange-agreements", { producerNodeId: ids.d1, recipientNodeId: ids.tx, dataset: "enrollment_by_grade",
+      purpose: "state_reporting", legalBasis: "State education code reporting requirement", minCellSize: 10, effectiveTo: "2099-12-31" }), 201);
+    ok(await as("sup1")("POST", `/exchange-agreements/${now.id}/approve`, { publicKey: ids.xkeys.public }));
+    ok(await as("tea")("POST", `/exchange-agreements/${now.id}/approve`, {}));
+    const d = ok(await as("sup1")("POST", `/exchange-agreements/${now.id}/deliveries`, resign(ids.xenv(), { agreement_id: now.id }, ids.xkeys)), 201);
+    await admin.query("UPDATE master_control.exchange_agreements SET effective_from='2099-01-01' WHERE id=$1", [now.id]);
+    const r = await as("tea")("GET", `/exchange-deliveries/${d.id}`);
+    assert.equal(r.status, 410); assert.equal(r.body.reason, "agreement_not_started");
+  });
+
+  it("only the parties read deliveries, while the agreement is in force; every read is audited; revoking stops it", async () => {
+    const read = await as("tea")("GET", `/exchange-deliveries/${ids.xd}`);
+    assert.equal(read.status, 200); assert.deepEqual(read.body.data.envelope.rows.map(r => r.student_count), [52, 16, 35]);
+    assert.equal((await as("op")("GET", `/exchange-deliveries/${ids.xd}`)).status, 403, "no global access, even to aggregates");
+    assert.equal((await as("vp")("GET", `/exchange-deliveries/${ids.xd}`)).status, 403);
+    const list = ok(await as("sup1")("GET", `/exchange-agreements?nodeId=${ids.d1}`));
+    assert.equal(list.find(a => a.id === ids.xa).deliveries, 2);
+    ok(await as("sup1")("POST", `/exchange-agreements/${ids.xa}/revoke`, { reason: "Board withdrew consent" }));
+    assert.equal((await as("tea")("GET", `/exchange-deliveries/${ids.xd}`)).status, 410);
+    assert.equal((await as("sup1")("POST", `/exchange-agreements/${ids.xa}/deliveries`, {})).body.error, "agreement_revoked");
+    const log = ok(await as("sup1")("GET", `/audit?nodeId=${ids.d1}&limit=500`));
+    const reads = log.filter(e => e.action === "read_exchange_delivery" && e.target_id === ids.xd);
+    assert.deepEqual(reads.map(e => e.decision).sort(), ["allowed", "denied", "denied", "denied"]);
+    for (const a of ["propose_exchange", "approve_exchange", "deliver_exchange", "revoke_exchange"]) assert.ok(log.some(e => e.action === a), a);
+    await assert.rejects(admin.query("DELETE FROM master_control.exchange_deliveries"), /append-only/);
   });
 
   it("the console loads with a strict content security policy", async () => {

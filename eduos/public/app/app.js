@@ -4026,6 +4026,36 @@ const ROSTER_TEACHER_TEXT = { no_matching_eduos_teacher: "No EduOS teacher at th
   no_email: "Their SIS record has no email", not_in_staff_list: "Not in their staff list", matched_teacher_not_at_school: "The matched teacher doesn't teach at that school" };
 const REJECT_TEXT = { no_sis_user_id: "Canvas student without a SIS ID", no_matching_eduos_student: "No EduOS student with that SIS ID", student_not_imported: "a student in a class isn't in EduOS", student_at_another_eduos_school: "a student in a class is at another EduOS school", duplicate_student_number: "same student number twice", enrolled_at_another_eduos_school: "already at another school in EduOS",
   no_school: "no school", missing_name: "no name", missing_sourcedId: "no id", missing_studentUniqueId: "no id", invalid_school_id: "invalid school id", missing_student_id: "no student id", missing_student_number: "no student number", missing_enrollment_status: "enrollment status unavailable" };
+// FED-06: share de-identified aggregates through the exchange gateway. The
+// report is built only from the agreement's terms file signed by Master
+// Control, and is a snapshot of today.
+const XR_ERRORS = { exchange_signing_not_configured: "This server has no exchange signing key (EXCHANGE_SIGNING_SECRET).",
+  policy_key_not_configured: "This server has no Master Control key (MC_POLICY_PUBLIC_KEY), so it can't check agreement terms.",
+  not_exchange_terms: "That isn't an agreement terms file from Master Control.", altered: "The terms file was changed after Master Control signed it.",
+  wrong_key: "The terms weren't signed with the Master Control key this server trusts.", bad_signature: "The signature on the terms doesn't check out.",
+  malformed: "The terms file is damaged or not in the expected format.", not_for_this_district: "Those terms are for another district.",
+  agreement_not_started: "This agreement hasn't started yet.", agreement_ended: "This agreement has ended." };
+async function exchangeCard() {
+  const d = (await safe(api.get("/api/district/exchange")))?.data;
+  if (!d || !d.datasets) return null;
+  const file = h("input", { id: "xr-terms", type: "file", accept: ".json,application/json" });
+  return h("section", { class: "card", "aria-label": "Share aggregates" }, h("h2", {}, "Share aggregates (exchange gateway)"),
+    h("p", { class: "small muted" }, "For an exchange agreement the district approved in Master Control: download its terms file there, then build the report here. The report uses exactly the agreed fields, purpose and smallest count, and counts what the district holds today. Only school-level counts leave; counts under the minimum are hidden, plus one more where needed so they can't be worked out. No student records are included."),
+    d.configured ? h("p", { class: "small" }, "This server's exchange key fingerprint ", h("code", {}, d.fingerprint), ". When approving an agreement in Master Control, give it this public key: ",
+      h("code", { class: "wrap" }, d.publicKey)) : h("p", { class: "notice" }, XR_ERRORS.exchange_signing_not_configured),
+    d.termsKeyConfigured === false ? h("p", { class: "notice" }, XR_ERRORS.policy_key_not_configured) : null,
+    d.configured && d.termsKeyConfigured !== false ? h("form", { class: "row wrap", onsubmit: async e => { e.preventDefault();
+        const f = file.files?.[0]; if (!f) return toast("Choose the terms file first.");
+        let terms; try { terms = JSON.parse(await f.text()); } catch { return toast(XR_ERRORS.not_exchange_terms); }
+        try {
+          const r = await fetch("/api/district/exchange/reports", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "x-csrf-token": api.csrf || "" }, body: JSON.stringify({ terms }) });
+          if (!r.ok) { const j = await r.json().catch(() => ({})); return toast(XR_ERRORS[j.error] || "Couldn't build the report."); }
+          const name = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "")?.[1] || "exchange-report.json";
+          const href = URL.createObjectURL(await r.blob()); const a = h("a", { href, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(href), 10_000);
+          toast("Report built and signed. Deliver it in Master Control.");
+        } catch { toast("Couldn't build the report."); } } },
+      h("div", { class: "grow" }, h("label", { for: "xr-terms" }, "Agreement terms file (from Master Control)"), file), h("button", { class: "btn", type: "submit" }, "Build and sign")) : null);
+}
 // FED-05: signed policy bundles from Master Control, kept as received.
 // Shown for information; EduOS applies nothing from them yet.
 const PB_ERRORS = { not_a_policy_bundle: "That isn't a policy bundle file.", malformed: "The file is damaged or not in the expected format.",
@@ -4062,7 +4092,8 @@ VIEWS.integrations = async () => {
     staffDistrict() ? h("section", { class: "card", "aria-label": "Payment options" }, h("h2", {}, "Payment options"),
       h("p", { class: "small muted" }, "Connect the district's PayPal, Square or BTCPay Server account for ticket and marketplace payments."),
       h("button", { class: "btn", type: "button", onclick: () => go("payments") }, "Open payment setup")) : null,
-    ["superintendent", "it_admin"].includes(state.me.role) ? await masterControlPoliciesCard() : null];
+    ["superintendent", "it_admin"].includes(state.me.role) ? await masterControlPoliciesCard() : null,
+    state.me.role === "superintendent" ? await exchangeCard() : null];
   if (!enabled) return [...out, h("p", { class: "notice" }, "Data links are off on this server. District IT turns them on by setting INTEGRATIONS_KEY.")];
   const results = new Map(); // connector id -> last preview/apply result (this page view)
   const resultCard = (c, res) => {

@@ -13,3 +13,6 @@ GRANT SELECT, INSERT, UPDATE ON master_control.identity_providers, master_contro
 -- FED-05
 GRANT SELECT, INSERT, UPDATE ON master_control.policy_releases TO mc_app;
 GRANT SELECT, INSERT ON master_control.policy_bundles, master_control.policy_acknowledgements TO mc_app;
+-- FED-06
+GRANT SELECT, INSERT, UPDATE ON master_control.exchange_agreements TO mc_app;
+GRANT SELECT, INSERT ON master_control.exchange_deliveries TO mc_app;

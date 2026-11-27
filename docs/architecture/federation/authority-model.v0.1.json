@@ -1,5 +1,5 @@
 {
-  "model_version": "0.4.0",
+  "model_version": "0.5.0",
   "as_of": "2026-11-26",
   "capabilities": [
     {
@@ -139,6 +139,17 @@
       "description": "Submit the district's required aggregate reports to its state authority."
     },
     {
+      "id": "exchange.share",
+      "domain": "exchange",
+      "student_data": "aggregate",
+      "assignable_levels": [
+        "district"
+      ],
+      "reach": "node",
+      "delegable": false,
+      "description": "Agree to share the district's de-identified aggregates through the exchange gateway, deliver them, and revoke the agreement. Only the district decides what leaves it."
+    },
+    {
       "id": "tenant.users.manage",
       "domain": "tenant_admin",
       "student_data": "none",
@@ -256,6 +267,7 @@
         "audit.view",
         "reporting.aggregate.view",
         "reporting.submit",
+        "exchange.share",
         "tenant.users.manage",
         "tenant.roles.assign",
         "school.operations.manage",
