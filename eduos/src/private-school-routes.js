@@ -45,11 +45,11 @@ const emailOk = v => typeof v === "string" && v.length <= 320 && /^[^\s@]+@[^\s@
 const today = () => new Date().toISOString().slice(0, 10);
 const ymd = v => v instanceof Date ? v.toISOString().slice(0, 10) : v;
 
-function psAudit(c, req, action, type, id = null, detail = null) {
+export function psAudit(c, req, action, type, id = null, detail = null) {
   return c.query("INSERT INTO private_school_audit_events(school_id, actor_user_id, actor_role, action, resource_type, resource_id, detail) VALUES ($1,$2,$3,$4,$5,$6,$7)",
     [req.actor.privateSchoolId, req.actor.userId, req.actor.privateSchoolRole, action, type, id, detail]);
 }
-const school = (fn, status = 200) => async (req, res, next) => {
+export const school = (fn, status = 200) => async (req, res, next) => {
   try {
     if (req.actor?.tenantKind !== "private_school") throw new HttpError(403, "private_school_context_required");
     const data = await withPrivateSchoolTransaction(req.actor, c => fn(c, req));

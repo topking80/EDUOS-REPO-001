@@ -430,9 +430,105 @@ async function renderPrivateSchoolInvite(token) {
           await switchContextTo({ kind: "private_school", membershipId: r.membershipId }, "You've joined the school."); } catch (e) { psErr(e, "Couldn't accept the invitation."); } } }, "Accept"),
       h("button", { class: "btn", type: "button", onclick: () => { location.hash = ""; boot(); } }, "Not now"))));
 }
+
+// ---- HSP-04: admissions, classes, attendance, report cards -----------------------
+const PS_APP = { inquiry: "Inquiry", applied: "Applied", under_review: "Under review", offered: "Offered", waitlisted: "Waitlisted", accepted: "Accepted", declined: "Declined",
+  withdrawn: "Withdrawn", not_offered: "Not offered", enrolled: "Enrolled" };
+const PS_MARK = { present: "Present", tardy: "Tardy", absent: "Absent", excused: "Excused" };
+const WEEKDAY = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+Object.assign(PS_ERRORS, { not_a_next_step: "That isn't the next step for this application.", not_accepted: "Only an accepted applicant can be enrolled.", not_your_class: "That isn't your class.",
+  learner_on_another_campus: "That learner is on another campus.", already_on_roster: "Already in the class.", report_card_exists: "That learner already has a report card for that term.",
+  report_card_published: "That report card is already published.", teacher_not_on_campus: "Pick a teacher from the class's campus.", already_applied_for_that_year: "There's already an application for that year." });
+function psAcademics(x) {
+  const { r, active, enrolls, camps, campName, learnerList, apps, classes, cards, week, members, post } = x;
+  const out = [];
+  const year = schoolYearNow();
+  if (enrolls && active) {
+    const f = { name: h("input", { id: "pa-name", required: true, maxlength: 120 }), grade: h("select", { id: "pa-grade" }, PS_GRADES.map(([v, t]) => h("option", { value: v }, t))),
+      year: h("input", { id: "pa-year", value: year.replace(/^(\d{4})-(\d{4})$/, (m, a, b) => `${+a + 1}-${+b + 1}`), pattern: "[0-9]{4}-[0-9]{4}", required: true }),
+      campus: h("select", { id: "pa-campus" }, camps.map(c => h("option", { value: c.id }, c.name))), gname: h("input", { id: "pa-gname", maxlength: 120 }), gemail: h("input", { id: "pa-gemail", type: "email" }) };
+    out.push(h("section", { class: "card", "aria-label": "Admissions" }, h("h3", {}, "Admissions"),
+      apps.length ? h("ul", { class: "list" }, apps.map(a => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, a.applicantName),
+        h("span", { class: "small muted" }, ` · ${a.schoolYear} · ${PS_APP[a.status]}${a.waitlistPosition ? ` #${a.waitlistPosition}` : ""}${a.kind === "re_enrollment" ? " · re-enrollment" : ""} · ${campName(a.campusId)}`),
+        a.documents?.length ? h("span", { class: "small muted" }, ` · documents ${a.documents.filter(d => d.received).length}/${a.documents.length}`) : null),
+        ...a.next.map(n => h("button", { class: "btn small", type: "button", onclick: () => post(`/api/private-school/admissions/${a.id}/status`, { status: n }, `${a.applicantName}: ${PS_APP[n]}.`) }, PS_APP[n])),
+        a.status === "accepted" ? h("button", { class: "btn small primary", type: "button", onclick: () => post(`/api/private-school/admissions/${a.id}/enroll`, {}, `${a.applicantName} is enrolled.`) }, "Enroll") : null))) : h("p", { class: "muted" }, "No applications yet."),
+      h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post("/api/private-school/admissions", { applicantName: f.name.value.trim(), gradeLevel: f.grade.value, schoolYear: f.year.value.trim(),
+          campusId: f.campus.value, guardianName: f.gname.value.trim() || undefined, guardianEmail: f.gemail.value.trim() || undefined, documents: ["Birth certificate", "Prior school records"] }, "Inquiry added."); } },
+        h("h4", {}, "New inquiry"), h("label", { for: "pa-name" }, "Applicant"), f.name, h("label", { for: "pa-grade" }, "Grade"), f.grade, h("label", { for: "pa-year" }, "School year"), f.year,
+        h("label", { for: "pa-campus" }, "Campus"), f.campus, h("label", { for: "pa-gname" }, "Guardian name"), f.gname, h("label", { for: "pa-gemail" }, "Guardian email"), f.gemail, h("button", { class: "btn", type: "submit" }, "Add inquiry"))));
+  }
+  if (week.length) out.push(h("section", { class: "card", "aria-label": "This week" }, h("h3", {}, r === "guardian" ? "Your children's week" : r === "teacher" ? "Your week" : "This week's schedule"),
+    h("ul", { class: "list small" }, week.map(m => h("li", {}, `${WEEKDAY[m.weekday]} ${m.starts}–${m.ends} · ${m.name}${m.room ? ` · room ${m.room}` : ""}`)))));
+  if (r !== "finance") {
+    const teachers = members.filter(m => m.role === "teacher");
+    const f = { name: h("input", { id: "pk-name", required: true, maxlength: 120 }), campus: h("select", { id: "pk-campus" }, camps.map(c => h("option", { value: c.id }, c.name))),
+      teacher: h("select", { id: "pk-teacher" }, h("option", { value: "" }, "No teacher yet"), teachers.map(t => h("option", { value: t.id }, `${t.name} · ${campName(t.campusId)}`))),
+      term: h("input", { id: "pk-term", value: "Fall", maxlength: 40, required: true }) };
+    out.push(h("section", { class: "card", "aria-label": "Classes" }, h("h3", {}, "Classes"),
+      classes.length ? h("ul", { class: "list" }, classes.map(k => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, k.name),
+        h("span", { class: "small muted" }, ` · ${k.schoolYear} ${k.term} · ${campName(k.campusId)}${k.teacher ? ` · ${k.teacher}` : ""} · ${k.size} learners${k.status === "ended" ? " · ended" : ""}`)),
+        h("button", { class: "btn small", type: "button", "aria-label": `Open ${k.name}`, onclick: () => renderPsClass(k.id).catch(e => psErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, "No classes."),
+      enrolls ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post("/api/private-school/classes", { name: f.name.value.trim(), campusId: f.campus.value, schoolYear: year, term: f.term.value.trim(),
+          teacherMembershipId: f.teacher.value || undefined }, "Class added."); } },
+        h("div", { class: "grow" }, h("label", { for: "pk-name" }, "New class"), f.name), h("div", {}, h("label", { for: "pk-campus" }, "Campus"), f.campus), h("div", {}, h("label", { for: "pk-term" }, "Term"), f.term),
+        h("div", {}, h("label", { for: "pk-teacher" }, "Teacher"), f.teacher), h("button", { class: "btn", type: "submit" }, "Add")) : null));
+  }
+  if (r !== "finance" && (cards.length || enrolls)) {
+    const f = { learner: h("select", { id: "prc-learner" }, learnerList.filter(l => l.enrollmentStatus === "enrolled").map(l => h("option", { value: l.id }, l.displayName))), term: h("input", { id: "prc-term", value: "Fall", required: true, maxlength: 40 }) };
+    out.push(h("section", { class: "card", "aria-label": "Report cards" }, h("h3", {}, "Report cards"),
+      cards.length ? h("ul", { class: "list" }, cards.map(c => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, c.learner), h("span", { class: "small muted" }, ` · ${c.schoolYear} ${c.term} · ${c.status === "published" ? "Published" : "Draft"}`)),
+        h("button", { class: "btn small", type: "button", "aria-label": `Open report card for ${c.learner}`, onclick: () => renderPsCard(c.id).catch(e => psErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, r === "guardian" ? "No report cards published yet." : "No report cards yet."),
+      enrolls && active && learnerList.length ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); post("/api/private-school/report-cards", { learnerId: f.learner.value, schoolYear: year, term: f.term.value.trim() }, "Report card started."); } },
+        h("div", { class: "grow" }, h("label", { for: "prc-learner" }, "Start a report card for"), f.learner), h("div", {}, h("label", { for: "prc-term" }, "Term"), f.term), h("button", { class: "btn", type: "submit" }, "Start")) : null));
+  }
+  return out;
+}
+async function renderPsClass(id) {
+  const k = (await api.get(`/api/private-school/classes/${id}`)).data, back = () => renderPrivateSchool(), reload = () => renderPsClass(id);
+  const day = h("input", { id: "pcl-day", type: "date", value: hsDay(0), max: hsDay(0) });
+  const sheet = (await safe(api.get(`/api/private-school/attendance?classId=${id}&day=${hsDay(0)}`)))?.data;
+  const picks = (sheet?.learners || []).map(l => h("select", { "aria-label": `Attendance for ${l.displayName}` }, h("option", { value: "" }, "—"), Object.entries(PS_MARK).map(([v, t]) => h("option", { value: v, selected: l.status === v }, t))));
+  const learners = (await safe(api.get("/api/private-school/learners")))?.data || [];
+  const add = h("select", { id: "pcl-add" }, learners.filter(l => l.enrollmentStatus === "enrolled" && l.campusId === k.campusId && !k.roster.some(x => x.id === l.id)).map(l => h("option", { value: l.id }, l.displayName)));
+  const meet = { weekday: h("select", { id: "pcl-wd" }, WEEKDAY.slice(1).map((d, i) => h("option", { value: String(i + 1) }, d))), starts: h("input", { id: "pcl-st", type: "time", value: "09:00" }), ends: h("input", { id: "pcl-en", type: "time", value: "09:50" }) };
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: back }, "← School")), h("h2", {}, k.name),
+    h("p", { class: "small muted" }, `${k.schoolYear} ${k.term}${k.teacher ? ` · ${k.teacher}` : ""}`),
+    h("section", { class: "card", "aria-label": "Schedule" }, h("h3", {}, "Schedule"),
+      k.meetings.length ? h("ul", { class: "list small" }, k.meetings.map(m => h("li", {}, `${WEEKDAY[m.weekday]} ${m.starts}–${m.ends}${m.room ? ` · room ${m.room}` : ""}`))) : h("p", { class: "muted" }, "No meeting times yet."),
+      k.canRun ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.put(`/api/private-school/classes/${id}/meetings`, [...k.meetings, { weekday: Number(meet.weekday.value), starts: meet.starts.value, ends: meet.ends.value }])
+          .then(() => { toast("Schedule saved."); reload(); }).catch(err => psErr(err, "Couldn't save it.")); } },
+        h("div", {}, h("label", { for: "pcl-wd" }, "Day"), meet.weekday), h("div", {}, h("label", { for: "pcl-st" }, "Starts"), meet.starts), h("div", {}, h("label", { for: "pcl-en" }, "Ends"), meet.ends), h("button", { class: "btn", type: "submit" }, "Add time")) : null),
+    h("section", { class: "card", "aria-label": "Roster" }, h("h3", {}, `Roster (${k.roster.length})`),
+      h("ul", { class: "list small" }, k.roster.map(l => h("li", { class: "row" }, h("span", { class: "grow" }, l.displayName),
+        k.canRun ? h("button", { class: "link", type: "button", onclick: () => api.post(`/api/private-school/classes/${id}/roster/${l.id}/remove`, {}).then(() => { toast("Removed."); reload(); }).catch(e => psErr(e, "Couldn't remove.")) }, "Remove") : null))),
+      k.canRun && add.options.length ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.post(`/api/private-school/classes/${id}/roster`, { learnerId: add.value }).then(() => { toast("Added."); reload(); }).catch(err => psErr(err, "Couldn't add.")); } },
+        h("div", { class: "grow" }, h("label", { for: "pcl-add" }, "Add a learner"), add), h("button", { class: "btn", type: "submit" }, "Add")) : null),
+    (k.youTeach || k.canRun) && sheet?.learners?.length ? h("section", { class: "card", "aria-label": "Attendance" }, h("h3", {}, "Attendance"),
+      h("form", { class: "stack", onsubmit: e => { e.preventDefault(); const marks = sheet.learners.map((l, i) => ({ learnerId: l.id, status: picks[i].value })).filter(m => m.status);
+          if (!marks.length) return toast("Mark at least one learner.");
+          api.post("/api/private-school/attendance", { day: day.value, classId: id, marks }).then(r => toast(`Saved ${r.data.recorded} marks.`)).catch(err => psErr(err, "Couldn't save attendance.")); } },
+        h("label", { for: "pcl-day" }, "Day"), day, h("ul", { class: "list" }, sheet.learners.map((l, i) => h("li", { class: "row" }, h("span", { class: "grow" }, l.displayName), picks[i]))),
+        h("button", { class: "btn", type: "submit" }, "Save attendance"))) : null);
+}
+async function renderPsCard(id) {
+  const c = (await api.get(`/api/private-school/report-cards/${id}`)).data, me = (await api.get("/api/private-school/me")).data, reload = () => renderPsCard(id);
+  const runs = ["school_admin", "registrar", "campus_admin"].includes(me.role), draft = c.status === "draft";
+  const lineForm = cls => { const g = h("input", { "aria-label": `Grade for ${cls.class}`, maxlength: 20, value: cls.grade || "" }), m = h("input", { "aria-label": `Comment for ${cls.class}`, maxlength: 1000, value: cls.comment || "" });
+    return h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); api.put(`/api/private-school/report-cards/${id}/lines/${cls.classId}`, { grade: g.value.trim() || null, comment: m.value.trim() || null })
+      .then(() => { toast("Saved."); reload(); }).catch(err => psErr(err, "Couldn't save it.")); } }, h("b", { class: "grow" }, cls.class), g, m, h("button", { class: "btn small", type: "submit" }, "Save")); };
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: () => renderPrivateSchool() }, "← School")), h("h2", {}, `${c.learner} · ${c.schoolYear} ${c.term}`),
+    h("section", { class: "card", "aria-label": "Report card" }, h("p", {}, draft ? "Draft: families can't see it yet." : `Published ${new Date(c.publishedAt).toLocaleDateString()}`),
+      h("ul", { class: "list" }, c.lines.map(l => h("li", {}, draft && me.role !== "guardian" ? lineForm(l) : [h("b", {}, l.class), ` · ${l.grade || "—"}`, l.comment ? h("p", { class: "small" }, l.comment) : null]))),
+      draft && c.missing?.length && me.role !== "guardian" ? [h("h4", {}, "Classes still to write"), ...c.missing.map(lineForm)] : null,
+      c.comment ? h("p", {}, h("i", {}, c.comment)) : null,
+      draft && runs ? h("button", { class: "btn primary", type: "button", onclick: () => api.post(`/api/private-school/report-cards/${id}/publish`, {}).then(() => { toast("Published. Families can see it now."); reload(); }).catch(e => psErr(e, "Couldn't publish it.")) }, "Publish") : null,
+      !draft ? h("button", { class: "btn small", type: "button", onclick: () => window.print() }, "Print") : null));
+}
 async function renderPrivateSchool() {
-  const [meRes, learners, campuses, members, cal, ctx] = await Promise.all([api.get("/api/private-school/me"), safe(api.get("/api/private-school/learners")), safe(api.get("/api/private-school/campuses")),
-    safe(api.get("/api/private-school/members")), safe(api.get("/api/private-school/calendar")), safe(api.get("/api/session/contexts"))]);
+  const [meRes, learners, campuses, members, cal, ctx, apps, classes, cards, week] = await Promise.all([api.get("/api/private-school/me"), safe(api.get("/api/private-school/learners")), safe(api.get("/api/private-school/campuses")),
+    safe(api.get("/api/private-school/members")), safe(api.get("/api/private-school/calendar")), safe(api.get("/api/session/contexts")),
+    safe(api.get("/api/private-school/admissions")), safe(api.get("/api/private-school/classes")), safe(api.get("/api/private-school/report-cards")), safe(api.get("/api/private-school/schedule"))]);
   const d = meRes.data, r = d.role, sch = d.school, reload = () => renderPrivateSchool(), active = sch.status === "active";
   const admin = r === "school_admin", enrolls = ["school_admin", "registrar", "campus_admin"].includes(r), staff = r !== "guardian";
   const camps = (campuses?.data || []).filter(c => c.status === "active"), campName = id => camps.find(c => c.id === id)?.name || "";
@@ -464,6 +560,7 @@ async function renderPrivateSchool() {
           campusId: ln.campus ? ln.campus.value : d.campus?.id, localNumber: ln.number.value.trim() || undefined }, "Enrolled."); } },
         h("h4", {}, "Enroll a learner"), h("label", { for: "ps-l-name" }, "Name"), ln.name, h("label", { for: "ps-l-grade" }, "Grade"), ln.grade,
         ln.campus ? [h("label", { for: "ps-l-campus" }, "Campus"), ln.campus] : null, h("label", { for: "ps-l-number" }, "Student number (optional)"), ln.number, h("button", { class: "btn", type: "submit" }, "Enroll")) : null),
+    psAcademics({ r, active, enrolls, camps, campName, learnerList, apps: apps?.data || [], classes: classes?.data || [], cards: cards?.data || [], week: week?.data || [], members: members?.data?.members || [], post }),
     h("section", { class: "card", "aria-label": "Calendar" }, h("h3", {}, "Calendar"),
       (cal?.data || []).length ? h("ul", { class: "list" }, cal.data.map(e => h("li", {}, h("b", {}, e.title), h("span", { class: "small muted" }, ` · ${PS_KINDS[e.kind]} · ${fmt(e.startsAt)}${e.campus ? ` · ${e.campus}` : ""}${e.audience === "staff" ? " · staff only" : ""}`)))) : h("p", { class: "muted" }, "Nothing scheduled."),
       ["school_admin", "campus_admin"].includes(r) ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const day = new Date(`${ev.day.value}T08:00:00`);
