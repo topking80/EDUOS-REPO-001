@@ -12,6 +12,8 @@ import rateLimit from "express-rate-limit";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { registerSigningKey, freezingIncident, securityAlerts, KeyRevokedError } from "./security.js";
+import { metricsMiddleware, metricsHandler } from "../federation/prometheus.js";
+import { federationGauges, cachedGauges } from "./metrics.js";
 import { loadModel, catalog, today, authorize, validateAuthorityModel, resolvePolicy, visibleNodes, inForce, withinNode } from "./model.js";
 import { appendAudit, verifyAudit } from "./audit.js";
 import { randomSecret, sha256 } from "./oidc.js";
@@ -85,6 +87,16 @@ export function createApp({ cfg, db, providers }) {
   app.use("/mc", rateLimit({ windowMs: 60_000, limit: cfg.rateLimitPerMinute, standardHeaders: true, legacyHeaders: false }));
   app.use("/mc/api", express.json({ limit: "64kb" }));
   app.get("/mc/healthz", (req, res) => res.json({ ok: true }));
+  // FED-09: readiness (the database answers) and Prometheus metrics, served
+  // only with the MC_METRICS_TOKEN bearer token. Internal-only, like EduOS's.
+  app.get("/mc/readyz", async (req, res) => {
+    try { await db.query("SELECT 1"); res.json({ status: "ok" }); } catch { res.status(503).json({ status: "unavailable" }); }
+  });
+  app.use("/mc", metricsMiddleware);
+  const signingFingerprint = () => { try { return bundleKeys(readProviderSecret("MC_POLICY_SIGNING_SECRET"))?.fingerprint || null; } catch { return null; } };
+  app.get("/mc/metrics", metricsHandler({ token: process.env.MC_METRICS_TOKEN || "", version: catalog.model_version, prefix: "mc",
+    poolStats: () => ({ total: db.pool.totalCount, idle: db.pool.idleCount, waiting: db.pool.waitingCount }),
+    extra: cachedGauges(() => federationGauges(db, { signingFingerprint: signingFingerprint() })) }));
 
   // ---- sign-in -----------------------------------------------------------
   // ---- sign-in (FED-04: any active trusted provider; ?idp=<id>, default primary;

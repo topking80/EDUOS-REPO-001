@@ -1,0 +1,104 @@
+# FED-09: Prometheus alert rules for the federation layer: Master Control
+# (scraped at /mc/metrics with MC_METRICS_TOKEN, job "master-control") and the
+# federation gauges on each EduOS's /metrics (job "eduos").
+# Runbook: docs/OPERATIONS-FEDERATION.md
+groups:
+  - name: master-control.availability
+    rules:
+      - alert: MasterControlScrapeUnavailable
+        expr: up{job="master-control"} == 0 or absent(up{job="master-control"})
+        for: 5m
+        labels: { severity: warning, service: master-control }
+        annotations:
+          summary: Master Control metrics can't be scraped
+          description: Prometheus can't reach /mc/metrics, or the target is missing. Check the service, its network path and the MC_METRICS_TOKEN credentials file.
+          runbook: docs/OPERATIONS-FEDERATION.md#master-control-unavailable
+      - alert: MasterControlStateUnavailable
+        expr: mc_federation_up == 0
+        for: 5m
+        labels: { severity: warning, service: master-control }
+        annotations:
+          summary: Master Control can't read its own state
+          description: The metrics endpoint answers but its database queries fail. Check the master_control schema, the mc_app grants and database health.
+          runbook: docs/OPERATIONS-FEDERATION.md#master-control-unavailable
+
+  - name: master-control.security
+    rules:
+      - alert: MasterControlAuditChainBroken
+        expr: mc_audit_chain_ok == 0
+        for: 1m
+        labels: { severity: critical, service: master-control }
+        annotations:
+          summary: Master Control's audit hash chain is broken
+          description: An audit entry was removed or changed. Treat as a security incident; GET /mc/api/audit/verify shows where the chain breaks.
+          runbook: docs/OPERATIONS-FEDERATION.md#audit-chain-broken
+      - alert: MasterControlRevokedSigningKeyConfigured
+        expr: mc_signing_key_status{status="revoked"} == 1
+        for: 1m
+        labels: { severity: critical, service: master-control }
+        annotations:
+          summary: Master Control is configured with a revoked signing key
+          description: It will refuse to sign bundles and terms until a new MC_POLICY_SIGNING_SECRET is configured. Follow the FED-08 revocation runbook.
+          runbook: docs/OPERATIONS-FEDERATION.md#revoked-signing-key
+      - alert: MasterControlRepeatedDenials
+        expr: mc_audit_max_denials_per_operator_last_hour >= 10
+        for: 5m
+        labels: { severity: warning, service: master-control }
+        annotations:
+          summary: An operator is being refused repeatedly
+          description: One operator has had ten or more refusals in the last hour. GET /mc/api/security/alerts names the account; check for misuse or a misconfigured role.
+          runbook: docs/OPERATIONS-FEDERATION.md#repeated-denials
+      - alert: MasterControlHighSeverityIncidentOpen
+        expr: sum(mc_incidents_open{severity=~"high|critical"}) > 0
+        for: 1m
+        labels: { severity: warning, service: master-control }
+        annotations:
+          summary: A high or critical security incident is open
+          description: Coordinate through the incident in Master Control; exchanges under it may be frozen.
+          runbook: docs/OPERATIONS-FEDERATION.md#open-incident
+
+  - name: master-control.distribution
+    rules:
+      - alert: MasterControlPolicyBundleUnanswered
+        expr: mc_policy_bundle_oldest_unacknowledged_seconds > 7 * 86400
+        for: 1h
+        labels: { severity: warning, service: master-control }
+        annotations:
+          summary: A district hasn't answered its newest policy bundle for a week
+          description: GET /mc/api/policy-releases shows which. Contact the district; it may not have received the file.
+          runbook: docs/OPERATIONS-FEDERATION.md#unanswered-bundle
+
+  - name: eduos.federation
+    rules:
+      - alert: EduOSFederationStatusUnavailable
+        expr: eduos_federation_status_up == 0
+        for: 10m
+        labels: { severity: warning, service: eduos }
+        annotations:
+          summary: EduOS can't read district federation status
+          description: The eduos_federation_status() function failed. Check migrations and runtime grants (db/158).
+          runbook: docs/OPERATIONS-FEDERATION.md#eduos-federation-status
+      - alert: EduOSNoTrustedMasterControlKey
+        expr: eduos_federation_trusted_keys == 0 and on(instance) sum by (instance) (eduos_federation_districts{bundle="in_effect"}) > 0
+        for: 10m
+        labels: { severity: warning, service: eduos }
+        annotations:
+          summary: EduOS has policy bundles but trusts no Master Control key
+          description: MC_POLICY_PUBLIC_KEY is empty or every key in it is revoked. New bundles and exchange terms will be refused.
+          runbook: docs/OPERATIONS-FEDERATION.md#revoked-signing-key
+      - alert: EduOSBundleUnderRevokedKey
+        expr: eduos_federation_newest_bundle_revoked_key_districts > 0
+        for: 30m
+        labels: { severity: warning, service: eduos }
+        annotations:
+          summary: A district's newest policy bundle was signed with a revoked key
+          description: EduOS is following an older bundle for that district. Ask Master Control to issue a new release, and have the district receive it.
+          runbook: docs/OPERATIONS-FEDERATION.md#revoked-signing-key
+      - alert: EduOSResidencyNotMet
+        expr: eduos_federation_residency_districts{status="not_met"} > 0
+        for: 30m
+        labels: { severity: warning, service: eduos }
+        annotations:
+          summary: A district's data residency rule doesn't match the declared hosting location
+          description: EDUOS_DATA_LOCATION is outside what a district's rule allows. Review the hosting declaration with the district; EduOS doesn't move data.
+          runbook: docs/OPERATIONS-FEDERATION.md#residency-not-met

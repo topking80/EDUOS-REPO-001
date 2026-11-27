@@ -861,3 +861,6 @@ GRANT EXECUTE ON FUNCTION eduos_history_donation_schedule_cancel(uuid, text), ed
 -- received; append-only).
 GRANT SELECT, INSERT ON district_policy_bundles TO eduos_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON district_policy_bundles FROM eduos_app;
+
+-- 158 (FED-09): aggregate federation status for /metrics (counts only).
+GRANT EXECUTE ON FUNCTION eduos_federation_status(text, text[]) TO eduos_app;

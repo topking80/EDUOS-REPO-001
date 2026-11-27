@@ -15,7 +15,7 @@ test("the SLO rules and their promtool tests are generated from src/slo.js and u
 });
 
 test("SLIs use only metrics and labels EduOS exports", () => {
-  const metrics = read("../src/metrics.js");
+  const metrics = read("../src/federation/prometheus.js");
   for (const name of ["eduos_http_requests_total", "eduos_http_request_duration_seconds"]) assert.ok(metrics.includes(name));
   const buckets = JSON.parse(/LATENCY_BUCKETS = (\[[^\]]+\])/.exec(metrics)[1]);
   assert.ok(buckets.includes(LATENCY_THRESHOLD_SECONDS), "the latency threshold is a histogram bucket boundary");

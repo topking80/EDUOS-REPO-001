@@ -15,6 +15,7 @@ const key = () => bundleKeys(crypto.randomBytes(24).toString("hex"));
 describe("FED-08 Master Control key rotation and revocation in EduOS", { skip }, () => {
   let db, idp, server, admin, s = {};
   const oldKey = key(), newKey = key(), leaked = key(), stranger = key();
+  const metricsToken = crypto.randomBytes(24).toString("hex");
   const bundle = (version, k, policies = {}) => signBundle({ format: BUNDLE_FORMAT, bundle_id: `pb-${version}`, release_id: `rel-${version}`, kind: "release", version,
     previous_sha256: null, issued_at: TODAY, effective_from: TODAY, district: { node_id: "dist-1", name: "D1", tenant_ref: ID.d1, jurisdiction_id: "US-TX" },
     issuer: { node_id: "sea-tx", name: "Texas Education Agency" }, catalog_version: "0.6.0",
@@ -28,7 +29,7 @@ describe("FED-08 Master Control key rotation and revocation in EduOS", { skip },
   before(async () => {
     db = await createDatabase(); idp = await startIdp();
     const env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app, EXCHANGE_SIGNING_SECRET: crypto.randomBytes(24).toString("hex"),
-      MC_POLICY_PUBLIC_KEY: `${oldKey.public},${newKey.public},${leaked.public}`, MC_POLICY_REVOKED_KEYS: leaked.fingerprint });
+      MC_POLICY_PUBLIC_KEY: `${oldKey.public},${newKey.public},${leaked.public}`, MC_POLICY_REVOKED_KEYS: leaked.fingerprint, METRICS_TOKEN: metricsToken, EDUOS_DATA_LOCATION: "US-TX" });
     const m = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl }); assert.equal(m.code, 0, m.out);
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
@@ -65,5 +66,19 @@ describe("FED-08 Master Control key rotation and revocation in EduOS", { skip },
     assert.equal((await build(terms(oldKey))).status, 200);
     assert.equal((await build(terms(newKey))).status, 200);
     assert.equal((await build(terms(leaked))).body.error, "key_revoked");
+  });
+
+  it("FED-09: /metrics counts districts by federation state without naming any", async () => {
+    const res = await fetch(`${server.base}/metrics`, { headers: { authorization: `Bearer ${metricsToken}` } });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const v = name => Number(new RegExp(`^${name.replace(/[{}"=]/g, m => "\\" + m)} (\\S+)$`, "m").exec(text)?.[1]);
+    assert.equal(v("eduos_federation_status_up"), 1);
+    assert.equal(v("eduos_federation_trusted_keys"), 2); assert.equal(v("eduos_federation_revoked_keys"), 1);
+    assert.equal(v('eduos_federation_districts{bundle="in_effect"}'), 1); assert.equal(v('eduos_federation_districts{bundle="none"}'), 1, "D2 has none");
+    assert.equal(v("eduos_federation_newest_bundle_revoked_key_districts"), 1);
+    assert.equal(v("eduos_federation_legal_hold_districts"), 0, "the hold came in under the revoked key");
+    assert.equal(v('eduos_federation_residency_districts{status="met"}'), 2);
+    for (const id of [ID.d1, ID.d2, "D1", "Texas"]) assert.ok(!text.includes(id), `${id} isn't in the metrics`);
   });
 });
