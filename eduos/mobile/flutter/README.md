@@ -20,9 +20,12 @@ approvals and restrictions, the accountability board during an incident
 starting an alert in two confirmed steps, plus debriefs.
 
 **Phase 4** adds learners: Home (what to practise next, courses, my bus,
-school news), Courses (grades, standards mastery, lessons with primary
-sources, quizzes with a timer and answers saved as you go, results and
-classwork feedback), Christie practice chats, My path, My library and News.
+school news), **My work** (a cross-course assignment planner grouped into
+to-do, turned-in/awaiting-review and graded work, sorted by due date), Courses
+(grades, standards mastery, lessons with primary sources, quizzes with a timer
+and answers saved as you go, results and classwork feedback), Christie practice
+chats, My path, My library and News. See
+`docs/STUDENT-APP-EXPANSION-ROADMAP.md` for the next student-app phases.
 Quiz answers are never queued offline; the app says when one isn't saved.
 
 **Phase 5** adds teachers: Classes (offline-safe attendance and a native daily
