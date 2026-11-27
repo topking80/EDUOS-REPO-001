@@ -27,6 +27,6 @@ test("family endpoints return only summary fields and do not expose response tex
   const start = server.indexOf('app.get("/api/family/children/:studentId/summary"');
   const end = server.indexOf("// Phase 32.0.34: authenticated family messaging.", start);
   const route = server.slice(start, end);
-  assert.match(route, /sub\.score,sub\.feedback,sub\.graded_at/);
+  assert.match(route, /held_at IS NULL THEN sub\.score END AS score,CASE WHEN sub\.held_at IS NULL THEN sub\.feedback END AS feedback/, "a held-back grade (db/174) stays hidden");
   assert.doesNotMatch(route, /sub\.response_text|local_student_number/);
 });

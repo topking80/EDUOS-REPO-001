@@ -252,6 +252,36 @@ describe("EduOS 32.6.0 learning core and EDAL against real PostgreSQL", { skip }
     await admin.query("DELETE FROM assignments WHERE id = ANY($1::uuid[])", [[late.id, turnedIn.id]]);
   });
 
+  it("a held-back grade stays out of learner and family views until the teacher returns it (db/174)", async () => {
+    const STD3 = "5d000000-0000-4000-8000-0000000000d3";
+    await admin.query("INSERT INTO learning_standards(id,district_id,framework,code,subject,grade_level,description) VALUES($1,$2,'CCSS','W.4.1','Writing','3','Summary: opinion pieces')", [STD3, ID.d1]);
+    const evBefore = 0;
+    const lab = ok(await as("t1")("POST", "/api/learning/assignments", { courseId: course.id, title: "Lab report", kind: "work",
+      rubric: [{ id: "claims", title: "Claims", standardId: STD3, levels: [{ points: 1, label: "Not yet" }, { points: 3, label: "Clear" }] }] }), 201);
+    const before = ok(await as("pu")("GET", "/api/learning/progress")).courses[0].grade.percent;
+    const g = ok(await as("t1")("POST", `/api/learning/assignments/${lab.id}/grade`, { studentId: ID.alice, scores: [{ criterionId: "claims", points: 3 }], feedback: "HELD-FEEDBACK", returnToStudent: false }));
+    assert.equal(g.held, true); assert.deepEqual(g.evidence, [], "no mastery evidence while held");
+    const mine = ok(await as("pu")("GET", "/api/learning/progress")).courses[0];
+    const w = mine.work.find(x => x.title === "Lab report");
+    assert.deepEqual([w.status, w.feedback, w.counted, mine.grade.percent], ["submitted", null, false, before]);
+    const fam = ok(await as("pa")("GET", `/api/learning/assignments/${lab.id}?studentId=${ID.alice}`)).submission;
+    assert.deepEqual([fam.graded, fam.feedback, fam.rubric_scores], [false, undefined, undefined]);
+    assert.ok(!JSON.stringify(ok(await as("pa")("GET", `/api/learning/courses/${course.id}?studentId=${ID.alice}`))).includes("HELD-FEEDBACK"));
+    assert.equal(ok(await as("pa")("GET", `/api/learning/mastery/${STD3}?studentId=${ID.alice}`)).evidenceCount, evBefore);
+    const cell = ok(await as("t1")("GET", `/api/learning/courses/${course.id}/gradebook`)).students.find(x => x.id === ID.alice).cells.find(x => x.assignmentId === lab.id);
+    assert.deepEqual([cell.held, cell.earned], [true, 3], "the teacher still sees it");
+    assert.equal((await as("pu")("POST", `/api/learning/assignments/${lab.id}/return`, {})).status, 403);
+    await assert.rejects(asRole("pupil", USERS.pu[0], ID.s1, `UPDATE assignment_submissions SET held_at=NULL WHERE assignment_id='${lab.id}'`), /cannot grade/);
+    assert.equal(ok(await as("t1")("POST", `/api/learning/assignments/${lab.id}/return`, { studentIds: [ID.alice] })).released, 1);
+    const after = ok(await as("pu")("GET", "/api/learning/progress")).courses[0].work.find(x => x.title === "Lab report");
+    assert.deepEqual([after.status, after.feedback, after.counted], ["graded", "HELD-FEEDBACK", true]);
+    assert.equal(ok(await as("pa")("GET", `/api/learning/assignments/${lab.id}?studentId=${ID.alice}`)).submission.feedback, "HELD-FEEDBACK");
+    assert.equal(ok(await as("pa")("GET", `/api/learning/mastery/${STD3}?studentId=${ID.alice}`)).evidenceCount, evBefore + 1, "evidence arrives on release");
+    assert.equal(ok(await as("t1")("POST", `/api/learning/assignments/${lab.id}/return`, {})).released, 0, "nothing left to release");
+    // Leave the course as the later ledger and export checks expect it.
+    await admin.query("UPDATE assignments SET status='draft' WHERE id=$1", [lab.id]);
+  });
+
   it("EDAL verify: leaders only, district-scoped, checkpoints, per-record proofs for families", async () => {
     for (const who of ["t1", "pa", "pu"]) assert.equal((await as(who)("GET", "/api/edal/verify")).status, 403, who);
     const v = ok(await as("supt1")("GET", "/api/edal/verify"));

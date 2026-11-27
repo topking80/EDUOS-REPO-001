@@ -4498,14 +4498,22 @@ VIEWS.rubric = async () => {
   const groups = a.rubric.map(c => h("fieldset", { class: "choices" }, h("legend", {}, c.title),
     c.levels.map(l => h("label", { class: "choice", for: `rb-${c.id}-${l.points}` }, h("input", { type: "radio", name: `rb-${c.id}`, id: `rb-${c.id}-${l.points}`, value: l.points, required: true }), h("span", {}, `${l.points} · ${l.label}`)))));
   const fb = h("textarea", { id: "rb-feedback", maxlength: 4000, rows: 3 });
+  // A grade can be held back and returned later (db/174); until then the
+  // learner and family see the work as turned in, with no score or feedback.
+  const now = h("input", { type: "checkbox", id: "rb-return-now", checked: true });
   return [back("grading", "Grading"), h("h2", {}, `${a.title} · ${name}`),
+    sub?.held_at ? h("section", { class: "card", "aria-label": "Held back" }, h("p", { class: "notice" }, `Graded ${fmtDay(sub.graded_at)} and held back: ${first(name)} and their family don't see the score or feedback yet.`),
+      h("button", { class: "btn primary", type: "button", onclick: async () => { try { await api.post(`/api/learning/assignments/${a.id}/return`, { studentIds: [studentId] }); toast(`Returned to ${first(name)}.`); go("grading"); } catch { toast("Couldn't return it."); } } }, "Return now")) : null,
     sub?.response_text ? h("section", { class: "card" }, h("h3", {}, "Handed in"), h("p", {}, sub.response_text)) : null,
     h("form", { class: "card", onsubmit: async (e) => {
       e.preventDefault();
       const scores = a.rubric.map(c => ({ criterionId: c.id, points: Number($main().querySelector(`input[name="rb-${c.id}"]:checked`)?.value) }));
-      try { const r = await api.post(`/api/learning/assignments/${a.id}/grade`, { studentId, scores, feedback: fb.value }); toast(`Returned: ${r.data.earned}/${r.data.possible}`); go("grading"); }
+      try { const r = await api.post(`/api/learning/assignments/${a.id}/grade`, { studentId, scores, feedback: fb.value, returnToStudent: now.checked });
+        toast(r.data.held ? `Saved ${r.data.earned}/${r.data.possible}, held back.` : `Returned: ${r.data.earned}/${r.data.possible}`); go("grading"); }
       catch { toast("Pick a level for every row."); } } },
-      groups, h("label", { for: fb.id }, "Feedback for the learner and family"), fb, h("button", { class: "btn primary block", type: "submit" }, "Return with rubric"))];
+      groups, h("label", { for: fb.id }, "Feedback for the learner and family"), fb,
+      h("label", { class: "inline", for: now.id }, now, " Return it to the learner and family now (untick to hold it back)"),
+      h("button", { class: "btn primary block", type: "submit" }, "Save rubric grade"))];
 };
 
 VIEWS.approvals = async () => {

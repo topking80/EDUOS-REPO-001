@@ -327,7 +327,10 @@ app.get("/api/family/children/:studentId/summary",requireSession,requireGuardian
         ),
         ()=>client.query(
           `SELECT a.id,a.title,a.due_at,a.status AS assignment_status,
-                  sub.submitted_at,sub.score,sub.feedback,sub.graded_at
+                  sub.submitted_at,
+                  -- A grade the teacher is holding back (db/174) isn't shown to the family yet.
+                  CASE WHEN sub.held_at IS NULL THEN sub.score END AS score,CASE WHEN sub.held_at IS NULL THEN sub.feedback END AS feedback,
+                  CASE WHEN sub.held_at IS NULL THEN sub.graded_at END AS graded_at
              FROM assignments a
              LEFT JOIN assignment_submissions sub
                ON sub.assignment_id=a.id AND sub.student_id=$2 AND sub.district_id=a.district_id
@@ -1459,7 +1462,7 @@ app.get("/api/student-360/:studentId",requireSession,requirePermission("students
       const studentId=req.params.studentId;
       const [attendance,assignments,cases,timeline]=await inSequence([
         ()=>client.query(`SELECT id,event_date,status,family_acknowledged_at FROM attendance_events WHERE student_id=$1 ORDER BY event_date DESC LIMIT 100`,[studentId]),
-        ()=>client.query(`SELECT a.id,a.title,a.due_at,a.status,sub.score,sub.feedback,sub.submitted_at FROM assignments a LEFT JOIN assignment_submissions sub ON sub.assignment_id=a.id AND sub.student_id=$1 WHERE a.school_id=$2 AND (a.status<>'draft' OR $3 IN ('superintendent','principal','teacher')) ORDER BY a.created_at DESC LIMIT 100`,[studentId,profile.rows[0].school_id,req.actor.role]),
+        ()=>client.query(`SELECT a.id,a.title,a.due_at,a.status,CASE WHEN sub.held_at IS NOT NULL AND $3 IN ('parent','pupil') THEN NULL ELSE sub.score END AS score,CASE WHEN sub.held_at IS NOT NULL AND $3 IN ('parent','pupil') THEN NULL ELSE sub.feedback END AS feedback,sub.submitted_at FROM assignments a LEFT JOIN assignment_submissions sub ON sub.assignment_id=a.id AND sub.student_id=$1 WHERE a.school_id=$2 AND (a.status<>'draft' OR $3 IN ('superintendent','principal','teacher')) ORDER BY a.created_at DESC LIMIT 100`,[studentId,profile.rows[0].school_id,req.actor.role]),
         ()=>client.query(`SELECT c.id,c.category,c.priority,c.status,c.title,c.summary,c.family_visible,c.follow_up_at,c.created_at,c.updated_at,owner.display_name AS owner_name
            FROM student_intervention_cases c LEFT JOIN users owner ON owner.id=c.owner_user_id
           WHERE c.student_id=$1 AND ($2 IN ('superintendent','principal','teacher') OR ($2='parent' AND c.family_visible=true))
@@ -1497,6 +1500,7 @@ app.get("/api/student-360/:studentId",requireSession,requirePermission("students
             FROM assignment_submissions sub JOIN assignments a ON a.id=sub.assignment_id
             LEFT JOIN users grader ON grader.id=sub.graded_by
            WHERE sub.student_id=$1 AND sub.graded_at IS NOT NULL AND a.school_id=$2
+             AND (sub.held_at IS NULL OR $3 NOT IN ('parent','pupil'))
              AND (a.status<>'draft' OR $3 IN ('superintendent','principal','teacher'))
           UNION ALL
           SELECT 'case_note',n.id,n.created_at,c.title,n.note,author.display_name

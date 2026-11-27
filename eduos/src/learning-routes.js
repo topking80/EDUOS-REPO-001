@@ -180,7 +180,7 @@ export function registerLearningRoutes(app) {
     for (const c of list) {
       const stds = await courseStandards(client, c.id);
       c.mastery = courseMastery(stds.map(s => s.id), await learnerStandardMastery(client, learner.id, stds.map(s => s.id)));
-      const g = await courseGradeData(client, c.id, [learner.id]);
+      const g = await courseGradeData(client, c.id, [learner.id], { learnerView: ["pupil", "parent"].includes(req.actor.role) });
       c.grade = g.byStudent.get(learner.id).grade;
       const next = await one(client, `SELECT a.id,a.title,a.kind,a.due_at FROM assignments a WHERE a.course_id=$1 AND a.status='published'
           AND NOT EXISTS(SELECT 1 FROM assignment_submissions s WHERE s.assignment_id=a.id AND s.student_id=$2)
@@ -223,7 +223,7 @@ export function registerLearningRoutes(app) {
       out.learner = { id: learner.id, name: learner.display_name };
       out.standards = stds.map(s => ({ ...s, mastery: m.get(s.id)?.mastery ?? null, level: m.get(s.id)?.level ?? "not_started" }));
       out.mastery = courseMastery(stds.map(s => s.id), m);
-      const g = await courseGradeData(client, c.id, [learner.id]);
+      const g = await courseGradeData(client, c.id, [learner.id], { learnerView: ["pupil", "parent"].includes(req.actor.role) });
       const mine = g.byStudent.get(learner.id);
       out.grade = mine.grade;
       out.assignments = work.map(w => ({ ...w, mine: mine.cells.find(x => x.assignmentId === w.id) || null }));
@@ -389,7 +389,7 @@ export function registerLearningRoutes(app) {
       out.submissions = a.kind === "quiz"
         ? await rows(client, `SELECT q.id,q.student_id,s.display_name,q.attempt_no,q.status,q.total_points::float8 AS total,q.possible_points::float8 AS possible,q.late,q.submitted_at,q.extra_time_pct
             FROM quiz_attempts q JOIN students s ON s.id=q.student_id WHERE q.assignment_id=$1 ORDER BY s.display_name,q.attempt_no`, [a.id])
-        : await rows(client, `SELECT x.id,x.student_id,s.display_name,x.response_text,x.submitted_at,x.score::float8 AS score,x.points_earned::float8 AS points_earned,x.rubric_scores,x.feedback,x.graded_at,x.returned_at
+        : await rows(client, `SELECT x.id,x.student_id,s.display_name,x.response_text,x.submitted_at,x.score::float8 AS score,x.points_earned::float8 AS points_earned,x.rubric_scores,x.feedback,x.graded_at,x.returned_at,x.held_at
             FROM assignment_submissions x JOIN students s ON s.id=x.student_id WHERE x.assignment_id=$1 ORDER BY s.display_name`, [a.id]);
     } else {
       const learner = await resolveLearner(client, req.actor, req.query.studentId);
@@ -400,10 +400,12 @@ export function registerLearningRoutes(app) {
         out.accommodations = { extraTimePct: acc?.extra_time_pct || 0, readAloud: Boolean(acc?.read_aloud) };
         out.effectiveMinutes = a.time_limit_minutes ? Math.round(a.time_limit_minutes * (1 + (acc?.extra_time_pct || 0) / 100)) : null;
       } else {
-        const s = await one(client, `SELECT id,response_text,submitted_at,score::float8 AS score,points_earned::float8 AS points_earned,rubric_scores,feedback,graded_at,returned_at
+        const s = await one(client, `SELECT id,response_text,submitted_at,score::float8 AS score,points_earned::float8 AS points_earned,rubric_scores,feedback,graded_at,returned_at,held_at
             FROM assignment_submissions WHERE assignment_id=$1 AND student_id=$2`, [a.id, learner.id]);
-        // Feedback and rubric scores are shown once the teacher returns the work.
-        out.submission = s && (s.returned_at ? s : { id: s.id, response_text: s.response_text, submitted_at: s.submitted_at, graded: Boolean(s.graded_at) });
+        // Score, feedback and rubric are shown once the work is graded, unless the
+        // teacher is holding it back (db/174); then it reads as turned in.
+        out.submission = s && (s.graded_at && !s.held_at ? (({ held_at, ...rest }) => rest)(s)
+          : { id: s.id, response_text: s.response_text, submitted_at: s.submitted_at, graded: false });
       }
     }
     await audit(client, req, "read", "assignment", a.id);
@@ -426,20 +428,37 @@ export function registerLearningRoutes(app) {
       earned = points;
     }
     const pct = Math.round((earned / Number(a.points_possible)) * 10000) / 100;
-    const s = await one(client, `INSERT INTO assignment_submissions(district_id,assignment_id,student_id,response_text,submitted_at,score,points_earned,rubric_scores,feedback,graded_by,graded_at,returned_at,grade_source)
-        VALUES($1,$2,$3,'(graded in class)',now(),$4,$5,$6,$7,$8,now(),CASE WHEN $9 THEN now() END,'teacher')
+    const s = await one(client, `INSERT INTO assignment_submissions(district_id,assignment_id,student_id,response_text,submitted_at,score,points_earned,rubric_scores,feedback,graded_by,graded_at,returned_at,grade_source,held_at)
+        VALUES($1,$2,$3,'(graded in class)',now(),$4,$5,$6,$7,$8,now(),CASE WHEN $9 THEN now() END,'teacher',CASE WHEN $9 THEN NULL ELSE now() END)
         ON CONFLICT(assignment_id,student_id) DO UPDATE SET score=$4,points_earned=$5,rubric_scores=$6,feedback=$7,graded_by=$8,graded_at=now(),grade_source='teacher',
-          returned_at=CASE WHEN $9 THEN now() ELSE assignment_submissions.returned_at END RETURNING id`,
+          returned_at=CASE WHEN $9 THEN now() ELSE assignment_submissions.returned_at END,held_at=CASE WHEN $9 THEN NULL ELSE now() END RETURNING id`,
       [req.actor.districtId, a.id, learner.id, pct, earned, rubricRows ? JSON.stringify(rubricRows) : null, feedback, req.actor.userId, Boolean(returnToStudent)]);
-    // Rubric rows tied to a standard become mastery evidence.
+    // Rubric rows tied to a standard become mastery evidence, once the work is
+    // returned (a held grade adds its evidence when it's released).
     const evidence = [];
-    for (const r of rubricRows || []) if (r.standardId) {
+    if (returnToStudent) for (const r of rubricRows || []) if (r.standardId) {
       const m = await addEvidence(client, req.actor, { schoolId: a.school_id, studentId: learner.id, standardId: r.standardId, source: "rubric", sourceRef: s.id,
         label: `${a.title}: ${r.title}`, score: r.max ? r.points / r.max : 0 });
       evidence.push({ standardId: r.standardId, mastery: m.mastery, level: m.level, milestone: Boolean(m.milestone) });
     }
     await audit(client, req, "grade", "assignment_submission", s.id, `points=${earned};returned=${Boolean(returnToStudent)}`);
-    return { submissionId: s.id, earned, possible: Number(a.points_possible), percent: pct, rubric: rubricRows, evidence };
+    return { submissionId: s.id, earned, possible: Number(a.points_possible), percent: pct, rubric: rubricRows, evidence, held: !returnToStudent };
+  }));
+
+  // Release grades held back with returnToStudent: false (db/174): the learner
+  // and family see them from now on, and rubric evidence reaches mastery.
+  app.post("/api/learning/assignments/:id/return", ...write("grade"), wrap(async (client, req) => {
+    const a = await assignmentFor(client, req.params.id);
+    if (!a.can_manage || a.kind !== "work") throw new HttpError(403, "not_gradable_here");
+    const ids = req.body?.studentIds;
+    if (ids !== undefined && (!Array.isArray(ids) || !ids.length || ids.length > 500 || !ids.every(validId))) throw new HttpError(400, "invalid_student_ids");
+    const released = await rows(client, `UPDATE assignment_submissions SET held_at=NULL, returned_at=now()
+        WHERE assignment_id=$1 AND held_at IS NOT NULL AND ($2::uuid[] IS NULL OR student_id=ANY($2::uuid[])) RETURNING id,student_id,rubric_scores`, [a.id, ids ?? null]);
+    for (const s of released) for (const r of s.rubric_scores || []) if (r.standardId)
+      await addEvidence(client, req.actor, { schoolId: a.school_id, studentId: s.student_id, standardId: r.standardId, source: "rubric", sourceRef: s.id,
+        label: `${a.title}: ${r.title}`, score: r.max ? r.points / r.max : 0 });
+    await audit(client, req, "return", "assignment", a.id, `released=${released.length}`);
+    return { released: released.length };
   }));
 
   // ---------- quizzes ----------
@@ -642,7 +661,7 @@ export function registerLearningRoutes(app) {
     const courses = await rows(client, `SELECT c.id,c.title,c.subject,c.term,u.display_name AS teacher FROM course_enrollments e JOIN courses c ON c.id=e.course_id
         JOIN users u ON u.id=c.teacher_user_id WHERE e.student_id=$1 AND e.status='active' AND c.status='active' ORDER BY c.title`, [learner.id]);
     for (const c of courses) {
-      const g = await courseGradeData(client, c.id, [learner.id]);
+      const g = await courseGradeData(client, c.id, [learner.id], { learnerView: ["pupil", "parent"].includes(req.actor.role) });
       const mine = g.byStudent.get(learner.id);
       c.grade = mine.grade; c.missing = mine.missing;
       c.recent = g.work.map((w, i) => ({ id: w.id, title: w.title, kind: w.kind, points: w.points, ...mine.cells[i] })).filter(x => x.status === "graded").slice(-4).reverse();
