@@ -145,6 +145,15 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       waitlistPosition: null, documents: [{ label: "Birth certificate", received: true }, { label: "Records", received: false }], next: ["offered", "waitlisted", "not_offered", "withdrawn"] }] };
     case "/api/private-school/classes": return { data: [{ id: "pk1", campusId: "pc1", name: "Math 4", schoolYear: "2026-2027", term: "Fall", teacher: "Teacher S1", status: "active", size: 18 }] };
     case "/api/private-school/report-cards": return { data: [{ id: "prc1", learnerId: "pl1", learner: "Ava Lin", schoolYear: "2026-2027", term: "Fall", status: "draft", lines: [] }] };
+    // HSP-06 part 2: compliance planning.
+    case "/api/homeschool/compliance": return { data: { schoolYear: "2026-2027", disclaimer: "Requirements differ by place and change. This is a planning aid, not legal advice.", canAdopt: true, canCheck: true,
+      profile: { id: "cp1", label: "Example plan (2026.1)", custom: false, retentionYears: 3, provenance: "From the platform's template, last reviewed 2026-11-01 by Reviewer.",
+        template: { authority: { name: "Example Department of Education", url: "https://example.org" }, sources: [{ title: "Example statute", url: "https://example.org/s" }], retired: false } },
+      instruction: { required: { days: 180 }, progress: [{ learnerId: "l1", learner: "Mia", days: 42, hours: 168, daysMet: false }] }, subjects: ["Reading"],
+      deadlines: [{ key: "notice", label: "Notice of intent", due: "2026-08-15", status: "done", flag: null }],
+      documents: [{ key: "att", label: "Attendance record", perLearner: [{ learnerId: "l1", learner: "Mia", status: "to_do" }] }], assessments: [] } };
+    case "/api/private-school/compliance": return { data: { schoolYear: "2026-2027", disclaimer: "Requirements differ by place and change. This is a planning aid, not legal advice.", canAdopt: true, profile: null } };
+    case "/api/private-school/compliance/templates": return { data: [] };
     // HSP-07 part 2: reading lists and school messages.
     case "/api/homeschool/learners/l1/reading": return { data: { canEdit: true, totals: { finishedThisSchoolYear: 3, reading: 1, minutes: 600 },
       books: [{ id: "b1", title: "Charlotte's Web", author: "E. B. White", status: "reading", minutes: 90 }, { id: "b2", title: "Holes", author: "Louis Sachar", status: "finished", finishedOn: "2026-11-01", minutes: 300 }] } };
@@ -1503,7 +1512,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
       let text = "";
       for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Add a learner"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
-      for (const w of ["Ortiz Homeschool", "Learners", "Mia", "2 this week", "Coming up", "Fractions", "Tutor Tess", "Invite an adult", "Add a learner", "Add to the calendar", "Receive records", "Transfer code", "Co-ops", "Creek Co-op", "Organizer · 3 families", "Mia · Creek Co-op · Science lab · 120 min", "Add to log", "Start a co-op"])
+      for (const w of ["Ortiz Homeschool", "Learners", "Mia", "2 this week", "Coming up", "Fractions", "Tutor Tess", "Invite an adult", "Add a learner", "Add to the calendar", "Receive records", "Transfer code", "Co-ops", "Creek Co-op", "Compliance planning · 2026-2027", "Mia: 42/180 days", "Notice of intent · 2026-08-15", "Example Department of Education", "not legal advice", "Organizer · 3 families", "Mia · Creek Co-op · Science lab · 120 min", "Add to log", "Start a co-op"])
         if (!text.includes(w)) failures.push(`homeschool workspace: "${w}" is missing`);
       await axeScan(page, "homeschool workspace", a11y);
       await page.eval(`([...document.querySelectorAll("button")].find(b => b.getAttribute("aria-label") === "Open Mia") || {}).click?.()`);
@@ -1522,7 +1531,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
       let text = "";
       for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Export the school's records"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
-      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Billing", "INV-2026-0001", "Messages", "Math homework", "2 new", "New conversation", "Rita Registrar (Registrar)", "Transfers", "from Ortiz Homeschool", "Send a learner's records", "Published report cards", "Receive records", "RCT-2026-0001", "needs approval", "Sign off", "Draft invoice", "Export the school's records", "Ask to close the school",
+      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Billing", "INV-2026-0001", "Messages", "Math homework", "No plan for this school year yet.", "Or set your own targets", "2 new", "New conversation", "Rita Registrar (Registrar)", "Transfers", "from Ortiz Homeschool", "Send a learner's records", "Published report cards", "Receive records", "RCT-2026-0001", "needs approval", "Sign off", "Draft invoice", "Export the school's records", "Ask to close the school",
         "Admissions", "Cy Park", "Under review", "documents 1/2", "Offered", "New inquiry", "This week's schedule", "Mon 09:00–09:50 · Math 4", "Classes", "18 learners", "Report cards", "Draft"])
         if (!text.includes(w)) failures.push(`private school workspace: "${w}" is missing`);
       await axeScan(page, "private school workspace", a11y);

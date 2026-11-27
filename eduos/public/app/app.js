@@ -498,6 +498,40 @@ async function renderHomeschoolCoop(id) {
         h("div", { class: "grow" }, h("label", { for: "co-inv" }, "Invite a family"), inv), h("button", { class: "btn", type: "submit" }, "Create code")) : null, inviteBox,
       act ? h("p", {}, confirmBtn("Leave this co-op", "Yes, leave", () => api.post(`/api/homeschool/coops/${id}/leave`, {}).then(() => { toast("Your family left the co-op."); renderHomeschool(); }).catch(e => hsErr(e, "Couldn't leave.")))) : null));
 }
+// ---- HSP-06 part 2: compliance planning ------------------------------------------
+const CMP_STATUS = { done: "Done", not_applicable: "Doesn't apply", to_do: "To do" };
+Object.assign(HS_ERRORS, { already_have_a_profile_for_that_year: "There's already a plan for that school year.", learner_required: "Pick a learner.", invalid_requirements: "Check the requirements." });
+async function complianceCard(base, err, reload) {
+  const c = (await safe(api.get(`${base}/compliance`)))?.data;
+  if (!c) return null;
+  const sec = (...kids) => h("section", { class: "card", "aria-label": "Compliance planning" }, h("h3", {}, `Compliance planning · ${c.schoolYear}`), ...kids, h("p", { class: "small muted" }, c.disclaimer));
+  const post = (path, body, msg, method = "post") => api[method](path, body).then(() => { toast(msg); reload(); }).catch(e => err(e, "Couldn't save it."));
+  if (!c.profile) {
+    const tpl = (await safe(api.get(`${base}/compliance/templates`)))?.data || [];
+    const lbl = h("input", { id: "cmp-label", maxlength: 200, placeholder: "e.g. Our plan for this year" }), days = h("input", { id: "cmp-days", type: "number", min: 1, max: 366 }), hours = h("input", { id: "cmp-hours", type: "number", min: 1, max: 2000 });
+    return sec(h("p", {}, "No plan for this school year yet."),
+      tpl.length ? h("ul", { class: "list" }, tpl.map(t => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, t.title), h("span", { class: "small muted" }, ` · ${t.jurisdiction} · ${t.version} · reviewed ${t.lastReviewedOn} by ${t.reviewedBy}`)),
+        c.canAdopt ? h("button", { class: "btn small", type: "button", onclick: () => post(`${base}/compliance`, { schoolYear: c.schoolYear, templateId: t.id }, "Plan adopted.") }, "Use this") : null))) : h("p", { class: "small muted" }, "The platform hasn't published a reviewed template for you yet."),
+      c.canAdopt ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const instruction = {}; if (days.value) instruction.days = Number(days.value); if (hours.value) instruction.hours = Number(hours.value);
+          post(`${base}/compliance`, { schoolYear: c.schoolYear, label: lbl.value.trim() || "Our plan", requirements: Object.keys(instruction).length ? { instruction } : {} }, "Plan saved."); } },
+        h("div", { class: "grow" }, h("label", { for: "cmp-label" }, "Or set your own targets"), lbl), h("div", {}, h("label", { for: "cmp-days" }, "Days"), days), h("div", {}, h("label", { for: "cmp-hours" }, "Hours"), hours),
+        h("button", { class: "btn", type: "submit" }, "Save")) : null);
+  }
+  const P = c.profile, can = c.canCheck;
+  const mark = (key, status, learnerId) => post(`${base}/compliance/${P.id}/checklist/${key}`, { status, learnerId }, "Updated.", "put");
+  const pickStatus = (key, cur, learnerId, label) => can ? h("select", { "aria-label": label, onchange: e => mark(key, e.target.value, learnerId) }, Object.entries(CMP_STATUS).map(([v, t]) => h("option", { value: v, selected: v === cur }, t))) : h("span", { class: "small" }, CMP_STATUS[cur]);
+  const prog = c.instruction.progress, req = c.instruction.required;
+  return sec(h("p", {}, h("b", {}, P.label)), h("p", { class: "small muted" }, P.provenance),
+    P.template ? h("p", { class: "small" }, "Official source: ", h("a", { href: P.template.authority.url, target: "_blank", rel: "noopener noreferrer" }, P.template.authority.name),
+      P.template.sources.map(x => [" · ", h("a", { href: x.url, target: "_blank", rel: "noopener noreferrer" }, x.title)]), P.template.retired ? " · this template has since been retired; check for a newer one" : "") : null,
+    h("h4", {}, "Instruction"), h("ul", { class: "list small" }, prog.map(x => h("li", {}, `${x.learner}: ${x.days}${req?.days ? `/${req.days}` : ""} days${x.hours != null ? ` · ${x.hours}${req?.hours ? `/${req.hours}` : ""} hours` : ""}${x.daysMet ? " ✓" : ""}`))),
+    c.deadlines.length ? [h("h4", {}, "Dates"), h("ul", { class: "list small" }, c.deadlines.map(d => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${d.label} · ${d.due}${d.flag === "overdue" ? " · past due" : d.flag === "due_soon" ? " · coming up" : ""}`), pickStatus(d.key, d.status, undefined, d.label))))] : null,
+    c.documents.length ? [h("h4", {}, "Documents"), h("ul", { class: "list small" }, c.documents.map(d => d.perLearner ? d.perLearner.map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${d.label} · ${x.learner}${x.evidenceRef ? ` · kept: ${x.evidenceRef}` : ""}`), pickStatus(d.key, x.status, x.learnerId, `${d.label} for ${x.learner}`)))
+      : h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${d.label}${d.evidenceRef ? ` · kept: ${d.evidenceRef}` : ""}`), pickStatus(d.key, d.status, undefined, d.label))))] : null,
+    c.assessments.length ? [h("h4", {}, "Assessments"), h("ul", { class: "list small" }, c.assessments.map(a => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${a.label}${a.grades ? ` · grades ${a.grades.join(", ")}` : ""}`), pickStatus(a.key, a.status, undefined, a.label))))] : null,
+    c.subjects.length ? h("p", { class: "small" }, `Subjects: ${c.subjects.join(", ")}`) : null,
+    h("p", { class: "small" }, `Keep records for: ${P.retentionYears ? `${P.retentionYears} years` : "not set"}. EduOS doesn't delete anything on this schedule; it's your reminder.`));
+}
 async function renderHomeschool() {
   const [meRes, cal, members, ctx] = await Promise.all([api.get("/api/homeschool/me"), safe(api.get("/api/homeschool/calendar")), safe(api.get("/api/homeschool/members")), safe(api.get("/api/session/contexts"))]);
   const d = meRes.data, owner = d.role === "owner", reload = () => renderHomeschool();
@@ -551,6 +585,7 @@ async function renderHomeschool() {
         learners.length ? h("fieldset", {}, h("legend", {}, "Learners they can see"), learners.map((l, i) => h("label", { class: "check" }, inv.picks[i], ` ${l.displayName}`))) : null,
         h("button", { class: "btn", type: "submit" }, "Create invitation link"), linkBox) : null),
     d.role === "learner" || d.role === "guardian_viewer" ? null : await homeschoolCoopsCard(owner, reload),
+    ["owner", "co_educator"].includes(d.role) ? await complianceCard("/api/homeschool", hsErr, reload) : null,
     owner ? xferReceiveCard("/api/homeschool", null, reload) : null,
     owner ? h("section", { class: "card", "aria-label": "Add a learner" }, h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
         try { await api.post("/api/homeschool/learners", { displayName: ln.name.value.trim(), gradeBand: ln.grade.value }); toast("Learner added."); reload(); } catch (err) { hsErr(err, "Couldn't add the learner."); } } },
@@ -840,6 +875,7 @@ async function renderPrivateSchool() {
       xferList("/api/private-school", xfers, { canRelease: true, reload })) : null;
   const receive = ["school_admin", "registrar"].includes(r) && active ? xferReceiveCard("/api/private-school", camps, reload) : null;
   const messages = active ? await psMessagesCard(r, learnerList).catch(() => null) : null;
+  const compliance = ["school_admin", "registrar", "campus_admin"].includes(r) ? await complianceCard("/api/private-school", psErr, reload).catch(() => null) : null;
   put(h("h2", {}, sch.displayName),
     sch.status !== "active" ? h("p", { class: "notice" }, `${PS_STATUS[sch.status]}. ${sch.status === "pending_verification" ? "You can set up campuses and staff now; learner records can be added once the platform has verified the school." : ""}`) : null,
     h("section", { class: "card", "aria-label": r === "guardian" ? "Your children" : "Learners" }, h("h3", {}, r === "guardian" ? "Your children" : "Learners"),
@@ -852,7 +888,7 @@ async function renderPrivateSchool() {
         h("h4", {}, "Enroll a learner"), h("label", { for: "ps-l-name" }, "Name"), ln.name, h("label", { for: "ps-l-grade" }, "Grade"), ln.grade,
         ln.campus ? [h("label", { for: "ps-l-campus" }, "Campus"), ln.campus] : null, h("label", { for: "ps-l-number" }, "Student number (optional)"), ln.number, h("button", { class: "btn", type: "submit" }, "Enroll")) : null),
     psAcademics({ r, active, enrolls, camps, campName, learnerList, apps: apps?.data || [], classes: classes?.data || [], cards: cards?.data || [], week: week?.data || [], members: members?.data?.members || [], post }),
-    messages, billing, transfers, receive,
+    messages, billing, transfers, receive, compliance,
     h("section", { class: "card", "aria-label": "Calendar" }, h("h3", {}, "Calendar"),
       (cal?.data || []).length ? h("ul", { class: "list" }, cal.data.map(e => h("li", {}, h("b", {}, e.title), h("span", { class: "small muted" }, ` · ${PS_KINDS[e.kind]} · ${fmt(e.startsAt)}${e.campus ? ` · ${e.campus}` : ""}${e.audience === "staff" ? " · staff only" : ""}`)))) : h("p", { class: "muted" }, "Nothing scheduled."),
       ["school_admin", "campus_admin"].includes(r) ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const day = new Date(`${ev.day.value}T08:00:00`);

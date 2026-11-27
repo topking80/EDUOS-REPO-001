@@ -93,7 +93,7 @@ Education requirements differ by jurisdiction and can change. Build a configurab
 - **HSP-03 — Private school foundation:** verified organization/campus onboarding, roles, branding, calendar, staff and student enrollment. Built: `docs/product/hsp-03-private-school-foundation.md`.
 - **HSP-04 — Private school admissions and academics:** admissions lifecycle, rosters, schedules, attendance, learning and report-card workflows. Built: `docs/product/hsp-04-private-school-academics.md`.
 - **HSP-05 — Tuition and school finance:** provider configuration, invoices, aid/credits, receipts, refunds, reconciliation, separation of duties. Built: `docs/product/hsp-05-tuition-and-finance.md`
-- **HSP-06 — Controlled portability and compliance profiles:** family/school/district transfer, provenance, jurisdictional templates, retention and audit. Transfers between families and private schools built: `docs/product/hsp-06-learner-transfers.md` (compliance profiles and district transfers next).
+- **HSP-06 — Controlled portability and compliance profiles:** family/school/district transfer, provenance, jurisdictional templates, retention and audit. Transfers between families and private schools built: `docs/product/hsp-06-learner-transfers.md` Compliance profiles built: `docs/product/hsp-06b-compliance-profiles.md` (district transfers next).
 - **HSP-07 — Co-ops and shared services:** supervised co-op groups, approved resource sharing, library and family communication integrations. Co-ops with moderated sharing built: `docs/product/hsp-07-coops.md`; reading lists and private school messages built: `docs/product/hsp-07b-reading-and-messages.md`.
 
 ## Acceptance gates for every implementation PR
