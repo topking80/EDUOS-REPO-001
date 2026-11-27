@@ -954,3 +954,11 @@ REVOKE ALL ON ps_invoice_counters, ps_receipt_counters FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON ps_payment_providers, ps_billing_accounts, ps_invoices, ps_payments, ps_refunds, ps_reconciliations FROM eduos_app;
 REVOKE UPDATE ON ps_payments FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_ps_finance(), eduos_ps_pays(uuid), eduos_ps_invoice_account(uuid), eduos_ps_payment_invoice(uuid), eduos_ps_billing_learners(), eduos_ps_next_number(text) TO eduos_app;
+
+-- 165 (HSP-06): learner transfers. Read-only for the runtime role; every change goes through the eduos_transfer_* functions.
+GRANT SELECT (id, source_kind, source_tenant, source_learner, source_label, purpose, note, sections, snapshot, sha256, status, prepared_by, prepared_at, released_by, released_at, expires_at,
+  receiver_kind, receiver_tenant, receiver_label, receiver_learner, decided_by, decided_at, decline_reason, revoked_by, revoked_at, revoke_reason) ON learner_transfers TO eduos_app;
+GRANT SELECT ON transferred_records TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON learner_transfers, transferred_records FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_ps_guards(uuid), eduos_transfer_side(text,uuid,uuid,text,uuid), eduos_transfer_prepare(uuid,text,text[],text,text), eduos_transfer_release(uuid,text),
+  eduos_transfer_revoke(uuid,text), eduos_transfer_preview(text), eduos_transfer_accept(text,uuid), eduos_transfer_decline(text,text), eduos_transferred_record_void(uuid,text) TO eduos_app;
