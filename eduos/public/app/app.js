@@ -4036,6 +4036,7 @@ const XR_ERRORS = { exchange_signing_not_configured: "This server has no exchang
   malformed: "The terms file is damaged or not in the expected format.", not_for_this_district: "Those terms are for another district.",
   consent_reference_required: "The district's rules need a recorded consent or authorization, and this agreement has none. Approve it again in Master Control with one.",
   recipient_outside_residency: "The district's residency rule doesn't allow sending data to this recipient.",
+  key_revoked: "The terms were signed with a Master Control key that has been revoked. Download them again from Master Control.",
   agreement_not_started: "This agreement hasn't started yet.", agreement_ended: "This agreement has ended." };
 async function exchangeCard() {
   const d = (await safe(api.get("/api/district/exchange")))?.data;
@@ -4063,7 +4064,8 @@ async function exchangeCard() {
 const PB_ERRORS = { not_a_policy_bundle: "That isn't a policy bundle file.", malformed: "The file is damaged or not in the expected format.",
   altered: "The file was changed after Master Control signed it.", wrong_key: "It wasn't signed with the key this server trusts.",
   bad_signature: "The signature doesn't check out.", not_for_this_district: "That bundle is for another district.",
-  older_than_received: "A newer bundle has already been received.", policy_key_not_configured: "This server has no Master Control key (MC_POLICY_PUBLIC_KEY)." };
+  older_than_received: "A newer bundle has already been received.", policy_key_not_configured: "This server has no Master Control key (MC_POLICY_PUBLIC_KEY).",
+  key_revoked: "It was signed with a Master Control key that has been revoked (MC_POLICY_REVOKED_KEYS)." };
 // FED-07: the jurisdiction rules EduOS follows, from the newest policy bundle in effect.
 const RESIDENCY_SCOPE = { any: "No restriction", us: "In the United States", in_state: "In the district's state" };
 const RESIDENCY_STATUS = { met: ["present", "Meets the rule (as declared)"], not_met: ["absent", "Doesn't meet the rule"], undeclared: ["expected", "Hosting location not declared"] };
@@ -4091,9 +4093,12 @@ async function masterControlPoliciesCard() {
   const latest = d.latest;
   return h("section", { class: "card", "aria-label": "Policies from Master Control" }, h("h2", {}, "Policies from Master Control"),
     h("p", { class: "small muted" }, "Signed policy bundles issued for this district, kept as received. EduOS follows the jurisdiction rules in the newest one in effect (below); nothing else in the district's settings changes."),
-    d.configured ? h("p", { class: "small" }, "Trusted signing key fingerprint ", h("code", {}, d.fingerprint), ". Check it matches the one Master Control shows.")
+    d.configured ? h("p", { class: "small" }, (d.fingerprints || [d.fingerprint]).length > 1 ? "Trusted signing key fingerprints (a rotation is under way) " : "Trusted signing key fingerprint ",
+        (d.fingerprints || [d.fingerprint]).map((f, i) => [i ? ", " : "", h("code", {}, f)]), ". Check they match what Master Control shows.",
+        d.revokedFingerprints?.length ? [" Revoked: ", d.revokedFingerprints.map((f, i) => [i ? ", " : "", h("code", {}, f)]), "."] : null)
       : h("p", { class: "notice" }, PB_ERRORS.policy_key_not_configured),
     latest ? h("div", {}, h("h3", {}, `Version ${latest.version}${latest.kind === "rollback" ? " (rollback)" : ""}`),
+      latest.keyRevoked ? h("p", { class: "notice" }, "This version was signed with a revoked key, so EduOS doesn't follow it. Ask Master Control to issue it again.") : null,
       h("p", { class: "small muted" }, `From ${latest.issuer || "Master Control"} · issued ${fmtDay(latest.issuedAt)} · in effect from ${fmtDay(latest.effectiveFrom)} · received by ${latest.receivedBy}`),
       latest.policies.length ? h("ul", { class: "list small" }, latest.policies.map(p => h("li", { class: "row" }, h("code", { class: "grow" }, p.id),
         h("span", {}, JSON.stringify(p.value)), p.locked_by ? chip("expected", "Locked") : null))) : h("p", { class: "small muted" }, "No policies in this version.")) : h("p", { class: "muted" }, "No bundles received yet."),

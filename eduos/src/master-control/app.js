@@ -11,6 +11,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { registerSigningKey, freezingIncident, securityAlerts, KeyRevokedError } from "./security.js";
 import { loadModel, catalog, today, authorize, validateAuthorityModel, resolvePolicy, visibleNodes, inForce, withinNode } from "./model.js";
 import { appendAudit, verifyAudit } from "./audit.js";
 import { randomSecret, sha256 } from "./oidc.js";
@@ -600,8 +601,15 @@ export function createApp({ cfg, db, providers }) {
     const r = resolvePolicy(m, pd.id, districtId, at);
     return { id: pd.id, value: r.value, source: r.source, locked_by: r.lockedBy || null, chain: r.chain };
   });
+  // FED-08: every signature goes through the key registry, which refuses a revoked key.
+  const signingKeysFor = async c => {
+    const keys = policyKeys();
+    if (!keys) return null;
+    try { await registerSigningKey(c, keys); } catch (e) { if (e instanceof KeyRevokedError) throw new HttpError(503, "policy_key_revoked"); throw e; }
+    return keys;
+  };
   async function issueBundles(c, m, release, districtIds, stage, contentFor, actor) {
-    const keys = policyKeys(), issuer = m.nodes.find(n => n.id === release.node_id), out = [];
+    const keys = await signingKeysFor(c), issuer = m.nodes.find(n => n.id === release.node_id), out = [];
     for (const did of districtIds) {
       const node = m.nodes.find(n => n.id === did);
       const { rows: [prev] } = await c.query("SELECT version, sha256 FROM policy_bundles WHERE district_node_id=$1 ORDER BY version DESC LIMIT 1", [did]);
@@ -621,7 +629,9 @@ export function createApp({ cfg, db, providers }) {
 
   app.get("/mc/api/policy-signing-key", ...read(async () => {
     const k = policyKeys();
-    return k ? { configured: true, publicKey: k.public, fingerprint: k.fingerprint } : { configured: false };
+    if (!k) return { configured: false };
+    const { rows: [r] } = await db.query("SELECT status FROM signing_keys WHERE fingerprint=$1", [k.fingerprint]);
+    return { configured: true, publicKey: k.public, fingerprint: k.fingerprint, status: r?.status || "unused" };
   }));
 
   app.post("/mc/api/policy-releases", ...change("release_policies", "policy_release", async (req, m) => {
@@ -809,6 +819,7 @@ export function createApp({ cfg, db, providers }) {
   app.post("/mc/api/exchange-agreements/:id/approve", ...change("approve_exchange", "exchange_agreement", async (req, m, c) => {
     const a = await loadAgreement(c, req.params.id, true);
     if (a.status !== "proposed") throw new HttpError(409, "agreement_not_proposed");
+    if (await freezingIncident(c, m, [a.producer_node_id, a.recipient_node_id])) throw new HttpError(423, "incident_freeze");
     const side = sideOf(m, req.principal, a);
     const as = side.producer.allowed && !a.producer_approved_at ? "producer" : side.recipient.allowed && !a.recipient_approved_at ? "recipient" : null;
     const decision = as ? { ...side[as], basis: { ...side[as].basis, side: as } } : side.producer.allowed || side.recipient.allowed ? { allowed: false, reason: "already_approved_by_your_side" } : side.producer;
@@ -861,6 +872,7 @@ export function createApp({ cfg, db, providers }) {
     const decision = decideAt(m, req.principal, "exchange.share", a.producer_node_id);
     if (decision.allowed && !inForceAgreement(a)) throw new HttpError(409, notInForce(a));
     if (decision.allowed && residencyError(m, a.producer_node_id, a.recipient_node_id)) throw new HttpError(409, "recipient_outside_residency");
+    if (decision.allowed && await freezingIncident(c, m, [a.producer_node_id, a.recipient_node_id])) throw new HttpError(423, "incident_freeze");
     const producer = m.nodes.find(n => n.id === a.producer_node_id);
     const v = checkEnvelope(req.body, { ...a, fields: a.fields, producer_tenant_ref: producer?.tenant_ref, effective_from: dateOf(a.effective_from), effective_to: dateOf(a.effective_to) });
     if (decision.allowed && !v.ok) throw new HttpError(422, v.reason, { detail: v.detail });
@@ -895,7 +907,9 @@ export function createApp({ cfg, db, providers }) {
         if (!inForceAgreement(a)) return { status: 409, body: { error: notInForce(a) } };
         if (residencyError(m, a.producer_node_id, a.recipient_node_id)) return { status: 409, body: { error: "recipient_outside_residency" } };
         if (ruleAt(m, "exchange.consent_reference.required", a.producer_node_id) && !a.consent_reference) return { status: 409, body: { error: "consent_reference_required" } };
-        const keys = policyKeys();
+        const frozen = await freezingIncident(c, m, [a.producer_node_id, a.recipient_node_id]);
+        if (frozen) { await appendAudit(c, { ...base, decision: "denied", reason: "incident_freeze", detail: { incident: frozen.id } }); return { status: 423, body: { error: "incident_freeze", incident: frozen.id } }; }
+        const keys = await signingKeysFor(c);
         if (!keys) return { status: 503, body: { error: "policy_signing_not_configured" } };
         const producer = m.nodes.find(n => n.id === a.producer_node_id), recipient = m.nodes.find(n => n.id === a.recipient_node_id);
         const terms = signTerms({ format: TERMS_FORMAT, agreement_id: a.id, producer: { node_id: producer.id, tenant_ref: producer.tenant_ref, name: producer.name },
@@ -933,6 +947,8 @@ export function createApp({ cfg, db, providers }) {
         const base = { actor: req.principal, action: "read_exchange_delivery", target_type: "exchange_delivery", target_id: d.id, node_id: a.producer_node_id, capability: party === "producer" ? "exchange.share" : "reporting.aggregate.view" };
         if (!party) { await appendAudit(c, { ...base, decision: "denied", reason: side.recipient.reason }); return { status: 403, body: { error: "not_a_party" } }; }
         if (!inForceAgreement(a)) { await appendAudit(c, { ...base, decision: "denied", reason: notInForce(a) }); return { status: 410, body: { error: "agreement_not_in_force", reason: notInForce(a) } }; }
+        const frozen = await freezingIncident(c, m, [a.producer_node_id, a.recipient_node_id]);
+        if (frozen) { await appendAudit(c, { ...base, decision: "denied", reason: "incident_freeze", detail: { incident: frozen.id } }); return { status: 423, body: { error: "incident_freeze", incident: frozen.id } }; }
         await appendAudit(c, { ...base, decision: "allowed", basis: { side: party, agreement: a.id }, detail: { purpose: a.purpose, sha256: d.sha256 } });
         return { status: 200, body: { data: { id: d.id, agreement: agreementView(a), version: d.version, envelope: d.envelope } } };
       });
@@ -940,6 +956,97 @@ export function createApp({ cfg, db, providers }) {
       res.status(out.status).json(out.body);
     } catch (e) { e instanceof HttpError ? res.status(e.status).json({ error: e.code }) : next(e); }
   });
+
+
+  // ---- FED-08: security operations ------------------------------------------
+  const platformRoot = m => m.nodes.find(n => n.kind === "platform");
+  const alertThreshold = () => { const n = Number(process.env.MC_ALERT_DENIALS_PER_HOUR || 10); return Number.isInteger(n) && n >= 1 && n <= 10000 ? n : 10; };
+  const platformDecision = (m, principal) => { const root = platformRoot(m); return root ? decide(m, principal, "platform.config.manage", root.id) : { allowed: false, reason: "no_platform" }; };
+
+  // The producing district replaces its EduOS exchange key (planned rotation,
+  // or after a compromise). Reports signed with the old key are refused from now on.
+  app.post("/mc/api/exchange-agreements/:id/rotate-key", ...change("rotate_exchange_key", "exchange_agreement", async (req, m, c) => {
+    const a = await loadAgreement(c, req.params.id, true), reason = text(req.body?.reason, 500, 3);
+    const key = parsePublicKey(typeof req.body?.publicKey === "string" ? req.body.publicKey : "");
+    if (!key || !reason) throw new HttpError(400, "public_key_and_reason_required");
+    if (a.status === "revoked") throw new HttpError(409, "agreement_revoked");
+    if (!a.producer_approved_at) throw new HttpError(409, "producer_not_approved");
+    const decision = decideAt(m, req.principal, "exchange.share", a.producer_node_id);
+    const extraErrors = key.fingerprint === a.producer_fingerprint ? ["exchange_agreements: that is the key already in use"] : [];
+    return { capability: "exchange.share", nodeId: a.producer_node_id, targetId: a.id, decision, extraErrors, next: mm => mm,
+      apply: cc => cc.query("UPDATE exchange_agreements SET producer_public_key=$2, producer_fingerprint=$3, producer_key_rotated_at=now() WHERE id=$1", [a.id, key.spki, key.fingerprint]),
+      detail: { from: a.producer_fingerprint, to: key.fingerprint, reason }, result: { id: a.id, producerFingerprint: key.fingerprint } };
+  }));
+
+  // Signing keys: the one in use, retired ones, revoked ones. Platform only.
+  app.get("/mc/api/signing-keys", ...read(async (req, m) => {
+    if (!platformDecision(m, req.principal).allowed) throw new HttpError(403, "not_authorized");
+    const { rows } = await db.query(`SELECT k.fingerprint, k.purpose, k.status, k.first_used_at, k.retired_at, k.revoked_at, k.revoked_by, k.revoke_reason,
+        (SELECT count(*)::int FROM policy_bundles b WHERE b.bundle->'signature'->>'keyFingerprint' = k.fingerprint) AS bundles
+       FROM signing_keys k ORDER BY k.first_used_at DESC`);
+    const k = policyKeys();
+    return { configured: k?.fingerprint || null, keys: rows.map(r => ({ fingerprint: r.fingerprint, purpose: r.purpose, status: r.status, firstUsedAt: r.first_used_at,
+      retiredAt: r.retired_at, revokedAt: r.revoked_at, revokedBy: r.revoked_by, revokeReason: r.revoke_reason, bundles: r.bundles })) };
+  }));
+
+  // Revoke a signing key: Master Control never signs with it again. Each
+  // district's EduOS must add it to MC_POLICY_REVOKED_KEYS (see FED-08 doc).
+  app.post("/mc/api/signing-keys/:fp/revoke", ...change("revoke_signing_key", "signing_key", async (req, m, c) => {
+    const fp = String(req.params.fp || "").toLowerCase(), reason = text(req.body?.reason, 500, 3);
+    if (!/^[0-9a-f]{32}$/.test(fp) || !reason) throw new HttpError(400, "fingerprint_and_reason_required");
+    const { rows: [k] } = await c.query("SELECT * FROM signing_keys WHERE fingerprint=$1 FOR UPDATE", [fp]);
+    if (!k) throw new HttpError(404, "key_not_found");
+    if (k.status === "revoked") throw new HttpError(409, "already_revoked");
+    const { rows: [n] } = await c.query("SELECT count(*)::int AS n FROM policy_bundles WHERE bundle->'signature'->>'keyFingerprint'=$1", [fp]);
+    const root = platformRoot(m);
+    return { capability: "platform.config.manage", nodeId: root?.id, targetId: fp, decision: platformDecision(m, req.principal), next: mm => mm,
+      apply: cc => cc.query("UPDATE signing_keys SET status='revoked', revoked_at=now(), revoked_by=$2, revoke_reason=$3 WHERE fingerprint=$1", [fp, req.principal, reason]),
+      detail: { reason, wasStatus: k.status, bundlesSigned: n.n }, result: { fingerprint: fp, status: "revoked", bundlesSigned: n.n, stillConfigured: policyKeys()?.fingerprint === fp } };
+  }));
+
+  // Incidents: whoever coordinates security at a node opens one there. It can
+  // freeze exchanges involving the node and anything under it, and sign out
+  // everyone holding a role there (except whoever opened it).
+  const incidentView = r => ({ id: r.id, nodeId: r.node_id, severity: r.severity, summary: r.summary, freezeExchange: r.freeze_exchange, signedOut: r.signed_out,
+    status: r.status, openedBy: r.opened_by, openedAt: r.opened_at, closedBy: r.closed_by, closedAt: r.closed_at, closeNote: r.close_note });
+  app.post("/mc/api/incidents", ...change("open_incident", "incident", async (req, m) => {
+    const b = req.body || {}, node = m.nodes.find(n => n.id === b.nodeId), summary = text(b.summary, 1000, 5);
+    if (!node || !summary || !["low", "moderate", "high", "critical"].includes(b.severity)) throw new HttpError(400, "node_severity_and_summary_required");
+    const decision = decide(m, req.principal, "security.incident.coordinate", node.id);
+    const iid = id("inc"), freeze = b.freezeExchange === true;
+    const people = b.signOut === true ? [...new Set(m.role_assignments.filter(a => a.status === "active" && withinNode(m.nodes, node.id, a.node_id)).map(a => a.principal_id))].filter(p => p !== req.principal) : [];
+    let signedOut = 0;
+    return { capability: "security.incident.coordinate", nodeId: node.id, targetId: iid, created: true, decision, next: mm => mm,
+      apply: async c => {
+        if (people.length) signedOut = (await c.query("DELETE FROM sessions WHERE principal_id = ANY($1)", [people])).rowCount;
+        await c.query("INSERT INTO incidents(id, node_id, severity, summary, freeze_exchange, signed_out, opened_by) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+          [iid, node.id, b.severity, summary, freeze, signedOut, req.principal]);
+      },
+      get detail() { return { severity: b.severity, freezeExchange: freeze, signOut: b.signOut === true, sessionsEnded: signedOut, principals: people.length }; },
+      get result() { return { id: iid, status: "open", freezeExchange: freeze, sessionsEnded: signedOut }; } };
+  }));
+  app.post("/mc/api/incidents/:id/close", ...change("close_incident", "incident", async (req, m, c) => {
+    const { rows: [r] } = await c.query("SELECT * FROM incidents WHERE id=$1 FOR UPDATE", [req.params.id]);
+    if (!r) throw new HttpError(404, "incident_not_found");
+    if (r.status !== "open") throw new HttpError(409, "incident_closed");
+    const note = text(req.body?.note, 1000, 5);
+    if (!note) throw new HttpError(400, "note_required");
+    return { capability: "security.incident.coordinate", nodeId: r.node_id, targetId: r.id, decision: decide(m, req.principal, "security.incident.coordinate", r.node_id), next: mm => mm,
+      apply: cc => cc.query("UPDATE incidents SET status='closed', closed_by=$2, closed_at=now(), close_note=$3 WHERE id=$1", [r.id, req.principal, note]),
+      detail: { note }, result: { id: r.id, status: "closed" } };
+  }));
+  app.get("/mc/api/incidents", ...read(async (req, m) => {
+    const node = text(req.query.nodeId, 80);
+    if (!node || !decide(m, req.principal, "security.incident.coordinate", node).allowed) throw new HttpError(403, "not_authorized");
+    const { rows } = await db.query("SELECT * FROM incidents ORDER BY opened_at DESC LIMIT 200");
+    return rows.filter(r => withinNode(m.nodes, node, r.node_id) || withinNode(m.nodes, r.node_id, node)).map(incidentView);
+  }));
+
+  // Security alerts from the audit log and state. Platform only.
+  app.get("/mc/api/security/alerts", ...read(async (req, m) => {
+    if (!platformDecision(m, req.principal).allowed) throw new HttpError(403, "not_authorized");
+    return securityAlerts(db, { currentFingerprint: policyKeys()?.fingerprint || null, threshold: alertThreshold() });
+  }));
 
   // ---- console -------------------------------------------------------------
   app.use("/mc", express.static(fileURLToPath(new URL("./console/", import.meta.url)), { index: "index.html", maxAge: 0 }));

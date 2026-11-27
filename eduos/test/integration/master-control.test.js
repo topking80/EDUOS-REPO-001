@@ -9,7 +9,8 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import pg from "pg";
 import { PG_URL, ROOT, startIdp, baseEnv, run, createDatabase, freePort } from "./harness.js";
-import { verifyBundle, parsePublicKey } from "../../src/federation/policy-bundle.js";
+import { verifyBundle, parsePublicKey, bundleKeys } from "../../src/federation/policy-bundle.js";
+import { registerSigningKey } from "../../src/master-control/security.js";
 import { ENVELOPE_FORMAT, DATASETS, minimize, exchangeKeys, signEnvelope, verifyTerms } from "../../src/federation/exchange.js";
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -414,6 +415,7 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     assert.equal(noConsent.status, 422); assert.match(noConsent.body.errors.join(";"), /consent or authorization/);
     ok(await as("sup1")("POST", `/exchange-agreements/${ag.id}/approve`, { publicKey: ids.xkeys.public, consentReference: "Board resolution 2026-14" }));
     ok(await as("tea")("POST", `/exchange-agreements/${ag.id}/approve`, {}));
+    ids.xconsent = ag.id;
     const tr = await as("sup1")("GET", `/exchange-agreements/${ag.id}/terms`), t = tr.body;
     assert.equal(tr.status, 200, JSON.stringify(t));
     assert.equal(t.consent_reference, "Board resolution 2026-14"); assert.equal(t.recipient.jurisdiction_id, "US-TX");
@@ -426,6 +428,69 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     const out = await as("sup1")("POST", "/exchange-agreements", { ...base, recipientNodeId: "platform" });
     assert.equal(out.status, 422); assert.match(out.body.errors.join(";"), /residency/);
     ok(await as("tea")("POST", "/exchange-agreements", base), 201, "an in-state recipient is fine");
+  });
+
+  // ---- FED-08: security operations -------------------------------------------
+  it("a district replaces its exchange key; reports signed with the old one are refused", async () => {
+    const next = exchangeKeys(crypto.randomBytes(24).toString("hex"));
+    assert.equal((await as("tea")("POST", `/exchange-agreements/${ids.xconsent}/rotate-key`, { publicKey: next.public, reason: "planned rotation" })).status, 403, "only the producer's sharer");
+    assert.equal((await as("sup1")("POST", `/exchange-agreements/${ids.xconsent}/rotate-key`, { publicKey: ids.xkeys.public, reason: "same key" })).status, 422);
+    ok(await as("sup1")("POST", `/exchange-agreements/${ids.xconsent}/rotate-key`, { publicKey: next.public, reason: "planned yearly rotation" }));
+    assert.equal((await as("sup1")("POST", `/exchange-agreements/${ids.xconsent}/deliveries`, resign(ids.xenv(), { agreement_id: ids.xconsent }, ids.xkeys))).body.error, "wrong_key");
+    ids.xdnew = ok(await as("sup1")("POST", `/exchange-agreements/${ids.xconsent}/deliveries`, resign(ids.xenv(), { agreement_id: ids.xconsent }, next)), 201).id;
+    ids.xnext = next;
+  });
+
+  it("an incident freezes exchanges under its node and signs out everyone with a role there", async () => {
+    assert.equal((await as("vp")("GET", "/me")).status, 200);
+    assert.equal((await as("vp")("POST", "/incidents", { nodeId: ids.tx, severity: "high", summary: "Suspected stolen credentials" })).status, 403, "only within your own scope");
+    const inc = ok(await as("sup1")("POST", "/incidents", { nodeId: ids.d1, severity: "high", summary: "Suspected stolen credentials at Lakeside", freezeExchange: true, signOut: true }), 201);
+    assert.ok(inc.sessionsEnded >= 1);
+    assert.equal((await as("vp")("GET", "/me")).status, 401, "signed out");
+    assert.equal((await as("sup1")("GET", "/me")).status, 200, "not whoever opened it");
+    assert.equal((await as("tea")("GET", `/exchange-deliveries/${ids.xdnew}`)).status, 423);
+    assert.equal((await as("sup1")("GET", `/exchange-agreements/${ids.xconsent}/terms`)).body.error, "incident_freeze");
+    assert.equal((await as("sup1")("POST", `/exchange-agreements/${ids.xconsent}/deliveries`, resign(ids.xenv(), { agreement_id: ids.xconsent, generated_at: "2026-01-02" }, ids.xnext))).body.error, "incident_freeze");
+    const alerts = ok(await as("op")("GET", "/security/alerts"));
+    assert.ok(alerts.some(a => a.kind === "open_incident" && a.detail.id === inc.id && a.severity === "high"));
+    assert.ok(alerts.some(a => a.kind === "audit_chain_broken" && a.severity === "critical"), "the tampering test above broke the chain, and it stays broken");
+    assert.equal((await as("sup1")("GET", "/security/alerts")).status, 403, "platform only");
+    assert.deepEqual(ok(await as("tea")("GET", `/incidents?nodeId=${ids.tx}`)).map(i => [i.id, i.status]), [[inc.id, "open"]]);
+    ok(await as("tea")("POST", `/incidents/${inc.id}/close`, { note: "Credentials reset; no data accessed" }));
+    assert.equal((await as("tea")("GET", `/exchange-deliveries/${ids.xdnew}`)).status, 200, "the freeze ends with the incident");
+    const log = ok(await as("sup1")("GET", `/audit?nodeId=${ids.d1}&limit=500`));
+    for (const a of ["open_incident", "close_incident", "rotate_exchange_key"]) assert.ok(log.some(e => e.action === a && e.decision === "allowed"), a);
+  });
+
+  it("signing keys rotate in the registry; a revoked key is never used again", async () => {
+    const configured = bundleKeys(env.MC_POLICY_SIGNING_SECRET);
+    let keys = ok(await as("op")("GET", "/signing-keys"));
+    assert.equal(keys.configured, configured.fingerprint);
+    assert.deepEqual(keys.keys.map(k => [k.fingerprint, k.status]), [[configured.fingerprint, "active"]]);
+    assert.ok(keys.keys[0].bundles > 0);
+    assert.equal((await as("tea")("GET", "/signing-keys")).status, 403);
+    // A rotation, as the server does when its secret changes: the new key becomes active, the old one retired.
+    const c = new pg.Client(db.adminUrl); await c.connect();
+    try {
+      await c.query("SET search_path = master_control");
+      const other = bundleKeys(crypto.randomBytes(24).toString("hex"));
+      assert.deepEqual(await registerSigningKey(c, other), { rotated: true });
+      assert.deepEqual(await registerSigningKey(c, other), { rotated: false });
+      keys = ok(await as("op")("GET", "/signing-keys"));
+      assert.deepEqual(Object.fromEntries(keys.keys.map(k => [k.fingerprint, k.status])), { [configured.fingerprint]: "retired", [other.fingerprint]: "active" });
+      await registerSigningKey(c, configured); // back to the configured one
+    } finally { await c.end(); }
+    assert.equal((await as("tea")("POST", `/signing-keys/${configured.fingerprint}/revoke`, { reason: "nope" })).status, 403);
+    const rv = ok(await as("op")("POST", `/signing-keys/${configured.fingerprint}/revoke`, { reason: "Secret exposed in a support ticket" }));
+    assert.equal(rv.stillConfigured, true); assert.ok(rv.bundlesSigned > 0);
+    const rel = await as("tea")("POST", "/policy-releases", { nodeId: ids.tx, reason: "after revocation" });
+    assert.equal(rel.status, 503); assert.equal(rel.body.error, "policy_key_revoked");
+    assert.equal((await as("op")("GET", "/policy-signing-key")).body.data.status, "revoked");
+    const alerts = ok(await as("op")("GET", "/security/alerts"));
+    assert.ok(alerts.some(a => a.kind === "revoked_key_configured" && a.severity === "critical"));
+    const check = await run(["src/master-control/security-check.js"], { ...env });
+    assert.equal(check.code, 1, check.out);
+    assert.ok(JSON.parse(check.out.trim().split("\n").at(-1)).alerts.some(a => a.kind === "revoked_key_configured"));
   });
 
   it("the console loads with a strict content security policy", async () => {
