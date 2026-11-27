@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { config } from "./config.js";
 import { parse as parseCookies } from "./cookies.js";
 import { pool, withTenantTransaction, assertSafeRuntimeRole, assertSchemaReady } from "./db.js";
-import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership, sessionIsLive } from "./auth.js";
+import { beginLogin, completeLogin, exchangeNativeLogin, requireSession, requireCsrf, issueCsrfToken, logout, listMemberships, switchMembership, listContexts, switchContext, sessionIsLive } from "./auth.js";
 import { startDeviceSignIn, redeemDeviceSignIn, checkDeviceSignIn, approveDeviceSignIn, denyDeviceSignIn } from "./device-sign-in.js";
 import { requirePermission, requireSchoolScope, canPerform, isGrantable, isDistrictRole } from "./policy.js";
 import { writeAudit } from "./audit.js";
@@ -51,6 +51,7 @@ import { registerPortfolioRoutes } from "./portfolio-routes.js";
 import { registerStorageRoutes, STORAGE_FILE_PATHS } from "./storage-routes.js";
 import { registerSportsSharingRoutes } from "./sports-sharing-routes.js";
 import { registerAssociationAttestationRoutes } from "./association-attestation-routes.js";
+import { registerHomeschoolRoutes } from "./homeschool-routes.js";
 import { registerSportsConnectorRoutes } from "./sports-connector-routes.js";
 import { registerRankingRoutes } from "./ranking-routes.js";
 import { registerHistoryPrivacyRoutes } from "./history-privacy-routes.js";
@@ -226,8 +227,12 @@ app.get("/api/app-config",(_req,res)=>{res.setHeader("Cache-Control","no-store")
 // or a parent with children at two schools). Switching rotates the session.
 app.get("/api/memberships",requireSession,listMemberships);
 app.post("/api/session/membership",requireSession,requireCsrf,switchMembership);
+// HSP-01: environments (district memberships and homeschool families).
+app.get("/api/session/contexts",requireSession,listContexts);
+app.post("/api/session/context",requireSession,requireCsrf,switchContext);
 
-app.get("/api/me",requireSession,(req,res)=>res.json({userId:req.actor.userId,displayName:req.actor.displayName,role:req.actor.role,membershipRole:req.actor.membershipRole||req.actor.role,districtId:req.actor.districtId,schoolId:req.actor.schoolId}));
+app.get("/api/me",requireSession,(req,res)=>res.json({userId:req.actor.userId,displayName:req.actor.displayName,role:req.actor.role,membershipRole:req.actor.membershipRole||req.actor.role,districtId:req.actor.districtId,schoolId:req.actor.schoolId,
+  tenantKind:req.actor.tenantKind||"district",...(req.actor.tenantKind==="homeschool_family"?{familyId:req.actor.familyId,familyRole:req.actor.familyRole}:{})}));
 
 app.get("/api/schools",requireSession,requirePermission("schools","read"),async(req,res,next)=>{
   try {
@@ -2056,6 +2061,7 @@ registerPortfolioRoutes(app);
 registerStorageRoutes(app);
 registerSportsSharingRoutes(app);
 registerAssociationAttestationRoutes(app);
+registerHomeschoolRoutes(app);
 registerSportsConnectorRoutes(app);
 registerRankingRoutes(app);
 registerHistoryPrivacyRoutes(app);

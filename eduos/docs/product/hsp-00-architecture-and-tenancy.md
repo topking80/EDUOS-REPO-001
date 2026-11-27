@@ -156,12 +156,12 @@ family_learner_relationships(id, family_id, learner_id, user_id,
 ## 8. API boundaries
 
 - **District routes are unchanged.** They require a district context and return 403 `district_context_required` in any other.
-- **Family routes** live under `/api/home/…`: `/api/home/family`, `/api/home/members`, `/api/home/learners`, `/api/home/calendar`. They require a family context.
+- **Family routes** live under `/api/homeschool/…`: `/api/homeschool/family`, `/api/homeschool/members`, `/api/homeschool/learners`, `/api/homeschool/calendar`. They require a family context.
 - **Context:**
   - `GET /api/session/contexts` lists the signed-in user's active memberships across kinds, with labels only.
   - `POST /api/session/context` switches.
 - **Creating a family:**
-  - `POST /api/home/families` works from any signed-in session and creates the family tenant with the creator as owner.
+  - `POST /api/homeschool/families` works from any signed-in session and creates the family tenant with the creator as owner.
   - Abuse controls: per-user limits on families created and invitations sent, an email-verified account, and rate limits.
 - **IDs in paths** are checked in SQL against the active tenant; a mismatch is 404. Exports re-check authority at download time. Every route has a negative test.
 
@@ -174,7 +174,7 @@ family_learner_relationships(id, family_id, learner_id, user_id,
 | **Tampering** | Parent-entered grades presented as a verified credential | Provenance labels on every grade and export: "parent-entered", "issuer: family". EDAL verification only for verified issuers. |
 | **Repudiation** | An owner removes a co-educator and denies it | Audit events for every membership, relationship, grade, export and ownership change, append-only as today. |
 | **Information disclosure** | A family session reads district rows | District policies compare to an empty `app.district_id`, so nothing matches. Negative integration test as the runtime role. |
-| **Information disclosure** | IDOR on `/api/home/learners/:id` | RLS plus SQL relationship check; 404 on mismatch. |
+| **Information disclosure** | IDOR on `/api/homeschool/learners/:id` | RLS plus SQL relationship check; 404 on mismatch. |
 | **Information disclosure** | A revoked guardian keeps a cached session | Revocation evicts sessions, and every request re-checks the relationship. |
 | **Information disclosure** | A worker sends a report after authority was revoked | Delivery-time re-check. |
 | **Denial of service** | Mass family creation or invite spam | Per-user and per-IP limits, verified email, abuse review queue. |
@@ -215,7 +215,7 @@ The acceptance gates from #207, made concrete:
 3. **Per-learner authority levels** `full`, `educational` and `view`, and export or delete only with `full`.
 4. **Learners are family-owned records**, not `students`, and no learner sign-in by default.
 5. **Families aren't federated** (no Master Control node). Private schools join state programs only by agreement.
-6. **The family API prefix** `/api/home/…`.
+6. **The family API prefix** `/api/homeschool/…` (`/api/home` is already the role dashboard).
 7. **HSP-01 scope:**
    - the family tenant, members and invitations;
    - learners and relationships;

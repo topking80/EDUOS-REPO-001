@@ -88,7 +88,7 @@ Education requirements differ by jurisdiction and can change. Build a configurab
 ## Proposed implementation sequence
 
 - **HSP-00 — Architecture and tenancy foundation:** tenant-type model, threat model, membership/relationship model, policy matrix, migration strategy, API boundaries, and test plan. Gate for all runtime work. Design: `docs/product/hsp-00-architecture-and-tenancy.md`.
-- **HSP-01 — Homeschool family workspace:** family tenant and membership lifecycle, multi-learner dashboard, learner relationship verification, family calendar.
+- **HSP-01 — Homeschool family workspace:** family tenant and membership lifecycle, multi-learner dashboard, learner relationship verification, family calendar. Built: `docs/product/hsp-01-homeschool-family-workspace.md`.
 - **HSP-02 — Homeschool learning operations:** individualized plans, attendance sessions and instructional time, parent-authored evidence, progress reports and transcript/portfolio exports.
 - **HSP-03 — Private school foundation:** verified organization/campus onboarding, roles, branding, calendar, staff and student enrollment.
 - **HSP-04 — Private school admissions and academics:** admissions lifecycle, rosters, schedules, attendance, learning and report-card workflows.

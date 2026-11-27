@@ -128,7 +128,16 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/apps": return { data: [{ id: "app3", name: "New LTI Tool", vendor: "Tool Co", integrationType: "lti13", registrationStatus: "pending" }] };
     case "/api/app-requests": return { data: [{ id: "r1", status: "pending" }] };
     case "/api/my/apps": return { data: [{ id: "a1", name: "Reading Room", category: "Reading", integrationType: "link" }, { id: "a2", name: "MathQuest", category: "Math", integrationType: "lti13" }] };
-    case "/api/me": return { userId: "u1", displayName: "Smoke Test", role: role === "vice_principal" ? "principal" : role, membershipRole: role, districtId: "d1", schoolId: mockSchool, memberships: [] };
+    case "/api/me": return role === "homeschool" ? { userId: "u1", displayName: "Smoke Test", role: "family_member", membershipRole: "family_member", districtId: null, schoolId: null,
+        tenantKind: "homeschool_family", familyId: "f1", familyRole: "owner" }
+      : { userId: "u1", displayName: "Smoke Test", role: role === "vice_principal" ? "principal" : role, membershipRole: role, districtId: "d1", schoolId: mockSchool, memberships: [] };
+    // HSP-01: a homeschool family session (owner).
+    case "/api/homeschool/me": return { data: { family: { id: "f1", name: "Ortiz Homeschool", timeZone: "America/Chicago", jurisdiction: "US-TX" }, role: "owner", displayName: "Smoke Test",
+      learners: [{ id: "l1", displayName: "Mia", gradeBand: "3", status: "active", authority: "full", upcomingThisWeek: 2 }], familyEventsThisWeek: 1 } };
+    case "/api/homeschool/calendar": return { data: [{ id: "e1", learnerId: "l1", title: "Fractions", kind: "lesson", startsAt: now, endsAt: now, allDay: false, cancelled: false }] };
+    case "/api/homeschool/members": return { data: { members: [{ id: "m1", role: "owner", name: "Smoke Test", you: true }, { id: "m2", role: "co_educator", name: "Tutor Tess", you: false }], invitations: [] } };
+    case "/api/session/contexts": return { data: { current: role === "homeschool" ? { kind: "homeschool_family", membershipId: "m1" } : { kind: "district" },
+      contexts: [{ kind: "district", membershipId: "dm1", label: "Lakeside ISD · Maple", role: "parent" }, { kind: "homeschool_family", membershipId: "m1", label: "Ortiz Homeschool", role: "owner" }] } };
     case "/api/session": return { csrfToken: "smoke" };
     case "/api/safety/status": return { data: { incidents: liveLockdown ? [{ id: "inc1", schoolId: "s1", schoolName: "Maple", kind: "lockdown", label: "Lockdown", isDrill: true, status: "active",
         startedAt: now, message: "Lock doors, lights off, out of sight.", audience: "staff", instructions: null }] : [], canInitiate: sosCaps, canLead: sosCaps,
@@ -1436,6 +1445,20 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         if (!text.includes(want)) failures.push(`parent capsule detail: "${want}" is missing`);
       await axeScan(page, "parent capsule detail", a11y);
       if (page.errors.length) failures.push(`parent capsule detail: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
+  }
+  // HSP-01: a homeschool family session shows its own workspace, not district tabs.
+  state.role = "homeschool";
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
+      let text = "";
+      for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Add a learner"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
+      for (const w of ["Ortiz Homeschool", "Learners", "Mia", "2 this week", "Coming up", "Fractions", "Tutor Tess", "Invite an adult", "Add a learner", "Add to the calendar"])
+        if (!text.includes(w)) failures.push(`homeschool workspace: "${w}" is missing`);
+      await axeScan(page, "homeschool workspace", a11y);
+      if (page.errors.length) failures.push(`homeschool workspace: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
   // Failed queue requests must be visibly different from genuinely empty queues.
