@@ -145,6 +145,9 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       waitlistPosition: null, documents: [{ label: "Birth certificate", received: true }, { label: "Records", received: false }], next: ["offered", "waitlisted", "not_offered", "withdrawn"] }] };
     case "/api/private-school/classes": return { data: [{ id: "pk1", campusId: "pc1", name: "Math 4", schoolYear: "2026-2027", term: "Fall", teacher: "Teacher S1", status: "active", size: 18 }] };
     case "/api/private-school/report-cards": return { data: [{ id: "prc1", learnerId: "pl1", learner: "Ava Lin", schoolYear: "2026-2027", term: "Fall", status: "draft", lines: [] }] };
+    // HSP-07: co-ops.
+    case "/api/homeschool/coops": return { data: [{ id: "k1", name: "Creek Co-op", role: "organizer", families: 3 }] };
+    case "/api/homeschool/coop-attendance": return { data: [{ id: "ca1", present: true, learnerId: "l1", name: "Mia", session: "Science lab", coop: "Creek Co-op", startsAt: now, minutes: 120, logged: false }] };
     // HSP-06: learner transfers.
     case "/api/homeschool/transfers": return { data: [{ id: "x1", direction: "sent", learner: "Mia", from: "Ortiz Homeschool", to: "Hillside Academy", purpose: "enrollment", sections: ["courses", "work"],
       status: "accepted", items: 4, sourceLearnerId: "l1", preparedAt: now }] };
@@ -1495,7 +1498,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
       let text = "";
       for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Add a learner"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
-      for (const w of ["Ortiz Homeschool", "Learners", "Mia", "2 this week", "Coming up", "Fractions", "Tutor Tess", "Invite an adult", "Add a learner", "Add to the calendar", "Receive records", "Transfer code"])
+      for (const w of ["Ortiz Homeschool", "Learners", "Mia", "2 this week", "Coming up", "Fractions", "Tutor Tess", "Invite an adult", "Add a learner", "Add to the calendar", "Receive records", "Transfer code", "Co-ops", "Creek Co-op", "Organizer · 3 families", "Mia · Creek Co-op · Science lab · 120 min", "Add to log", "Start a co-op"])
         if (!text.includes(w)) failures.push(`homeschool workspace: "${w}" is missing`);
       await axeScan(page, "homeschool workspace", a11y);
       await page.eval(`([...document.querySelectorAll("button")].find(b => b.getAttribute("aria-label") === "Open Mia") || {}).click?.()`);
