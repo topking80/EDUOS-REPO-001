@@ -40,11 +40,11 @@ const isTz = tz => { try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); r
 const isTime = v => typeof v === "string" && v.length <= 40 && !Number.isNaN(Date.parse(v));
 const emailOk = v => typeof v === "string" && v.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
-function familyAudit(c, req, action, type, id = null, detail = null) {
+export function familyAudit(c, req, action, type, id = null, detail = null) {
   return c.query("INSERT INTO family_audit_events(family_id, actor_user_id, actor_role, action, resource_type, resource_id, detail) VALUES ($1,$2,$3,$4,$5,$6,$7)",
     [req.actor.familyId, req.actor.userId, req.actor.familyRole, action, type, id, detail]);
 }
-const family = (fn, status = 200) => async (req, res, next) => {
+export const family = (fn, status = 200) => async (req, res, next) => {
   try {
     if (req.actor?.tenantKind !== "homeschool_family") throw new HttpError(403, "family_context_required");
     const data = await withFamilyTransaction(req.actor, c => fn(c, req));

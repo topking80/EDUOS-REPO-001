@@ -134,6 +134,13 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     // HSP-01: a homeschool family session (owner).
     case "/api/homeschool/me": return { data: { family: { id: "f1", name: "Ortiz Homeschool", timeZone: "America/Chicago", jurisdiction: "US-TX" }, role: "owner", displayName: "Smoke Test",
       learners: [{ id: "l1", displayName: "Mia", gradeBand: "3", status: "active", authority: "full", upcomingThisWeek: 2 }], familyEventsThisWeek: 1 } };
+    // HSP-02: one learner's plan, attendance and work.
+    case "/api/homeschool/learners/l1/plan": return { data: { learner: { id: "l1", displayName: "Mia", gradeBand: "3", authority: "full" }, canTeach: true,
+      courses: [{ id: "c1", title: "Algebra I", subject: "Math", schoolYear: "2026-2027", status: "active", finalGrade: null, credits: null }],
+      goals: [{ id: "g1", courseId: "c1", text: "Two-step equations", status: "open" }] } };
+    case "/api/homeschool/learners/l1/attendance": return { data: { totals: { instructionalDays: 12, absentDays: 1, minutes: 2880, hours: 48, minutesByKind: {} },
+      sessions: [{ id: "a1", day: "2026-11-25", minutes: 240, kind: "instruction", courseId: "c1", voided: false }] } };
+    case "/api/homeschool/learners/l1/work": return { data: [{ id: "w1", courseId: "c1", title: "Unit 1 test", kind: "test", doneOn: "2026-11-24", score: 18, maxScore: 20, provenance: "parent_entered", voided: false }] };
     case "/api/homeschool/calendar": return { data: [{ id: "e1", learnerId: "l1", title: "Fractions", kind: "lesson", startsAt: now, endsAt: now, allDay: false, cancelled: false }] };
     case "/api/homeschool/members": return { data: { members: [{ id: "m1", role: "owner", name: "Smoke Test", you: true }, { id: "m2", role: "co_educator", name: "Tutor Tess", you: false }], invitations: [] } };
     case "/api/session/contexts": return { data: { current: role === "homeschool" ? { kind: "homeschool_family", membershipId: "m1" } : { kind: "district" },
@@ -1458,6 +1465,11 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       for (const w of ["Ortiz Homeschool", "Learners", "Mia", "2 this week", "Coming up", "Fractions", "Tutor Tess", "Invite an adult", "Add a learner", "Add to the calendar"])
         if (!text.includes(w)) failures.push(`homeschool workspace: "${w}" is missing`);
       await axeScan(page, "homeschool workspace", a11y);
+      await page.eval(`([...document.querySelectorAll("button")].find(b => b.getAttribute("aria-label") === "Open Mia") || {}).click?.()`);
+      for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Work and evidence"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
+      for (const w of ["Algebra I", "Two-step equations", "12 days · 48 hours · 1 absent", "Unit 1 test", "18/20", "Export transcript", "Progress report (last 90 days)", "Add a course"])
+        if (!text.includes(w)) failures.push(`homeschool learner: "${w}" is missing`);
+      await axeScan(page, "homeschool learner", a11y);
       if (page.errors.length) failures.push(`homeschool workspace: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }

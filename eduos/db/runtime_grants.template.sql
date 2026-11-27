@@ -894,3 +894,12 @@ REVOKE DELETE, TRUNCATE ON homeschool_families, family_memberships, family_invit
 REVOKE UPDATE ON family_audit_events FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_family_contexts(uuid), eduos_family_session(text,integer), eduos_create_family(uuid,text,text,text),
   eduos_accept_family_invitation(uuid,text,text), eduos_family_role(), eduos_family_authority(uuid), eduos_ctx_family() TO eduos_app;
+
+-- 161 (HSP-02): homeschool learning records. Corrections are voids, not deletes.
+GRANT SELECT, INSERT ON family_courses, family_goals, family_attendance, family_work, family_exports TO eduos_app;
+GRANT UPDATE (title, subject, description, status, final_grade, credits, completed_on) ON family_courses TO eduos_app;
+GRANT UPDATE (text, target_on, status, met_on) ON family_goals TO eduos_app;
+GRANT UPDATE (voided_by, voided_at, void_reason) ON family_attendance, family_work TO eduos_app;
+REVOKE DELETE, TRUNCATE ON family_courses, family_goals, family_attendance, family_work, family_exports FROM eduos_app;
+REVOKE UPDATE ON family_exports FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_family_can_teach(uuid) TO eduos_app;
