@@ -1,6 +1,6 @@
 # Project NOMAD Capability Extraction — EduOS Integration Plan
 
-**Status:** Planning proposal  
+**Status:** Planning proposal, audited 2026-11-27 against the repository and the NOMAD source (corrections in §13; Phase 0 inventory in §14; work items in §15)  
 **Source reviewed:** https://github.com/Crosstalk-Solutions/project-nomad  
 **Target repository:** `topking80/EDUOS-REPO-001`  
 **Implementation principle:** Extract useful capabilities and patterns; implement them natively in EduOS. Project NOMAD is a reference, not a runtime dependency.
@@ -15,7 +15,8 @@ Instead, build an **EduOS Learning Resource and Offline Knowledge Hub** on top o
 - Existing Learning services for courses, lessons, assignments, standards, mastery, and feedback.
 - Existing EDEN school-node architecture for signed content bundles, local caching, offline operation, and controlled synchronization.
 - Existing media/storage registration, scanning, consent, and delivery pipeline.
-- Existing maps and school emergency-readiness capabilities.
+- Existing school safety and emergency-readiness capabilities (`src/safety-*.js`). EduOS has **no map module** today (see §13); offline maps are new work.
+- Existing district library services (`library_items`, loans, reservations, resource requests, catalog imports) and AI gateway with egress controls (`src/ai/`).
 
 NOMAD is useful as a catalogue of capabilities and operational patterns. Its current README explicitly describes the management UI as unauthenticated and warns against direct internet exposure. Its Compose deployment grants the management service access to the host Docker socket. Those choices are not suitable authorization or execution boundaries for a multi-tenant K–12 platform.
 
@@ -27,7 +28,7 @@ NOMAD is useful as a catalogue of capabilities and operational patterns. Its cur
 | Curated content collections and setup wizard | District Resource Catalog | Adopt | District approves collections; schools choose from approved catalog; age/grade and accessibility metadata required. |
 | Kolibri learning platform and channels | Learning Content Import and Delivery | Adapt | Reuse course, lesson, assignment, standards, and mastery records in EduOS. Import/launch approved content without a parallel gradebook or student identity. |
 | Local AI chat and RAG over uploaded documents | EduOS Knowledge Assistant | Adapt with strict controls | District-controlled model/provider policy; scoped retrieval; citations; no external model egress by default; never index student records or private documents without explicit purpose and authorization. |
-| Offline maps / regional map packages | Existing EduOS Maps + EDEN bundles | Extend existing system | Reuse current map capabilities and signed distribution; do not introduce a second map stack. |
+| Offline maps / regional map packages | New: offline map packages | Build (no existing map stack) | EduOS has no maps module to extend. Build one governed map-package type on the Phase 1 provisioning path; OpenStreetMap-derived data carries ODbL attribution and share-alike duties. |
 | Download manager, job status, retries, content updates | Content Provisioning Service | Adopt patterns | Idempotent jobs, resumable downloads, checksums, storage quotas, version pinning, rollback, operator visibility. |
 | FlatNotes / local notes | Student Portfolio and Teacher Workspace | Adapt | Use existing portfolio/time-capsule and teacher workflows; preserve ownership, approval, retention, and consent controls. |
 | Hardware benchmark and system health | EDEN Node Health / Capacity Dashboard | Extend | Use measured health, storage, memory, temperature, service status, and capacity alerts; avoid public hardware leaderboards for school infrastructure. |
@@ -101,7 +102,7 @@ School node / approved devices
 1. EduOS remains the system of record for identities, enrollments, courses, assignments, grades, mastery, consent, and audit.
 2. Resource metadata is tenant-scoped and school-scoped where applicable. Every resource read, download, search result, attachment, and background job is authorized server-side.
 3. Binary packages live in approved object/file storage or the existing school-node content store. PostgreSQL stores metadata, license records, checksums, versions, access policy, and opaque object references.
-4. Offline distribution uses EDEN's signed, versioned bundle mechanism. Nodes verify signatures, pinned trust root, version monotonicity, checksums, school assignment, and revocations before activation.
+4. Offline distribution uses EDEN's signed, versioned bundle mechanism **for manifests**. Nodes verify signatures, pinned trust root, version monotonicity, checksums, school assignment, and revocations before activation. EDEN bundles today are JSON documents stored in PostgreSQL (`eden_bundles.bundle jsonb`, 16 MB request limit), so large packages (ZIM archives, video) travel as separate content-addressed files named by SHA-256 in a signed `content` manifest, not inside the bundle.
 5. Do not cache private student records or broaden the existing phone offline queue. Offline reference packages are public-to-the-authorized-school resources, not student-specific records.
 6. Search results must be filtered by authorization before content snippets are returned. Retrieval is not a bypass around RLS or resource permissions.
 7. No arbitrary Docker deployment, host Docker socket exposure, unaudited plugin execution, or direct vendor access to student data.
@@ -155,7 +156,7 @@ School node / approved devices
 
 ### Phase 4 — Offline maps, emergency resources, and resilience
 
-- Extend the existing EduOS map package workflow for offline school, district, and curriculum use.
+- Build an offline map package type (no map workflow exists today) for school, district, and curriculum use, reusing the Phase 1 provisioning and EDEN manifest path.
 - Create versioned emergency reference collections with named district owners and review/expiry dates.
 - Include approved evacuation maps, emergency procedures, contact protocols, and continuity instructions.
 - Add node capacity preflight, content freshness, failed bundle alerts, checksum failures, and storage pressure reporting.
@@ -245,7 +246,7 @@ Use small PRs from `main`, each with one bounded purpose:
 7. **Learning content import** — Kolibri/open content adapter and EduOS assignment links.
 8. **Knowledge search** — authorized full-text search, followed by semantic retrieval.
 9. **Local AI assistant** — only after search security and district policy gates pass.
-10. **Maps and emergency packs** — reuse existing maps and school-node paths.
+10. **Maps and emergency packs** — new map package type on the Phase 1 provisioning path; emergency packs alongside existing safety features.
 11. **Integration catalog and operational scale** — governed connectors, dashboards, pilot.
 
 Keep PRs draft until automated tests, security review, and required PostgreSQL integration checks pass. Do not merge phases that depend on unimplemented security boundaries.
@@ -266,6 +267,101 @@ Keep PRs draft until automated tests, security review, and required PostgreSQL i
 Begin with **Phase 0 followed by Phase 1**. The first shippable product should be the district-governed Offline Reference Library, distributed through EDEN and surfaced in the student, teacher, librarian, and administrator experiences. This delivers immediate value without introducing AI risk or duplicating the learning platform.
 
 After the resource catalog and offline delivery are proven, add curriculum import. Add AI last, because retrieval authorization, source governance, age policy, and data egress must be solved first.
+
+## 13. Audit (2026-11-27)
+
+Checked against the repository at the merge of PR #214 and against the NOMAD source.
+
+### Confirmed
+
+- NOMAD's README states it "includes no authentication" and isn't designed for direct internet exposure; its
+  licence is Apache-2.0.
+- `install/management_compose.yaml` mounts `/var/run/docker.sock` into the admin service (and two others). The
+  plan's refusal to copy that execution model stands.
+- The NOMAD references in "Source references" exist (`admin/docs/use-cases.md`, `admin/constants/service_names.ts`),
+  as do the five EduOS documents and `src/learning-service.js`.
+- The governance gates in §7, the test matrix in §9 and the non-goals in §11 match EduOS's existing rules
+  (forced RLS, non-owner runtime role, no vendor student-data scope by default, no automatic transfers).
+
+### Corrected in this document
+
+1. **Maps.** The plan said to extend "existing EduOS Maps". There is no map module (only weather/NWS alerts). §1, §2,
+   Phase 4 and §10 now treat offline maps as new work.
+2. **EDEN can't carry the packages.** EDEN bundles are signed JSON stored in PostgreSQL with a 16 MB request limit.
+   ZIM archives and media run to gigabytes. Rule 4 now separates the signed manifest (EDEN) from content-addressed
+   file transfer verified by SHA-256 on the node.
+
+### To carry into implementation
+
+3. **Library overlap.** EduOS already has a physical library module (`library_items`, `library_loans`,
+   `library_reservations`, `library_resource_requests`, `library_catalog_imports`, library intelligence routes)
+   and a `librarian` role (migration 024), plus teacher-owned `teacher_library_items`. The resource catalog must
+   sit beside these under one Library destination, reuse the librarian role and resource-request workflow, and
+   not create a second "library".
+4. **AI already has a gateway and egress policy.** `src/ai/providers.js`, `src/ai/provider-egress.js`,
+   `ai_district_policy`, `ai_usage` and `docs/AI-PROVIDER-EGRESS.md` already keep external AI off by default with a
+   host allowlist and redaction. Phase 3 extends these, not a new provider interface.
+5. **Integration catalog exists.** `apps`, `app_requests`, `app_licenses`, `app_assignments` and the LTI marketplace
+   (`docs/MARKETPLACE.md`) are the district-reviewed catalog. Phase 5 extends them.
+6. **Tenancy has changed.** Since HSP-00 (`docs/product/hsp-00-architecture-and-tenancy.md`) a tenant is a district,
+   a homeschool family or a private school; the latter two have no `district_id`. Resource tables need the tenant
+   model, or must state that phase 1 is district-only. Homeschool reading lists (`family_reading`, HSP-07 part 2)
+   should be able to point at catalog resources later.
+7. **Kolibri.** Kolibri keeps its own accounts and progress. Import channel *content* without running Kolibri
+   or its accounts, and record progress only through EduOS assignments, consistent with §11.
+8. **Licences differ by package, and some restrict use.** Upstream terms as published (to verify per package
+   before distribution): Wikipedia text CC BY-SA; Khan Academy content CC BY-NC-SA (non-commercial); OpenStreetMap
+   data ODbL (attribution, share-alike). The licence matrix in §14 tracks this.
+9. **Scanning very large archives.** The media pipeline (`src/media-pipeline*.js`) scans uploads. Multi-gigabyte
+   archives need a size-aware scan or a trusted-source checksum policy, decided in Phase 1.
+
+## 14. Phase 0 inventory
+
+| Need in this plan | What EduOS has | Gap |
+|---|---|---|
+| Governed resource catalog | Physical library catalog (`library_items`), teacher library items, lesson sources (`lesson_sources`) | Digital/offline resource records with licence, checksum, version, age band |
+| Collection approval and publication | District policy bundles (`district_policy_bundles`), app approval workflow | Collection lifecycle (draft, approved, published, retired) |
+| Offline distribution | EDEN nodes, signed bundles (`eden_bundles`, `eden_node_bundles`, `eden_bundle_cache`), egress gate | Large-file transfer and node-side verification/activation |
+| File storage and scanning | Private media objects and pipeline (`private_media_objects`, `src/media-pipeline*.js`) | Resource-content store separate from student media quotas |
+| Assignments and progress | Learning service: courses, units, lessons, assignments, mastery | Resource-version links on lessons and assignments |
+| Search | None beyond per-module filters | Authorized full-text search |
+| AI | Staff AI gateway, district AI policy, egress allowlist, usage log | Retrieval over approved collections with authorization filters |
+| Maps | None | Map package type |
+| Emergency readiness | Safety incidents, reunification, room safety, weather alerts | Versioned offline emergency reference packs |
+| Integration catalog | Apps, requests, licences, LTI marketplace | Content-provider entries |
+| Non-district tenants | Homeschool families and private schools (HSP-00 to HSP-07) | Decide whether phase 1 serves them |
+
+**Licence matrix (to verify per package before any distribution):**
+
+| Content type | Typical upstream terms | Distribution concern | Status |
+|---|---|---|---|
+| Wikipedia (Kiwix ZIM) | CC BY-SA | Attribution, share-alike | To verify |
+| Khan Academy (Kolibri channels) | CC BY-NC-SA | Non-commercial use only | To verify |
+| Other Kiwix collections (medical, ebooks) | Varies by collection | Per-collection review | To verify |
+| OpenStreetMap-derived maps (ProtoMaps) | ODbL | Attribution, share-alike for derived databases | To verify |
+| Local AI models | Varies by model licence | Use restrictions, redistribution | To verify |
+
+**Threat model (headline risks to design against in Phase 1):** a tampered or substituted package (signed
+manifest plus SHA-256 per file); a resource visible outside its approved schools or age band (server-side checks
+plus forced RLS); search or AI returning content the user can't open (filter before snippets); storage exhaustion
+on a school node (quotas and preflight); licence breach through redistribution (licence state required before
+publication); student data leaking into a package (packages hold approved reference content only).
+
+## 15. Work items
+
+| ID | Item | Depends on |
+|---|---|---|
+| LRH-00 | This audit and Phase 0 inventory (done; ADR approval and the licence review still needed) | — |
+| LRH-01 | Resource catalog foundation: schema, forced RLS, permissions, audit, alongside the library module | LRH-00 |
+| LRH-02 | District collection governance: approve, publish, retire, school selection, policy | LRH-01 |
+| LRH-03 | Provisioning: jobs, checksums, quotas, resumable transfer, rollback | LRH-01 |
+| LRH-04 | EDEN content manifests and node verification/activation | LRH-03 |
+| LRH-05 | Library experience for district, school, librarian, teacher, student and guardian | LRH-02 |
+| LRH-06 | Learning content import (open content, Kolibri channel content without Kolibri accounts) | LRH-05 |
+| LRH-07 | Authorized full-text search | LRH-05 |
+| LRH-08 | Retrieval-grounded assistant on the existing AI gateway | LRH-07 |
+| LRH-09 | Offline map packages and emergency reference packs | LRH-04 |
+| LRH-10 | Content-provider entries in the app catalog; operations dashboards; pilot | LRH-04 |
 
 ## Source references
 
