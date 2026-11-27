@@ -60,7 +60,10 @@ def validate_hash(name, value):
     if not value:
         raise ConfigError(f"{name} is empty")
     word = placeholder_word(value, RANDOM_SAFE_WORDS, fold=False)
-    if word or "..." in value or " " in value:
+    # "..." marks an elided placeholder ("$6$...$..."), but a real crypt
+    # hash can contain "..." by chance, so only treat it as one when the
+    # value isn't a well-formed hash.
+    if word or " " in value or ("..." in value and not HASH_RE.match(value)):
         raise ConfigError(f"{name} looks like a placeholder ({word or 'contains spaces/...'}); supply a real crypt(3) hash")
     if not HASH_RE.match(value):
         raise ConfigError(f"{name} is not a sha512/sha256-crypt, yescrypt or bcrypt hash (generate one with `mkpasswd -m yescrypt` or `openssl passwd -6`)")
