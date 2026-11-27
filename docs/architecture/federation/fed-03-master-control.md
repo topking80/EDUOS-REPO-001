@@ -89,5 +89,5 @@ Creating delegations is API-only in this slice.
 - Signed policy distribution to districts and acknowledgements (FED-05). Policies resolved here aren't yet pushed into EduOS.
 - Cross-tenant exchange (FED-06).
 - Jurisdiction and data residency (FED-07).
-- Resilience (FED-10). Security operations are FED-08 (`fed-08-security-operations.md`); observability is FED-09 (`fed-09-observability.md`).
+- Security operations, observability and resilience: FED-08 (`fed-08-security-operations.md`), FED-09 (`fed-09-observability.md`) and FED-10 (`fed-10-resilience.md`).
 - A delegation form in the console.

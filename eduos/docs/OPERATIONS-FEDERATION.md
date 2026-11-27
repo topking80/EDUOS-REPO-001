@@ -54,7 +54,7 @@ The state gauges are read at most every 30 seconds.
 ## Alerts
 
 ### Master Control unavailable
-`MasterControlScrapeUnavailable` or `MasterControlStateUnavailable`. Check that the service is running, its network path, the token file, the database and the `mc_app` grants (`npm run mc:migrate` reapplies them). While Master Control is down, districts keep following the bundles they already hold. No new releases, terms or deliveries can be made.
+`MasterControlScrapeUnavailable` or `MasterControlStateUnavailable`. Check that the service is running, its network path, the token file, the database and the `mc_app` grants (`npm run mc:migrate` reapplies them). While Master Control is down, districts keep following the bundles they already hold. No new releases, terms or deliveries can be made. If the database is lost, restore it as in `docs/architecture/federation/fed-10-resilience.md`.
 
 ### Audit chain broken
 `MasterControlAuditChainBroken` (critical). An audit entry was changed or removed.

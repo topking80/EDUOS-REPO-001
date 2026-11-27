@@ -624,10 +624,12 @@ export function createApp({ cfg, db, providers }) {
     const keys = await signingKeysFor(c), issuer = m.nodes.find(n => n.id === release.node_id), out = [];
     for (const did of districtIds) {
       const node = m.nodes.find(n => n.id === did);
-      const { rows: [prev] } = await c.query("SELECT version, sha256 FROM policy_bundles WHERE district_node_id=$1 ORDER BY version DESC LIMIT 1", [did]);
+      const { rows: [prev] } = await c.query("SELECT version, sha256, issued_at FROM policy_bundles WHERE district_node_id=$1 ORDER BY version DESC LIMIT 1", [did]);
+      // FED-10: after a restore, jump past versions issued after the backup.
+      const { rows: [sk] } = await c.query("SELECT coalesce(sum(version_skip), 0)::int AS n FROM restore_events WHERE $1::timestamptz IS NULL OR recorded_at > $1", [prev?.issued_at || null]);
       const bid = id("pb");
       const body = { format: BUNDLE_FORMAT, bundle_id: bid, release_id: release.id, kind: release.kind, ...(release.rollback_of && { rollback_of: release.rollback_of }),
-        version: (prev?.version || 0) + 1, previous_sha256: prev?.sha256 || null, issued_at: today(), effective_from: release.effective_from,
+        version: (prev?.version || 0) + 1 + (prev ? sk.n : 0), previous_sha256: prev?.sha256 || null, issued_at: today(), effective_from: release.effective_from,
         district: { node_id: did, name: node.name, tenant_ref: node.tenant_ref, jurisdiction_id: node.jurisdiction_id }, issuer: { node_id: issuer.id, name: issuer.name },
         catalog_version: release.catalog_version, policies: contentFor(did) };
       const signed = signBundle(body, keys);
