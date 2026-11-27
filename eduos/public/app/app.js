@@ -4335,8 +4335,8 @@ VIEWS.progress = async () => {
       w.missing ? chip("absent", "Missing · not counted yet") : chip(...(WORK_STATUS[w.status] || ["expected", w.status]))),
     w.feedback ? h("p", { class: "small feedback" }, `Teacher: ${w.feedback}`) : null,
     h("div", { class: "btns" }, w.kind === "quiz"
-      ? h("button", { class: "btn small-btn", type: "button", "aria-label": `Open ${w.title}`, onclick: () => openView("quiz", { assignmentId: w.id, courseId: c.id }) }, w.canRetake && state.me.role === "pupil" ? "Open or retake" : "Open")
-      : h("button", { class: "btn small-btn", type: "button", "aria-label": `Open ${c.title} for ${w.title}`, onclick: () => openView("course", { courseId: c.id }) }, "Open course")));
+      ? (t => h("button", { class: "btn small-btn", type: "button", "aria-label": `${t}: ${w.title}`, onclick: () => openView("quiz", { assignmentId: w.id, courseId: c.id }) }, t))(w.canRetake && state.me.role === "pupil" ? "Open or retake" : "Open")
+      : h("button", { class: "btn small-btn", type: "button", "aria-label": `Open course: ${c.title}, for ${w.title}`, onclick: () => openView("course", { courseId: c.id }) }, "Open course")));
   const courseCard = c => {
     const n = c.counts || {};
     return h("section", { class: "card", "aria-label": c.title },
