@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
-import '../../core/api_client.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
 import '../widgets.dart';
@@ -40,12 +39,7 @@ class StudentWorkScreen extends StatelessWidget {
     final details = await Future.wait(courses.map((course) async {
       final id = str(course['id']);
       if (id.isEmpty) return <String, Object?>{};
-      try {
-        return obj((await api.get('/api/learning/courses/$id'))['data']);
-      } on ApiException catch (e) {
-        if (e.isUnauthorized || e.isOffline) rethrow;
-        return <String, Object?>{};
-      }
+      return obj((await api.get('/api/learning/courses/$id'))['data']);
     }));
 
     final items = <_WorkItem>[];
