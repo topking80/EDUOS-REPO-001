@@ -1032,3 +1032,6 @@ GRANT UPDATE (withdrawn_by, withdrawn_at) ON course_meeting_changes TO eduos_app
 GRANT UPDATE (removed_by, removed_at) ON school_calendar_days TO eduos_app;
 REVOKE DELETE, TRUNCATE ON course_meetings, course_meeting_changes, school_calendar_days FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_learner_schedule(uuid, date, integer) TO eduos_app;
+
+-- 173: row security on assignment_submissions.
+GRANT EXECUTE ON FUNCTION eduos_can_see_submission(uuid, uuid) TO eduos_app;
