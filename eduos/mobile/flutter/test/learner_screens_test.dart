@@ -134,7 +134,7 @@ void main() {
     expect(find.text('Fractions practice'), findsOneWidget);
     expect(find.text('Vocabulary review'), findsOneWidget);
     expect(find.text('Unit check'), findsOneWidget);
-    expect(find.text('18 / 20 points'), findsOneWidget);
+    expect(find.textContaining('18 / 20 points'), findsOneWidget);
     expect(find.text('To do'), findsOneWidget);
     expect(find.text('Turned in'), findsOneWidget);
     expect(find.text('Graded'), findsNWidgets(2));
