@@ -15,8 +15,8 @@ class RoleTab {
 /// register and safety roll call (the offline-critical staff screens).
 /// Phase 3: school leaders: overview, pick-up desk + approvals, safety
 /// board and starting alerts.
-/// Phase 4: learners: home, courses and quizzes, Christie practice, path,
-/// library and news.
+/// Phase 4: learners: home, cross-course work, courses and quizzes, Christie
+/// practice, path, library and news.
 /// Phase 5: teachers: courses, gradebook, grading and Christie copilot;
 /// staffing for every staff role.
 /// Phase 6: everything else: operations queues, attendance, transport,
@@ -36,6 +36,7 @@ const roleTabs = <String, List<RoleTab>>{
   ],
   'pupil': [
     RoleTab('home', 'Home', Icons.home_outlined, native: true),
+    RoleTab('work', 'My work', Icons.assignment_outlined, native: true),
     RoleTab('library', 'My library', Icons.menu_book, native: true),
     RoleTab('courses', 'Courses', Icons.school_outlined, native: true),
     RoleTab('christie', 'Christie', Icons.auto_awesome, native: true),

@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:eduos_mobile_branding/app/role_tabs.dart';
 import 'package:eduos_mobile_branding/ui/screens/alerts_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/arrival_screen.dart';
+import 'package:eduos_mobile_branding/ui/screens/student_work_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/children_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/clubs_sports_screen.dart';
 import 'package:eduos_mobile_branding/ui/screens/coach_teams_screen.dart';
@@ -74,6 +75,7 @@ Type expectedScreen(String role, String tab) => switch (tab) {
       'capsules' => TimeCapsulesScreen,
       'portfolio' => HistoryTimeline,
       'contributions' => TeacherHistoryItemsScreen,
+      'work' when role == 'pupil' => StudentWorkScreen,
       _ => throw StateError('no screen specified for $role/$tab'),
     };
 

@@ -108,9 +108,40 @@ void main() {
     expect(find.text('Route 7 · Bus 12'), findsOneWidget);
     expect(find.text('Picture day'), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
-    for (final t in ['Home', 'My library', 'Courses', 'Christie', 'More']) {
+    for (final t in ['Home', 'My work', 'My library', 'Courses', 'More']) {
       expect(find.descendant(of: find.byType(NavigationBar), matching: find.text(t)), findsOneWidget, reason: t);
     }
+  });
+
+  testWidgets('My Work combines due work, submissions and graded results across courses', (tester) async {
+    final fake = FakeServer({
+      'GET /api/learning/courses/$course': (_) => {'data': {
+        'id': course, 'title': 'Grade 4 Math',
+        'assignments': [
+          {'id': 'w1', 'title': 'Fractions practice', 'kind': 'work', 'points': 10, 'due_at': '2099-05-01T15:00:00.000Z',
+            'mine': {'status': 'not_started', 'missing': false}},
+          {'id': 'w2', 'title': 'Vocabulary review', 'kind': 'work', 'points': 5, 'due_at': '2099-05-02T15:00:00.000Z',
+            'mine': {'status': 'submitted', 'missing': false}},
+          {'id': 'w3', 'title': 'Unit check', 'kind': 'quiz', 'points': 20, 'due_at': '2099-04-30T15:00:00.000Z',
+            'mine': {'status': 'graded', 'earned': 18, 'missing': false}},
+        ],
+      }},
+    });
+    await launch(tester, fake);
+    await tester.tap(find.text('My work').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Fractions practice'), findsOneWidget);
+    expect(find.text('Vocabulary review'), findsOneWidget);
+    expect(find.text('Unit check'), findsOneWidget);
+    expect(find.textContaining('18 / 20 points'), findsOneWidget);
+    expect(find.text('To do'), findsOneWidget);
+    expect(find.text('Turned in'), findsOneWidget);
+    expect(find.text('Graded'), findsNWidgets(2));
+
+    await tester.tap(find.text('Fractions practice'));
+    await tester.pumpAndSettle();
+    expect(fake.sent('GET', '/api/learning/courses/$course').length, greaterThanOrEqualTo(2));
   });
 
   testWidgets('practising with Christie: start, answer, ask, and finish', (tester) async {
