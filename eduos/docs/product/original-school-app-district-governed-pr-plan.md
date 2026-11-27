@@ -100,3 +100,4 @@ Every implementation PR must provide:
 - PR #67 remains the Timeline & Time Capsule design foundation; it is not the runtime implementation.
 - This document is a proposed build queue, not evidence that any listed implementation PR has been completed.
 - Do not merge a feature that violates the district-governance rule, even if it matches the original wording.
+- The Learning Resources and Offline Knowledge Hub (capabilities drawn from Project NOMAD) has its own audited plan and work items LRH-00 to LRH-10: `eduos/docs/PROJECT-NOMAD-CAPABILITY-EXTRACTION-INTEGRATION-PLAN.md`. It builds on items 1 (local-first edge) and 10 (governed marketplace) above.
