@@ -1,6 +1,102 @@
-# EduOS District Edition 37.7.4
+# EduOS
 
-**Package version: 37.7.4.** This README's detailed feature inventory below is historical context, not a complete inventory of changes through 37.7.4. Consult `RELEASE-NOTES-37.7.4.md` for the weather-warning safety fixes, `RELEASE-NOTES-37.7.3.md` for the broken-connections audit fixes, `RELEASE-NOTES-37.7.2.md` for the notification reliability and release-audit fixes, `RELEASE-NOTES-37.7.1.md` for district payment providers, and `RELEASE-NOTES-37.7.0.md` (plus `RELEASE-NOTES-37.5.0.md` for monitoring additions) for earlier changes and deployment requirements.
+**Package version 37.7.4.** Work merged since 37.7.4 is listed under "What's in it", with links to each
+feature's document. The release notes for 37.7.x are `RELEASE-NOTES-37.7.*.md`, and the older sections
+under "Release history" are kept as they were written.
+
+## What's in it
+
+EduOS serves three kinds of school, each kept apart by the database, through one sign-in. A person can hold
+roles in several of them and switch between them.
+
+**School districts**
+- Every role has its own home and app: superintendent, principal, vice principal, teacher, coach, counselor,
+  nurse, librarian, bus driver, SRO, IT, operations staff, families and students.
+- **Learning:** courses, lessons, assignments, quizzes, a weighted gradebook in which ungraded work never
+  counts as zero, explainable standards mastery, and the Christie tutor (approved content only).
+- **School safety:** lockdown, shelter and evacuation with roll call and reunification, and car pick-up
+  verification. Weather alerts only prompt; a person still starts a shelter (`docs/WEATHER-ALERTS.md`).
+- **Operations:** arrival and transportation handoff, the school-day command center, staffing and coverage,
+  library circulation, clubs and sports (eligibility, physicals, Arbiter links), event tickets and commerce.
+- **Student history and Time Capsules:**
+  - families and schools add items, and capsules hold them for later;
+  - media goes to S3-compatible storage with malware scanning (`docs/STUDENT-HISTORY-TIME-CAPSULES.md`,
+    `docs/MEDIA-STORAGE.md`);
+  - preservation, donations and the preservation fund (`docs/HISTORY-PRESERVATION.md`).
+- **Records between districts:** a signed history transfer file. Districts on the same deployment can deliver it
+  online instead, and the receiving district still accepts each item (`docs/HISTORY-TRANSFER.md`).
+- **Integrations:**
+  - SIS import and scheduled sync;
+  - LTI 1.3 and Canvas;
+  - an app catalog with district approval and licences;
+  - webhooks;
+  - external AI, which is off unless the district allows it (`docs/AI-PROVIDER-EGRESS.md`).
+- **Offline schools (EDEN):**
+  - school nodes keep a school running when the district link is down;
+  - only aggregate counts leave a school;
+  - a partner school can take over in a failover (`docs/EDEN-32.7.0.md`, `deploy/school-node/`).
+
+**Homeschool families and private schools** (`docs/product/homeschool-private-school-hub-plan.md`)
+- **Homeschool families:**
+  - adults with set authority over each learner;
+  - courses, attendance and instructional time, work samples and reading lists;
+  - progress reports and transcripts labelled as family records;
+  - invite-only, adult-only co-ops with moderated posts.
+- **Private schools:**
+  - verified by the platform, with campuses;
+  - admissions, classes, attendance and report cards;
+  - tuition and billing with a second person on every step that moves money;
+  - messages between a learner's guardians and the staff who work with them.
+- **Learner transfers:** families, private schools and districts can send a learner's records to each other.
+  A guardian releases them, the receiver accepts explicitly, and nothing moves on its own
+  (`docs/product/hsp-06-learner-transfers.md`, `hsp-06c-district-transfers.md`).
+- **Compliance planning:** templates published by the platform, each with its sources and a named reviewer, or
+  a family's or school's own targets. A planning aid only: EduOS files nothing with any agency
+  (`docs/product/hsp-06b-compliance-profiles.md`).
+
+**Federation (Master Control)**
+- Master Control runs across districts and nodes:
+  - delegated authority and identity federation;
+  - signed policy bundles;
+  - jurisdiction rules;
+  - an exchange gateway that carries aggregate reports only;
+  - signed sports eligibility attestations.
+- It has its own audit chain, security operations, monitoring and restore checks (`../docs/architecture/federation/`,
+  `docs/OPERATIONS-FEDERATION.md`).
+
+**Apps**
+- **Web:** the web app, and the installable phone app at `/app/`.
+- **Native:** the Flutter app for phones, tablets and desktop (`mobile/flutter/README.md`; every tab is native,
+  and a test checks every server address it calls).
+- **Roku:** a look-only Roku TV channel where families view their Time Capsules and school history (`clients/roku/`).
+
+**Planned:** an offline learning-resource library built natively from Project NOMAD's capabilities. It's waiting
+on approval of the architecture and a licence review (`docs/PROJECT-NOMAD-CAPABILITY-EXTRACTION-INTEGRATION-PLAN.md`).
+
+## Security model
+
+- PostgreSQL row-level security is forced on every tenant table.
+- The API runs as a non-owner runtime role without BYPASSRLS, and refuses to start otherwise.
+- Every session carries one context: a district, a family or a private school. Database policies key on it.
+- Writes that cross a boundary (transfers, co-ops, deliveries) go through definer functions that re-check the
+  session and are audited.
+- Details: `SECURITY.md`, `docs/security/district-governance-feature-acceptance.md`, `docs/MIGRATIONS.md`.
+
+## Run and test
+
+- **Try it:** `make up` starts everything with a local sign-in provider and a demo district (`GETTING-STARTED.md`).
+- **Unit tests:** `npm test`.
+- **Database tests:** `EDUOS_TEST_PG_URL=postgres://<superuser>@<host>/postgres npm run test:integration` runs the
+  suite against real PostgreSQL as the runtime role.
+- **Browser tests:** `make smoke-browser` (axe accessibility scans included).
+- **Mobile app:** in `mobile/flutter`, run `flutter analyze` and `flutter test` (Flutter 3.24.5, as in CI).
+- **Deploying:** see "Deploy with Docker Compose" and "Without Docker" below.
+
+## Release history
+
+**Historical summary (37.7.4 and earlier):** This README's detailed feature inventory below is historical context, not a complete inventory of changes through 37.7.4. Consult `RELEASE-NOTES-37.7.4.md` for the weather-warning safety fixes, `RELEASE-NOTES-37.7.3.md` for the broken-connections audit fixes, `RELEASE-NOTES-37.7.2.md` for the notification reliability and release-audit fixes, `RELEASE-NOTES-37.7.1.md` for district payment providers, and `RELEASE-NOTES-37.7.0.md` (plus `RELEASE-NOTES-37.5.0.md` for monitoring additions) for earlier changes and deployment requirements.
+
+**32.7.0. Offline school nodes, the aggregation gate, EDEN and DECN.**
 - **School node:** a small box at each school (Pi 5-class profile; arm64 not
   yet tested on hardware). It runs one school's EduOS, so attendance, bus
   check-ins, SafetyOS roll call, pick-up, Christie and gradebook reads keep
