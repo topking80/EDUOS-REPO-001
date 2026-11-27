@@ -13,6 +13,7 @@
 //     with the scope and shown to the district. EduOS can't check where it is
 //     really hosted; the status says "declared".
 import { readFileSync } from "node:fs";
+import { mcKeyRing } from "./federation/key-ring.js";
 
 const catalog = JSON.parse(readFileSync(new URL("./federation/authority-catalog.json", import.meta.url), "utf8"));
 
@@ -44,10 +45,13 @@ export function rulesFrom(policies = [], meta = {}) {
   return out;
 }
 
-/** The rules in force for the transaction's district on `on` (YYYY-MM-DD). */
-export async function rulesInForce(client, on = today()) {
+/**
+ * The rules in force for the transaction's district on `on` (YYYY-MM-DD).
+ * FED-08: bundles signed with a revoked Master Control key aren't followed.
+ */
+export async function rulesInForce(client, on = today(), revoked = [...mcKeyRing().revoked]) {
   const { rows: [b] } = await client.query(`SELECT version, bundle FROM district_policy_bundles
-     WHERE (bundle->>'effective_from') <= $1 ORDER BY version DESC LIMIT 1`, [on]);
+     WHERE (bundle->>'effective_from') <= $1 AND NOT (key_fingerprint = ANY($2::text[])) ORDER BY version DESC LIMIT 1`, [on, revoked]);
   if (!b) return rulesFrom([], { bundleVersion: null, jurisdictionId: null });
   return rulesFrom(b.bundle.policies, { bundleVersion: b.version, jurisdictionId: b.bundle.district?.jurisdiction_id || null, effectiveFrom: b.bundle.effective_from });
 }

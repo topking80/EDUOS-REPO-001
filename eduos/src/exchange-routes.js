@@ -16,7 +16,7 @@ import { requireSession, requireCsrf } from "./auth.js";
 import { withTenantTransaction } from "./db.js";
 import { audit, rows, one, HttpError, sendError } from "./role-app-util.js";
 import { DATASETS, PURPOSES, MIN_CELL_FLOOR, DEFAULT_MIN_CELL, ENVELOPE_FORMAT, minimize, exchangeKeys, signEnvelope, verifyTerms } from "./federation/exchange.js";
-import { parsePublicKey } from "./federation/policy-bundle.js";
+import { mcKeyRing, verifyWithRing } from "./federation/key-ring.js";
 import { rulesInForce, recipientAllowed } from "./jurisdiction-rules.js";
 
 function secret() {
@@ -25,7 +25,7 @@ function secret() {
   return process.env.EXCHANGE_SIGNING_SECRET || "";
 }
 const keys = () => exchangeKeys(secret());
-const mcKey = () => parsePublicKey(process.env.MC_POLICY_PUBLIC_KEY || "");
+const mcRing = () => mcKeyRing();
 const today = () => new Date().toISOString().slice(0, 10);
 
 const QUERIES = {
@@ -45,16 +45,16 @@ export function registerExchangeRoutes(app) {
   app.get("/api/district/exchange", requireSession, superintendent, (req, res) => {
     const k = keys();
     res.setHeader("Cache-Control", "no-store");
-    res.json({ data: { configured: !!k, termsKeyConfigured: !!mcKey(), publicKey: k?.public || null, fingerprint: k?.fingerprint || null, datasets: DATASETS, purposes: PURPOSES, minCellFloor: MIN_CELL_FLOOR, defaultMinCell: DEFAULT_MIN_CELL } });
+    res.json({ data: { configured: !!k, termsKeyConfigured: mcRing().configured, publicKey: k?.public || null, fingerprint: k?.fingerprint || null, datasets: DATASETS, purposes: PURPOSES, minCellFloor: MIN_CELL_FLOOR, defaultMinCell: DEFAULT_MIN_CELL } });
   });
 
   app.post("/api/district/exchange/reports", limiter, requireSession, requireCsrf, superintendent, async (req, res, next) => {
     try {
       const k = keys();
       if (!k) throw new HttpError(503, "exchange_signing_not_configured");
-      const trusted = mcKey();
-      if (!trusted) throw new HttpError(503, "policy_key_not_configured");
-      const t = verifyTerms(req.body?.terms, trusted, req.actor.districtId, today());
+      const ring = mcRing();
+      if (!ring.configured) throw new HttpError(503, "policy_key_not_configured");
+      const t = verifyWithRing(verifyTerms, req.body?.terms, ring, req.actor.districtId, today());
       if (!t.ok) throw new HttpError(t.reason.startsWith("agreement_") ? 409 : 400, t.reason);
       const terms = t.terms, ds = DATASETS[terms.dataset], fields = terms.fields, minCell = terms.min_cell_size, asOf = today();
       const env = await withTenantTransaction(req.actor, async c => {

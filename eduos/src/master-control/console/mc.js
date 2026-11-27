@@ -75,6 +75,8 @@ async function nodePanel(id) {
   if (n.kind !== "district" && n.kind !== "school" && await can("policy.distribute")) out.push(await releasesCard(n));
   if (n.kind === "district") out.push(await bundlesCard(n, await can("policy.set")));
   if (n.kind !== "school") out.push(await exchangeCard(n, await can("exchange.share")));
+  if (await can("security.incident.coordinate")) out.push(await incidentsCard(n));
+  if (n.kind === "platform" && await can("platform.config.manage")) out.push(await securityCard());
   if (await can("audit.view")) out.push(await auditCard(n));
   return out;
 }
@@ -214,8 +216,41 @@ async function exchangeCard(n, isProducer) {
             if (consentReference === null) return;
             act(a, "approve", publicKey ? { publicKey, ...(consentReference && { consentReference }) } : {}); } }, "Approve") : null, " ",
           a.status === "active" && a.producerNodeId === n.id && isProducer ? [h("a", { href: `/mc/api/exchange-agreements/${encodeURIComponent(a.id)}/terms` }, "Terms file"), " ",
-            h("button", { class: "link", type: "button", onclick: () => deliver(a) }, "Deliver report"), " "] : null,
+            h("button", { class: "link", type: "button", onclick: () => deliver(a) }, "Deliver report"), " ",
+            h("button", { class: "link", type: "button", onclick: () => { const publicKey = prompt("Paste the district EduOS's new exchange public key:"); if (!publicKey) return;
+              const reason = prompt("Reason for replacing the key (planned rotation, suspected compromise)?"); if (reason) act(a, "rotate-key", { publicKey, reason }); } }, "Replace key"), " "] : null,
           a.status !== "revoked" ? h("button", { class: "link", type: "button", onclick: () => { const reason = prompt("Reason for revoking?"); if (reason) act(a, "revoke", { reason }); } }, "Revoke") : null)))) : h("p", { class: "muted" }, "No agreements."));
+}
+
+// FED-08: incidents at this node.
+async function incidentsCard(n) {
+  const list = await api("GET", `/incidents?nodeId=${encodeURIComponent(n.id)}`);
+  const summary = h("input", { id: "inc-summary", required: true, minlength: 5, maxlength: 1000 });
+  const sev = h("select", { id: "inc-sev" }, ["low", "moderate", "high", "critical"].map(v => h("option", { value: v }, v)));
+  const freeze = h("input", { id: "inc-freeze", type: "checkbox" }), signOut = h("input", { id: "inc-signout", type: "checkbox" });
+  const open = list.filter(i => i.status === "open");
+  return h("section", { class: "card", "aria-label": "Security incidents" }, h("h3", {}, "Security incidents"),
+    open.length ? h("ul", {}, open.map(i => h("li", {}, h("strong", {}, `${i.severity}: `), i.summary, h("span", { class: "muted" }, ` · ${i.nodeId}${i.freezeExchange ? " · exchanges frozen" : ""}${i.signedOut ? ` · ${i.signedOut} sessions ended` : ""} `),
+      h("button", { class: "link", type: "button", onclick: async () => { const note = prompt("What was found and done? (closes the incident)"); if (!note) return;
+        try { await api("POST", `/incidents/${encodeURIComponent(i.id)}/close`, { note }); await refresh(); } catch (err) { alertCard(message(err)); } } }, "Close")))) : h("p", { class: "muted" }, "No open incidents."),
+    h("form", { onsubmit: async e => { e.preventDefault();
+        try { await api("POST", "/incidents", { nodeId: n.id, severity: sev.value, summary: summary.value, freezeExchange: freeze.checked, signOut: signOut.checked }); await refresh(); }
+        catch (err) { alertCard(message(err)); } } },
+      h("label", { for: "inc-summary" }, "What happened"), summary, h("label", { for: "inc-sev" }, "Severity"), sev,
+      h("label", {}, freeze, " Freeze exchanges involving this node"), h("label", {}, signOut, " Sign out everyone with a role here (not you)"),
+      h("button", { type: "submit" }, "Open incident")));
+}
+
+// FED-08: signing keys and security alerts (platform).
+async function securityCard() {
+  const [keys, alerts] = await Promise.all([api("GET", "/signing-keys"), api("GET", "/security/alerts")]);
+  return h("section", { class: "card", "aria-label": "Security" }, h("h3", {}, "Security"),
+    h("h4", {}, "Alerts"), alerts.length ? h("ul", {}, alerts.map(a => h("li", {}, h("strong", {}, `${a.severity} `), a.kind.replaceAll("_", " "), h("code", {}, ` ${JSON.stringify(a.detail)}`)))) : h("p", { class: "muted" }, "No alerts."),
+    h("h4", {}, "Policy signing keys"), keys.keys.length ? h("table", {}, h("tr", {}, h("th", {}, "Fingerprint"), h("th", {}, "Status"), h("th", {}, "Bundles"), h("th", {}, "")),
+      keys.keys.map(k => h("tr", {}, h("td", {}, h("code", {}, k.fingerprint), k.fingerprint === keys.configured ? " (configured)" : ""), h("td", {}, k.status), h("td", {}, String(k.bundles)),
+        h("td", {}, k.status !== "revoked" ? h("button", { class: "link", type: "button", onclick: async () => { const reason = prompt("Reason for revoking this key?"); if (!reason) return;
+          try { await api("POST", `/signing-keys/${k.fingerprint}/revoke`, { reason }); await refresh(); } catch (err) { alertCard(message(err)); } } }, "Revoke") : k.revokeReason))))
+      : h("p", { class: "muted" }, "No key has signed anything yet."));
 }
 function alertCard(text) { const el = h("p", { class: "bad", role: "alert" }, text); main.prepend(el); setTimeout(() => el.remove(), 8000); }
 boot();
