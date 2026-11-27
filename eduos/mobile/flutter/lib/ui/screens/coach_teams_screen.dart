@@ -4,6 +4,7 @@ import '../../app/app_scope.dart';
 import '../../core/api_client.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
+import '../arbiter_links.dart';
 import '../widgets.dart';
 import 'activity_ops_screens.dart';
 
@@ -54,6 +55,7 @@ class CoachTeamsScreen extends StatelessWidget {
               ),
             ),
           for (final t in teams) _team(context, t),
+          if (teams.isNotEmpty) const ArbiterLinksCard(),
         ]);
       },
     );
