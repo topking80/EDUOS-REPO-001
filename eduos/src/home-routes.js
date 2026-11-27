@@ -80,7 +80,7 @@ export function registerHomeRoutes(app) {
                        AND NOT EXISTS(SELECT 1 FROM assignment_submissions sub WHERE sub.assignment_id=x.id AND sub.student_id=s.id))::int AS due_7d,
                     (SELECT count(*) FROM assignments x WHERE x.school_id=s.school_id AND x.status='published' AND x.due_at<now()
                        AND NOT EXISTS(SELECT 1 FROM assignment_submissions sub WHERE sub.assignment_id=x.id AND sub.student_id=s.id))::int AS overdue,
-                    (SELECT count(*) FROM assignment_submissions sub WHERE sub.student_id=s.id AND sub.score IS NOT NULL AND sub.graded_at>now()-interval '14 days')::int AS recently_graded,
+                    (SELECT count(*) FROM assignment_submissions sub WHERE sub.student_id=s.id AND sub.score IS NOT NULL AND sub.held_at IS NULL AND sub.graded_at>now()-interval '14 days')::int AS recently_graded,
                     ${a.role === "parent" ? `(SELECT count(*) FROM student_intervention_cases c WHERE c.student_id=s.id AND c.status<>'closed' AND c.family_visible)::int` : "0"} AS shared_plans
                FROM student_user_links l JOIN students s ON s.id=l.student_id JOIN schools sc ON sc.id=s.school_id
               WHERE l.user_id=$1 AND l.status='active' AND l.relationship=ANY($2) ORDER BY s.display_name`, [a.userId, rel]);

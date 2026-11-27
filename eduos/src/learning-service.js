@@ -70,13 +70,15 @@ export async function masteryExplanation(client, studentId, standardId) {
 }
 
 /** Assignments of a course with each listed learner's points (null = not graded yet). */
-export async function courseGradeData(client, courseId, studentIds) {
+// learnerView: what a learner or their family sees. A grade the teacher is
+// holding back (held_at, db/174) reads as turned in, with no score or feedback.
+export async function courseGradeData(client, courseId, studentIds, { learnerView = false } = {}) {
   const course = await one(client, `SELECT id,title,subject,grade_level,term,school_id,grade_weights,teacher_user_id FROM courses WHERE id=$1`, [courseId]);
   if (!course) throw new HttpError(404, "course_not_found");
   const work = await rows(client, `SELECT id,title,kind,category,points_possible::float8 AS points,due_at,max_attempts,retake_policy,rubric IS NOT NULL AS has_rubric
       FROM assignments WHERE course_id=$1 AND status IN ('published','closed') ORDER BY coalesce(due_at, created_at), title`, [courseId]);
   const ids = work.map(w => w.id);
-  const subs = ids.length ? await rows(client, `SELECT assignment_id,student_id,points_earned::float8 AS points_earned,score::float8 AS score,graded_at,feedback,returned_at,submitted_at
+  const subs = ids.length ? await rows(client, `SELECT assignment_id,student_id,points_earned::float8 AS points_earned,score::float8 AS score,graded_at,feedback,returned_at,submitted_at,held_at
       FROM assignment_submissions WHERE assignment_id=ANY($1::uuid[]) AND student_id=ANY($2::uuid[])`, [ids, studentIds]) : [];
   const atts = ids.length ? await rows(client, `SELECT assignment_id,student_id,attempt_no,status,total_points::float8 AS total,possible_points::float8 AS possible
       FROM quiz_attempts WHERE assignment_id=ANY($1::uuid[]) AND student_id=ANY($2::uuid[]) ORDER BY attempt_no`, [ids, studentIds]) : [];
@@ -94,9 +96,11 @@ export async function courseGradeData(client, courseId, studentIds) {
         return { assignmentId: w.id, earned, status, attempts: mine.length, missing: status === "not_started" && w.due_at && new Date(w.due_at) < now };
       }
       const s = subs.find(x => x.assignment_id === w.id && x.student_id === sid);
-      if (s?.graded_at) { earned = s.points_earned ?? (s.score != null ? Math.round(s.score * w.points) / 100 : null); status = "graded"; }
+      const hidden = learnerView && s?.held_at;
+      if (s?.graded_at && !hidden) { earned = s.points_earned ?? (s.score != null ? Math.round(s.score * w.points) / 100 : null); status = "graded"; }
       else if (s) status = "submitted";
-      return { assignmentId: w.id, earned, status, feedback: s?.feedback || null, missing: !s && w.due_at && new Date(w.due_at) < now };
+      return { assignmentId: w.id, earned, status, feedback: hidden ? null : s?.feedback || null, missing: !s && w.due_at && new Date(w.due_at) < now,
+        ...(!learnerView && s?.held_at ? { held: true } : {}) };
     });
     const grade = courseGrade(work.map((w, i) => ({ id: w.id, category: w.category, points: w.points, earned: cells[i].earned })), course.grade_weights);
     byStudent.set(sid, { cells, grade, missing: cells.filter(c => c.missing).length });
