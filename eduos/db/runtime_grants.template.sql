@@ -903,3 +903,26 @@ GRANT UPDATE (voided_by, voided_at, void_reason) ON family_attendance, family_wo
 REVOKE DELETE, TRUNCATE ON family_courses, family_goals, family_attendance, family_work, family_exports FROM eduos_app;
 REVOKE UPDATE ON family_exports FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_family_can_teach(uuid) TO eduos_app;
+
+-- 162 (HSP-03): private schools. Registration, invitation acceptance and verification go through definer functions or the owner.
+GRANT SELECT ON private_schools TO eduos_app;
+GRANT UPDATE (display_name, time_zone, jurisdiction_ref, website_domain, branding, closure_requested_by, closure_requested_at) ON private_schools TO eduos_app;
+GRANT SELECT, INSERT ON private_school_campuses TO eduos_app;
+GRANT UPDATE (name, city, status) ON private_school_campuses TO eduos_app;
+GRANT SELECT ON private_school_memberships TO eduos_app;
+GRANT UPDATE (role, campus_id, status, revoked_by, revoked_at, revoke_reason) ON private_school_memberships TO eduos_app;
+GRANT SELECT, INSERT ON private_school_invitations TO eduos_app;
+GRANT UPDATE (revoked_at) ON private_school_invitations TO eduos_app;
+GRANT SELECT, INSERT ON private_school_learners TO eduos_app;
+GRANT UPDATE (display_name, grade_level, local_number, campus_id, enrollment_status, withdrawn_on, withdraw_reason) ON private_school_learners TO eduos_app;
+GRANT SELECT, INSERT ON private_school_guardian_links TO eduos_app;
+GRANT UPDATE (revoked_by, revoked_at) ON private_school_guardian_links TO eduos_app;
+GRANT SELECT, INSERT ON private_school_calendar_events TO eduos_app;
+GRANT UPDATE (title, kind, audience, starts_at, ends_at, cancelled_by, cancelled_at) ON private_school_calendar_events TO eduos_app;
+GRANT SELECT, INSERT ON private_school_audit_events TO eduos_app;
+REVOKE DELETE, TRUNCATE ON private_schools, private_school_campuses, private_school_memberships, private_school_invitations, private_school_learners,
+  private_school_guardian_links, private_school_calendar_events, private_school_audit_events FROM eduos_app;
+REVOKE UPDATE ON private_school_audit_events FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_private_school_contexts(uuid), eduos_private_school_session(text,integer), eduos_register_private_school(uuid,text,text,text,text,text,text),
+  eduos_accept_private_school_invitation(uuid,text,text), eduos_ps_roles(), eduos_ps_campuses(), eduos_ps_active(), eduos_ps_sees_learner(uuid), eduos_ps_has(text[]),
+  eduos_ctx_private_school(), eduos_ctx_ps_membership() TO eduos_app;
