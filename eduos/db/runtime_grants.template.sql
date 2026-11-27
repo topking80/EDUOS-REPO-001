@@ -864,3 +864,13 @@ REVOKE UPDATE, DELETE, TRUNCATE ON district_policy_bundles FROM eduos_app;
 
 -- 158 (FED-09): aggregate federation status for /metrics (counts only).
 GRANT EXECUTE ON FUNCTION eduos_federation_status(text, text[]) TO eduos_app;
+
+-- 159 (SPORT-05): athletic association agreements, consents, attestations.
+GRANT SELECT, INSERT ON athletic_association_agreements, athlete_association_consents, eligibility_attestations TO eduos_app;
+GRANT UPDATE (status, revoked_by, revoked_at, revoke_reason, token_hash) ON athletic_association_agreements TO eduos_app;
+GRANT UPDATE (revoked_by, revoked_at) ON athlete_association_consents TO eduos_app;
+GRANT UPDATE (withdrawn_by, withdrawn_at, withdraw_reason) ON eligibility_attestations TO eduos_app;
+REVOKE DELETE, TRUNCATE ON athletic_association_agreements, athlete_association_consents, eligibility_attestations FROM eduos_app;
+GRANT SELECT ON association_reads TO eduos_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON association_reads FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_association_access(uuid, text, uuid) TO eduos_app;

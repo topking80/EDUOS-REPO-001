@@ -228,6 +228,10 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/district/policy-bundles": { const b = { id: "pbr1", bundleId: "pb-1", releaseId: "rel-1", version: 2, kind: "release", issuedAt: now, effectiveFrom: now,
       issuer: "Texas Education Agency", receivedAt: now, receivedBy: "Supt One", policies: [{ id: "security.mfa.required_for_staff", value: true, locked_by: "ps-1" }, { id: "ui.default_locale", value: "en-US", locked_by: null }] };
       return { data: { configured: true, fingerprint: "0f".repeat(16), latest: b, bundles: [b, { ...b, id: "pbr0", version: 1 }] } }; }
+    // SPORT-05: one athletic association agreement, read once.
+    case "/api/district/athletic-associations": return { data: { signingConfigured: true, fingerprint: "ab".repeat(16), agreements: [{ id: "ag1", associationRef: "uil-tx",
+      associationName: "University Interscholastic League", purpose: "eligibility_verification", legalBasis: "UIL Constitution", effectiveFrom: now, effectiveTo: now, status: "active",
+      inForce: true, consents: 12, reads: [{ action: "read", outcome: "allowed", reason: null, at: now }] }] } };
     // FED-07: the jurisdiction rules in force, under a state legal hold.
     case "/api/district/jurisdiction-rules": return { data: { bundleVersion: 2, jurisdictionId: "US-TX", effectiveFrom: now, auditYears: 7, closedCaseYears: 0, safetyYears: 5, historyYears: 10,
       legalHold: true, consentRequired: true, residency: { scope: "in_state", status: "met", declaredLocation: "US-TX", jurisdictionId: "US-TX" } } };
@@ -702,6 +706,8 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         if (!text.includes(w)) failures.push(`superintendent #/integrations: exchange "${w}" is missing`);
       for (const w of ["Policies from Master Control", "Version 2", "security.mfa.required_for_staff", "Locked", "Earlier versions received: 1", "Check and keep"])
         if (!text.includes(w)) failures.push(`superintendent #/integrations: policy bundles "${w}" is missing`);
+      for (const w of ["Athletic associations", "University Interscholastic League", "12 families agreed", "New access token", "Approve agreement"])
+        if (!text.includes(w)) failures.push(`superintendent #/integrations: athletic associations "${w}" is missing`);
       for (const w of ["Jurisdiction rules", "Legal hold: no district records", "In the district's state", "Meets the rule (as declared)", "7 years", "Exchanges need a recorded consent"])
         if (!text.includes(w)) failures.push(`superintendent #/integrations: jurisdiction rules "${w}" is missing`);
       await page.eval(`([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Preview") || {}).click?.()`);
