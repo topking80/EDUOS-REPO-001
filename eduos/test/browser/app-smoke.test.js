@@ -145,6 +145,12 @@ function mockApi(role, pathname, failWebhookLoads = false) {
       waitlistPosition: null, documents: [{ label: "Birth certificate", received: true }, { label: "Records", received: false }], next: ["offered", "waitlisted", "not_offered", "withdrawn"] }] };
     case "/api/private-school/classes": return { data: [{ id: "pk1", campusId: "pc1", name: "Math 4", schoolYear: "2026-2027", term: "Fall", teacher: "Teacher S1", status: "active", size: 18 }] };
     case "/api/private-school/report-cards": return { data: [{ id: "prc1", learnerId: "pl1", learner: "Ava Lin", schoolYear: "2026-2027", term: "Fall", status: "draft", lines: [] }] };
+    // HSP-06: learner transfers.
+    case "/api/homeschool/transfers": return { data: [{ id: "x1", direction: "sent", learner: "Mia", from: "Ortiz Homeschool", to: "Hillside Academy", purpose: "enrollment", sections: ["courses", "work"],
+      status: "accepted", items: 4, sourceLearnerId: "l1", preparedAt: now }] };
+    case "/api/homeschool/learners/l1/transferred-records": return { data: [] };
+    case "/api/private-school/transfers": return { data: [{ id: "x2", direction: "received", learner: "Mia Ortiz", from: "Ortiz Homeschool", to: "Hillside Academy", purpose: "enrollment",
+      sections: ["courses", "attendance"], status: "accepted", items: 3, receiverLearnerId: "pl1", preparedAt: now }] };
     // HSP-05: billing for finance and the school admin.
     case "/api/private-school/billing/accounts": return { data: [{ id: "pba1", name: "Lin family", payer: "Gwen Lin", status: "active", balanceCents: 555000 }] };
     case "/api/private-school/billing/learners": return { data: [{ id: "pl1", displayName: "Ava Lin", enrolled: true }] };
@@ -1489,12 +1495,12 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
       let text = "";
       for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Add a learner"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
-      for (const w of ["Ortiz Homeschool", "Learners", "Mia", "2 this week", "Coming up", "Fractions", "Tutor Tess", "Invite an adult", "Add a learner", "Add to the calendar"])
+      for (const w of ["Ortiz Homeschool", "Learners", "Mia", "2 this week", "Coming up", "Fractions", "Tutor Tess", "Invite an adult", "Add a learner", "Add to the calendar", "Receive records", "Transfer code"])
         if (!text.includes(w)) failures.push(`homeschool workspace: "${w}" is missing`);
       await axeScan(page, "homeschool workspace", a11y);
       await page.eval(`([...document.querySelectorAll("button")].find(b => b.getAttribute("aria-label") === "Open Mia") || {}).click?.()`);
       for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Work and evidence"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
-      for (const w of ["Algebra I", "Two-step equations", "12 days · 48 hours · 1 absent", "Unit 1 test", "18/20", "Export transcript", "Progress report (last 90 days)", "Add a course"])
+      for (const w of ["Algebra I", "Two-step equations", "12 days · 48 hours · 1 absent", "Unit 1 test", "18/20", "Export transcript", "Progress report (last 90 days)", "Add a course", "Transfer records", "sent to Hillside Academy", "Prepare transfer", "Courses and final grades"])
         if (!text.includes(w)) failures.push(`homeschool learner: "${w}" is missing`);
       await axeScan(page, "homeschool learner", a11y);
       if (page.errors.length) failures.push(`homeschool workspace: ${page.errors[0].split("\n")[0]}`);
@@ -1508,7 +1514,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
       let text = "";
       for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Export the school's records"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
-      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Billing", "INV-2026-0001", "RCT-2026-0001", "needs approval", "Sign off", "Draft invoice", "Export the school's records", "Ask to close the school",
+      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Billing", "INV-2026-0001", "Transfers", "from Ortiz Homeschool", "Send a learner's records", "Published report cards", "Receive records", "RCT-2026-0001", "needs approval", "Sign off", "Draft invoice", "Export the school's records", "Ask to close the school",
         "Admissions", "Cy Park", "Under review", "documents 1/2", "Offered", "New inquiry", "This week's schedule", "Mon 09:00–09:50 · Math 4", "Classes", "18 learners", "Report cards", "Draft"])
         if (!text.includes(w)) failures.push(`private school workspace: "${w}" is missing`);
       await axeScan(page, "private school workspace", a11y);
