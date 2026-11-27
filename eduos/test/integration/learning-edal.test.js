@@ -220,6 +220,38 @@ describe("EduOS 32.6.0 learning core and EDAL against real PostgreSQL", { skip }
     assert.equal(prog.finalGrades.length, 1); assert.equal(prog.finalGrades[0].letter, "B"); assert.equal(prog.corrections, 1);
   });
 
+  it("Phase C progress: every piece of work with its status, ungraded and missing work not counted, retakes, corrected and past-term finals, practice estimates apart", async () => {
+    const before = ok(await as("pu")("GET", "/api/learning/progress")).courses[0].grade.percent;
+    const late = ok(await as("t1")("POST", "/api/learning/assignments", { courseId: course.id, title: "Reading log", kind: "work", pointsPossible: 10, dueAt: "2020-01-06T15:00:00Z" }), 201);
+    const turnedIn = ok(await as("t1")("POST", "/api/learning/assignments", { courseId: course.id, title: "Field notes", kind: "work", pointsPossible: 10, dueAt: "2099-01-06T15:00:00Z" }), 201);
+    await admin.query("INSERT INTO assignment_submissions(district_id,assignment_id,student_id,response_text,submitted_at) VALUES($1,$2,$3,'My notes',now())", [ID.d1, turnedIn.id, ID.alice]);
+    const SK = "5c000000-0000-4000-8000-0000000000aa";
+    await admin.query(`INSERT INTO christie_skills(id,district_id,school_id,subject,grade_level,code,title,sequence,explanation,source,status,created_by,approved_by,approved_at)
+        VALUES($1,$2,$3,'Math','3','G3.SK','Skip counting',2,'Count by twos.','test','approved',$4,$5,now())`, [SK, ID.d1, ID.s1, USERS.t1[0], USERS.p1[0]]);
+    await admin.query("INSERT INTO student_skill_mastery(district_id,school_id,student_id,skill_id,attempts,correct,mastery) VALUES($1,$2,$3,$4,4,3,62)", [ID.d1, ID.s1, ID.alice, SK]);
+    const p = ok(await as("pu")("GET", "/api/learning/progress")), c = p.courses[0];
+    assert.equal(c.grade.percent, before, "ungraded and missing work don't change the grade");
+    const by = t => c.work.find(w => w.title === t);
+    assert.deepEqual([by("Reading log").status, by("Reading log").missing, by("Reading log").counted], ["not_started", true, false]);
+    assert.deepEqual([by("Field notes").status, by("Field notes").counted], ["submitted", false]);
+    assert.deepEqual([by("Poster").status, by("Poster").feedback, by("Poster").counted], ["graded", "Lovely poster.", true]);
+    const q = c.work.find(w => w.kind === "quiz");
+    assert.deepEqual([q.attempts, q.maxAttempts, q.retakePolicy, q.canRetake], [2, 2, "highest", false]);
+    assert.deepEqual([c.counts.missing, c.counts.waiting], [1, 1]);
+    const fix = p.finalGrades[0];
+    assert.deepEqual([fix.letter, fix.replaced_letter, fix.course_status], ["B", "A", "active"]);
+    assert.deepEqual(p.practice, [{ skillId: SK, title: "Skip counting", subject: "Math", estimate: 62, attempts: 4 }]);
+    const fam = ok(await as("pa")("GET", `/api/learning/progress?studentId=${ID.alice}`));
+    assert.equal(fam.practice.length, 1, "the family sees the same estimates");
+    // Term rollover: the course is archived; its final grade stays, the live course doesn't.
+    await admin.query("UPDATE courses SET status='archived' WHERE id=$1", [course.id]);
+    const after = ok(await as("pu")("GET", "/api/learning/progress"));
+    assert.equal(after.courses.length, 0); assert.equal(after.finalGrades[0].course_status, "archived");
+    await admin.query("UPDATE courses SET status='active' WHERE id=$1", [course.id]);
+    await admin.query("DELETE FROM assignment_submissions WHERE assignment_id=$1", [turnedIn.id]);
+    await admin.query("DELETE FROM assignments WHERE id = ANY($1::uuid[])", [[late.id, turnedIn.id]]);
+  });
+
   it("EDAL verify: leaders only, district-scoped, checkpoints, per-record proofs for families", async () => {
     for (const who of ["t1", "pa", "pu"]) assert.equal((await as(who)("GET", "/api/edal/verify")).status, 403, who);
     const v = ok(await as("supt1")("GET", "/api/edal/verify"));

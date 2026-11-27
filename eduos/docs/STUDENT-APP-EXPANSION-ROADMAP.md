@@ -48,11 +48,11 @@ The student experience must remain age-appropriate, accessible, privacy-preservi
 
 ### Phase C — Progress and feedback
 
-- [ ] Create a learner-facing progress overview combining course grades, standards mastery, returned work, teacher feedback, and credentials already available through existing APIs.
-- [ ] Clearly distinguish official/final grades, current calculated grades, mastery evidence, and practice estimates.
-- [ ] Show missing/ungraded work without treating ungraded work as zero.
-- [ ] Support accessible progress explanations and links back to the source course/assessment.
-- [ ] Verify accommodations, retakes, corrected grades, and term rollover.
+- [x] Create a learner-facing progress overview combining course grades, standards mastery, returned work, teacher feedback, and credentials already available through existing APIs (web Grades tab, Flutter Grades screen; `GET /api/learning/progress` now lists every piece of published work with its status and feedback).
+- [x] Clearly distinguish official/final grades, current calculated grades, mastery evidence, and practice estimates (a "How to read this" key; Christie practice estimates listed apart and never part of a grade).
+- [x] Show missing/ungraded work without treating ungraded work as zero (missing and waiting work is listed with "not counted yet"; the course grade is unchanged by it, tested).
+- [x] Support accessible progress explanations and links back to the source course/assessment (Why? opens the mastery evidence; each item opens its quiz or course).
+- [x] Verify accommodations, retakes, corrected grades, and term rollover (attempts used, attempts allowed and which attempt counts; a correction shows the grade it replaced; an archived course's final grade stays as a past course; tested in `test/integration/learning-edal.test.js`).
 
 ### Phase D — School day services
 
@@ -83,3 +83,5 @@ The student experience must remain age-appropriate, accessible, privacy-preservi
 Phase A adds the My work screen and pupil navigation entry. It uses `GET /api/learning/courses` followed by the existing learner-scoped `GET /api/learning/courses/:id` response, including each assignment's learner-specific status, missing flag, and earned points. This is a first implementation slice, not a claim that the full roadmap or Flutter release gate is complete.
 
 Phase B adds the day planner: staff publish class times, one-day changes and school calendar days; `GET /api/learning/schedule` returns the learner's own week through a database function that checks the caller and leaves staff notes out. Reminders are not built yet.
+
+Phase C turns the existing progress endpoint into the learner's Grades view. It doesn't change how grades are calculated; it shows every piece of work and labels each kind of number.
