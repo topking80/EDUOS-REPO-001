@@ -128,9 +128,18 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     case "/api/apps": return { data: [{ id: "app3", name: "New LTI Tool", vendor: "Tool Co", integrationType: "lti13", registrationStatus: "pending" }] };
     case "/api/app-requests": return { data: [{ id: "r1", status: "pending" }] };
     case "/api/my/apps": return { data: [{ id: "a1", name: "Reading Room", category: "Reading", integrationType: "link" }, { id: "a2", name: "MathQuest", category: "Math", integrationType: "lti13" }] };
-    case "/api/me": return role === "homeschool" ? { userId: "u1", displayName: "Smoke Test", role: "family_member", membershipRole: "family_member", districtId: null, schoolId: null,
+    case "/api/me": if (role === "private_school") return { userId: "u1", displayName: "Smoke Test", role: "private_school_member", membershipRole: "private_school_member", districtId: null, schoolId: null,
+        tenantKind: "private_school", privateSchoolId: "ps1", privateSchoolRole: "school_admin", privateSchoolStatus: "active" };
+      return role === "homeschool" ? { userId: "u1", displayName: "Smoke Test", role: "family_member", membershipRole: "family_member", districtId: null, schoolId: null,
         tenantKind: "homeschool_family", familyId: "f1", familyRole: "owner" }
       : { userId: "u1", displayName: "Smoke Test", role: role === "vice_principal" ? "principal" : role, membershipRole: role, districtId: "d1", schoolId: mockSchool, memberships: [] };
+    // HSP-03: an independent private school (school administrator).
+    case "/api/private-school/me": return { data: { school: { id: "ps1", legalName: "Hillside Academy, Inc.", displayName: "Hillside Academy", status: "active", timeZone: "America/Chicago",
+      websiteDomain: "hillside.example", domainVerified: true, branding: {} }, role: "school_admin", campus: null, displayName: "Smoke Test", learnersYouCanSee: 1, campuses: 1 } };
+    case "/api/private-school/learners": return { data: [{ id: "pl1", campusId: "pc1", displayName: "Ava Lin", gradeLevel: "4", localNumber: "H-001", enrollmentStatus: "enrolled" }] };
+    case "/api/private-school/campuses": return { data: [{ id: "pc1", name: "Main Campus", city: "Austin", status: "active" }] };
+    case "/api/private-school/members": return { data: { members: [{ id: "pm1", role: "school_admin", name: "Smoke Test", you: true }, { id: "pm2", role: "registrar", name: "Rita Registrar", you: false }], invitations: [] } };
+    case "/api/private-school/calendar": return { data: [{ id: "pe1", title: "First day of term", kind: "term_start", audience: "everyone", startsAt: now, endsAt: now }] };
     // HSP-01: a homeschool family session (owner).
     case "/api/homeschool/me": return { data: { family: { id: "f1", name: "Ortiz Homeschool", timeZone: "America/Chicago", jurisdiction: "US-TX" }, role: "owner", displayName: "Smoke Test",
       learners: [{ id: "l1", displayName: "Mia", gradeBand: "3", status: "active", authority: "full", upcomingThisWeek: 2 }], familyEventsThisWeek: 1 } };
@@ -1471,6 +1480,20 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
         if (!text.includes(w)) failures.push(`homeschool learner: "${w}" is missing`);
       await axeScan(page, "homeschool learner", a11y);
       if (page.errors.length) failures.push(`homeschool workspace: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
+  }
+  // HSP-03: a private school session shows the school workspace.
+  state.role = "private_school";
+  {
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/` });
+      let text = "";
+      for (const end = Date.now() + 8000; Date.now() < end && !text.includes("Export the school's records"); await new Promise(r => setTimeout(r, 100))) text = await page.mainText();
+      for (const w of ["Hillside Academy", "School administrator", "Ava Lin", "Main Campus", "#H-001", "First day of term", "Rita Registrar", "Enroll a learner", "Invite someone", "Export the school's records", "Ask to close the school"])
+        if (!text.includes(w)) failures.push(`private school workspace: "${w}" is missing`);
+      await axeScan(page, "private school workspace", a11y);
+      if (page.errors.length) failures.push(`private school workspace: ${page.errors[0].split("\n")[0]}`);
     } finally { page.close(); }
   }
   // Failed queue requests must be visibly different from genuinely empty queues.

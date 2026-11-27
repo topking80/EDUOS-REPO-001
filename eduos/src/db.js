@@ -156,7 +156,7 @@ export async function withFamilyTransaction(actor, callback) {
     await client.query("BEGIN");
     open = true;
     await client.query(
-      "SELECT set_config('app.family_id', $1, true), set_config('app.user_id', $2, true), set_config('app.role', $3, true), set_config('app.district_id', '', true), set_config('app.school_id', '', true), set_config('app.membership_role', $3, true)",
+      "SELECT set_config('app.family_id', $1, true), set_config('app.user_id', $2, true), set_config('app.role', $3, true), set_config('app.district_id', '', true), set_config('app.school_id', '', true), set_config('app.private_school_id', '', true), set_config('app.membership_role', $3, true)",
       [String(actor.familyId), String(actor.userId), `family_${actor.familyRole}`]);
     const result = await callback(client);
     await client.query("COMMIT");
@@ -176,7 +176,33 @@ export async function withUserTransaction(actor, callback) {
   try {
     await client.query("BEGIN");
     open = true;
-    await client.query("SELECT set_config('app.user_id', $1, true), set_config('app.family_id', '', true), set_config('app.district_id', '', true), set_config('app.school_id', '', true), set_config('app.role', '', true)", [String(actor.userId)]);
+    await client.query("SELECT set_config('app.user_id', $1, true), set_config('app.family_id', '', true), set_config('app.private_school_id', '', true), set_config('app.ps_membership_id', '', true), set_config('app.district_id', '', true), set_config('app.school_id', '', true), set_config('app.role', '', true)", [String(actor.userId)]);
+    const result = await callback(client);
+    await client.query("COMMIT");
+    open = false;
+    return result;
+  } catch (error) {
+    if (open) { try { await client.query("ROLLBACK"); } catch (e) { error.rollbackError = e; } }
+    throw error;
+  } finally { client.release(); }
+}
+
+/**
+ * HSP-03: a transaction in an independent private school's context, for the
+ * one membership the session was opened for. app.district_id, app.school_id
+ * and app.family_id are empty, so no district or family row matches.
+ */
+export async function withPrivateSchoolTransaction(actor, callback) {
+  if (actor?.tenantKind !== "private_school" || !actor.privateSchoolId || !actor.privateSchoolMembershipId || !actor.userId) throw new TypeError("Private school transaction requires a private school session");
+  const client = await pool.connect();
+  let open = false;
+  try {
+    await client.query("BEGIN");
+    open = true;
+    await client.query(
+      `SELECT set_config('app.private_school_id', $1, true), set_config('app.ps_membership_id', $2, true), set_config('app.user_id', $3, true), set_config('app.role', $4, true),
+              set_config('app.membership_role', $4, true), set_config('app.district_id', '', true), set_config('app.school_id', '', true), set_config('app.family_id', '', true)`,
+      [String(actor.privateSchoolId), String(actor.privateSchoolMembershipId), String(actor.userId), `ps_${actor.privateSchoolRole}`]);
     const result = await callback(client);
     await client.query("COMMIT");
     open = false;

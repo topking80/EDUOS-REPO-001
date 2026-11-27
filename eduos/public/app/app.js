@@ -342,7 +342,7 @@ async function renderHomeschool() {
   const learners = d.learners, nameOf = id => learners.find(l => l.id === id)?.displayName || "Family";
   const others = (ctx?.data?.contexts || []).filter(c => !(c.kind === "homeschool_family" && c.membershipId === ctx.data.current.membershipId));
   const switcher = others.length ? h("select", { "aria-label": "Switch environment", onchange: e => { const c = others[Number(e.target.value)]; if (c) switchContextTo(c, `Now using ${c.label}`).catch(() => toast("Couldn't switch.")); } },
-    h("option", { value: "" }, "Switch to…"), others.map((c, i) => h("option", { value: String(i) }, `${c.kind === "district" ? "School" : "Homeschool"}: ${c.label}`))) : null;
+    h("option", { value: "" }, "Switch to…"), others.map((c, i) => h("option", { value: String(i) }, `${c.kind === "district" ? "School district" : c.kind === "private_school" ? "Private school" : "Homeschool"}: ${c.label}`))) : null;
   document.getElementById("top").replaceChildren(h("div", { class: "who" }, h("p", { class: "school" }, `${d.family.name} · ${HS_ROLE[d.role]}`), h("h1", {}, `Hi, ${first(d.displayName)}`)),
     h("div", { class: "row" }, switcher, h("button", { class: "btn small", type: "button", onclick: async () => { await api.post("/auth/logout", {}).catch(() => {}); location.reload(); } }, "Sign out")));
   document.getElementById("tabs")?.replaceChildren();
@@ -392,6 +392,111 @@ async function renderHomeschool() {
         try { await api.post("/api/homeschool/learners", { displayName: ln.name.value.trim(), gradeBand: ln.grade.value }); toast("Learner added."); reload(); } catch (err) { hsErr(err, "Couldn't add the learner."); } } },
       h("h3", {}, "Add a learner"), h("label", { for: "hs-l-name" }, "Name"), ln.name, h("label", { for: "hs-l-grade" }, "Grade"), ln.grade, h("button", { class: "btn", type: "submit" }, "Add learner"))) : null,
     h("p", { class: "small muted" }, "This family workspace is private to its members. Records you keep here are labeled as family records; EduOS doesn't certify them or file anything with any agency."));
+}
+
+// ---- HSP-03: independent private school ----------------------------------------
+const PS_ROLE = { school_admin: "School administrator", campus_admin: "Campus administrator", registrar: "Registrar", finance: "Finance", teacher: "Teacher", staff: "Staff", guardian: "Guardian" };
+const PS_STATUS = { pending_verification: "Waiting for verification", active: "Verified", suspended: "Suspended", closing: "Closing", closed: "Closed" };
+const PS_KINDS = { event: "Event", holiday: "Holiday", term_start: "Term starts", term_end: "Term ends", closure: "Closure", meeting: "Meeting" };
+const PS_GRADES = [["pre_k", "Pre-K"], ["k", "K"], ...Array.from({ length: 12 }, (_, i) => [String(i + 1), `Grade ${i + 1}`])];
+const PS_ERRORS = { school_not_verified: "The platform hasn't verified this school yet, so learner records can't be added.", school_admin_only: "Only a school administrator can do that.",
+  not_allowed: "Your role can't do that.", school_needs_an_admin: "A school needs at least one school administrator.", campus_required_for_campus_roles: "Pick a campus for that role.",
+  local_number_in_use: "Another learner already has that number.", invitation_for_another_email: "This invitation was sent to a different email address.",
+  invitation_not_valid: "This invitation has expired, been used or been withdrawn.", already_a_member: "You already have that role here.", pending_limit_reached: "You already have schools waiting for verification.",
+  campus_has_learners: "Move or withdraw the campus's learners first.", verified_email_required: "Your sign-in needs a verified email for this." };
+const psErr = (e, fallback) => toast(PS_ERRORS[e?.body?.error] || fallback);
+async function privateSchoolEntryCard() {
+  const d = (await safe(api.get("/api/session/contexts")))?.data;
+  const mine = (d?.contexts || []).filter(c => c.kind === "private_school");
+  const f = { legal: h("input", { id: "ps-legal", required: true, minlength: 2, maxlength: 200 }), name: h("input", { id: "ps-name", required: true, minlength: 2, maxlength: 120 }),
+    campus: h("input", { id: "ps-campus", required: true, maxlength: 120, value: "Main campus" }), domain: h("input", { id: "ps-domain", maxlength: 253, placeholder: "example.org (optional)" }) };
+  return h("section", { class: "card", "aria-label": "Private school" }, h("h3", {}, "Independent private school"),
+    h("p", { class: "small muted" }, "A private school is its own organization in EduOS, separate from any district. The platform verifies the school before learner records can be added."),
+    mine.length ? h("ul", { class: "list" }, mine.map(c => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, c.label), ` · ${PS_ROLE[c.role] || c.role}${c.pending ? " · waiting for verification" : ""}`),
+      h("button", { class: "btn small", type: "button", onclick: () => switchContextTo(c, `Now in ${c.label}`).catch(e => psErr(e, "Couldn't open it.")) }, "Open")))) : null,
+    h("details", {}, h("summary", {}, "Register a school"), h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+        try { const r = (await api.post("/api/private-school/schools", { legalName: f.legal.value.trim(), displayName: f.name.value.trim(), campusName: f.campus.value.trim(),
+            websiteDomain: f.domain.value.trim() || undefined, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })).data;
+          await switchContextTo({ kind: "private_school", membershipId: r.membershipId }, "Registered. The platform will verify the school."); } catch (err) { psErr(err, "Couldn't register the school."); } } },
+      h("label", { for: "ps-legal" }, "Legal name"), f.legal, h("label", { for: "ps-name" }, "Name families see"), f.name, h("label", { for: "ps-campus" }, "First campus"), f.campus,
+      h("label", { for: "ps-domain" }, "Website domain"), f.domain, h("button", { class: "btn", type: "submit" }, "Register"))));
+}
+async function renderPrivateSchoolInvite(token) {
+  document.getElementById("top").replaceChildren(h("div", { class: "who" }, h("h1", {}, "School invitation")));
+  document.getElementById("tabs")?.replaceChildren();
+  put(h("section", { class: "card" }, h("h2", {}, "Join a private school"), h("p", {}, "Accepting adds you to the school with the role it chose."),
+    h("div", { class: "btns" }, h("button", { class: "btn primary", type: "button", onclick: async () => {
+        try { const r = (await api.post("/api/private-school/invitations/accept", { token })).data;
+          await switchContextTo({ kind: "private_school", membershipId: r.membershipId }, "You've joined the school."); } catch (e) { psErr(e, "Couldn't accept the invitation."); } } }, "Accept"),
+      h("button", { class: "btn", type: "button", onclick: () => { location.hash = ""; boot(); } }, "Not now"))));
+}
+async function renderPrivateSchool() {
+  const [meRes, learners, campuses, members, cal, ctx] = await Promise.all([api.get("/api/private-school/me"), safe(api.get("/api/private-school/learners")), safe(api.get("/api/private-school/campuses")),
+    safe(api.get("/api/private-school/members")), safe(api.get("/api/private-school/calendar")), safe(api.get("/api/session/contexts"))]);
+  const d = meRes.data, r = d.role, sch = d.school, reload = () => renderPrivateSchool(), active = sch.status === "active";
+  const admin = r === "school_admin", enrolls = ["school_admin", "registrar", "campus_admin"].includes(r), staff = r !== "guardian";
+  const camps = (campuses?.data || []).filter(c => c.status === "active"), campName = id => camps.find(c => c.id === id)?.name || "";
+  const others = (ctx?.data?.contexts || []).filter(c => !(c.kind === "private_school" && c.membershipId === ctx.data.current.membershipId));
+  document.getElementById("top").replaceChildren(h("div", { class: "who" }, h("p", { class: "school" }, `${sch.displayName} · ${PS_ROLE[r]}${d.campus ? ` · ${d.campus.name}` : ""}`), h("h1", {}, `Hi, ${first(d.displayName)}`)),
+    h("div", { class: "row" }, others.length ? h("select", { "aria-label": "Switch environment", onchange: e => { const c = others[Number(e.target.value)]; if (c) switchContextTo(c, `Now using ${c.label}`).catch(() => toast("Couldn't switch.")); } },
+      h("option", { value: "" }, "Switch to…"), others.map((c, i) => h("option", { value: String(i) }, `${c.kind === "district" ? "School district" : c.kind === "homeschool_family" ? "Homeschool" : "Private school"}: ${c.label}`))) : null,
+      h("button", { class: "btn small", type: "button", onclick: async () => { await api.post("/auth/logout", {}).catch(() => {}); location.reload(); } }, "Sign out")));
+  document.getElementById("tabs")?.replaceChildren();
+  const fmt = t => new Date(t).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const post = (path, body, msg) => api.post(path, body).then(() => { toast(msg); reload(); }).catch(e => psErr(e, "Couldn't save it."));
+  const campusSelect = id => h("select", { id }, camps.map(c => h("option", { value: c.id }, c.name)));
+  const ln = { name: h("input", { id: "ps-l-name", required: true, maxlength: 120 }), grade: h("select", { id: "ps-l-grade" }, PS_GRADES.map(([v, t]) => h("option", { value: v }, t))),
+    campus: r === "campus_admin" ? null : campusSelect("ps-l-campus"), number: h("input", { id: "ps-l-number", maxlength: 40 }) };
+  const inv = { email: h("input", { id: "ps-i-email", type: "email", required: true }), role: h("select", { id: "ps-i-role" }, (admin ? Object.entries(PS_ROLE) : [["guardian", "Guardian"]]).map(([v, t]) => h("option", { value: v }, t))),
+    campus: campusSelect("ps-i-campus"), picks: (learners?.data || []).filter(l => l.enrollmentStatus === "enrolled").map(l => h("input", { type: "checkbox", value: l.id, "aria-label": `Guardian of ${l.displayName}` })) };
+  const ev = { title: h("input", { id: "ps-e-title", required: true, maxlength: 200 }), kind: h("select", { id: "ps-e-kind" }, Object.entries(PS_KINDS).map(([v, t]) => h("option", { value: v }, t))),
+    audience: h("select", { id: "ps-e-aud" }, h("option", { value: "everyone" }, "Everyone"), h("option", { value: "staff" }, "Staff only")), day: h("input", { id: "ps-e-day", type: "date", required: true }) };
+  const linkBox = h("div", {});
+  const learnerList = learners?.data || [];
+  put(h("h2", {}, sch.displayName),
+    sch.status !== "active" ? h("p", { class: "notice" }, `${PS_STATUS[sch.status]}. ${sch.status === "pending_verification" ? "You can set up campuses and staff now; learner records can be added once the platform has verified the school." : ""}`) : null,
+    h("section", { class: "card", "aria-label": r === "guardian" ? "Your children" : "Learners" }, h("h3", {}, r === "guardian" ? "Your children" : "Learners"),
+      learnerList.length ? h("ul", { class: "list" }, learnerList.map(l => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, l.displayName),
+        h("span", { class: "small muted" }, ` · ${PS_GRADES.find(g => g[0] === l.gradeLevel)?.[1] || "No grade"} · ${campName(l.campusId)}${l.localNumber ? ` · #${l.localNumber}` : ""}${l.enrollmentStatus === "withdrawn" ? " · withdrawn" : ""}`)),
+        enrolls && l.enrollmentStatus === "enrolled" ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why is ${l.displayName} leaving?`,
+          reason => post(`/api/private-school/learners/${l.id}/withdraw`, { reason }, "Withdrawn.")) }, "Withdraw")) : null))) : h("p", { class: "muted" }, r === "finance" ? "Finance doesn't see learner records." : "No learners yet."),
+      enrolls && active ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); post("/api/private-school/learners", { displayName: ln.name.value.trim(), gradeLevel: ln.grade.value,
+          campusId: ln.campus ? ln.campus.value : d.campus?.id, localNumber: ln.number.value.trim() || undefined }, "Enrolled."); } },
+        h("h4", {}, "Enroll a learner"), h("label", { for: "ps-l-name" }, "Name"), ln.name, h("label", { for: "ps-l-grade" }, "Grade"), ln.grade,
+        ln.campus ? [h("label", { for: "ps-l-campus" }, "Campus"), ln.campus] : null, h("label", { for: "ps-l-number" }, "Student number (optional)"), ln.number, h("button", { class: "btn", type: "submit" }, "Enroll")) : null),
+    h("section", { class: "card", "aria-label": "Calendar" }, h("h3", {}, "Calendar"),
+      (cal?.data || []).length ? h("ul", { class: "list" }, cal.data.map(e => h("li", {}, h("b", {}, e.title), h("span", { class: "small muted" }, ` · ${PS_KINDS[e.kind]} · ${fmt(e.startsAt)}${e.campus ? ` · ${e.campus}` : ""}${e.audience === "staff" ? " · staff only" : ""}`)))) : h("p", { class: "muted" }, "Nothing scheduled."),
+      ["school_admin", "campus_admin"].includes(r) ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const day = new Date(`${ev.day.value}T08:00:00`);
+          post("/api/private-school/calendar", { title: ev.title.value.trim(), kind: ev.kind.value, audience: ev.audience.value, startsAt: day.toISOString(), endsAt: new Date(day.getTime() + 8 * 3600_000).toISOString() }, "Added."); } },
+        h("div", { class: "grow" }, h("label", { for: "ps-e-title" }, "Add to the calendar"), ev.title), h("div", {}, h("label", { for: "ps-e-kind" }, "Kind"), ev.kind),
+        h("div", {}, h("label", { for: "ps-e-aud" }, "For"), ev.audience), h("div", {}, h("label", { for: "ps-e-day" }, "Day"), ev.day), h("button", { class: "btn", type: "submit" }, "Add")) : null),
+    staff ? h("section", { class: "card", "aria-label": "Staff" }, h("h3", {}, "People"),
+      h("ul", { class: "list" }, (members?.data?.members || []).map(m => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, m.name), ` · ${PS_ROLE[m.role]}${m.campusId ? ` · ${campName(m.campusId)}` : ""}${m.you ? " (you)" : ""}`),
+        admin && !m.you ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, `Why remove ${m.name}?`,
+          reason => post(`/api/private-school/members/${m.id}/revoke`, { reason }, `${m.name} no longer has access.`)) }, "Remove")) : null))),
+      (members?.data?.invitations || []).length ? h("p", { class: "small muted" }, `Waiting: ${members.data.invitations.map(i => `${i.email} (${PS_ROLE[i.role]})`).join(", ")}`) : null,
+      ["school_admin", "registrar", "campus_admin"].includes(r) ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault();
+          const body = { email: inv.email.value.trim(), role: inv.role.value };
+          if (["campus_admin", "teacher", "staff"].includes(body.role)) body.campusId = inv.campus.value;
+          if (body.role === "guardian") body.learnerIds = inv.picks.filter(x => x.checked).map(x => x.value);
+          try { const x = (await api.post("/api/private-school/invitations", body)).data;
+            linkBox.replaceChildren(h("p", { class: "notice" }, "Send this link to that person only (shown once, works for 7 days): ", h("code", { class: "wrap" }, `${location.origin}${x.link}`))); }
+          catch (err) { psErr(err, "Couldn't create the invitation."); } } },
+        h("h4", {}, "Invite someone"), h("label", { for: "ps-i-email" }, "Their email"), inv.email, h("label", { for: "ps-i-role" }, "Role"), inv.role,
+        h("label", { for: "ps-i-campus" }, "Campus (campus staff)"), inv.campus,
+        inv.picks.length ? h("fieldset", {}, h("legend", {}, "Their children (guardians)"), learnerList.filter(l => l.enrollmentStatus === "enrolled").map((l, i) => h("label", { class: "check" }, inv.picks[i], ` ${l.displayName}`))) : null,
+        h("button", { class: "btn", type: "submit" }, "Create invitation link"), linkBox) : null) : null,
+    admin ? h("section", { class: "card", "aria-label": "School" }, h("h3", {}, "School"),
+      h("p", { class: "small" }, `${sch.legalName} · ${PS_STATUS[sch.status]}${sch.websiteDomain ? ` · ${sch.websiteDomain} ${sch.domainVerified ? "(verified)" : "(not verified)"}` : ""}`),
+      h("ul", { class: "list small" }, camps.map(c => h("li", {}, `${c.name}${c.city ? ` · ${c.city}` : ""}`))),
+      h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const n = e.target.querySelector("input"); post("/api/private-school/campuses", { name: n.value.trim() }, "Campus added."); } },
+        h("div", { class: "grow" }, h("label", { for: "ps-c-name" }, "Add a campus"), h("input", { id: "ps-c-name", required: true, maxlength: 120 })), h("button", { class: "btn", type: "submit" }, "Add")),
+      h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: async () => { try { const x = (await api.get("/api/private-school/export")).data;
+          const href = URL.createObjectURL(new Blob([JSON.stringify(x, null, 2)], { type: "application/json" })); const a = h("a", { href, download: `${sch.displayName.replace(/[^A-Za-z0-9]+/g, "-")}-export.json` });
+          document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(href), 10000); toast("Exported."); } catch (e) { psErr(e, "Couldn't export."); } } }, "Export the school's records"),
+        sch.closureRequestedAt ? h("span", { class: "small muted" }, "Closure requested") : h("span", {}, h("button", { class: "btn small", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why close the school?",
+          reason => post("/api/private-school/closure", { reason }, "Closure requested. The platform will confirm with you.")) }, "Ask to close the school")))) : null,
+    h("p", { class: "small muted" }, "This school's records are separate from any district's. EduOS doesn't accredit schools or file anything with any agency."));
 }
 async function loadProfiles() { state.profiles = (await safe(api.get("/api/memberships")))?.data || []; }
 async function loadFamily() {
@@ -4843,6 +4948,7 @@ VIEWS.me = async () => {
   return [h("h2", {}, "Account"), h("section", { class: "card" }, h("h3", {}, state.me.displayName), h("p", { class: "muted" }, `${roleName()} · ${state.brand?.school?.name || state.brand?.districtName || ""}`)),
     memberships.length > 1 ? h("section", { class: "card", "aria-label": "Switch profile" }, h("h3", {}, "Switch profile"), profileList(switchProfile)) : null,
     await homeschoolEntryCard(),
+    await privateSchoolEntryCard(),
     LICENSED.includes(state.me.role) ? await licenseCard() : null,
     state.me.role === "teacher" ? h("button", { class: "btn block", type: "button", onclick: () => go("mywork") }, icon("spark"), "My work: take it with you") : null,
     ["principal", "superintendent"].includes(state.me.role) ? h("button", { class: "btn block", type: "button", onclick: () => go("portfolioreview") }, icon("check"), "Teachers' work: rights and transfers") : null,
@@ -6993,6 +7099,9 @@ async function boot() {
   } catch (e) { if (e.status === 401) { await OQ.clear().catch(() => {}); return renderSignIn(); } put(empty(navigator.onLine ? "EduOS is unavailable right now." : "You're offline.")); return; }
   // HSP-01: a homeschool family session has its own workspace and no district data.
   if (state.me.tenantKind === "homeschool_family") return renderHomeschool();
+  if (state.me.tenantKind === "private_school") return renderPrivateSchool();
+  const psInvite = /^#\/private-school-invite\/([A-Za-z0-9_-]{30,100})$/.exec(location.hash);
+  if (psInvite) return renderPrivateSchoolInvite(psInvite[1]);
   const invite = /^#\/homeschool-invite\/([A-Za-z0-9_-]{30,100})$/.exec(location.hash);
   if (invite) return renderHomeschoolInvite(invite[1]);
   const [brand] = await Promise.all([safe(api.get("/api/branding/current")), loadProfiles().then(loadFamily)]);

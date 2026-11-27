@@ -53,6 +53,7 @@ import { registerSportsSharingRoutes } from "./sports-sharing-routes.js";
 import { registerAssociationAttestationRoutes } from "./association-attestation-routes.js";
 import { registerHomeschoolRoutes } from "./homeschool-routes.js";
 import { registerHomeschoolLearningRoutes } from "./homeschool-learning-routes.js";
+import { registerPrivateSchoolRoutes } from "./private-school-routes.js";
 import { registerSportsConnectorRoutes } from "./sports-connector-routes.js";
 import { registerRankingRoutes } from "./ranking-routes.js";
 import { registerHistoryPrivacyRoutes } from "./history-privacy-routes.js";
@@ -233,7 +234,8 @@ app.get("/api/session/contexts",requireSession,listContexts);
 app.post("/api/session/context",requireSession,requireCsrf,switchContext);
 
 app.get("/api/me",requireSession,(req,res)=>res.json({userId:req.actor.userId,displayName:req.actor.displayName,role:req.actor.role,membershipRole:req.actor.membershipRole||req.actor.role,districtId:req.actor.districtId,schoolId:req.actor.schoolId,
-  tenantKind:req.actor.tenantKind||"district",...(req.actor.tenantKind==="homeschool_family"?{familyId:req.actor.familyId,familyRole:req.actor.familyRole}:{})}));
+  tenantKind:req.actor.tenantKind||"district",...(req.actor.tenantKind==="homeschool_family"?{familyId:req.actor.familyId,familyRole:req.actor.familyRole}:{}),
+  ...(req.actor.tenantKind==="private_school"?{privateSchoolId:req.actor.privateSchoolId,privateSchoolRole:req.actor.privateSchoolRole,privateSchoolStatus:req.actor.privateSchoolStatus}:{})}));
 
 app.get("/api/schools",requireSession,requirePermission("schools","read"),async(req,res,next)=>{
   try {
@@ -2064,6 +2066,7 @@ registerSportsSharingRoutes(app);
 registerAssociationAttestationRoutes(app);
 registerHomeschoolRoutes(app);
 registerHomeschoolLearningRoutes(app);
+registerPrivateSchoolRoutes(app);
 registerSportsConnectorRoutes(app);
 registerRankingRoutes(app);
 registerHistoryPrivacyRoutes(app);
