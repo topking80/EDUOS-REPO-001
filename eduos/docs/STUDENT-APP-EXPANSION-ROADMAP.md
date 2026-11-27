@@ -40,11 +40,11 @@ The student experience must remain age-appropriate, accessible, privacy-preservi
 
 ### Phase B — Student day planner
 
-- [ ] Define a student-scoped schedule read model that combines class periods, approved room/location details, and school-approved activity sessions.
-- [ ] Display today's schedule and a week view, with clear timezone and schedule-update timestamps.
-- [ ] Show teacher/school-published changes and cancellations without exposing staff-only notes or other students' schedules.
+- [x] Define a student-scoped schedule read model that combines class periods, approved room/location details, and school-approved activity sessions (migration 172, `eduos_learner_schedule`; see `docs/STUDENT-DAY-PLANNER.md`).
+- [x] Display today's schedule and a week view, with clear timezone and schedule-update timestamps (web Schedule tab and Flutter Schedule screen).
+- [x] Show teacher/school-published changes and cancellations without exposing staff-only notes or other students' schedules.
 - [ ] Add accessible reminders only after district notification preferences and quiet-hour rules are applied.
-- [ ] Test schedule changes, no-school days, daylight-saving transitions, stale/offline state, and student transfer/withdrawal.
+- [x] Test schedule changes, no-school days, daylight-saving transitions, stale/offline state, and student transfer/withdrawal (`test/integration/day-planner.test.js`, Flutter `learner_screens_test.dart`).
 
 ### Phase C — Progress and feedback
 
@@ -81,3 +81,5 @@ The student experience must remain age-appropriate, accessible, privacy-preservi
 ## Current implementation note
 
 Phase A adds the My work screen and pupil navigation entry. It uses `GET /api/learning/courses` followed by the existing learner-scoped `GET /api/learning/courses/:id` response, including each assignment's learner-specific status, missing flag, and earned points. This is a first implementation slice, not a claim that the full roadmap or Flutter release gate is complete.
+
+Phase B adds the day planner: staff publish class times, one-day changes and school calendar days; `GET /api/learning/schedule` returns the learner's own week through a database function that checks the caller and leaves staff notes out. Reminders are not built yet.

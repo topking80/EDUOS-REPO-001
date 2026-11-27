@@ -108,7 +108,7 @@ void main() {
     expect(find.text('Route 7 · Bus 12'), findsOneWidget);
     expect(find.text('Picture day'), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
-    for (final t in ['Home', 'My work', 'My library', 'Courses', 'More']) {
+    for (final t in ['Home', 'My work', 'Schedule', 'Courses', 'More']) {
       expect(find.descendant(of: find.byType(NavigationBar), matching: find.text(t)), findsOneWidget, reason: t);
     }
   });
@@ -142,6 +142,45 @@ void main() {
     await tester.tap(find.text('Fractions practice'));
     await tester.pumpAndSettle();
     expect(fake.sent('GET', '/api/learning/courses/$course').length, greaterThanOrEqualTo(2));
+  });
+
+  testWidgets('Schedule shows the week in school time: changes, no-school days and club events', (tester) async {
+    final fake = FakeServer({
+      'GET /api/learning/schedule': (r) => {'data': {
+        'timezone': 'America/New_York', 'today': '2027-03-08', 'from': r.url.queryParameters['from'] ?? '2027-03-08', 'to': '2027-03-14',
+        'updatedAt': '2027-03-07T15:00:00Z', 'generatedAt': '2027-03-08T12:00:00Z',
+        'days': [
+          {'date': '2027-03-08', 'weekday': 1, 'calendar': null,
+           'classes': [{'courseId': course, 'title': 'Grade 4 Math', 'teacher': 'Ms. Rivera', 'period': 'Period 1', 'starts': '09:00', 'ends': '09:50', 'room': 'Room 202', 'status': 'changed', 'note': 'Library visit'}],
+           'events': [{'id': 'e1', 'title': 'Robotics build night', 'activity': 'Robotics', 'kind': 'club', 'venue': 'Room 101', 'starts': '18:00', 'ends': '20:00', 'status': 'published'}]},
+          {'date': '2027-03-10', 'weekday': 3, 'calendar': {'kind': 'no_school', 'label': 'Teacher workday'}, 'classes': [], 'events': []},
+        ],
+      }},
+    });
+    await launch(tester, fake);
+    await tester.tap(find.text('Schedule').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Today · Mon, Mar 8'), findsOneWidget);
+    expect(find.text('09:00–09:50 Grade 4 Math'), findsOneWidget);
+    expect(find.text('Period 1 · Room 202 · Ms. Rivera'), findsOneWidget);
+    expect(find.text('Library visit'), findsOneWidget);
+    expect(find.text('Changed'), findsOneWidget);
+    expect(find.text('18:00–20:00 Robotics build night'), findsOneWidget);
+    expect(find.text('No school: Teacher workday'), findsOneWidget);
+    expect(find.text('No school today.'), findsOneWidget);
+    expect(find.textContaining('America/New_York'), findsOneWidget);
+    await tester.tap(find.text('Next week'));
+    await tester.pumpAndSettle();
+    expect(fake.sent('GET', '/api/learning/schedule').last.url.queryParameters['from'], '2027-03-15');
+  });
+
+  testWidgets('Schedule offline says so and shows nothing saved', (tester) async {
+    final fake = FakeServer({'GET /api/learning/schedule': (_) => throw http.ClientException('network down')});
+    await launch(tester, fake);
+    await tester.tap(find.text('Schedule').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Something went wrong'), findsOneWidget);
+    expect(find.textContaining('Grade 4 Math'), findsNothing);
   });
 
   testWidgets('practising with Christie: start, answer, ask, and finish', (tester) async {
@@ -268,6 +307,8 @@ void main() {
     expect(find.text('Math'), findsOneWidget);
     expect(find.text('4.NF.3 · standard mastery'), findsOneWidget);
     expect(find.text('Practice again'), findsOneWidget);
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('My library'));
     await tester.pumpAndSettle();
     expect(find.text('Charlotte\'s Web'), findsOneWidget);

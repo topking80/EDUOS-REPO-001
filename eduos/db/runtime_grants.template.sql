@@ -1024,3 +1024,11 @@ GRANT DELETE ON learning_resource_collection_items TO eduos_app;
 GRANT UPDATE (removed_by, removed_at) ON learning_resource_school_selections TO eduos_app;
 REVOKE DELETE, TRUNCATE ON learning_resources, learning_resource_collections, learning_resource_school_selections FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_grade_rank(text), eduos_lr_manager(), eduos_lr_school_lead(), eduos_lr_pupil_grade(), eduos_lr_visible(uuid) TO eduos_app;
+
+-- 172 (student app Phase B): the day planner.
+GRANT SELECT, INSERT ON course_meetings, course_meeting_changes, school_calendar_days TO eduos_app;
+GRANT UPDATE (ended_by, ended_at, updated_at) ON course_meetings TO eduos_app;
+GRANT UPDATE (withdrawn_by, withdrawn_at) ON course_meeting_changes TO eduos_app;
+GRANT UPDATE (removed_by, removed_at) ON school_calendar_days TO eduos_app;
+REVOKE DELETE, TRUNCATE ON course_meetings, course_meeting_changes, school_calendar_days FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_learner_schedule(uuid, date, integer) TO eduos_app;

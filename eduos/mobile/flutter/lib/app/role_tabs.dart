@@ -37,8 +37,9 @@ const roleTabs = <String, List<RoleTab>>{
   'pupil': [
     RoleTab('home', 'Home', Icons.home_outlined, native: true),
     RoleTab('work', 'My work', Icons.assignment_outlined, native: true),
-    RoleTab('library', 'My library', Icons.menu_book, native: true),
+    RoleTab('schedule', 'Schedule', Icons.calendar_today_outlined, native: true),
     RoleTab('courses', 'Courses', Icons.school_outlined, native: true),
+    RoleTab('library', 'My library', Icons.menu_book, native: true),
     RoleTab('christie', 'Christie', Icons.auto_awesome, native: true),
     RoleTab('path', 'My path', Icons.route, native: true),
     RoleTab('news', 'News', Icons.newspaper, native: true),
