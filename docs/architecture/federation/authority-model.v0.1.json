@@ -1,5 +1,5 @@
 {
-  "model_version": "0.5.0",
+  "model_version": "0.6.0",
   "as_of": "2026-11-26",
   "capabilities": [
     {
@@ -388,6 +388,103 @@
       ],
       "lockable_levels": [],
       "description": "Default interface language. Any level may choose its own."
+    },
+    {
+      "id": "data.residency.scope",
+      "value_type": "enum",
+      "allowed_values": [
+        "any",
+        "us",
+        "in_state"
+      ],
+      "default": "any",
+      "mode": "restrict_only",
+      "stricter": "narrower",
+      "settable_levels": [
+        "platform",
+        "state_education_authority",
+        "district"
+      ],
+      "lockable_levels": [
+        "platform",
+        "state_education_authority"
+      ],
+      "description": "Where the district's student data may be held and sent: anywhere, in the United States, or in the district's own state. Each level may narrow it, never widen it. EduOS compares it with the hosting location its operator declares, and the exchange gateway refuses recipients outside the state when it is in_state."
+    },
+    {
+      "id": "records.audit.minimum_years",
+      "value_type": "integer",
+      "min": 0,
+      "max": 100,
+      "default": 0,
+      "mode": "restrict_only",
+      "stricter": "higher",
+      "settable_levels": [
+        "state_education_authority",
+        "district"
+      ],
+      "lockable_levels": [],
+      "description": "Minimum years EduOS keeps audit records. The retention job never purges sooner, whatever the server is configured to."
+    },
+    {
+      "id": "records.closed_cases.minimum_years",
+      "value_type": "integer",
+      "min": 0,
+      "max": 100,
+      "default": 0,
+      "mode": "restrict_only",
+      "stricter": "higher",
+      "settable_levels": [
+        "state_education_authority",
+        "district"
+      ],
+      "lockable_levels": [],
+      "description": "Minimum years EduOS keeps closed intervention cases and their notes."
+    },
+    {
+      "id": "records.safety.minimum_years",
+      "value_type": "integer",
+      "min": 0,
+      "max": 100,
+      "default": 0,
+      "mode": "restrict_only",
+      "stricter": "higher",
+      "settable_levels": [
+        "state_education_authority",
+        "district"
+      ],
+      "lockable_levels": [],
+      "description": "Minimum years EduOS keeps closed safety incidents, roll calls and the pick-up log."
+    },
+    {
+      "id": "records.legal_hold",
+      "value_type": "boolean",
+      "default": false,
+      "mode": "restrict_only",
+      "stricter": "true",
+      "settable_levels": [
+        "state_education_authority",
+        "district"
+      ],
+      "lockable_levels": [
+        "state_education_authority"
+      ],
+      "description": "A legal hold on the district's records. While it is on, EduOS's retention job deletes no district records and student records can't be deleted. A district can't lift a hold its state placed. The reason should name the matter."
+    },
+    {
+      "id": "exchange.consent_reference.required",
+      "value_type": "boolean",
+      "default": false,
+      "mode": "restrict_only",
+      "stricter": "true",
+      "settable_levels": [
+        "state_education_authority",
+        "district"
+      ],
+      "lockable_levels": [
+        "state_education_authority"
+      ],
+      "description": "A district approving an exchange agreement must record the consent or authorization it relies on (a board resolution, a parental consent process, a statute). EduOS builds no report from terms without one."
     }
   ],
   "policy_settings": []

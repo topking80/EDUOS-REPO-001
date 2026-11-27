@@ -6,6 +6,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool } from "./db.js";
+import { rulesInForce, applyRetentionMinimums } from "./jurisdiction-rules.js";
 
 const days = (env, name, fallback) => {
   const value = Number(env[name] ?? fallback);
@@ -56,9 +57,20 @@ export async function runRetention(settings = retentionSettings()) {
     try {
       await client.query("BEGIN");
       await client.query("SELECT set_config('app.district_id', $1, true)", [id]);
+      // FED-07: the district's jurisdiction rules. A legal hold stops every
+      // purge of district records; retention minimums raise the configured days.
+      const rules = await rulesInForce(client);
+      if (rules.legalHold) {
+        const or = await client.query("SELECT eduos_retention_purge_offline_replays($1) AS counts", [settings.offlineReplayDays ?? retentionSettings({}).offlineReplayDays]);
+        const er = await client.query("SELECT eduos_retention_purge_edge_reports($1) AS counts", [settings.edgeReportDays ?? retentionSettings({}).edgeReportDays]);
+        await client.query("COMMIT");
+        summary.districts[id] = { legal_hold: true, ...or.rows[0].counts, ...er.rows[0].counts };
+        continue;
+      }
+      const { settings: ds, raised } = applyRetentionMinimums({ ...settings, roleApps: settings.roleApps || retentionSettings({}).roleApps }, rules);
       const r = await client.query("SELECT eduos_retention_purge($1,$2,$3,$4) AS counts",
-        [settings.auditDays, settings.closedCaseDays, settings.flowEventDays, settings.webhookDeliveryDays]);
-      const ra = await client.query("SELECT eduos_retention_purge_role_apps($1::jsonb) AS counts", [JSON.stringify(settings.roleApps || retentionSettings({}).roleApps)]);
+        [ds.auditDays, ds.closedCaseDays, settings.flowEventDays, settings.webhookDeliveryDays]);
+      const ra = await client.query("SELECT eduos_retention_purge_role_apps($1::jsonb) AS counts", [JSON.stringify(ds.roleApps)]);
       const or = await client.query("SELECT eduos_retention_purge_offline_replays($1) AS counts",
         [settings.offlineReplayDays ?? retentionSettings({}).offlineReplayDays]);
       const er = await client.query("SELECT eduos_retention_purge_edge_reports($1) AS counts",
@@ -73,7 +85,7 @@ export async function runRetention(settings = retentionSettings()) {
         Object.assign(fr, (await client.query(`SELECT ${proname}($1::jsonb) AS counts`, [JSON.stringify(settings.features || featureRetentionSettings())])).rows[0].counts);
       }
       await client.query("COMMIT");
-      summary.districts[id] = { ...r.rows[0].counts, ...ra.rows[0].counts, ...or.rows[0].counts, ...er.rows[0].counts, ...fr };
+      summary.districts[id] = { ...r.rows[0].counts, ...ra.rows[0].counts, ...or.rows[0].counts, ...er.rows[0].counts, ...fr, ...(raised.length && { minimums_applied: raised }) };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;

@@ -154,7 +154,8 @@ export function verifyTerms(pkg, trusted, tenantRef, on) {
   if (!good) return { ok: false, reason: "bad_signature" };
   const ds = DATASETS[body.dataset];
   if (!ds || !Array.isArray(body.fields) || body.fields.some(f => !ds.fields.includes(f)) || ds.required.some(f => !body.fields.includes(f))
-      || !PURPOSES[body.purpose] || !Number.isInteger(body.min_cell_size) || body.min_cell_size < MIN_CELL_FLOOR || !/^xa-[0-9a-f]{16}$/.test(body.agreement_id || ""))
+      || !PURPOSES[body.purpose] || !Number.isInteger(body.min_cell_size) || body.min_cell_size < MIN_CELL_FLOOR || !/^xa-[0-9a-f]{16}$/.test(body.agreement_id || "")
+      || (body.consent_reference != null && (typeof body.consent_reference !== "string" || body.consent_reference.length > 200)))
     return { ok: false, reason: "malformed" };
   if (body.producer?.tenant_ref !== tenantRef) return { ok: false, reason: "not_for_this_district" };
   if (on < body.effective_from) return { ok: false, reason: "agreement_not_started" };

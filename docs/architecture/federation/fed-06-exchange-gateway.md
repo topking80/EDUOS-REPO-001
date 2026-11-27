@@ -86,4 +86,5 @@ The page shows the public key to give Master Control when approving.
 - Automatic, network-level delivery between EduOS and Master Control; files move by download and upload, as in FED-05.
 - Datasets beyond the two above.
 - Historical (as-of) reports, which need dated history in EduOS.
-- Jurisdiction-specific residency and retention rules (FED-07).
+
+FED-07 adds the district's consent and residency rules to agreements, terms and reports (`fed-07-jurisdiction-rules.md`).

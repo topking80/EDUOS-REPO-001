@@ -351,6 +351,7 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
   it("signed terms carry exactly the agreed fields, only for the producing district's sharer", async () => {
     const partial = ok(await as("tea")("POST", "/exchange-agreements", { producerNodeId: ids.d1, recipientNodeId: ids.tx, dataset: "enrollment_by_grade",
       fields: ["school_id", "grade_level", "student_count"], purpose: "operations_planning", legalBasis: "State education code reporting requirement", minCellSize: 12, effectiveTo: "2099-12-31" }), 201);
+    ids.xpartial = partial.id;
     assert.equal((await as("sup1")("GET", `/exchange-agreements/${partial.id}/terms`)).body.error, "agreement_proposed", "no terms before both sides approve");
     ok(await as("sup1")("POST", `/exchange-agreements/${partial.id}/approve`, { publicKey: ids.xkeys.public }));
     ok(await as("tea")("POST", `/exchange-agreements/${partial.id}/approve`, {}));
@@ -401,6 +402,30 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     assert.deepEqual(reads.map(e => e.decision).sort(), ["allowed", "denied", "denied", "denied"]);
     for (const a of ["propose_exchange", "approve_exchange", "deliver_exchange", "revoke_exchange"]) assert.ok(log.some(e => e.action === a), a);
     await assert.rejects(admin.query("DELETE FROM master_control.exchange_deliveries"), /append-only/);
+  });
+
+  // ---- FED-07: jurisdiction rules ---------------------------------------------
+  it("a district's consent and residency rules bind its exchange agreements", async () => {
+    ok(await as("sup1")("POST", "/policy-settings", { policyId: "exchange.consent_reference.required", nodeId: ids.d1, value: true, reason: "board policy 7.12" }), 201);
+    assert.equal((await as("sup1")("GET", `/exchange-agreements/${ids.xpartial}/terms`)).body.error, "consent_reference_required", "an agreement approved without one issues no terms now");
+    const base = { producerNodeId: ids.d1, recipientNodeId: ids.tx, dataset: "enrollment_by_grade", purpose: "state_reporting", legalBasis: "State education code reporting requirement", minCellSize: 10, effectiveTo: "2099-12-31" };
+    const ag = ok(await as("tea")("POST", "/exchange-agreements", base), 201);
+    const noConsent = await as("sup1")("POST", `/exchange-agreements/${ag.id}/approve`, { publicKey: ids.xkeys.public });
+    assert.equal(noConsent.status, 422); assert.match(noConsent.body.errors.join(";"), /consent or authorization/);
+    ok(await as("sup1")("POST", `/exchange-agreements/${ag.id}/approve`, { publicKey: ids.xkeys.public, consentReference: "Board resolution 2026-14" }));
+    ok(await as("tea")("POST", `/exchange-agreements/${ag.id}/approve`, {}));
+    const tr = await as("sup1")("GET", `/exchange-agreements/${ag.id}/terms`), t = tr.body;
+    assert.equal(tr.status, 200, JSON.stringify(t));
+    assert.equal(t.consent_reference, "Board resolution 2026-14"); assert.equal(t.recipient.jurisdiction_id, "US-TX");
+
+    // Residency: the state narrows it to in-state; the district can't widen it back.
+    ok(await as("tea")("POST", "/policy-settings", { policyId: "data.residency.scope", nodeId: ids.tx, value: "in_state", reason: "state data residency rule" }), 201);
+    ok(await as("sup1")("POST", "/policy-settings", { policyId: "data.residency.scope", nodeId: ids.d1, value: "us", reason: "trying to widen" }), 201);
+    const r = ok(await as("sup1")("GET", `/policies/data.residency.scope/resolve?nodeId=${ids.d1}`));
+    assert.equal(r.value, "in_state"); assert.ok(r.conflicts.some(c => c.reason === "looser_than_inherited"));
+    const out = await as("sup1")("POST", "/exchange-agreements", { ...base, recipientNodeId: "platform" });
+    assert.equal(out.status, 422); assert.match(out.body.errors.join(";"), /residency/);
+    ok(await as("tea")("POST", "/exchange-agreements", base), 201, "an in-state recipient is fine");
   });
 
   it("the console loads with a strict content security policy", async () => {

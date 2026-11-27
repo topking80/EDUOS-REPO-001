@@ -192,9 +192,11 @@ export function validateAuthorityModel(model) {
     const p = `policy_definitions.${pd.id}`;
     if (!["boolean", "integer", "enum", "string"].includes(pd.value_type)) err(p, "value_type is unknown");
     if (!["free", "restrict_only", "district_reserved"].includes(pd.mode)) err(p, "mode must be free, restrict_only or district_reserved");
-    if (pd.mode === "restrict_only" && !["true", "false", "higher", "lower"].includes(pd.stricter)) err(p, "restrict_only needs stricter: true, false, higher or lower");
+    if (pd.mode === "restrict_only" && !["true", "false", "higher", "lower", "narrower"].includes(pd.stricter)) err(p, "restrict_only needs stricter: true, false, higher, lower or narrower");
     if (pd.mode === "restrict_only" && (pd.stricter === "higher" || pd.stricter === "lower") && pd.value_type !== "integer") err(p, "higher/lower is for integers");
     if (pd.mode === "restrict_only" && (pd.stricter === "true" || pd.stricter === "false") && pd.value_type !== "boolean") err(p, "true/false is for booleans");
+    // FED-07: an enum whose allowed_values run from loosest to strictest.
+    if (pd.mode === "restrict_only" && pd.stricter === "narrower" && pd.value_type !== "enum") err(p, "narrower is for enums (allowed_values from loosest to strictest)");
     if (pd.mode === "district_reserved" && (JSON.stringify(pd.settable_levels) !== JSON.stringify(["district"]) || (pd.lockable_levels || []).length))
       err(p, "a district-reserved policy is set only by the district and can't be locked");
     if (!Array.isArray(pd.settable_levels) || !pd.settable_levels.length || pd.settable_levels.some(l => !LEVELS.includes(l))) err(p, "settable_levels must list known levels");
@@ -331,6 +333,7 @@ function atLeastAsStrict(pd, next, current) {
     case "false": return next === false || current === true;
     case "higher": return next >= current;
     case "lower": return next <= current;
+    case "narrower": return pd.allowed_values.indexOf(next) >= pd.allowed_values.indexOf(current);
     default: return false;
   }
 }

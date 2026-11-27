@@ -752,7 +752,16 @@ export function createApp({ cfg, db, providers }) {
   const agreementView = a => ({ id: a.id, producerNodeId: a.producer_node_id, recipientNodeId: a.recipient_node_id, dataset: a.dataset, datasetName: DATASETS[a.dataset]?.name,
     fields: a.fields, purpose: a.purpose, legalBasis: a.legal_basis, minCellSize: a.min_cell_size, effectiveFrom: dateOf(a.effective_from), effectiveTo: dateOf(a.effective_to),
     producerFingerprint: a.producer_fingerprint, producerApprovedAt: a.producer_approved_at, recipientApprovedAt: a.recipient_approved_at, status: a.status,
-    revokedAt: a.revoked_at, revokeReason: a.revoke_reason, createdAt: a.created_at });
+    consentReference: a.consent_reference || null, revokedAt: a.revoked_at, revokeReason: a.revoke_reason, createdAt: a.created_at });
+  // FED-07: the producing district's jurisdiction rules, as resolved today.
+  const ruleAt = (m, pid, nodeId) => resolvePolicy(m, pid, nodeId, today()).value;
+  const residencyError = (m, producerId, recipientId) => {
+    const scope = ruleAt(m, "data.residency.scope", producerId);
+    const p = m.nodes.find(n => n.id === producerId), r = m.nodes.find(n => n.id === recipientId);
+    if (scope === "in_state" && (!r?.jurisdiction_id || r.jurisdiction_id !== p?.jurisdiction_id)) return "recipient_outside_residency";
+    if (scope === "us" && !/^US-[A-Z]{2}$/.test(r?.jurisdiction_id || "")) return "recipient_outside_residency";
+    return null;
+  };
   const sideOf = (m, principal, a) => ({
     producer: decideAt(m, principal, "exchange.share", a.producer_node_id),
     recipient: decideAt(m, principal, "reporting.aggregate.view", a.recipient_node_id) });
@@ -781,6 +790,7 @@ export function createApp({ cfg, db, providers }) {
     if (ds.required.some(f => !fields.includes(f))) extraErrors.push(`exchange_agreements: ${b.dataset} needs ${ds.required.join(", ")}`);
     if (!Number.isInteger(minCell) || minCell < MIN_CELL_FLOOR) extraErrors.push(`exchange_agreements: minimum cell size is at least ${MIN_CELL_FLOOR}`);
     if (to < from || from < today()) extraErrors.push("exchange_agreements: the period must start today or later and end after it starts");
+    if (producer.kind === "district" && residencyError(m, producer.id, recipient.id)) extraErrors.push("exchange_agreements: the district's residency rule doesn't allow this recipient (data.residency.scope)");
     const ordered = ds.fields.filter(f => fields.includes(f));
     const draft = { producer_node_id: producer.id, recipient_node_id: recipient.id };
     const side = sideOf(m, req.principal, draft);
@@ -803,20 +813,24 @@ export function createApp({ cfg, db, providers }) {
     const as = side.producer.allowed && !a.producer_approved_at ? "producer" : side.recipient.allowed && !a.recipient_approved_at ? "recipient" : null;
     const decision = as ? { ...side[as], basis: { ...side[as].basis, side: as } } : side.producer.allowed || side.recipient.allowed ? { allowed: false, reason: "already_approved_by_your_side" } : side.producer;
     const extraErrors = [];
-    let key = null;
+    let key = null, consent = null;
     if (as === "producer") {
       key = parsePublicKey(typeof req.body?.publicKey === "string" ? req.body.publicKey : "");
       if (!key) extraErrors.push("exchange_agreements: the district's EduOS exchange public key (Ed25519) is required");
+      consent = text(req.body?.consentReference, 200, 3) || null;
+      if (ruleAt(m, "exchange.consent_reference.required", a.producer_node_id) && !consent)
+        extraErrors.push("exchange_agreements: the district's rules need the consent or authorization this relies on (consentReference)");
     }
+    if (as && residencyError(m, a.producer_node_id, a.recipient_node_id)) extraErrors.push("exchange_agreements: the district's residency rule doesn't allow this recipient (data.residency.scope)");
     const other = as === "producer" ? a.recipient_approved_by : a.producer_approved_by;
     if (as && other === req.principal) extraErrors.push("exchange_agreements: one person can't approve both sides");
     const bothNow = as === "producer" ? !!a.recipient_approved_at : !!a.producer_approved_at;
     return { capability: as === "producer" ? "exchange.share" : "reporting.aggregate.view", nodeId: a.producer_node_id, targetId: a.id, decision, extraErrors, next: mm => mm,
       apply: cc => as === "producer"
-        ? cc.query("UPDATE exchange_agreements SET producer_approved_by=$2, producer_approved_at=now(), producer_public_key=$3, producer_fingerprint=$4, status=CASE WHEN recipient_approved_at IS NOT NULL THEN 'active' ELSE status END WHERE id=$1",
-          [a.id, req.principal, key.spki, key.fingerprint])
+        ? cc.query("UPDATE exchange_agreements SET producer_approved_by=$2, producer_approved_at=now(), producer_public_key=$3, producer_fingerprint=$4, consent_reference=$5, status=CASE WHEN recipient_approved_at IS NOT NULL THEN 'active' ELSE status END WHERE id=$1",
+          [a.id, req.principal, key.spki, key.fingerprint, consent])
         : cc.query("UPDATE exchange_agreements SET recipient_approved_by=$2, recipient_approved_at=now(), status=CASE WHEN producer_approved_at IS NOT NULL THEN 'active' ELSE status END WHERE id=$1", [a.id, req.principal]),
-      detail: { side: as, producerFingerprint: key?.fingerprint }, result: { id: a.id, side: as, status: bothNow ? "active" : "proposed" } };
+      detail: { side: as, producerFingerprint: key?.fingerprint, ...(consent && { consentReference: consent }) }, result: { id: a.id, side: as, status: bothNow ? "active" : "proposed" } };
   }));
 
   app.post("/mc/api/exchange-agreements/:id/revoke", ...change("revoke_exchange", "exchange_agreement", async (req, m, c) => {
@@ -846,6 +860,7 @@ export function createApp({ cfg, db, providers }) {
     const a = await loadAgreement(c, req.params.id, true);
     const decision = decideAt(m, req.principal, "exchange.share", a.producer_node_id);
     if (decision.allowed && !inForceAgreement(a)) throw new HttpError(409, notInForce(a));
+    if (decision.allowed && residencyError(m, a.producer_node_id, a.recipient_node_id)) throw new HttpError(409, "recipient_outside_residency");
     const producer = m.nodes.find(n => n.id === a.producer_node_id);
     const v = checkEnvelope(req.body, { ...a, fields: a.fields, producer_tenant_ref: producer?.tenant_ref, effective_from: dateOf(a.effective_from), effective_to: dateOf(a.effective_to) });
     if (decision.allowed && !v.ok) throw new HttpError(422, v.reason, { detail: v.detail });
@@ -878,11 +893,14 @@ export function createApp({ cfg, db, providers }) {
         const base = { actor: req.principal, action: "issue_exchange_terms", target_type: "exchange_agreement", target_id: a.id, node_id: a.producer_node_id, capability: "exchange.share" };
         if (!dcs.allowed) { await appendAudit(c, { ...base, decision: "denied", reason: dcs.reason }); return { status: 403, body: { error: "not_authorized" } }; }
         if (!inForceAgreement(a)) return { status: 409, body: { error: notInForce(a) } };
+        if (residencyError(m, a.producer_node_id, a.recipient_node_id)) return { status: 409, body: { error: "recipient_outside_residency" } };
+        if (ruleAt(m, "exchange.consent_reference.required", a.producer_node_id) && !a.consent_reference) return { status: 409, body: { error: "consent_reference_required" } };
         const keys = policyKeys();
         if (!keys) return { status: 503, body: { error: "policy_signing_not_configured" } };
         const producer = m.nodes.find(n => n.id === a.producer_node_id), recipient = m.nodes.find(n => n.id === a.recipient_node_id);
         const terms = signTerms({ format: TERMS_FORMAT, agreement_id: a.id, producer: { node_id: producer.id, tenant_ref: producer.tenant_ref, name: producer.name },
-          recipient: { node_id: recipient.id, name: recipient.name }, dataset: a.dataset, fields: a.fields, purpose: a.purpose, legal_basis: a.legal_basis,
+          recipient: { node_id: recipient.id, name: recipient.name, jurisdiction_id: recipient.jurisdiction_id || null }, dataset: a.dataset, fields: a.fields, purpose: a.purpose, legal_basis: a.legal_basis,
+          ...(a.consent_reference && { consent_reference: a.consent_reference }),
           min_cell_size: a.min_cell_size, effective_from: dateOf(a.effective_from), effective_to: dateOf(a.effective_to), issued_at: today() }, keys);
         await appendAudit(c, { ...base, decision: "allowed", basis: dcs.basis, detail: { sha256: terms.signature.sha256 } });
         return { status: 200, body: terms };

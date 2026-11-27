@@ -1,3 +1,4 @@
+import { rulesInForce } from "./jurisdiction-rules.js";
 import express from "express";
 import helmet from "helmet";
 import compression from "compression";
@@ -1699,6 +1700,11 @@ app.post("/api/students/:studentId/records-delete",requireSession,requireCsrf,as
       const student=await client.query(`SELECT local_student_number FROM students WHERE id=$1`,[req.params.studentId]);
       if(!student.rowCount)return {status:404,error:"student_not_found"};
       if(student.rows[0].local_student_number!==confirmLocalStudentNumber.trim())return {status:409,error:"confirmation_mismatch"};
+      // FED-07: nothing is deleted under a legal hold (the district's, from its
+      // jurisdiction rules, or one placed on this student's history).
+      if((await rulesInForce(client)).legalHold)return {status:409,error:"legal_hold"};
+      const held=await client.query(`SELECT 1 FROM history_legal_holds WHERE student_id=$1 AND released_at IS NULL LIMIT 1`,[req.params.studentId]);
+      if(held.rowCount)return {status:409,error:"legal_hold"};
       const purged=await client.query(`SELECT eduos_purge_student($1) AS counts`,[req.params.studentId]);
       await client.query(`INSERT INTO audit_events(district_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,detail,request_id)
         VALUES($1,$2,$3,'delete','student_record',$4,'success',$5,$6)`,
