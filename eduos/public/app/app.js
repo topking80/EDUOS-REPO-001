@@ -340,6 +340,28 @@ async function xferRecords(base, learnerId, slot) {
     r.voided ? null : h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why is this being corrected?", async reason => {
       try { await api.post(`${base}/transferred-records/${r.id}/void`, { reason }); toast("Corrected."); xferRecords(base, learnerId, slot); } catch (err) { xferErr(err, "Couldn't correct it."); } }) }, "Correct")))))));
 }
+// ---- HSP-07 part 2: reading lists ------------------------------------------------
+const READ_STATUS = { to_read: "To read", reading: "Reading", finished: "Finished", set_aside: "Set aside" };
+async function hsReadingCard(id) {
+  const r = (await safe(api.get(`/api/homeschool/learners/${id}/reading`)))?.data;
+  if (!r) return null;
+  const reload = () => renderHomeschoolLearner(id);
+  const patch = (bid, body, msg) => api.patch(`/api/homeschool/reading/${bid}`, body).then(() => { toast(msg); reload(); }).catch(e => hsErr(e, "Couldn't save it."));
+  const f = { title: h("input", { id: "hr-title", required: true, maxlength: 200 }), author: h("input", { id: "hr-author", maxlength: 120 }),
+    status: h("select", { id: "hr-status" }, Object.entries(READ_STATUS).filter(([v]) => v !== "set_aside").map(([v, t]) => h("option", { value: v }, t))) };
+  return h("section", { class: "card", "aria-label": "Reading" }, h("h3", {}, "Reading"),
+    h("p", { class: "small" }, `${r.totals.finishedThisSchoolYear} finished this school year · ${r.totals.reading} in progress · ${Math.round(r.totals.minutes / 60 * 10) / 10} hours logged`),
+    r.books.length ? h("ul", { class: "list" }, r.books.map(b => { const mins = h("input", { type: "number", min: 1, max: 1440, "aria-label": `Minutes read of ${b.title}`, placeholder: "min" });
+      return h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, b.title), h("span", { class: "small muted" }, `${b.author ? ` · ${b.author}` : ""} · ${READ_STATUS[b.status]}${b.finishedOn ? ` ${b.finishedOn}` : ""}${b.minutes ? ` · ${b.minutes} min` : ""}`),
+          b.notes ? h("span", { class: "small" }, ` · ${b.notes}`) : null),
+        r.canEdit && b.status !== "finished" ? h("form", { class: "row", onsubmit: e => { e.preventDefault(); if (mins.value) patch(b.id, { minutes: Number(mins.value), status: b.status === "to_read" ? "reading" : undefined }, "Logged."); } },
+          mins, h("button", { class: "btn small", type: "submit" }, "Log")) : null,
+        r.canEdit && b.status !== "finished" ? h("button", { class: "btn small", type: "button", onclick: () => patch(b.id, { status: "finished" }, "Finished!") }, "Finished") : null); })) : h("p", { class: "muted" }, "No books yet."),
+    r.canEdit ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault();
+        api.post(`/api/homeschool/learners/${id}/reading`, { title: f.title.value.trim(), author: f.author.value.trim() || undefined, status: f.status.value }).then(() => { toast("Added."); reload(); }).catch(err => hsErr(err, "Couldn't add it.")); } },
+      h("div", { class: "grow" }, h("label", { for: "hr-title" }, "Add a book"), f.title), h("div", {}, h("label", { for: "hr-author" }, "Author"), f.author), h("div", {}, h("label", { for: "hr-status" }, "Status"), f.status),
+      h("button", { class: "btn", type: "submit" }, "Add")) : null);
+}
 async function renderHomeschoolLearner(id) {
   const [plan, att, work] = await Promise.all([api.get(`/api/homeschool/learners/${id}/plan`), api.get(`/api/homeschool/learners/${id}/attendance?from=${hsDay(30)}&to=${hsDay(0)}`), api.get(`/api/homeschool/learners/${id}/work?from=${hsDay(90)}`)]);
   const p = plan.data, L = p.learner, teach = p.canTeach, reload = () => renderHomeschoolLearner(id), courseName = cid => p.courses.find(c => c.id === cid)?.title;
@@ -384,6 +406,7 @@ async function renderHomeschoolLearner(id) {
         h("label", { for: "hw-source" }, "From an outside course or program"), w.source, h("button", { class: "btn", type: "submit" }, "Save work")) : null,
       h("ul", { class: "list small" }, work.data.slice(0, 30).map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, `${x.doneOn} · ${x.title} · ${HS_WORK[x.kind]}${x.score != null ? ` · ${x.score}/${x.maxScore}` : ""}${x.source ? ` · from ${x.source}` : ""}${x.voided ? ` · corrected (${x.voidReason})` : ""}`),
         teach && !x.voided ? voidBtn(`/api/homeschool/work/${x.id}/void`) : null)))),
+    await hsReadingCard(id),
     h("section", { class: "card", "aria-label": "Records" }, h("h3", {}, "Reports and records"),
       h("p", { class: "small muted" }, "Family records are labeled as entered by your family. EduOS doesn't verify or accredit them, and files nothing with any agency."),
       h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: async () => { try { out.replaceChildren(hsRecordView((await api.get(`/api/homeschool/learners/${id}/progress?from=${hsDay(90)}`)).data)); } catch (e) { hsErr(e, "Couldn't build it."); } } }, "Progress report (last 90 days)"),
@@ -741,6 +764,46 @@ async function psBilling(r, members, post) {
     h("button", { class: "btn small", type: "button", onclick: () => post("/api/private-school/billing/reconciliations", { from: `${day.slice(0, 8)}01`, to: day }, "Prepared. Someone else signs it off.") }, "Prepare this month so far"),
     h("p", { class: "small muted" }, "Aid, refunds, providers and reconciliations need a second person. EduOS keeps no card or bank details."));
 }
+// ---- HSP-07 part 2: private school messages --------------------------------------
+Object.assign(PS_ERRORS, { not_an_allowed_contact: "You can only include this learner's guardians or the staff who work with them.", thread_closed: "That conversation is closed.",
+  not_a_guardian_or_staff_for_this_learner: "You can only message about learners you're a guardian of or work with.", not_in_this_thread: "You're not in that conversation." });
+async function psMessagesCard(r, learnerList) {
+  if (r === "finance") return null;
+  const list = (await safe(api.get("/api/private-school/messages")))?.data || [];
+  const learners = learnerList.filter(l => l.enrollmentStatus === "enrolled");
+  const who = h("fieldset", {}, h("legend", {}, "Include")), subject = h("input", { id: "pm-subject", required: true, maxlength: 160 }), body = h("textarea", { id: "pm-body", required: true, maxlength: 4000, rows: 3 });
+  let picks = [];
+  const pick = h("select", { id: "pm-learner", onchange: () => loadContacts() }, learners.map(l => h("option", { value: l.id }, l.displayName)));
+  const loadContacts = async () => { const c = (await safe(api.get(`/api/private-school/messages/contacts?learnerId=${pick.value}`)))?.data || [];
+    picks = c.map(x => h("input", { type: "checkbox", value: x.membershipId, "aria-label": `Include ${x.name}` }));
+    who.replaceChildren(h("legend", {}, "Include"), ...(c.length ? c.map((x, i) => h("label", { class: "check" }, picks[i], ` ${x.name} (${PS_ROLE[x.role]})`)) : [h("p", { class: "small muted" }, "No one to message about this learner.")])); };
+  if (learners.length) await loadContacts();
+  return h("section", { class: "card", "aria-label": "Messages" }, h("h3", {}, "Messages"),
+    list.length ? h("ul", { class: "list" }, list.map(t => h("li", { class: "row" }, h("span", { class: "grow" }, h("b", {}, t.subject), h("span", { class: "small muted" }, ` · ${t.learner || ""}${t.status === "closed" ? " · closed" : ""}${t.participant ? "" : " · oversight"}`),
+        t.unread ? h("span", { class: "badge" }, ` ${t.unread} new`) : null),
+      h("button", { class: "btn small", type: "button", "aria-label": `Open ${t.subject}`, onclick: () => renderPsThread(t.id).catch(e => psErr(e, "Couldn't open it.")) }, "Open")))) : h("p", { class: "muted" }, "No conversations yet."),
+    learners.length ? h("form", { class: "stack", onsubmit: async e => { e.preventDefault(); const ids = picks.filter(x => x.checked).map(x => x.value);
+        if (!ids.length) return toast("Choose who to include.");
+        try { const t = (await api.post("/api/private-school/messages", { learnerId: pick.value, subject: subject.value.trim(), body: body.value.trim(), membershipIds: ids })).data; renderPsThread(t.id); } catch (err) { psErr(err, "Couldn't send it."); } } },
+      h("h4", {}, "New conversation"), h("label", { for: "pm-learner" }, "About"), pick, who, h("label", { for: "pm-subject" }, "Subject"), subject, h("label", { for: "pm-body" }, "Message"), body,
+      h("button", { class: "btn", type: "submit" }, "Send")) : null,
+    h("p", { class: "small muted" }, "Conversations are between a learner's guardians and the staff who work with them. School administrators can read them, and messages can't be edited or deleted."));
+}
+async function renderPsThread(id) {
+  const t = (await api.get(`/api/private-school/messages/${id}`)).data, reload = () => renderPsThread(id);
+  const reply = h("textarea", { id: "pt-reply", required: true, maxlength: 4000, rows: 3 });
+  put(h("p", {}, h("button", { class: "link", type: "button", onclick: () => renderPrivateSchool() }, "← School")), h("h2", {}, t.subject),
+    h("p", { class: "small muted" }, `About ${t.learner || "a learner"} · ${t.people.map(p => `${p.name} (${PS_ROLE[p.role]})${p.you ? " — you" : ""}`).join(", ")}`),
+    t.oversight ? h("p", { class: "notice" }, t.oversight) : null,
+    h("section", { class: "card", "aria-label": "Conversation" }, h("ul", { class: "list" }, t.messages.map(m => h("li", {}, h("p", { class: "small muted" }, `${m.from}${m.role ? ` · ${PS_ROLE[m.role]}` : ""} · ${new Date(m.sentAt).toLocaleString()}`),
+        m.hidden ? h("p", { class: "small muted" }, `Hidden by a school administrator: ${m.hideReason}`) : null, m.body != null ? h("p", {}, m.body) : null,
+        t.canHide && !m.hidden ? h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why hide it?", reason =>
+          api.post(`/api/private-school/messages/${id}/messages/${m.id}/hide`, { reason }).then(() => { toast("Hidden."); reload(); }).catch(err => psErr(err, "Couldn't hide it."))) }, "Hide")) : null))),
+      t.participant && t.status === "open" ? h("form", { class: "stack", onsubmit: e => { e.preventDefault(); api.post(`/api/private-school/messages/${id}/reply`, { body: reply.value.trim() }).then(reload).catch(err => psErr(err, "Couldn't send it.")); } },
+        h("label", { for: "pt-reply" }, "Reply"), reply, h("button", { class: "btn", type: "submit" }, "Send")) : null,
+      t.status === "open" && (t.participant || t.canHide) ? h("button", { class: "btn small", type: "button", onclick: () => api.post(`/api/private-school/messages/${id}/close`, {}).then(() => { toast("Closed."); reload(); }).catch(e => psErr(e, "Couldn't close it.")) }, "Close conversation")
+        : t.status === "closed" ? h("p", { class: "small muted" }, "This conversation is closed.") : null));
+}
 async function renderPrivateSchool() {
   const [meRes, learners, campuses, members, cal, ctx, apps, classes, cards, week] = await Promise.all([api.get("/api/private-school/me"), safe(api.get("/api/private-school/learners")), safe(api.get("/api/private-school/campuses")),
     safe(api.get("/api/private-school/members")), safe(api.get("/api/private-school/calendar")), safe(api.get("/api/session/contexts")),
@@ -776,6 +839,7 @@ async function renderPrivateSchool() {
       h("p", { class: "small muted" }, "The school has prepared these. Release one to get a code you give to the next school or your homeschool."),
       xferList("/api/private-school", xfers, { canRelease: true, reload })) : null;
   const receive = ["school_admin", "registrar"].includes(r) && active ? xferReceiveCard("/api/private-school", camps, reload) : null;
+  const messages = active ? await psMessagesCard(r, learnerList).catch(() => null) : null;
   put(h("h2", {}, sch.displayName),
     sch.status !== "active" ? h("p", { class: "notice" }, `${PS_STATUS[sch.status]}. ${sch.status === "pending_verification" ? "You can set up campuses and staff now; learner records can be added once the platform has verified the school." : ""}`) : null,
     h("section", { class: "card", "aria-label": r === "guardian" ? "Your children" : "Learners" }, h("h3", {}, r === "guardian" ? "Your children" : "Learners"),
@@ -788,7 +852,7 @@ async function renderPrivateSchool() {
         h("h4", {}, "Enroll a learner"), h("label", { for: "ps-l-name" }, "Name"), ln.name, h("label", { for: "ps-l-grade" }, "Grade"), ln.grade,
         ln.campus ? [h("label", { for: "ps-l-campus" }, "Campus"), ln.campus] : null, h("label", { for: "ps-l-number" }, "Student number (optional)"), ln.number, h("button", { class: "btn", type: "submit" }, "Enroll")) : null),
     psAcademics({ r, active, enrolls, camps, campName, learnerList, apps: apps?.data || [], classes: classes?.data || [], cards: cards?.data || [], week: week?.data || [], members: members?.data?.members || [], post }),
-    billing, transfers, receive,
+    messages, billing, transfers, receive,
     h("section", { class: "card", "aria-label": "Calendar" }, h("h3", {}, "Calendar"),
       (cal?.data || []).length ? h("ul", { class: "list" }, cal.data.map(e => h("li", {}, h("b", {}, e.title), h("span", { class: "small muted" }, ` · ${PS_KINDS[e.kind]} · ${fmt(e.startsAt)}${e.campus ? ` · ${e.campus}` : ""}${e.audience === "staff" ? " · staff only" : ""}`)))) : h("p", { class: "muted" }, "Nothing scheduled."),
       ["school_admin", "campus_admin"].includes(r) ? h("form", { class: "row wrap", onsubmit: e => { e.preventDefault(); const day = new Date(`${ev.day.value}T08:00:00`);

@@ -982,3 +982,14 @@ REVOKE INSERT ON coops, coop_members, coop_audit_events FROM eduos_app;
 REVOKE DELETE, TRUNCATE ON coops, coop_members, coop_invitations, coop_sessions, coop_signups, coop_session_attendance, coop_posts, coop_post_flags, coop_audit_events FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_coop_role(uuid), eduos_coop_manages(uuid), eduos_coop_leads(uuid), eduos_coop_signup(uuid), eduos_coop_create(text,text), eduos_coop_join(text),
   eduos_coop_leave(uuid), eduos_coop_session_counts(uuid), eduos_coop_audit(uuid,text,text,text,text) TO eduos_app;
+
+-- 167 (HSP-07 part 2): homeschool reading lists; private school message threads (messages never edited or deleted, only hidden).
+GRANT SELECT, INSERT ON family_reading TO eduos_app;
+GRANT UPDATE (title, author, status, started_on, finished_on, minutes, notes, course_id) ON family_reading TO eduos_app;
+REVOKE DELETE, TRUNCATE ON family_reading FROM eduos_app;
+GRANT SELECT, INSERT ON ps_message_threads, ps_message_participants, ps_messages TO eduos_app;
+GRANT UPDATE (status, closed_by, closed_at) ON ps_message_threads TO eduos_app;
+GRANT UPDATE (last_read_at) ON ps_message_participants TO eduos_app;
+GRANT UPDATE (hidden_by, hidden_at, hide_reason) ON ps_messages TO eduos_app;
+REVOKE DELETE, TRUNCATE ON ps_message_threads, ps_message_participants, ps_messages FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_ps_contacts(uuid), eduos_ps_in_thread(uuid), eduos_ps_thread_open(uuid), eduos_ps_thread_opener(uuid), eduos_ps_thread_people(uuid) TO eduos_app;
