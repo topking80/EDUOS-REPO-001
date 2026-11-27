@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'app/app_controller.dart';
 import 'app/app_scope.dart';
 import 'core/device_profile.dart';
+import 'core/models.dart';
 import 'branding/eduos_brand_theme.dart';
 import 'ui/device_sign_in_screen.dart';
 import 'ui/lock_screen.dart';
@@ -40,7 +41,8 @@ class EduOsApp extends StatelessWidget {
             accent: parseHex(controller.brand?.accentHex),
           );
           final tv = controller.isTv;
-          final scheme = ColorScheme.fromSeed(seedColor: brand.primary);
+          final display = controller.brand?.display ?? const DisplayPrefs();
+          final scheme = ColorScheme.fromSeed(seedColor: brand.primary, contrastLevel: display.highContrast ? 1.0 : 0.0);
           return MaterialApp(
             title: 'EduOS',
             debugShowCheckedModeBanner: false,
@@ -55,15 +57,22 @@ class EduOsApp extends StatelessWidget {
               visualDensity: tv ? VisualDensity.comfortable : null,
               focusColor: tv ? scheme.primary.withOpacity(0.28) : null,
             ),
-            builder: (context, child) => ActivityWatcher(
-              controller: controller,
-              child: tv
-                  ? MediaQuery(
-                      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(1.0) * 1.25)),
-                      child: child ?? const SizedBox.shrink(),
-                    )
-                  : child ?? const SizedBox.shrink(),
-            ),
+            builder: (context, child) {
+              // TV: larger text. Everyone: their own display settings, on top of the device's.
+              final mq = MediaQuery.of(context);
+              final scale = (tv ? 1.25 : 1.0) * display.textScale;
+              return ActivityWatcher(
+                controller: controller,
+                child: MediaQuery(
+                  data: mq.copyWith(
+                    textScaler: scale == 1.0 ? mq.textScaler : TextScaler.linear(mq.textScaler.scale(1.0) * scale),
+                    highContrast: mq.highContrast || display.highContrast,
+                    disableAnimations: mq.disableAnimations || display.reduceMotion,
+                  ),
+                  child: child ?? const SizedBox.shrink(),
+                ),
+              );
+            },
             home: switch (controller.stage) {
               AppStage.starting => const Scaffold(body: Center(child: CircularProgressIndicator())),
               AppStage.needsServer => const ServerSetupScreen(),

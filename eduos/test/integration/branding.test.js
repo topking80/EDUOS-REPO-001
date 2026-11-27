@@ -206,6 +206,11 @@ describe("EduOS 32.3.0 school branding against real PostgreSQL", { skip }, () =>
     assert.equal((await as("pu")("GET", "/api/branding/current")).body.data.preferences.theme, "high_contrast");
     assert.equal((await as("t1")("GET", "/api/branding/current")).body.data.preferences.theme, "school");
     assert.equal((await as("pu")("PUT", "/api/me/preferences", { theme: "neon" })).status, 400);
+    // Student app Phase E: text size and reduced motion, kept with the theme.
+    assert.deepEqual((await as("pu")("PUT", "/api/me/preferences", { textSize: "larger", reduceMotion: true })).body.data, { theme: "high_contrast", reduceMotion: true, textSize: "larger" });
+    assert.deepEqual((await as("pu")("GET", "/api/branding/current")).body.data.preferences, { theme: "high_contrast", reduceMotion: true, textSize: "larger" });
+    assert.equal((await as("t1")("GET", "/api/branding/current")).body.data.preferences.textSize, "standard");
+    assert.equal((await as("pu")("PUT", "/api/me/preferences", { textSize: "huge" })).status, 400);
     const others = await asRole("teacher", USERS.t1[0], ID.s1, "SELECT count(*)::int AS n FROM user_preferences");
     assert.equal(others[0].n, 0);
   });

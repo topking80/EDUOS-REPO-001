@@ -425,3 +425,16 @@ fieldset.caps label.check { display: flex; align-items: center; gap: 6px; min-he
 .print-qr { text-align: center; }
 .print-qr .qr { max-width: 320px; margin: 0 auto; }
 @media print { body * { visibility: hidden; } dialog[open] .print-qr, dialog[open] .print-qr * { visibility: visible; } dialog[open] .print-qr { position: fixed; inset: 0; } }
+
+/* Student app Phase E: each person's display settings (Help → Make EduOS easier
+   to read), stored with their account (user_preferences) and applied on load. */
+html[data-text="large"] body { zoom: 1.15; }
+html[data-text="larger"] body { zoom: 1.3; }
+html[data-contrast="more"] { --muted: #dfe6f3; --line: #9aa6c2; }
+html[data-contrast="more"][data-appearance="light"] { --muted: #1f2b3d; --line: #5d6b80; }
+html[data-contrast="more"] .card, html[data-contrast="more"] .btn, html[data-contrast="more"] input, html[data-contrast="more"] select, html[data-contrast="more"] textarea { border-width: 2px; }
+html[data-contrast="more"] a { text-decoration: underline; }
+html[data-contrast="more"] :focus-visible { outline-width: 4px; }
+html[data-motion="reduce"] * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+@media (prefers-contrast: more) { html:not([data-contrast]) { --muted: #dfe6f3; --line: #9aa6c2; } }
+.help-list li { margin-bottom: 6px; }

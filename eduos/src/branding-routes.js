@@ -103,12 +103,12 @@ export function registerBrandingRoutes(app, { emitServerFlow }) {
         const district = (await client.query("SELECT name FROM districts WHERE id=$1", [req.actor.districtId])).rows[0];
         const pub = await client.query(`SELECT * FROM branding_profiles WHERE status='published' AND (school_id IS NULL OR school_id=$1)`, [req.actor.schoolId || null]);
         const sp = pub.rows.find(r => r.school_id), dp = pub.rows.find(r => !r.school_id);
-        const pref = await client.query("SELECT theme,reduce_motion FROM user_preferences WHERE user_id=$1", [req.actor.userId]);
+        const pref = await client.query("SELECT theme,reduce_motion,text_size FROM user_preferences WHERE user_id=$1 AND district_id=$2", [req.actor.userId, req.actor.districtId]);
         const eff = M.effective(toApi(sp), toApi(dp));
         return { school, districtName: district?.name || null, branding: eff, mascot: mascotUrls(eff.mascotUploadId),
           versions: { school: sp?.version ?? null, district: dp?.version ?? null },
           publicKey: school ? `${req.actor.districtId}.${school.id}` : null, uploadMaxKb: Math.round(config.brandingUploadMaxBytes / 1024),
-          preferences: { theme: pref.rows[0]?.theme || "school", reduceMotion: Boolean(pref.rows[0]?.reduce_motion) } };
+          preferences: { theme: pref.rows[0]?.theme || "school", reduceMotion: Boolean(pref.rows[0]?.reduce_motion), textSize: pref.rows[0]?.text_size || "standard" } };
       });
       res.setHeader("Cache-Control", "no-store");
       res.json({ data: out });
@@ -116,18 +116,20 @@ export function registerBrandingRoutes(app, { emitServerFlow }) {
   });
 
   app.put("/api/me/preferences", requireSession, requireCsrf, async (req, res, next) => {
-    const { theme, reduceMotion } = req.body || {};
-    if ((theme !== undefined && !["school", "high_contrast"].includes(theme)) || (reduceMotion !== undefined && typeof reduceMotion !== "boolean"))
+    const { theme, reduceMotion, textSize } = req.body || {};
+    if ((theme !== undefined && !["school", "high_contrast"].includes(theme)) || (reduceMotion !== undefined && typeof reduceMotion !== "boolean") ||
+        (textSize !== undefined && !["standard", "large", "larger"].includes(textSize)))
       return res.status(400).json({ error: "invalid_preferences" });
     try {
       const row = await withTenantTransaction(req.actor, async client => {
-        const r = await client.query(`INSERT INTO user_preferences(user_id,district_id,theme,reduce_motion) VALUES($1,$2,coalesce($3,'school'),coalesce($4,false))
-          ON CONFLICT (user_id,district_id) DO UPDATE SET theme=coalesce($3,user_preferences.theme), reduce_motion=coalesce($4,user_preferences.reduce_motion), updated_at=now()
-          RETURNING theme,reduce_motion`, [req.actor.userId, req.actor.districtId, theme ?? null, reduceMotion ?? null]);
-        await audit(client, req, "preferences.update", req.actor.userId, { theme: r.rows[0].theme, reduceMotion: r.rows[0].reduce_motion }, req.actor.schoolId);
+        const r = await client.query(`INSERT INTO user_preferences(user_id,district_id,theme,reduce_motion,text_size) VALUES($1,$2,coalesce($3,'school'),coalesce($4,false),coalesce($5,'standard'))
+          ON CONFLICT (user_id,district_id) DO UPDATE SET theme=coalesce($3,user_preferences.theme), reduce_motion=coalesce($4,user_preferences.reduce_motion),
+            text_size=coalesce($5,user_preferences.text_size), updated_at=now()
+          RETURNING theme,reduce_motion,text_size`, [req.actor.userId, req.actor.districtId, theme ?? null, reduceMotion ?? null, textSize ?? null]);
+        await audit(client, req, "preferences.update", req.actor.userId, { theme: r.rows[0].theme, reduceMotion: r.rows[0].reduce_motion, textSize: r.rows[0].text_size }, req.actor.schoolId);
         return r.rows[0];
       });
-      res.json({ data: { theme: row.theme, reduceMotion: row.reduce_motion } });
+      res.json({ data: { theme: row.theme, reduceMotion: row.reduce_motion, textSize: row.text_size } });
     } catch (e) { next(e); }
   });
 

@@ -27,7 +27,7 @@ class Me {
 }
 
 class Brand {
-  const Brand({this.schoolName, this.districtName, this.primaryHex, this.accentHex});
+  const Brand({this.schoolName, this.districtName, this.primaryHex, this.accentHex, this.display = const DisplayPrefs()});
   factory Brand.fromJson(Json j) {
     final b = obj(j['branding']);
     return Brand(
@@ -35,10 +35,28 @@ class Brand {
       districtName: strOrNull(j['districtName']),
       primaryHex: strOrNull(b['primary']),
       accentHex: strOrNull(b['accent']),
+      display: DisplayPrefs.fromJson(obj(j['preferences'])),
     );
   }
   final String? schoolName, districtName, primaryHex, accentHex;
+  final DisplayPrefs display;
   String get placeName => schoolName ?? districtName ?? 'EduOS';
+  Brand withDisplay(DisplayPrefs d) => Brand(schoolName: schoolName, districtName: districtName, primaryHex: primaryHex, accentHex: accentHex, display: d);
+}
+
+/// Student app Phase E: the person's display settings, kept with their account
+/// (PUT /api/me/preferences) so they follow them to every device.
+class DisplayPrefs {
+  const DisplayPrefs({this.textSize = 'standard', this.highContrast = false, this.reduceMotion = false});
+  factory DisplayPrefs.fromJson(Json j) => DisplayPrefs(
+        textSize: const {'large', 'larger'}.contains(j['textSize']) ? str(j['textSize']) : 'standard',
+        highContrast: j['theme'] == 'high_contrast',
+        reduceMotion: boolean(j['reduceMotion']),
+      );
+  final String textSize;
+  final bool highContrast, reduceMotion;
+  double get textScale => switch (textSize) { 'large' => 1.15, 'larger' => 1.3, _ => 1.0 };
+  Json toJson() => {'textSize': textSize, 'theme': highContrast ? 'high_contrast' : 'school', 'reduceMotion': reduceMotion};
 }
 
 /// One profile the person can use: a role at a school (or district office) in a district.

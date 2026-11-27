@@ -241,6 +241,36 @@ void main() {
     expect(find.text('about 62%'), findsOneWidget);
   });
 
+  testWidgets('Help: who to ask, 988, and display settings saved with the account and applied', (tester) async {
+    Map<String, Object?>? saved;
+    final fake = FakeServer({
+      'GET /api/resources': (_) => {'data': [{'id': 'r1', 'title': 'Fractions picture book', 'source': {'name': 'Open Library', 'url': 'https://example.org/f'}}]},
+      'PUT /api/me/preferences': (r) { saved = jsonDecode(r.body) as Map<String, Object?>; return http.Response(jsonEncode({'data': saved}), 200); },
+    });
+    await launch(tester, fake);
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Help'));
+    await tester.pumpAndSettle();
+    expect(find.text('If you need help right now'), findsOneWidget);
+    expect(find.textContaining('call or text 988'), findsOneWidget);
+    expect(find.text('Ms. Rivera · Grade 4 Math'), findsOneWidget);
+    expect(find.text('Fractions picture book'), findsOneWidget);
+    expect(find.textContaining('no student-to-student messaging'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Save settings'), 200);
+    await tester.tap(find.text('Larger'));
+    await tester.tap(find.text('High contrast'));
+    await tester.tap(find.text('Reduce motion'));
+    await tester.pump();
+    await tester.tap(find.text('Save settings'));
+    await tester.pumpAndSettle();
+    expect(saved, {'textSize': 'larger', 'theme': 'high_contrast', 'reduceMotion': true});
+    final mq = MediaQuery.of(tester.element(find.text('Save settings')));
+    expect(mq.highContrast, isTrue);
+    expect(mq.disableAnimations, isTrue);
+    expect(mq.textScaler.scale(10), closeTo(13, 0.01));
+  });
+
   testWidgets('practising with Christie: start, answer, ask, and finish', (tester) async {
     final fake = FakeServer({
       'POST /api/christie/sessions': (_) => {'data': {'session': {'id': session}, 'resumed': false}},

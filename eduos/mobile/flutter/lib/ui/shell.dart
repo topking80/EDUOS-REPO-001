@@ -28,6 +28,7 @@ import 'screens/staffing_screen.dart';
 import 'screens/teacher_screens.dart';
 import 'screens/teacher_connections_screen.dart';
 import 'screens/teacher_dashboard_screen.dart';
+import 'screens/student_help_screen.dart';
 import 'screens/student_progress_screen.dart';
 import 'screens/student_schedule_screen.dart';
 import 'screens/student_work_screen.dart';
@@ -97,6 +98,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       'work' when role == 'pupil' => const StudentWorkScreen(),
       'schedule' when role == 'pupil' => const StudentScheduleScreen(),
       'progress' when role == 'pupil' => const StudentProgressScreen(),
+      'help' when role == 'pupil' => const StudentHelpScreen(),
       'path' when role == 'pupil' => const PathScreen(),
       'christie' when role == 'pupil' => const ChristieTab(),
       'courses' when role == 'pupil' => const LearnerCoursesScreen(),

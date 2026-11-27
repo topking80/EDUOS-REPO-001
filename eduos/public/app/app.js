@@ -103,6 +103,14 @@ const SURFACE = hex("#141a29"), LIGHT_SURFACE = hex("#ffffff"), WHITE = [255, 25
 // Lightens a colour (dark surface) or darkens it (light surface) until it reaches AA as text on bg.
 function readableOn(bg, color, toward = WHITE) { let c = color; for (let t = 0; t <= 1.0001 && contrast(c, bg) < 4.5; t += 0.05) c = mix(color, toward, t); return c; }
 const onFill = rgb => (contrast(rgb, WHITE) >= 4.5 ? "#ffffff" : "#0b0f19");
+// Student app Phase E: the person's display settings (db/011 + db/175). Kept
+// with their account, so nothing about them is stored in the browser.
+function applyDisplayPrefs(p) {
+  const d = document.documentElement.dataset;
+  if (p?.theme === "high_contrast") d.contrast = "more"; else delete d.contrast;
+  if (p?.reduceMotion) d.motion = "reduce"; else delete d.motion;
+  if (["large", "larger"].includes(p?.textSize)) d.text = p.textSize; else delete d.text;
+}
 function applyBranding(b) {
   const root = document.documentElement.style;
   const primary = hex(b?.branding?.primary) || hex("#2f6fbf");
@@ -113,6 +121,7 @@ function applyBranding(b) {
   const prefersLight = typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: light)").matches;
   const light = mode === "light" || (mode === "device" && prefersLight);
   document.documentElement.dataset.appearance = light ? "light" : "dark";
+  applyDisplayPrefs(b?.preferences);
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", light ? toHex(primary) : "#0b0f19");
   if (mode === "device" && !applyBranding.watching && typeof matchMedia === "function") {
     applyBranding.watching = true;
@@ -137,7 +146,7 @@ function applyBranding(b) {
 
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
-  pupil: [["home", "Home", "home"], ["schedule", "Schedule", "calendar"], ["progress", "Grades", "check"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
+  pupil: [["home", "Home", "home"], ["schedule", "Schedule", "calendar"], ["progress", "Grades", "check"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"], ["help", "Help", "shield"]],
   teacher: [["dashboard", "Dashboard", "home"], ["classes", "Classes", "grid"], ["schoolday", "School day", "bus"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["mediacenter", "Media center", "check"], ["messages", "Messages", "chat"]],
@@ -5522,6 +5531,56 @@ async function schoolCalendarCard() {
   await load();
   return box;
 }
+
+// Student app Phase E: the student's Help page. Who to ask, where help with
+// work is, the school's approved resources, and display settings. Nothing here
+// adds a way for students to message each other or anyone outside school.
+VIEWS.help = async () => {
+  const [wb, courses, resources] = await Promise.all([safe(api.get("/api/wellbeing/status")), safe(api.get("/api/learning/courses")), safe(api.get("/api/resources"))]);
+  const crisis = wb?.data?.crisis;
+  const teachers = [...new Map((courses?.data?.courses || []).map(c => [c.teacher_name, c.title])).entries()];
+  const res = Array.isArray(resources?.data) ? resources.data.slice(0, 6) : [];
+  const p = state.brand?.preferences || {};
+  const size = ["standard", "large", "larger"].map(v => h("input", { type: "radio", name: "pref-size", id: `pref-size-${v}`, value: v, checked: (p.textSize || "standard") === v }));
+  const contrast = h("input", { type: "checkbox", id: "pref-contrast", checked: p.theme === "high_contrast" });
+  const motion = h("input", { type: "checkbox", id: "pref-motion", checked: Boolean(p.reduceMotion) });
+  const save = async e => {
+    e.preventDefault();
+    try {
+      const r = (await api.req("PUT", "/api/me/preferences", { textSize: size.find(x => x.checked)?.value || "standard", theme: contrast.checked ? "high_contrast" : "school", reduceMotion: motion.checked })).data;
+      if (state.brand) state.brand.preferences = r;
+      applyDisplayPrefs(r); toast("Saved. These settings follow you to every device you sign in on.");
+    } catch { toast("Couldn't save your settings."); }
+  };
+  return [h("h2", {}, "Help"),
+    h("section", { class: "card", "aria-label": "If you need help right now" }, h("h3", {}, "If you need help right now"),
+      h("ul", { class: "list help-list" }, h("li", {}, "Tell a teacher, a counselor or any adult at school straight away."), h("li", {}, "If someone is in danger, call 911.")),
+      h("p", {}, "To talk to someone about how you're feeling, any time, call or text 988."),
+      h("div", { class: "row wrap" }, h("a", { class: "btn", href: crisis?.tel || "tel:988" }, "Call 988"), h("a", { class: "btn", href: crisis?.sms || "sms:988" }, "Text 988"))),
+    h("section", { class: "card", "aria-label": "Talk to an adult at school" }, h("h3", {}, "Talk to an adult at school"),
+      teachers.length ? h("ul", { class: "list" }, teachers.map(([name, course]) => h("li", {}, h("b", {}, name), h("span", { class: "muted small" }, ` · ${course}`)))) : null,
+      h("p", { class: "small" }, "You can ask any of your teachers before or after class, or visit the school office or counselor."),
+      h("button", { class: "btn", type: "button", onclick: () => go("checkin") }, "Check in with a counselor")),
+    h("section", { class: "card", "aria-label": "Help with your work" }, h("h3", {}, "Help with your work"),
+      h("ul", { class: "list help-list" }, h("li", {}, "Each assignment's page has your teacher's instructions. Open it from Courses."),
+        h("li", {}, "Grades shows what's graded, what's waiting and your teacher's feedback.")),
+      christieNotice(),
+      h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => go("courses") }, icon("book"), "Courses"),
+        h("button", { class: "btn", type: "button", onclick: () => go("progress") }, icon("check"), "Grades"),
+        h("button", { class: "btn", type: "button", onclick: () => go("christie") }, icon("spark"), "Practice with Christie"))),
+    h("section", { class: "card", "aria-label": "School resources" }, h("h3", {}, "School resources"),
+      res.length ? h("ul", { class: "list" }, res.map(r => h("li", { class: "row wrap" }, h("span", { class: "grow" }, r.title, h("span", { class: "muted small" }, ` · ${r.source.name}`)),
+        h("a", { class: "btn small secondary", href: r.source.url, target: "_blank", rel: "noopener noreferrer", "aria-label": `Open: ${r.title}` }, "Open")))) : h("p", { class: "small muted" }, "Your school hasn't chosen digital resources yet."),
+      h("button", { class: "btn", type: "button", onclick: () => go("library") }, icon("book"), "My library")),
+    h("section", { class: "card", "aria-label": "Make EduOS easier to read" }, h("h3", {}, "Make EduOS easier to read"),
+      h("form", { class: "stack", onsubmit: save },
+        h("fieldset", {}, h("legend", {}, "Text size"), h("div", { class: "row wrap" }, size.map((x, i) => h("label", { class: "inline", for: x.id }, x, ` ${["Standard", "Large", "Larger"][i]}`)))),
+        h("label", { class: "inline", for: contrast.id }, contrast, " High contrast"),
+        h("label", { class: "inline", for: motion.id }, motion, " Reduce motion"),
+        h("p", { class: "small muted" }, "Saved with your account, so they follow you to every device. Your device's own reduce-motion and contrast settings are respected too."),
+        h("button", { class: "btn primary", type: "submit" }, "Save settings"))),
+    h("p", { class: "notice" }, "There's no student-to-student messaging in EduOS. If anything here worries you, tell an adult at school.")];
+};
 
 // ---- Apps in the app (UI-01) -------------------------------------------------
 // Everyone's licensed apps, opened through the same governed launch as the full
