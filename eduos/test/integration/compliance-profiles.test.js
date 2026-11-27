@@ -5,6 +5,8 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import pg from "pg";
 import { PG_URL, ID, USERS, startIdp, baseEnv, run, createDatabase, seed, startServer, login, client } from "./harness.js";
 import { currentSchoolYear } from "../../src/compliance-requirements.js";
@@ -34,7 +36,7 @@ describe("HSP-06 part 2 compliance profiles", { skip }, () => {
   before(async () => {
     db = await createDatabase(); idp = await startIdp();
     env = baseEnv({ OIDC_ISSUER: idp.issuer, EDUOS_APP_ROLE: db.names.app });
-    tmp = `/tmp/eduos-template-${process.pid}.json`;
+    tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "eduos-template-")), "template.json");
     const m = await run(["src/migrate.js"], { ...env, DATABASE_URL: db.ownerUrl }); assert.equal(m.code, 0, m.out);
     await seed(db.adminUrl, idp.issuer);
     admin = new pg.Client(db.adminUrl); await admin.connect();
@@ -51,7 +53,7 @@ describe("HSP-06 part 2 compliance profiles", { skip }, () => {
     const r = ok(await as("p1")("POST", `${P}/schools`, { legalName: "Hillside Academy, Inc.", displayName: "Hillside Academy", campusName: "Main" }), 201);
     await switchTo("p1", "private_school", r.membershipId); ids.school = r.schoolId;
   });
-  after(async () => { await server?.stop(); await admin?.end(); await idp?.close(); await db?.drop(); fs.rmSync(tmp, { force: true }); });
+  after(async () => { await server?.stop(); await admin?.end(); await idp?.close(); await db?.drop(); if (tmp) fs.rmSync(path.dirname(tmp), { recursive: true, force: true }); });
 
   it("only the platform publishes templates, and only with sources, an authority, a recent review and a reviewer", async () => {
     const bad = await publish(template({ sources: [], reviewedBy: "" }));
