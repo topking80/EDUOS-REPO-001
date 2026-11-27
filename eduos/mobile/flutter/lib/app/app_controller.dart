@@ -351,6 +351,14 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Saves the person's display settings and applies them straight away.
+  Future<void> saveDisplay(DisplayPrefs d) async {
+    final r = await api.put('/api/me/preferences', d.toJson());
+    final saved = DisplayPrefs.fromJson(obj(r['data']));
+    brand = (brand ?? const Brand()).withDisplay(saved);
+    notifyListeners();
+  }
+
   /// The profile, branding, the person's other profiles, safety status and
   /// unread count, requested together (one round trip in sequence).
   Future<void> _loadProfile() async {

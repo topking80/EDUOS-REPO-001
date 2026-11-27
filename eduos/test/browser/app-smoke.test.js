@@ -677,6 +677,11 @@ function startServer() {
         return req.on("end", () => { copies.push({ path: pathname, body: JSON.parse(raw || "{}") });
           res.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ data: { kind: "unit", id: "u9", lessonIds: ["l8", "l9"] } })); });
       }
+      // Student app Phase E: saving display settings answers with what was saved.
+      if (pathname === "/api/me/preferences" && req.method === "PUT") {
+        let raw = ""; req.on("data", c => { raw += c; });
+        return req.on("end", () => { res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ data: JSON.parse(raw || "{}") })); });
+      }
       if (pathname === "/api/session/membership" && req.method === "POST") {
         let raw = ""; req.on("data", c => { raw += c; });
         return req.on("end", () => { const id = JSON.parse(raw || "{}").membershipId; switches.push(id); mockSchool = id.endsWith("0002") ? "s2" : "s1";
@@ -1322,6 +1327,27 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await axeScan(page, "principal: enter figures", a11y);
       if (page.errors.length) failures.push(`principal rankings: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
+  }
+  // Student app Phase E: the pupil's Help page, and display settings applied once saved. Passes axe.
+  {
+    state.role = "pupil";
+    const page = await Page.open(chrome.port);
+    const wants = ["If you need help right now", "call or text 988", "Talk to an adult at school", "ask any of your teachers", "Check in with a counselor", "Help with your work",
+      "hints, not answers", "School resources", "Make EduOS easier to read", "There's no student-to-student messaging"];
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/help` });
+      let text = await page.mainText();
+      for (const end = Date.now() + 5000; Date.now() < end && !wants.every(w => text.includes(w)); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const w of wants) if (!text.includes(w)) failures.push(`pupil help: "${w}" is missing`);
+      await axeScan(page, "pupil: help", a11y);
+      await page.eval(`(() => { document.querySelector("#pref-size-larger").click(); document.querySelector("#pref-contrast").click(); document.querySelector("#pref-motion").click();
+        document.querySelector("#pref-motion").form.requestSubmit(); })()`);
+      let d = {};
+      for (let i = 0; i < 50 && d.text !== "larger"; i++) { await new Promise(r => setTimeout(r, 100)); d = await page.eval(`({ ...document.documentElement.dataset })`); }
+      if (d.text !== "larger" || d.contrast !== "more" || d.motion !== "reduce") failures.push(`pupil help: display settings not applied: ${JSON.stringify(d)}`);
+      await axeScan(page, "pupil: help (larger text, high contrast)", a11y);
+      if (page.errors.length) failures.push(`pupil help: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
   }
   // Student app Phase D: a pupil's Home leads with Today at school. Passes axe.
   {

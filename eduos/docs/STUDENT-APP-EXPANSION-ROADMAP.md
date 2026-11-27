@@ -63,10 +63,10 @@ The student experience must remain age-appropriate, accessible, privacy-preservi
 
 ### Phase E — Student support and accessibility
 
-- [ ] Add a student help center for approved school resources, assignment instructions, and how to ask an adult for help.
-- [ ] Add language, reading, contrast, text-size, reduced-motion, and screen-reader improvements throughout student workflows.
-- [ ] Ensure Christie remains constrained to approved instructional content, hints rather than answer-giving, and the existing teacher visibility notice.
-- [ ] Do not add unsupervised direct messaging, public student directories, targeted advertising, or external AI transmission of student personal data.
+- [x] Add a student help center for approved school resources, assignment instructions, and how to ask an adult for help (web and Flutter Help: tell an adult, 911 and 988, the student's teachers, a counselor check-in, where assignment instructions and feedback are, the school's chosen digital resources).
+- [ ] Add language, reading, contrast, text-size, reduced-motion, and screen-reader improvements throughout student workflows. *Done: text size (standard, large, larger), high contrast and reduce motion, saved with the account (`PUT /api/me/preferences`, db/175) and applied on web and Flutter on top of the device's own settings; new student screens checked with axe. Still to do: translations.*
+- [x] Ensure Christie remains constrained to approved instructional content, hints rather than answer-giving, and the existing teacher visibility notice (unchanged; the Help page repeats the notice).
+- [x] Do not add unsupervised direct messaging, public student directories, targeted advertising, or external AI transmission of student personal data (Help adds none; it says plainly there's no student-to-student messaging).
 
 ## Acceptance criteria
 
@@ -87,3 +87,5 @@ Phase B adds the day planner: staff publish class times, one-day changes and sch
 Phase C turns the existing progress endpoint into the learner's Grades view. It doesn't change how grades are calculated; it shows every piece of work and labels each kind of number.
 
 Phase D adds no new endpoint: the Today card is built from the learner's own schedule, loans and memberships, each of which the server already limits to the signed-in learner.
+
+Phase E adds the student Help page and per-person display settings. Display settings are stored with the account rather than in the browser, which keeps the rule that the web app stores nothing on the device.
