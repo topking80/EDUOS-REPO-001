@@ -137,7 +137,7 @@ function applyBranding(b) {
 
 // ---------------- role apps: tabs ----------------
 const ROLE_TABS = {
-  pupil: [["home", "Home", "home"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
+  pupil: [["home", "Home", "home"], ["schedule", "Schedule", "calendar"], ["portfolio", "My history", "book"], ["capsules", "Time Capsules", "spark"], ["library", "My library", "book"], ["courses", "Courses", "book"], ["christie", "Christie", "spark"], ["path", "My path", "path"], ["activities", "Clubs & Sports", "trophy"], ["news", "News", "news"]],
   teacher: [["dashboard", "Dashboard", "home"], ["classes", "Classes", "grid"], ["schoolday", "School day", "bus"], ["staffing", "Staffing", "people"], ["courses", "Courses", "book"], ["contributions", "History items", "book"], ["grading", "Grading", "check"], ["copilot", "Christie", "spark"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"]],
   parent: [["children", "Children", "child"], ["capsules", "Time Capsules", "spark"], ["library", "Library books", "book"], ["arrival", "Arrival", "bus"], ["pickup", "Pick-up", "car"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   librarian: [["library", "Library desk", "book"], ["mediacenter", "Media center", "check"], ["messages", "Messages", "chat"]],
@@ -2995,6 +2995,7 @@ VIEWS.overview = async () => {
         h("button", { class: "btn", type: "button", onclick: () => go("edal") }, icon("ledger"), "Records ledger"),
         h("button", { class: "btn", type: "button", onclick: () => go("courses") }, icon("book"), "Courses"))),
     ["principal", "vice_principal"].includes(role) && state.me.schoolId ? await bellScheduleCard(true) : null,
+    ["principal", "vice_principal"].includes(role) && state.me.schoolId ? await schoolCalendarCard() : null,
         role === "principal" && !hosted?.hosted ? h("section", { class: "card", "aria-label": "School announcement" }, h("h2", {}, "Announce to the school"), announceForm("school")) : null,
     h("section", { class: "card", "aria-label": "Announcements" }, h("h2", {}, "Announcements"), announcementsCard(news?.data, { limit: 3 }))
   ];
@@ -5344,6 +5345,110 @@ async function digitalResourcesCard() {
 {
   const base = VIEWS.library;
   VIEWS.library = async () => [...[await base()].flat(), await digitalResourcesCard()];
+}
+
+// Student app Phase B: the day planner. Learners see their own week; a course's
+// teacher sets class times and one-day changes; the principal sets the school
+// calendar. Nothing here is kept on the device.
+const DP_WEEKDAY = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DP_DAY_KIND = { no_school: "No school", early_release: "Early release", late_start: "Late start", modified: "Modified day" };
+const DP_STATUS = { scheduled: ["present", "On"], adjusted: ["expected", "New time today"], changed: ["expected", "Changed"], cancelled: ["absent", "Cancelled"], no_school: ["absent", "No school"] };
+const DP_ERRORS = { already_set_for_that_day: "There's already a change for that day. Withdraw it first.", not_at_this_school: "That room or schedule isn't at this school.",
+  principal_or_vice_principal_only: "Only the principal or vice principal changes the calendar." };
+const dpErr = e => DP_ERRORS[e.body?.error] || (e.body?.fields ? `Check: ${e.body.fields.join(", ")}` : "That didn't work.");
+const dpDate = iso => new Date(`${iso}T12:00:00Z`).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" });
+const dpAdd = (iso, n) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+VIEWS.schedule = async () => {
+  const from = state.scheduleFrom || null;
+  const r = await safe(api.get(`/api/learning/schedule?days=7${from ? `&from=${from}` : ""}${state.me.role === "parent" && state.learnerId ? `&studentId=${state.learnerId}` : ""}`));
+  const d = r?.data && Array.isArray(r.data.days) ? r.data : null;
+  if (!d) return [h("h2", {}, "My schedule"), h("section", { class: "card" }, h("p", { class: "notice alertcard", role: "status" }, "Your schedule couldn't be loaded. Nothing is saved on this device, so check again when you're connected."))];
+  const move = n => { state.scheduleFrom = dpAdd(d.from, n); go("schedule", { push: false }); };
+  const dayCard = x => h("section", { class: "card", "aria-label": dpDate(x.date) },
+    h("h3", {}, x.date === d.today ? `Today · ${dpDate(x.date)}` : dpDate(x.date)),
+    x.calendar ? h("p", { class: "notice" }, `${DP_DAY_KIND[x.calendar.kind] || x.calendar.kind}: ${x.calendar.label}`) : null,
+    x.classes.length || x.events.length ? h("ul", { class: "list" },
+      x.classes.map(k => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, `${k.starts}–${k.ends} ${k.title}`), h("br"),
+        h("span", { class: "muted small" }, [k.period, k.room, k.teacher].filter(Boolean).join(" · ")), k.note ? h("span", { class: "small" }, h("br"), k.note) : null),
+        chip(...(DP_STATUS[k.status] || ["present", k.status])))),
+      x.events.map(e => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, `${e.starts}${e.ends ? `–${e.ends}` : ""} ${e.title}`), h("br"),
+        h("span", { class: "muted small" }, [e.activity, e.venue].filter(Boolean).join(" · "))), chip(e.status === "cancelled" ? "absent" : "present", e.status === "cancelled" ? "Cancelled" : e.kind === "sport" ? "Sport" : "Club"))))
+      : empty(x.calendar?.kind === "no_school" ? "No school today." : "Nothing scheduled."));
+  return [h("div", { class: "row wrap" }, h("h2", { class: "grow" }, "My schedule"),
+      h("button", { class: "btn small secondary", type: "button", onclick: () => move(-7) }, "Previous week"),
+      from ? h("button", { class: "btn small secondary", type: "button", onclick: () => { state.scheduleFrom = null; go("schedule", { push: false }); } }, "Today") : null,
+      h("button", { class: "btn small secondary", type: "button", onclick: () => move(7) }, "Next week")),
+    h("p", { class: "small muted" }, `Times are school time (${d.timezone}). ${d.updatedAt ? `Last changed ${new Date(d.updatedAt).toLocaleString()}. ` : ""}Loaded ${new Date(d.generatedAt).toLocaleTimeString()}.`),
+    ...d.days.map(dayCard)];
+};
+async function classTimesCard(courseId) {
+  const box = h("section", { class: "card", "aria-label": "Class times" });
+  const load = async () => {
+    const d = (await safe(api.get(`/api/courses/${courseId}/meetings`)))?.data;
+    if (!d || !Array.isArray(d.meetings)) return box.replaceChildren(h("h2", {}, "Class times"), empty("Class times aren't available."));
+    const act = async (fn, msg) => { try { await fn(); toast(msg); load(); } catch (e) { toast(dpErr(e)); } };
+    const roomSel = id => h("select", { class: "field", "aria-label": "Room" }, h("option", { value: "" }, "No room"), d.rooms.map(r => h("option", { value: r.id, selected: r.id === id }, r.name)));
+    const days = [1, 2, 3, 4, 5, 6, 7].map(n => h("input", { type: "checkbox", id: `ct-${courseId}-${n}`, value: String(n), checked: n <= 5 && n % 2 === 1 }));
+    const starts = h("input", { class: "field", type: "time", "aria-label": "Starts", value: "09:00", required: true }), ends = h("input", { class: "field", type: "time", "aria-label": "Ends", value: "09:50", required: true });
+    const period = h("input", { class: "field", "aria-label": "Period name (optional, matches the bell schedule)", placeholder: "Period name (optional)" }), room = roomSel(null);
+    const fromIn = h("input", { class: "field", type: "date", "aria-label": "Starting", required: true, value: new Date().toISOString().slice(0, 10) });
+    const cDay = h("input", { class: "field", type: "date", "aria-label": "Day of the change", required: true });
+    const cKind = h("select", { class: "field", "aria-label": "Change" }, h("option", { value: "cancelled" }, "Cancelled"), h("option", { value: "moved" }, "Different room"), h("option", { value: "retimed" }, "Different time"));
+    const cRoom = roomSel(null), cStart = h("input", { class: "field", type: "time", "aria-label": "New start" }), cEnd = h("input", { class: "field", type: "time", "aria-label": "New end" });
+    const cNote = h("input", { class: "field", maxlength: 300, "aria-label": "Note students and families see (optional)", placeholder: "Note students and families see (optional)" });
+    const sNote = h("input", { class: "field", maxlength: 1000, "aria-label": "Staff-only note (optional)", placeholder: "Staff-only note (optional, never shown to students)" });
+    box.replaceChildren(h("h2", {}, "Class times"),
+      h("p", { class: "small muted" }, "Students and their families see these in their schedule. Times are school time."),
+      d.meetings.length ? h("ul", { class: "list" }, d.meetings.map(m => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, `${m.weekdays.map(n => DP_WEEKDAY[n]).join(", ")} ${m.starts}–${m.ends}`), h("br"),
+        h("span", { class: "muted small" }, [m.periodLabel, m.room, `from ${m.effectiveFrom}${m.effectiveUntil ? ` to ${m.effectiveUntil}` : ""}`].filter(Boolean).join(" · "))),
+        h("button", { class: "btn small secondary", type: "button", onclick: () => act(() => api.post(`/api/course-meetings/${m.id}/end`, {}), "Those class times are removed.") }, "Remove")))) : empty("No class times yet."),
+      h("details", {}, h("summary", {}, "Add class times"), h("form", { class: "stack", onsubmit: e => { e.preventDefault();
+        act(() => api.post(`/api/courses/${courseId}/meetings`, { weekdays: days.filter(x => x.checked).map(x => Number(x.value)), starts: starts.value, ends: ends.value,
+          ...(period.value.trim() ? { periodLabel: period.value.trim() } : {}), ...(room.value ? { roomId: room.value } : {}), effectiveFrom: fromIn.value }), "Class times added."); } },
+        h("fieldset", {}, h("legend", {}, "Days"), h("div", { class: "row wrap" }, days.map((x, i) => h("label", { class: "inline", for: x.id }, x, ` ${DP_WEEKDAY[i + 1]}`)))),
+        h("div", { class: "row wrap" }, starts, ends), period, room, fromIn, h("button", { class: "btn", type: "submit" }, "Add"))),
+      h("h3", {}, "Changes for one day"),
+      d.changes.length ? h("ul", { class: "list" }, d.changes.map(x => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, `${x.day}: ${x.kind === "cancelled" ? "Cancelled" : x.kind === "moved" ? `Moved to ${x.room}` : `${x.starts}–${x.ends}`}`),
+        x.studentNote ? h("span", { class: "small" }, h("br"), x.studentNote) : null, x.staffNote ? h("span", { class: "small muted" }, h("br"), `Staff only: ${x.staffNote}`) : null),
+        h("button", { class: "btn small secondary", type: "button", onclick: () => act(() => api.post(`/api/course-meeting-changes/${x.id}/withdraw`, {}), "Change withdrawn.") }, "Withdraw")))) : empty("No upcoming changes."),
+      h("details", {}, h("summary", {}, "Cancel, move or retime one day"), h("form", { class: "stack", onsubmit: e => { e.preventDefault();
+        act(() => api.post(`/api/courses/${courseId}/changes`, { day: cDay.value, kind: cKind.value, ...(cKind.value === "moved" ? { roomId: cRoom.value } : {}),
+          ...(cKind.value === "retimed" ? { starts: cStart.value, ends: cEnd.value } : {}), ...(cNote.value.trim() ? { studentNote: cNote.value.trim() } : {}), ...(sNote.value.trim() ? { staffNote: sNote.value.trim() } : {}) }), "Change published to students."); } },
+        cDay, cKind, cRoom, h("div", { class: "row wrap" }, cStart, cEnd), cNote, sNote, h("button", { class: "btn", type: "submit" }, "Publish change"))));
+  };
+  await load();
+  return box;
+}
+{
+  const base = VIEWS.course;
+  VIEWS.course = async () => {
+    const out = [await base()].flat();
+    if (!state.courseId || !["teacher", "principal", "vice_principal"].includes(state.me.role)) return out;
+    const c = (await safe(api.get(`/api/learning/courses/${state.courseId}`)))?.data;
+    return c?.canManage ? [...out, await classTimesCard(state.courseId)] : out;
+  };
+}
+async function schoolCalendarCard() {
+  const box = h("section", { class: "card", "aria-label": "School calendar" });
+  const load = async () => {
+    const [days, bells] = await Promise.all([safe(api.get("/api/school-calendar")), safe(api.get("/api/schools/bell-schedules"))]);
+    const list = Array.isArray(days?.data) ? days.data : [], schedules = Array.isArray(bells?.data?.schedules) ? bells.data.schedules : [];
+    const act = async (fn, msg) => { try { await fn(); toast(msg); load(); } catch (e) { toast(dpErr(e)); } };
+    const dayIn = h("input", { class: "field", type: "date", "aria-label": "Day", required: true });
+    const kind = h("select", { class: "field", "aria-label": "Kind of day" }, Object.entries(DP_DAY_KIND).map(([v, t]) => h("option", { value: v }, t)));
+    const label = h("input", { class: "field", "aria-label": "What students see", placeholder: "What students see (e.g. Teacher workday)", required: true, minlength: 2, maxlength: 120 });
+    const bell = h("select", { class: "field", "aria-label": "Bell schedule for the day (optional)" }, h("option", { value: "" }, "Usual class times"), schedules.map(s => h("option", { value: s.id }, s.name)));
+    box.replaceChildren(h("h2", {}, "School calendar"),
+      h("p", { class: "small muted" }, "No-school, early-release and late-start days show in every student's schedule. Pick a bell schedule to use its period times that day."),
+      list.length ? h("ul", { class: "list" }, list.map(k => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, `${dpDate(k.day)}: ${k.label}`), h("br"),
+        h("span", { class: "muted small" }, [DP_DAY_KIND[k.kind], k.bellSchedule].filter(Boolean).join(" · "))),
+        h("button", { class: "btn small secondary", type: "button", onclick: () => act(() => api.post(`/api/school-calendar/${k.id}/remove`, {}), "Removed from the calendar.") }, "Remove")))) : empty("No special days coming up."),
+      h("details", {}, h("summary", {}, "Add a day"), h("form", { class: "stack", onsubmit: e => { e.preventDefault();
+        act(() => api.post("/api/school-calendar", { day: dayIn.value, kind: kind.value, label: label.value.trim(), ...(bell.value && kind.value !== "no_school" ? { bellScheduleId: bell.value } : {}) }), "Added to the calendar."); } },
+        dayIn, kind, label, bell, h("button", { class: "btn", type: "submit" }, "Add day"))));
+  };
+  await load();
+  return box;
 }
 
 // ---- Apps in the app (UI-01) -------------------------------------------------

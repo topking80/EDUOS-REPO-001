@@ -388,6 +388,16 @@ function mockApi(role, pathname, failWebhookLoads = false) {
     // TC-06c: online delivery between districts on this deployment.
     case "/api/history-delivery/settings": return { data: { accepting: true } };
     case "/api/history-delivery/directory": return { data: [{ id: "d2", name: "Lakeside Unified" }] };
+    // Student app Phase B: the day planner.
+    case "/api/learning/schedule": return { data: { student: { id: "c1", name: "Alice A" }, timezone: "America/New_York", today: "2027-03-08", from: "2027-03-08", to: "2027-03-14",
+      updatedAt: now, generatedAt: now, days: [
+        { date: "2027-03-08", weekday: 1, calendar: null, classes: [{ courseId: "k1", title: "Math 3", subject: "Math", teacher: "Teacher S1", period: "Period 1", starts: "09:00", ends: "09:50", room: "Room 202", status: "changed", note: "Library visit" }],
+          events: [{ id: "ev1", title: "Robotics build night", activity: "Robotics", kind: "club", venue: "Room 101", starts: "18:00", ends: "20:00", endsNextDay: false, status: "published" }] },
+        { date: "2027-03-10", weekday: 3, calendar: { kind: "no_school", label: "Teacher workday" }, classes: [], events: [] }] } };
+    case "/api/courses/k1/meetings": return { data: { course: { id: "k1", title: "Math 3" }, rooms: [{ id: "rm1", name: "Room 101" }],
+      meetings: [{ id: "mt1", weekdays: [1, 3, 5], starts: "09:00", ends: "09:50", periodLabel: "Period 1", roomId: "rm1", room: "Room 101", effectiveFrom: "2027-01-04", effectiveUntil: null }],
+      changes: [{ id: "chg1", day: "2027-03-08", kind: "cancelled", roomId: null, room: null, starts: null, ends: null, studentNote: "No math today", staffNote: "Sub unavailable" }] } };
+    case "/api/school-calendar": return { data: [{ id: "cd1", day: "2027-03-10", kind: "no_school", label: "Teacher workday", bellScheduleId: null, bellSchedule: null }] };
     // LRH-01: the digital learning-resource catalog.
     case "/api/resources/catalog": return { data: { notice: "Metadata only for now.", resources: [
       { id: "lr1", title: "Fractions picture book", type: "ebook", source: { name: "Open Library", url: "https://example.org/f" }, license: { name: "CC BY 4.0", url: null, status: "approved" },
@@ -1302,6 +1312,20 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       if (page.errors.length) failures.push(`principal rankings: ${page.errors[0].split("\n")[0]}`);
     } finally { page?.close(); }
   }
+  // Student app Phase B: a pupil's week, a teacher's class times, the principal's calendar. All pass axe.
+  for (const [role, path, wants] of [["pupil", "schedule", ["My schedule", "09:00–09:50 Math 3", "Library visit", "Robotics build night", "No school: Teacher workday", "America/New_York"]],
+    ["principal", "overview", ["School calendar", "Teacher workday"]]]) {
+    state.role = role;
+    const page = await Page.open(chrome.port);
+    try {
+      await page.send("Page.navigate", { url: `http://127.0.0.1:${port}/app/index.html#/${path}` });
+      let text = await page.mainText();
+      for (const end = Date.now() + 6000; Date.now() < end && !wants.every(w => text.includes(w)); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const w of wants) if (!text.includes(w)) failures.push(`${role} day planner: "${w}" is missing`);
+      await axeScan(page, `${role}: day planner`, a11y);
+      if (page.errors.length) failures.push(`${role} day planner: ${page.errors[0].split("\n")[0]}`);
+    } finally { page.close(); }
+  }
   // LRH-01: the superintendent's catalog, a principal's collection choice, a pupil's browse. All pass axe.
   for (const [role, wants] of [["superintendent", ["Digital resources", "Evacuation procedures", "needs licence approval", "Approve licence", "Publish collection", "Fractions picture book"]],
     ["principal", ["Collections for your school", "Use at our school", "Fractions picture book"]], ["pupil", ["Digital resources", "Fractions picture book", "E-book · Grades 2–4"]]]) {
@@ -1507,7 +1531,9 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
   // LTI-02: tool links on a course assignment, for a pupil (open) and a teacher (open, remove, add).
   withCourse = true;
   for (const [role, wants] of [["pupil", ["Fractions practice · Practice Tool", "Open", "Class list sharing", "These tools can read this course's class list"]],
-    ["teacher", ["Fractions practice · Practice Tool", "Remove", "Add from Practice Tool", "Share the class list with Practice Tool", "Send grades to EduOS (Fractions practice)", "Review scores from tools"]]]) {
+    ["teacher", ["Fractions practice · Practice Tool", "Remove", "Add from Practice Tool", "Share the class list with Practice Tool", "Send grades to EduOS (Fractions practice)", "Review scores from tools",
+      // Student app Phase B: the teacher's class times and one-day changes.
+      "Class times", "Mon, Wed, Fri 09:00–09:50", "Staff only: Sub unavailable", "Cancel, move or retime one day"]]]) {
     state.role = role;
     const page = await Page.open(chrome.port);
     try {
@@ -1515,7 +1541,7 @@ test("web app boots and every role's tabs render", { skip: !CHROME && !required 
       await page.mainText();
       await page.eval(`([...document.querySelectorAll("button")].find(b => /Open course|^Open$/.test(b.textContent.trim()) && /Math 3/.test(b.closest("li,section")?.textContent || "")) || {}).click?.()`);
       let text = "";
-      for (const end = Date.now() + 5000; Date.now() < end && !text.includes("Fractions practice"); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
+      for (const end = Date.now() + 6000; Date.now() < end && !wants.every(w => text.includes(w)); await new Promise(r => setTimeout(r, 50))) text = await page.mainText();
       for (const want of wants) if (!text.includes(want)) failures.push(`${role} course tool links: "${want}" is missing`);
       await axeScan(page, `${role} course with tool links`, a11y);
       if (page.errors.length) failures.push(`${role} course tool links: ${page.errors[0].split("\n")[0]}`);
