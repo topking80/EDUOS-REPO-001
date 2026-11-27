@@ -9,11 +9,11 @@ import 'courses_screen.dart';
 
 class _WorkItem {
   const _WorkItem({
-    required this.id, required this.courseId, required this.courseTitle,
+    required this.courseId, required this.courseTitle,
     required this.title, required this.kind, required this.status,
     this.dueAt, this.earned, this.points, this.missing = false,
   });
-  final String id, courseId, courseTitle, title, kind, status;
+  final String courseId, courseTitle, title, kind, status;
   final String? dueAt;
   final num? earned, points;
   final bool missing;
@@ -52,16 +52,15 @@ class StudentWorkScreen extends StatelessWidget {
     for (final course in details) {
       if (course.isEmpty) continue;
       final courseId = str(course['id']);
-      final courseTitle = str(course['title'], fallback: 'Course');
+      final courseTitle = str(course['title'], 'Course');
       for (final assignment in objs(course['assignments'])) {
         final mine = obj(assignment['mine']);
         items.add(_WorkItem(
-          id: str(assignment['id']),
           courseId: courseId,
           courseTitle: courseTitle,
-          title: str(assignment['title'], fallback: 'Assignment'),
-          kind: str(assignment['kind'], fallback: 'work'),
-          status: str(mine['status'], fallback: 'not_started'),
+          title: str(assignment['title'], 'Assignment'),
+          kind: str(assignment['kind'], 'work'),
+          status: str(mine['status'], 'not_started'),
           dueAt: assignment['due_at'] == null ? null : str(assignment['due_at']),
           earned: number(mine['earned']),
           points: number(assignment['points']),
@@ -161,7 +160,7 @@ class _WorkTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final due = item.dueAt == null ? 'No due date' : 'Due ${fmtDay(item.dueAt)}';
+    final due = item.dueAt == null ? 'No due date' : 'Due ${fmtDay(item.dueDate)}';
     final status = item.missing
         ? const StatusChip('attention', text: 'Missing')
         : switch (item.status) {
@@ -177,7 +176,7 @@ class _WorkTile extends StatelessWidget {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text('${item.courseTitle} · $due${score == null ? '' : ' · $score'}'),
+      subtitle: Text('${item.courseTitle} · ${item.kind == 'quiz' ? 'Quiz' : 'Assignment'} · $due${score == null ? '' : ' · $score'}'),
       trailing: status,
       onTap: onTap,
     );
