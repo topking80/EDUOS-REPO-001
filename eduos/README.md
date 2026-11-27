@@ -1,4 +1,4 @@
-# EduOS
+# EduOS District Edition 37.7.4
 
 **Package version 37.7.4.** Work merged since 37.7.4 is listed under "What's in it", with links to each
 feature's document. The release notes for 37.7.x are `RELEASE-NOTES-37.7.*.md`, and the older sections
