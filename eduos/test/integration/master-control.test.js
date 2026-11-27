@@ -6,7 +6,11 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import pg from "pg";
 import { PG_URL, ROOT, startIdp, baseEnv, run, createDatabase, freePort } from "./harness.js";
 import { verifyBundle, parsePublicKey, bundleKeys } from "../../src/federation/policy-bundle.js";
@@ -14,6 +18,9 @@ import { registerSigningKey } from "../../src/master-control/security.js";
 import { ENVELOPE_FORMAT, DATASETS, minimize, exchangeKeys, signEnvelope, verifyTerms } from "../../src/federation/exchange.js";
 
 const TODAY = new Date().toISOString().slice(0, 10);
+const exec = promisify(execFile);
+const pgTool = name => [process.env.PG_BIN, ...(existsSync("/usr/lib/postgresql") ? readdirSync("/usr/lib/postgresql").sort().reverse().map(v => `/usr/lib/postgresql/${v}/bin`) : []), "/usr/bin", "/usr/local/bin"]
+  .filter(Boolean).map(d => path.join(d, name)).find(existsSync);
 const resign = (env, over, keys) => { const { signature, ...body } = env; return signEnvelope({ ...body, ...over }, keys); };
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
 
@@ -461,6 +468,59 @@ describe("FED-03 Master Control against real PostgreSQL", { skip }, () => {
     assert.equal((await as("tea")("GET", `/exchange-deliveries/${ids.xdnew}`)).status, 200, "the freeze ends with the incident");
     const log = ok(await as("sup1")("GET", `/audit?nodeId=${ids.d1}&limit=500`));
     for (const a of ["open_incident", "close_incident", "rotate_exchange_key"]) assert.ok(log.some(e => e.action === a && e.decision === "allowed"), a);
+  });
+
+  // ---- FED-10: resilience ------------------------------------------------------
+  it("a backup of the master_control schema restores into a new database and checks out the same", async () => {
+    const PG_DUMP = pgTool("pg_dump"), PG_RESTORE = pgTool("pg_restore");
+    if (!PG_DUMP || !PG_RESTORE) { assert.ok(!process.env.CI, "pg_dump and pg_restore are required in CI"); return; }
+    const dir = mkdtempSync(path.join(os.tmpdir(), "mc-backup-"));
+    const restored = `${new URL(db.adminUrl).pathname.slice(1)}_mc_restored`;
+    const sup = new pg.Client(PG_URL); await sup.connect();
+    try {
+      await exec(PG_DUMP, ["-Fc", "-n", "master_control", "-f", path.join(dir, "mc.dump"), db.adminUrl]);
+      await sup.query(`CREATE DATABASE ${restored}`);
+      const ru = new URL(db.adminUrl); ru.pathname = `/${restored}`;
+      await exec(PG_RESTORE, ["--exit-on-error", "-d", ru.toString(), path.join(dir, "mc.dump")]);
+      const mcRestored = new URL(mcUrl); mcRestored.pathname = `/${restored}`;
+      const verify = async url => { const r = await run(["src/master-control/verify.js"], { ...env, MC_DATABASE_URL: url }); return { code: r.code, report: JSON.parse(r.out.trim().split("\n").at(-1)) }; };
+      const [a, b] = await Promise.all([verify(mcUrl), verify(mcRestored.toString())]);
+      assert.deepEqual(b.report, a.report, "the copy checks out exactly like the original");
+      assert.equal(a.report.audit.ok, false, "the tampering test broke the chain; the check says so");
+      assert.equal(a.code, 1);
+      assert.ok(a.report.bundles.checked > 0); assert.deepEqual(a.report.bundles.problems, []);
+      assert.ok(a.report.deliveries.checked > 0); assert.deepEqual(a.report.deliveries.problems, []);
+      assert.equal(a.report.model.ok, true);
+      // A changed delivery on the copy is caught.
+      const rc = new pg.Client(ru.toString()); await rc.connect();
+      try {
+        await rc.query("ALTER TABLE master_control.exchange_deliveries DISABLE TRIGGER USER");
+        await rc.query("UPDATE master_control.exchange_deliveries SET envelope = jsonb_set(envelope, '{rows,0,student_count}', '999') WHERE id = (SELECT id FROM master_control.exchange_deliveries ORDER BY delivered_at LIMIT 1)");
+      } finally { await rc.end(); }
+      assert.equal((await verify(mcRestored.toString())).report.deliveries.problems[0].problem, "altered");
+    } finally {
+      await sup.query(`DROP DATABASE IF EXISTS ${restored} WITH (FORCE)`).catch(() => {}); await sup.end();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("after a restore is recorded, every district's next bundle version jumps past what it may already hold", async () => {
+    const before = ok(await as("sup1")("GET", `/districts/${ids.d1}/policy-bundles`))[0];
+    const rec = await run(["src/master-control/after-restore.js", "--note", "Restored from the 02:00 backup (drill)", "--skip", "100"], env);
+    assert.equal(rec.code, 0, rec.out);
+    assert.equal((await run(["src/master-control/after-restore.js", "--note", "x"], env)).code, 1, "a note is required");
+    ok(await as("tea")("POST", "/policy-releases", { nodeId: ids.tx, reason: "re-issue after restore drill" }), 201);
+    const after = ok(await as("sup1")("GET", `/districts/${ids.d1}/policy-bundles`));
+    assert.equal(after[0].version, before.version + 101);
+    const file = await (await fetch(`${mc.base}/mc/api/policy-bundles/${after[0].id}/file`, { headers: { cookie: s.sup1.cookie } })).json();
+    assert.equal(file.previous_sha256, before.sha256, "Master Control's own chain stays unbroken");
+    const v = await run(["src/master-control/verify.js"], env);
+    const report = JSON.parse(v.out.trim().split("\n").at(-1));
+    assert.deepEqual(report.bundles.problems, [], "the jump is expected after the recorded restore");
+    assert.equal(report.restores.length, 1);
+    const log = ok(await as("op")("GET", "/audit/verify"));
+    assert.ok(log.entries > 0);
+    await assert.rejects(admin.query("DELETE FROM master_control.restore_events"), /append-only/);
   });
 
   it("signing keys rotate in the registry; a revoked key is never used again", async () => {

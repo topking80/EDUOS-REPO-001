@@ -34,7 +34,9 @@
     "mc:migrate": "node src/master-control/migrate.js",
     "mc:start": "node src/master-control/server.js",
     "mc:bootstrap": "node src/master-control/bootstrap.js",
-    "mc:security-check": "node src/master-control/security-check.js"
+    "mc:security-check": "node src/master-control/security-check.js",
+    "mc:verify": "node src/master-control/verify.js",
+    "mc:after-restore": "node src/master-control/after-restore.js"
   },
   "dependencies": {
     "compression": "^1.7.5",

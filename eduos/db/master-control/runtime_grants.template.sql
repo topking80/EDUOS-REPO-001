@@ -18,3 +18,5 @@ GRANT SELECT, INSERT, UPDATE ON master_control.exchange_agreements TO mc_app;
 GRANT SELECT, INSERT ON master_control.exchange_deliveries TO mc_app;
 -- FED-08
 GRANT SELECT, INSERT, UPDATE ON master_control.signing_keys, master_control.incidents TO mc_app;
+-- FED-10
+GRANT SELECT, INSERT ON master_control.restore_events TO mc_app;
