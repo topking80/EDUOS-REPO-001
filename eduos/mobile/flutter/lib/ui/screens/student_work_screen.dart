@@ -162,7 +162,7 @@ class _WorkTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final due = item.dueAt == null ? 'No due date' : 'Due ${fmtDay(item.dueDate)}';
     final status = item.missing
-        ? const StatusChip('attention', text: 'Missing')
+        ? const StatusChip('absent', text: 'Missing')
         : switch (item.status) {
             'graded' => const StatusChip('present', text: 'Graded'),
             'submitted' => const StatusChip('current', text: 'Submitted'),
