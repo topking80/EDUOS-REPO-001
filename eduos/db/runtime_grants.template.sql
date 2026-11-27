@@ -1002,3 +1002,9 @@ GRANT UPDATE (retention_years, status, ended_by, ended_at) ON compliance_profile
 GRANT UPDATE (status, done_on, evidence_ref, note, recorded_by, recorded_at) ON compliance_checklist TO eduos_app;
 REVOKE DELETE, TRUNCATE ON compliance_profiles, compliance_checklist FROM eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_compliance_reads(uuid,uuid), eduos_compliance_writes(uuid,uuid,boolean) TO eduos_app;
+
+-- 169 (HSP-06 part 3): districts in the learner transfer workflow; the superintendent turns it on.
+GRANT SELECT, INSERT ON district_transfer_settings TO eduos_app;
+GRANT UPDATE (enabled, changed_by, changed_at) ON district_transfer_settings TO eduos_app;
+REVOKE DELETE, TRUNCATE ON district_transfer_settings FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_district_records_office(uuid), eduos_district_guardian(uuid,uuid,uuid), eduos_district_transfers_on(uuid), eduos_transfer_accept(text,uuid) TO eduos_app;

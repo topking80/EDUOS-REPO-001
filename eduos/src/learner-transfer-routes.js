@@ -10,8 +10,12 @@
 //   POST …/transfers/receive/preview {code}
 //   POST …/transfers/receive/accept {code, campusId (schools)}   creates a new learner with the records attached
 //   POST …/transfers/receive/decline {code, reason}
-//   GET  …/learners/:id/transferred-records
+//   GET  …/learners/:id/transferred-records         (districts: /api/students/:id/transferred-records)
 //   POST …/transferred-records/:id/void {reason}
+//
+// Districts (HSP-06 part 3) use /api/transfers…: the records office prepares and
+// receives (onto an existing student: {code, studentId}); a linked guardian
+// releases; GET/PUT /api/transfers/settings is the superintendent's switch.
 //
 // Nothing transfers on its own: a person on each side acts, the sender's
 // records stay put, and what arrives is labelled with where it came from.
@@ -21,13 +25,24 @@ import { requireSession, requireCsrf } from "./auth.js";
 import { rows, one, validId, cleanText, HttpError } from "./role-app-util.js";
 import { family } from "./homeschool-routes.js";
 import { school } from "./private-school-routes.js";
+import { withTenantTransaction } from "./db.js";
+import { audit, sendError } from "./role-app-util.js";
 
 const sha256 = s => crypto.createHash("sha256").update(s).digest("hex");
 const PURPOSES = ["enrollment", "records_request", "return_to_homeschool", "other"];
 const CODE = /^[A-Za-z0-9_-]{30,100}$/;
 const STATUS = { invitation_not_valid: 404, transfer_code_not_valid: 404, transfer_not_found: 404, learner_not_found: 404, record_not_found: 404,
   full_authority_required: 403, registrar_or_admin_only: 403, family_owner_only: 403, guardian_of_this_learner_only: 403, school_not_verified: 409,
-  same_family_or_school: 409, already_decided: 409, not_awaiting_release: 409, already_voided: 409 };
+  same_family_or_school: 409, already_decided: 409, not_awaiting_release: 409, already_voided: 409, records_office_only: 403, district_transfers_off: 409,
+  use_the_signed_history_transfer: 409, student_required: 400 };
+// A district session (HSP-06 part 3).
+const district = (fn, status = 200) => async (req, res, next) => {
+  try {
+    if (req.actor?.tenantKind && req.actor.tenantKind !== "district") throw new HttpError(403, "district_context_required");
+    const data = await withTenantTransaction(req.actor, c => fn(c, req));
+    res.setHeader("Cache-Control", "no-store"); res.status(status).json({ data });
+  } catch (e) { if (e.code === "42501") return sendError(res, next, new HttpError(403, "not_allowed")); sendError(res, next, e); }
+};
 const check = out => { if (!out.ok) throw new HttpError(STATUS[out.error] ?? 400, out.error, out.allowed ? { allowed: out.allowed } : undefined); return out; };
 const code = body => { const c = body?.code; if (typeof c !== "string" || !CODE.test(c.trim())) throw new HttpError(400, "invalid_code"); return sha256(c.trim()); };
 const reason = (v, min = 3) => { if (!cleanText(v, 300, min)) throw new HttpError(400, "reason_required"); return v.trim(); };
@@ -41,7 +56,7 @@ const transferOut = (t, here) => ({ id: t.id, direction: t.source_tenant === her
 const recordOut = r => ({ id: r.id, transferId: r.transfer_id, kind: r.kind, title: r.title, detail: r.detail, provenance: r.provenance, receivedAt: r.received_at,
   voided: !!r.voided_at, voidReason: r.void_reason });
 
-function routes(app, base, wrap, here, learnerColumn) {
+function routes(app, base, wrap, here, learnerColumn, learnerPath = "learners") {
   const limiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false, keyGenerator: req => `xfer:${req.actor?.userId}` });
   app.get(`${base}/transfers`, requireSession, wrap(async (c, req) =>
     (await rows(c, `SELECT id, source_kind, source_tenant, source_learner, source_label, purpose, note, sections, snapshot, sha256, status, prepared_at, released_at, expires_at,
@@ -66,14 +81,14 @@ function routes(app, base, wrap, here, learnerColumn) {
       items: p.snapshot.items, sha256: p.sha256, expiresAt: p.expiresAt };
   }));
   app.post(`${base}/transfers/receive/accept`, limiter, requireSession, requireCsrf, wrap(async (c, req) => {
-    const campus = req.body?.campusId ?? null;
+    const campus = req.body?.campusId ?? req.body?.studentId ?? null;
     if (campus != null && !validId(campus)) throw new HttpError(400, "invalid_id");
     const out = check((await one(c, "SELECT eduos_transfer_accept($1,$2) AS out", [code(req.body), campus])).out);
     return { transferId: out.id, learnerId: out.learnerId, records: out.records };
   }));
   app.post(`${base}/transfers/receive/decline`, limiter, requireSession, requireCsrf, wrap(async (c, req) =>
     check((await one(c, "SELECT eduos_transfer_decline($1,$2) AS out", [code(req.body), reason(req.body?.reason)])).out) && { declined: true }));
-  app.get(`${base}/learners/:id/transferred-records`, requireSession, wrap(async (c, req) => {
+  app.get(`${base}/${learnerPath}/:id/transferred-records`, requireSession, wrap(async (c, req) => {
     if (!validId(req.params.id)) throw new HttpError(400, "invalid_id");
     return (await rows(c, `SELECT * FROM transferred_records WHERE ${learnerColumn}=$1 ORDER BY kind, title`, [req.params.id])).map(recordOut);
   }));
@@ -84,9 +99,22 @@ function routes(app, base, wrap, here, learnerColumn) {
 }
 
 export function registerLearnerTransferRoutes(app) {
-  // The guardian's release comes first so "receive" isn't read as an id.
-  app.post("/api/private-school/transfers/:id/release", rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false, keyGenerator: req => `xfer-r:${req.actor?.userId}` }),
-    requireSession, requireCsrf, school(async (c, req) => {
+  // Districts take part only once the superintendent turns transfers on.
+  app.get("/api/transfers/settings", requireSession, district(async c =>
+    ({ enabled: !!(await one(c, "SELECT eduos_district_transfers_on(eduos_ctx_district()) AS on")).on })));
+  app.put("/api/transfers/settings", rateLimit({ windowMs: 60_000, limit: 10, standardHeaders: true, legacyHeaders: false, keyGenerator: req => `xfer-s:${req.actor?.userId}` }),
+    requireSession, requireCsrf, district(async (c, req) => {
+      if (req.actor.role !== "superintendent") throw new HttpError(403, "superintendent_only");
+      if (typeof req.body?.enabled !== "boolean") throw new HttpError(400, "invalid_setting");
+      await c.query(`INSERT INTO district_transfer_settings(district_id, enabled, changed_by) VALUES ($1,$2,$3)
+        ON CONFLICT (district_id) DO UPDATE SET enabled=EXCLUDED.enabled, changed_by=EXCLUDED.changed_by, changed_at=now()`, [req.actor.districtId, req.body.enabled, req.actor.userId]);
+      await audit(c, req, req.body.enabled ? "enable" : "disable", "learner_transfer_settings", req.actor.districtId);
+      return { enabled: req.body.enabled };
+    }));
+  // The guardian's release is registered first so "receive" isn't read as an id.
+  for (const [path, wrap] of [["/api/transfers/:id/release", district], ["/api/private-school/transfers/:id/release", school]])
+    app.post(path, rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false, keyGenerator: req => `xfer-r:${req.actor?.userId}` }),
+    requireSession, requireCsrf, wrap(async (c, req) => {
       if (!validId(req.params.id)) throw new HttpError(400, "invalid_id");
       const token = newCode();
       const out = check((await one(c, "SELECT eduos_transfer_release($1,$2) AS out", [req.params.id, sha256(token)])).out);
@@ -94,4 +122,5 @@ export function registerLearnerTransferRoutes(app) {
     }));
   routes(app, "/api/homeschool", family, req => req.actor.familyId, "family_learner_id");
   routes(app, "/api/private-school", school, req => req.actor.privateSchoolId, "ps_learner_id");
+  routes(app, "/api", district, req => req.actor.districtId, "student_id", "students");
 }

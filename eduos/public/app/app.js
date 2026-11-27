@@ -291,9 +291,11 @@ const XFER_ERRORS = { full_authority_required: "Only someone with full authority
   family_owner_only: "Only a family owner can receive records.", guardian_of_this_learner_only: "A school's records can only go to that learner's guardian.",
   same_family_or_school: "That code is from your own family or school.", transfer_code_not_valid: "That code has expired, been used or been withdrawn.", invalid_code: "Check the code and try again.",
   school_not_verified: "The platform has to verify this school first.", campus_required: "Pick a campus.", already_decided: "That transfer has already been decided.",
-  choose_what_to_send: "Choose what to send.", invalid_sections: "Those records can't be sent from here." };
+  choose_what_to_send: "Choose what to send.", invalid_sections: "Those records can't be sent from here.", records_office_only: "Only the student's principal or the superintendent can do that.",
+  district_transfers_off: "The superintendent hasn't turned on transfers with families and private schools.", use_the_signed_history_transfer: "Between districts, use the signed history transfer.",
+  student_required: "Choose one of your school's students." };
 const xferErr = (e, fallback) => toast(XFER_ERRORS[e?.body?.error] || fallback);
-const XFER_SECTIONS = { courses: "Courses and final grades", attendance: "Attendance (yearly totals)", work: "Work and scores", enrollment: "Enrollment dates and grade", report_cards: "Published report cards" };
+const XFER_SECTIONS = { courses: "Courses and final grades", attendance: "Attendance (yearly totals)", work: "Work and scores", enrollment: "Enrollment dates and grade", report_cards: "Published report cards", final_grades: "Posted final grades" };
 const XFER_PURPOSE = { enrollment: "Enrolling there", records_request: "Records request", return_to_homeschool: "Returning to homeschool", other: "Other" };
 const XFER_STATUS = { awaiting_release: "Waiting for a guardian to release it", ready: "Code issued, not yet received", accepted: "Received", declined: "Declined", revoked: "Withdrawn", expired: "Code expired" };
 const xferCode = (box, code) => box.replaceChildren(h("p", { class: "notice" }, "Give this code only to the school or family that should receive these records. It's shown once and works for 14 days: ", h("code", { class: "wrap" }, code)));
@@ -311,11 +313,20 @@ function xferSendForm(base, sections, learnerSelect, done) {
 }
 function xferReceiveCard(base, campuses, reload) {
   const code = h("input", { id: "xr-code", required: true, maxlength: 100, autocomplete: "off" }), box = h("div", {});
-  const campus = campuses ? h("select", { "aria-label": "Campus" }, campuses.map(c => h("option", { value: c.id }, c.name))) : null;
+  const district = campuses === "students";
+  const campus = district ? h("select", { "aria-label": "Student these records belong to" }, h("option", { value: "" }, "Find the student first"))
+    : campuses ? h("select", { "aria-label": "Campus" }, campuses.map(c => h("option", { value: c.id }, c.name))) : null;
+  const find = district ? h("input", { "aria-label": "Student name or number", maxlength: 100, placeholder: "Name or student number" }) : null;
+  const finder = district ? h("span", { class: "row" }, find, h("button", { class: "btn small", type: "button", onclick: async () => {
+    const r = (await safe(api.get(`/api/students?q=${encodeURIComponent(find.value.trim())}&limit=20`)))?.data || [];
+    campus.replaceChildren(...(r.length ? r.map(x => h("option", { value: x.id }, `${x.display_name ?? x.displayName} · ${x.local_student_number ?? x.localStudentNumber ?? ""}`)) : [h("option", { value: "" }, "No match")])); } }, "Find")) : null;
   const preview = p => box.replaceChildren(h("div", { class: "stack" }, h("p", {}, h("b", {}, p.learner.displayName), ` from ${p.from} · ${XFER_PURPOSE[p.purpose] || p.purpose}`), p.note ? h("p", { class: "small" }, p.note) : null,
     h("p", { class: "small muted" }, p.provenance), h("ul", { class: "list small" }, p.items.map(i => h("li", {}, i.title))),
-    h("div", { class: "row wrap" }, campus, h("button", { class: "btn primary", type: "button", onclick: async () => {
-      try { const r = (await api.post(`${base}/transfers/receive/accept`, { code: code.value.trim(), campusId: campus?.value })).data; toast(`Received ${r.records} records as a new learner.`); reload(); } catch (e) { xferErr(e, "Couldn't receive it."); } } }, "Accept as a new learner"),
+    district ? h("p", { class: "small" }, "Choose the student these records belong to. Enroll a new child first; nothing is matched or created automatically.") : null,
+    h("div", { class: "row wrap" }, finder, campus, h("button", { class: "btn primary", type: "button", onclick: async () => {
+      if (district && !campus.value) return toast("Choose the student first.");
+      try { const r = (await api.post(`${base}/transfers/receive/accept`, district ? { code: code.value.trim(), studentId: campus.value } : { code: code.value.trim(), campusId: campus?.value })).data;
+        toast(district ? `Received ${r.records} records for that student.` : `Received ${r.records} records as a new learner.`); reload(); } catch (e) { xferErr(e, "Couldn't receive it."); } } }, district ? "Accept for this student" : "Accept as a new learner"),
       h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why decline?", async reason => {
         try { await api.post(`${base}/transfers/receive/decline`, { code: code.value.trim(), reason }); toast("Declined."); reload(); } catch (err) { xferErr(err, "Couldn't decline it."); } }) }, "Decline")))));
   return h("section", { class: "card", "aria-label": "Receive records" }, h("h3", {}, "Receive records"),
@@ -333,10 +344,10 @@ function xferList(base, list, { canRevoke, canRelease, reload }) {
       t.receiverLearnerId ? h("button", { class: "btn small", type: "button", onclick: () => xferRecords(base, t.receiverLearnerId, slot).catch(e => xferErr(e, "Couldn't load them.")) }, "Records") : null), box, slot); }));
 }
 async function xferRecords(base, learnerId, slot) {
-  const recs = (await api.get(`${base}/learners/${learnerId}/transferred-records`)).data;
+  const recs = (await api.get(`${base}/${base === "/api" ? "students" : "learners"}/${learnerId}/transferred-records`)).data;
   if (!recs.length) return slot.replaceChildren();
   slot.replaceChildren(h("div", {}, h("p", { class: "small muted" }, recs[0].provenance), h("ul", { class: "list small" }, recs.map(r => h("li", { class: "row wrap" },
-    h("span", { class: "grow" }, `${r.title}${r.detail?.finalGrade ? ` · ${r.detail.finalGrade}` : ""}${r.detail?.score != null ? ` · ${r.detail.score}/${r.detail.maxScore}` : ""}${r.voided ? ` · corrected (${r.voidReason})` : ""}`),
+    h("span", { class: "grow" }, `${r.title}${r.detail?.finalGrade ? ` · ${r.detail.finalGrade}` : ""}${r.detail?.letter ? ` · ${r.detail.letter}` : ""}${r.detail?.score != null ? ` · ${r.detail.score}/${r.detail.maxScore}` : ""}${r.voided ? ` · corrected (${r.voidReason})` : ""}`),
     r.voided ? null : h("span", {}, h("button", { class: "link", type: "button", onclick: e => reasonForm(e.target.parentNode, "Why is this being corrected?", async reason => {
       try { await api.post(`${base}/transferred-records/${r.id}/void`, { reason }); toast("Corrected."); xferRecords(base, learnerId, slot); } catch (err) { xferErr(err, "Couldn't correct it."); } }) }, "Correct")))))));
 }
@@ -2461,6 +2472,7 @@ VIEWS.portfolio = async () => {
     cursor ? more : null,
     historyDownloadCard(first.student.id, role),
     ["parent", "pupil"].includes(role) ? await familyTransferCard(first.student.id) : null,
+    role === "parent" ? await parentXferCard(first.student.id) : null,
     await familyStorageCard(first.student.id, role),
     await donationCard(role),
     await studentSharingCard(first.student.id)];
@@ -2899,7 +2911,7 @@ VIEWS.history = async () => {
         h("button", { class: "btn danger", type: "button", onclick: () => decide("reject") }, "Reject")));
   }) : [h("p", { class: "small muted" }, "No family memories are waiting for review.")];
   const teacher = await teacherReviewSection();
-  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard(), await donationSettingsCard(), await fundSettingsCard()] : null, await preservationCard()] : null;
+  const privacy = ["principal", "vice_principal", "superintendent"].includes(state.me.role) ? [recordsPrivacyCard(), await incomingTransfersCard(), await districtXferOfficeCard(), state.me.role === "superintendent" ? [await emergencyReviewCard(), await mediaPolicyCard(), await donationSettingsCard(), await fundSettingsCard()] : null, await preservationCard()] : null;
   const accounts = ["parent", "pupil"].includes(state.me.role) ? null : [await fundApprovalsCard(), await donationAccountsCard(), await fundDisbursementsCard()];
   return [privacy, accounts, h("div", { class: "row" }, h("h2", { class: "grow" }, "Student history review"),
     h("button", { class: "btn", type: "button", onclick: () => go("history", { push: false }) }, "Refresh")),
@@ -6293,6 +6305,36 @@ function historyDownloadCard(studentId, role) {
     h("div", { class: "btns" }, h("button", { class: "btn small", type: "button", onclick: () => get("html") }, "Web page (to read or print)"),
       h("button", { class: "btn small", type: "button", onclick: () => get("json") }, "Data file (JSON)")));
 }
+// ---- HSP-06 part 3: districts and the learner transfer workflow -------------------
+async function districtXferCard(student) {
+  const on = (await safe(api.get("/api/transfers/settings")))?.data?.enabled;
+  if (on == null) return null;
+  const all = (await safe(api.get("/api/transfers")))?.data || [], mine = all.filter(t => t.sourceLearnerId === student.id), recSlot = h("div", {});
+  await xferRecords("/api", student.id, recSlot).catch(() => {});
+  const reload = () => go("historyprivacy", { push: false });
+  return h("section", { class: "card", "aria-label": "Records for a family or private school" }, h("h3", {}, "Records for a family or private school"), recSlot,
+    mine.length ? xferList("/api", mine, { canRevoke: true, reload }) : null,
+    on ? [h("p", { class: "small muted" }, "For a family taking the student to homeschool, or a private school. A guardian releases it and gives the code to the receiver. Between districts, use the signed history transfer above."),
+      xferSendForm("/api", ["enrollment", "final_grades", "attendance"], () => student.id, null)]
+      : h("p", { class: "small muted" }, "Transfers with families and private schools are off. The superintendent can turn them on."));
+}
+async function districtXferOfficeCard() {
+  const on = (await safe(api.get("/api/transfers/settings")))?.data?.enabled;
+  if (on == null) return null;
+  const reload = () => go("history", { push: false });
+  const sup = state.me.role === "superintendent";
+  return [h("section", { class: "card", "aria-label": "Transfers with families and private schools" }, h("h3", {}, "Transfers with families and private schools"),
+      h("p", { class: "small" }, on ? "On. Principals can send a student's records to a family or private school (a guardian releases them) and receive records for students they already have." : "Off."),
+      sup ? h("button", { class: "btn small", type: "button", onclick: () => api.put("/api/transfers/settings", { enabled: !on }).then(() => { toast(on ? "Turned off." : "Turned on."); reload(); }).catch(e => xferErr(e, "Couldn't change it.")) }, on ? "Turn off" : "Turn on") : null),
+    on ? xferReceiveCard("/api", "students", reload) : null];
+}
+async function parentXferCard(studentId) {
+  const list = ((await safe(api.get("/api/transfers")))?.data || []).filter(t => t.sourceLearnerId === studentId && t.status === "awaiting_release");
+  if (!list.length) return null;
+  return h("section", { class: "card", "aria-label": "Records to release" }, h("h3", {}, "Records waiting for you to release"),
+    h("p", { class: "small muted" }, "The school has prepared these records for a homeschool or private school. Release one to get a code you give to whoever should receive them."),
+    xferList("/api", list, { canRelease: true, reload: () => go(state.tab, { push: false }) }));
+}
 // ---- TC-06: sending a student's history to another district ----------------
 const TRANSFER_BASIS = { enrollment_request: "The new district asked (enrollment)", records_request: "A records request", family_request: "The family asked", other: "Other" };
 const TRANSFER_STATUS = { awaiting_family: "Waiting for the family", ready: "Ready to send", cancelled: "Cancelled" };
@@ -6486,7 +6528,7 @@ VIEWS.historyprivacy = async () => {
       d.grants.length ? h("p", { class: "small" }, `Shared: ${d.grants.filter(g => !g.revoked).map(g => `${g.grantee} (${g.classifications.map(c => CLASS_TEXT[c]).join(", ")})`).join("; ") || "nothing now"}`) : null),
     d.emergency.length ? h("section", { class: "card", "aria-label": "Emergency access" }, h("h3", {}, "Emergency access"),
       h("ul", { class: "list small" }, d.emergency.map(a => h("li", {}, `${a.person} (${a.role}) · ${new Date(a.openedAt).toLocaleString()} · ${a.reason}${a.reviewed ? " · reviewed" : " · not reviewed yet"}`)))) : null,
-    await transferCard(d.student), await legalHoldCard(d.student), accessLogCard(log)];
+    await transferCard(d.student), await districtXferCard(d.student), await legalHoldCard(d.student), accessLogCard(log)];
 };
 // ---- TC-08: preservation (capacity, integrity, legal holds) ----------------
 const fmtBytes = n => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`;
