@@ -113,6 +113,31 @@ void main() {
     }
   });
 
+  testWidgets('Home leads with Today at school: classes, club events, books due and my clubs', (tester) async {
+    final fake = FakeServer({
+      'GET /api/learning/schedule': (_) => {'data': {'timezone': 'America/New_York', 'today': '2027-03-08', 'from': '2027-03-08', 'days': [
+        {'date': '2027-03-08', 'calendar': {'kind': 'early_release', 'label': 'Early release'},
+         'classes': [{'title': 'Grade 4 Math', 'starts': '08:30', 'ends': '09:00', 'room': 'Room 202', 'status': 'adjusted', 'note': null}],
+         'events': [{'title': 'Robotics build night', 'activity': 'Robotics', 'starts': '18:00', 'status': 'published'}]}]}},
+      'GET /api/library/my-loans': (_) => {'data': [
+        {'title': 'Charlotte\'s Web', 'due_at': DateTime.now().subtract(const Duration(days: 1)).toIso8601String(), 'returned_at': null, 'overdue': true},
+        {'title': 'Far future book', 'due_at': DateTime.now().add(const Duration(days: 30)).toIso8601String(), 'returned_at': null, 'overdue': false},
+      ]},
+      'GET /api/activities': (_) => {'data': [{'id': 'a1', 'title': 'Robotics', 'myStatus': 'active'}, {'id': 'a2', 'title': 'Chess', 'myStatus': null}]},
+    });
+    await launch(tester, fake);
+    expect(find.text('Today at school'), findsOneWidget);
+    expect(find.text('Early release: Early release'), findsOneWidget);
+    expect(find.text('08:30 Grade 4 Math'), findsOneWidget);
+    expect(find.text('New time today'), findsOneWidget);
+    expect(find.text('18:00 Robotics build night · Robotics'), findsOneWidget);
+    expect(find.text('Charlotte\'s Web'), findsOneWidget);
+    expect(find.text('Overdue'), findsOneWidget);
+    expect(find.text('Far future book'), findsNothing, reason: 'only books due soon');
+    expect(find.text('Robotics'), findsOneWidget, reason: 'my clubs, not every club');
+    expect(find.text('Chess'), findsNothing);
+  });
+
   testWidgets('My Work combines due work, submissions and graded results across courses', (tester) async {
     final fake = FakeServer({
       'GET /api/learning/courses/$course': (_) => {'data': {
@@ -345,7 +370,7 @@ void main() {
     await tester.tap(find.text('My library'));
     await tester.pumpAndSettle();
     expect(find.text('Charlotte\'s Web'), findsOneWidget);
-    expect(fake.sent('GET', '/api/library/my-loans'), hasLength(1));
+    expect(fake.sent('GET', '/api/library/my-loans'), hasLength(2), reason: 'Home (Today at school) and My library');
   });
 }
 

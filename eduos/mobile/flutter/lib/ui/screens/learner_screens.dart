@@ -8,6 +8,7 @@ import '../../core/models.dart';
 import '../widgets.dart';
 import 'courses_screen.dart';
 import 'messages_screen.dart';
+import 'student_schedule_screen.dart';
 
 /// A mastery ring: percent in the middle, the label read by screen readers.
 class MasteryRing extends StatelessWidget {
@@ -66,12 +67,84 @@ Future<void> startSkill(BuildContext context, String skillId) async {
 }
 
 class _Home {
-  const _Home({required this.path, required this.courses, required this.riders, required this.news, required this.young});
+  const _Home({required this.path, required this.courses, required this.riders, required this.news, required this.young,
+      this.today, this.loans = const [], this.clubs = const []});
   final LearningPath? path;
   final List<LearnerCourse> courses;
   final List<Rider> riders;
   final List<Announcement> news;
   final bool young;
+  // Student app Phase D: today's schedule, books due soon, my clubs and teams.
+  final Json? today;
+  final List<Json> loans;
+  final List<String> clubs;
+}
+
+const _todayKind = {'no_school': 'No school', 'early_release': 'Early release', 'late_start': 'Late start', 'modified': 'Modified day'};
+const _todayStatus = {
+  'adjusted': ('expected', 'New time today'),
+  'changed': ('expected', 'Changed'),
+  'cancelled': ('cancelled', 'Cancelled'),
+  'no_school': ('absent', 'No school'),
+};
+
+/// "Today at school": built only from endpoints that return the learner's own
+/// records. Attendance and meals wait for self-only APIs; the bus card below
+/// stays event-based (boarding and stop check-ins), never location tracking.
+class _TodayCard extends StatelessWidget {
+  const _TodayCard(this.h, {required this.onWeek});
+  final _Home h;
+  final VoidCallback onWeek;
+
+  @override
+  Widget build(BuildContext context) {
+    final day = h.today;
+    final cal = day == null || day['calendar'] == null ? null : obj(day['calendar']);
+    final classes = objs(day?['classes']), events = objs(day?['events']);
+    final small = Theme.of(context).textTheme.bodySmall;
+    return SectionCard(title: 'Today at school', children: [
+      if (cal != null) Notice('${_todayKind[str(cal['kind'])] ?? str(cal['kind'])}: ${str(cal['label'])}'),
+      if (day != null && classes.isEmpty && events.isEmpty)
+        Text(cal?['kind'] == 'no_school' ? 'No school today.' : 'Nothing on your schedule today.', style: small),
+      for (final k in classes)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${str(k['starts'])} ${str(k['title'])}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                if (k['room'] != null) Text(str(k['room']), style: small),
+                if (k['note'] != null) Text(str(k['note'])),
+              ]),
+            ),
+            if (_todayStatus[str(k['status'])] case (final st, final label)) StatusChip(st, text: label),
+          ]),
+        ),
+      for (final e in events)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(children: [
+            Expanded(child: Text('${str(e['starts'])} ${str(e['title'])} · ${str(e['activity'])}', style: const TextStyle(fontWeight: FontWeight.w600))),
+            if (e['status'] == 'cancelled') const StatusChip('cancelled', text: 'Cancelled'),
+          ]),
+        ),
+      if (h.loans.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Text('Library books', style: Theme.of(context).textTheme.titleSmall),
+        for (final l in h.loans)
+          Row(children: [
+            Expanded(child: Text(str(l['title']))),
+            StatusChip(l['overdue'] == true ? 'absent' : 'expected', text: l['overdue'] == true ? 'Overdue' : 'Due ${fmtDay(date(l['due_at']))}'),
+          ]),
+      ],
+      if (h.clubs.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Text('My clubs & teams', style: Theme.of(context).textTheme.titleSmall),
+        Text(h.clubs.join(' · ')),
+      ],
+      Align(alignment: Alignment.centerLeft, child: TextButton(onPressed: onWeek, child: const Text('My week'))),
+    ]);
+  }
 }
 
 /// Learner Home: what to practise next, my courses, my bus and school news.
@@ -95,13 +168,22 @@ class LearnerHomeScreen extends StatelessWidget {
       optional('/api/transport/today'),
       optional('/api/comms/announcements'),
       optional('/api/home'),
+      optional('/api/learning/schedule?days=1'),
+      optional('/api/library/my-loans'),
+      optional('/api/activities'),
     ]);
+    final days = objs(obj(r[5]?['data'])['days']);
+    final soon = DateTime.now().add(const Duration(days: 3));
+    final loans = objs(r[6]?['data']).where((l) => l['returned_at'] == null && (l['overdue'] == true || (date(l['due_at'])?.isBefore(soon) ?? false))).toList();
     return _Home(
       path: r[0] == null ? null : LearningPath.fromJson(obj(r[0]!['data'])),
       courses: objs(obj(r[1]?['data'])['courses']).map(LearnerCourse.fromJson).toList(),
       riders: objs(obj(r[2]?['data'])['riders']).map(Rider.fromJson).toList(),
       news: objs(r[3]?['data']).map(Announcement.fromJson).toList(),
       young: boolean(obj(r[4]?['data'])['youngLearner']),
+      today: days.isEmpty ? null : days.first,
+      loans: loans,
+      clubs: objs(r[7]?['data']).where((a) => a['myStatus'] == 'active').map((a) => str(a['title'])).toList(),
     );
   }
 
@@ -137,6 +219,9 @@ class LearnerHomeScreen extends StatelessWidget {
               ),
             ],
           ]),
+          if (h.today != null || h.loans.isNotEmpty || h.clubs.isNotEmpty)
+            _TodayCard(h, onWeek: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => Scaffold(appBar: AppBar(title: const Text('My schedule')), body: const StudentScheduleScreen())))),
           if (h.courses.isNotEmpty)
             SectionCard(title: 'My courses', children: [
               for (final c in h.courses)

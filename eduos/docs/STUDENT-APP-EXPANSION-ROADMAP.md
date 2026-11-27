@@ -56,10 +56,10 @@ The student experience must remain age-appropriate, accessible, privacy-preservi
 
 ### Phase D — School day services
 
-- [ ] Consolidate the learner's own library loans, bus rider status, approved clubs/sports participation, and school announcements in a student-friendly "Today" view.
-- [ ] Add a student-facing attendance summary only after a dedicated self-only endpoint is verified; do not expose class rosters, other learners, discipline records, or private staff notes.
-- [ ] Add meal/menu information only when the school menu and student dietary privacy boundaries are supported by a suitable API.
-- [ ] Keep transport status event-based (boarding / stop check-in), not GPS or continuous location tracking.
+- [x] Consolidate the learner's own library loans, bus rider status, approved clubs/sports participation, and school announcements in a student-friendly "Today" view ("Today at school" leads the student's Home on web and Flutter: today's classes and changes, the school-day notice, club and team events, books due within three days or overdue, and the clubs and teams they belong to; the bus and school news cards stay below).
+- [ ] Add a student-facing attendance summary only after a dedicated self-only endpoint is verified; do not expose class rosters, other learners, discipline records, or private staff notes. *(Waiting for that endpoint.)*
+- [ ] Add meal/menu information only when the school menu and student dietary privacy boundaries are supported by a suitable API. *(No such API yet.)*
+- [x] Keep transport status event-based (boarding / stop check-in), not GPS or continuous location tracking (the Today view adds no transport data; the bus card is unchanged).
 
 ### Phase E — Student support and accessibility
 
@@ -85,3 +85,5 @@ Phase A adds the My work screen and pupil navigation entry. It uses `GET /api/le
 Phase B adds the day planner: staff publish class times, one-day changes and school calendar days; `GET /api/learning/schedule` returns the learner's own week through a database function that checks the caller and leaves staff notes out. Reminders are not built yet.
 
 Phase C turns the existing progress endpoint into the learner's Grades view. It doesn't change how grades are calculated; it shows every piece of work and labels each kind of number.
+
+Phase D adds no new endpoint: the Today card is built from the learner's own schedule, loans and memberships, each of which the server already limits to the signed-in learner.

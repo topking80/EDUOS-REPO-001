@@ -1134,8 +1134,33 @@ function busCard(riders, { heading = "Bus today" } = {}) {
 }
 
 // ---------------- student ----------------
+// Student app Phase D: "Today at school" on the learner's Home, from endpoints
+// that already return only the learner's own records: today's schedule (db/172),
+// their library loans and the clubs and teams they belong to. Attendance and
+// meals wait for self-only APIs (roadmap Phase D); the bus card stays
+// event-based (boarding and stop check-ins), never location tracking.
+function learnerTodayCard(sched, loans, activities) {
+  const day = Array.isArray(sched?.days) ? sched.days[0] : null;
+  const soon = (Array.isArray(loans) ? loans : []).filter(l => !l.returned_at && (l.overdue || (l.due_at && new Date(l.due_at) - Date.now() < 3 * 86400000)));
+  const mine = (Array.isArray(activities) ? activities : []).filter(a => a.myStatus === "active");
+  if (!day && !soon.length && !mine.length) return null;
+  const items = [];
+  if (day?.calendar) items.push(h("p", { class: "notice" }, `${DP_DAY_KIND[day.calendar.kind] || day.calendar.kind}: ${day.calendar.label}`));
+  if (day) items.push(day.classes.length || day.events.length ? h("ul", { class: "list" },
+    day.classes.map(k => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, `${k.starts} ${k.title}`), k.room ? h("span", { class: "muted small" }, ` · ${k.room}`) : null,
+      k.note ? h("span", { class: "small" }, h("br"), k.note) : null), k.status !== "scheduled" ? chip(...(DP_STATUS[k.status] || ["expected", k.status])) : null)),
+    day.events.map(e => h("li", { class: "row wrap" }, h("span", { class: "grow" }, h("b", {}, `${e.starts} ${e.title}`), h("span", { class: "muted small" }, ` · ${e.activity}`)),
+      e.status === "cancelled" ? chip("absent", "Cancelled") : null)))
+    : h("p", { class: "small muted" }, day.calendar?.kind === "no_school" ? "No school today." : "Nothing on your schedule today."));
+  if (soon.length) items.push(h("h3", {}, "Library books"), h("ul", { class: "list" }, soon.map(l => h("li", { class: "row" }, h("span", { class: "grow" }, l.title),
+    chip(l.overdue ? "absent" : "expected", l.overdue ? "Overdue" : `Due ${fmtDay(l.due_at)}`)))));
+  if (mine.length) items.push(h("h3", {}, "My clubs & teams"), h("p", { class: "small" }, mine.map(a => a.title).join(" · ")));
+  return h("section", { class: "card", "aria-label": "Today at school" }, h("h2", {}, "Today at school"), ...items,
+    h("div", { class: "btns" }, h("button", { class: "btn", type: "button", onclick: () => go("schedule") }, icon("calendar"), "My week")));
+}
 VIEWS.home = async () => {
-  const [path, bus, news, home, courses] = await Promise.all([safe(api.get("/api/christie/path")), safe(api.get("/api/transport/today")), safe(api.get("/api/comms/announcements")), safe(api.get("/api/home")), safe(api.get("/api/learning/courses"))]);
+  const [path, bus, news, home, courses, sched, loans, acts] = await Promise.all([safe(api.get("/api/christie/path")), safe(api.get("/api/transport/today")), safe(api.get("/api/comms/announcements")), safe(api.get("/api/home")), safe(api.get("/api/learning/courses")),
+    state.me.role === "pupil" ? safe(api.get("/api/learning/schedule?days=1")) : null, state.me.role === "pupil" ? safe(api.get("/api/library/my-loans")) : null, state.me.role === "pupil" ? safe(api.get("/api/activities")) : null]);
   const myCourses = courses?.data?.courses || [];
   const young = Boolean(home?.data?.youngLearner);
   document.body.classList.toggle("young", young);
@@ -1151,6 +1176,7 @@ VIEWS.home = async () => {
           h("h2", {}, current ? current.title : "No practice assigned yet"),
           h("p", { class: "muted small" }, `${mastered} of ${skills.length} skills mastered`))),
       current ? h("button", { class: "btn primary block big", type: "button", onclick: () => startSkill(current.id) }, icon("spark"), "Practice with Christie") : null),
+    state.me.role === "pupil" ? learnerTodayCard(sched?.data, loans?.data, acts?.data) : null,
     myCourses.length ? h("section", { class: "card", "aria-label": "My courses" }, h("h2", {}, "My courses"), h("ul", { class: "list" }, myCourses.map(c => h("li", { class: "row" },
       h("div", { class: "grow" }, h("h3", {}, c.title), h("p", { class: "small muted" }, c.next ? `Next: ${c.next.title}${c.next.due_at ? ` · due ${fmtDay(c.next.due_at)}` : ""}` : "All caught up")),
       h("button", { class: "btn", type: "button", "aria-label": `Open ${c.title}`, onclick: () => openView("course", { courseId: c.id }) }, "Open"))))) : null,
