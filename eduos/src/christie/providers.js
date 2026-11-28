@@ -23,6 +23,7 @@
 import { bestPassage, leaksAnswer, MESSAGES } from "./tutor.js";
 import { removeIdentifiers } from "../redact-names.js";
 import { removeSecrets, expand } from "../redact-secrets.js";
+import { stripInvisible, unsafeReply } from "../ai/reply-screen.js";
 
 // SEC-03: secrets are removed before the text is cut to length, from a window
 // a little past the cut (a private key block is the longest), so a secret
@@ -45,8 +46,10 @@ export function redact(text, { names = [], numbers = [], max = 500 } = {}, tally
   // after a title, before the broader number patterns.
   // Secrets first (src/redact-secrets.js): a connection string or token must
   // go whole, before the email and number patterns below cut it into pieces.
-  // A `tally` (SEC-06) counts each removal by kind; counts only.
-  const clean = removeSecrets(String(text || "").slice(0, max + SECRET_WINDOW), tally).slice(0, max);
+  // Invisible characters go too (SEC-04): they can hide an instruction to the
+  // model from the teacher reviewing the session. A `tally` (SEC-06) counts
+  // each removal by kind; counts only.
+  const clean = removeSecrets(stripInvisible(String(text || "").slice(0, max + SECRET_WINDOW)), tally).slice(0, max);
   const out = removeIdentifiers(clean, { names: names.filter(Boolean), numbers }, { tally });
   return steps(out, learnerSteps(), tally);
 }
@@ -97,7 +100,7 @@ const CONTENT_ADDRESS = /\b\d{1,6}[A-Za-z]?\s+(?:[\p{L}'.-]+\s+){1,4}(?:Street|S
  * should be written without them, and external tutoring is off by default.
  */
 export function redactContent(text, identifiers = {}, tally = null) {
-  const out = removeIdentifiers(removeSecrets(text, tally), { names: identifiers.names || [], numbers: identifiers.numbers || [] }, { tally });
+  const out = removeIdentifiers(removeSecrets(stripInvisible(text), tally), { names: identifiers.names || [], numbers: identifiers.numbers || [] }, { tally });
   return steps(out, contentSteps(), tally);
 }
 
@@ -161,6 +164,10 @@ export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, fetchI
         const data = await res.json();
         const text = String(data?.choices?.[0]?.message?.content || "").trim().slice(0, 600);
         if (!text || leaksAnswer(text, input.answer)) return { ...(await fallback()), fallback: true };
+        // SEC-04: the model read approved content and a child's question, either of
+        // which may carry instructions. Only plain prose reaches the child.
+        const why = unsafeReply(text);
+        if (why) { log(`christie provider reply refused (${why}); using local reply`); return { ...(await fallback()), fallback: true }; }
         return { text, source: "external_provider" };
       } catch (e) {
         log(`christie provider unavailable (${e.name}); using local reply`);
