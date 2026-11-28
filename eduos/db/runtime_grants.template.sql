@@ -1042,6 +1042,9 @@ GRANT EXECUTE ON FUNCTION eduos_can_see_case(uuid, uuid, uuid, uuid, boolean), e
 -- 177 (SEC-01 part 2): family messages and guardian invitations.
 GRANT EXECUTE ON FUNCTION eduos_leads_student_school(uuid) TO eduos_app;
 
+-- 178 (SEC-01 part 3): attendance.
+GRANT EXECUTE ON FUNCTION eduos_can_see_attendance(uuid), eduos_can_write_attendance(uuid) TO eduos_app;
+
 -- 179 (SEC-01 part 4): students read policy; redaction lookups through definers.
 GRANT EXECUTE ON FUNCTION eduos_student_identifiers_match(text[]), eduos_student_identifiers_nospace(text) TO eduos_app;
 REVOKE SELECT ON student_redact_tokens FROM eduos_app;
