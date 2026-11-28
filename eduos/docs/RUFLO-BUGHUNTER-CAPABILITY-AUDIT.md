@@ -172,7 +172,7 @@ This is **OPS-03**, and is optional. None of BugHunter's own attack tooling is u
 | SEC-03 | Secret-shaped patterns in AI-gateway redaction (**built**: `src/redact-secrets.js`, run first in `redact()` and `redactContent()`; `secretKinds()` gives counts only, for SEC-06) | P1 | — |
 | SEC-04 | Hostile-content fixtures for Christie and the LRH-08 assistant (**built** for Christie: `test/fixtures/hostile-content.js`, `src/ai/reply-screen.js`, `docs/AI-HOSTILE-CONTENT.md`; LRH-08 must add its case before it ships) | P1 | before LRH-08 |
 | SEC-06 | Count-only redaction audit per AI call (**built**: `db/184_ai_redaction_counts.sql`, `src/redaction-counts.js`; usage row and audit detail, Christie turns too) | P2 | SEC-03 |
-| SEC-07 | Concurrency tests: quiz attempts, payments, tickets, one-time codes | P2 | — |
+| SEC-07 | Concurrency tests: quiz attempts, payments, tickets, one-time codes (**built**: `test/integration/concurrency.test.js`, `docs/CONCURRENCY.md`; fixed a double quiz submit in `db/185_quiz_submit_once.sql` and a failing double start) | P2 | — |
 | SEC-08 | Narrow staff reads of `students` from district-wide to their school (**built**: `db/183_staff_school_scope.sql`; district roles, the SIS scheduler and district-only jobs keep the district, drivers see their riders; tested in `test/integration/students-rls.test.js`) | P1 | SEC-01 part 4 |
 | OPS-02 | CI run with optional integrations absent | P3 | — |
 | OPS-03 | Authorized staging-only scan under a signed scope | P3 | staging |
