@@ -57,19 +57,26 @@ export const SECRET_PATTERNS = Object.freeze([
   ["secret_setting", new RegExp(`(^[ \\t]{0,40}(?:-[ \\t]{1,4})?${KEY}[ \\t]{0,5}:[ \\t]{0,5})(?!\\[secret\\])${VALUE}`, "gim"), "$1" + SECRET_LABEL],
 ]);
 
-/** The text with every secret-shaped match replaced by "[secret]". */
-export function removeSecrets(text) {
+/**
+ * The text with every secret-shaped match replaced by "[secret]". With a
+ * `tally` (SEC-06), each removal is counted there as `secret`.
+ */
+export function removeSecrets(text, tally = null) {
   let out = String(text ?? "");
-  for (const [, re, replacement = SECRET_LABEL] of SECRET_PATTERNS) out = out.replace(re, replacement);
+  for (const [, re, replacement = SECRET_LABEL] of SECRET_PATTERNS)
+    out = out.replace(re, tally ? (...m) => { tally.secret = (tally.secret || 0) + 1; return expand(replacement, m); } : replacement);
   return out;
 }
+
+/** A "$1 [secret]" replacement template filled from a callback's match arguments. */
+export const expand = (template, m) => template.replace(/\$(\d)/g, (_, i) => (typeof m[Number(i)] === "string" ? m[Number(i)] : ""));
 
 /** How many of each kind removeSecrets() would remove (kinds and counts only, never values). */
 export function secretKinds(text) {
   let out = String(text ?? "");
   const counts = {};
   for (const [kind, re, replacement = SECRET_LABEL] of SECRET_PATTERNS) {
-    out = out.replace(re, (...m) => { counts[kind] = (counts[kind] || 0) + 1; return replacement.replace(/\$(\d)/g, (_, i) => m[Number(i)] ?? ""); });
+    out = out.replace(re, (...m) => { counts[kind] = (counts[kind] || 0) + 1; return expand(replacement, m); });
   }
   return counts;
 }

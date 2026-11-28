@@ -53,7 +53,13 @@ Leo and Edison run only through their own endpoints (`/api/leo/drafts`,
     given back, so a failure can over-count a day's budget but not under-count
     it. The provider call is cut off at AI_PROVIDER_TIMEOUT_MS (at most 120 s).
 - **Kept:** use case, role, tokens and provider for each use; every use is in
-  the audit log. **Not kept:** the prompt or the answer. (Exception by design:
+  the audit log. For an external call, what redaction removed, as kinds and
+  counts only (SEC-06): `ai_usage.redactions` (for example
+  `{"student_name": 2, "email": 1, "secret": 1}`) and `redacted=email:1,…` in
+  the audit detail. Christie's external turns record the same in their audit
+  event. The database accepts only the fixed kinds (`src/redaction-counts.js`)
+  with whole-number counts, so no removed text can be kept there.
+  **Not kept:** the prompt or the answer. (Exception by design:
   a Leo draft IS the answer, saved as a draft lesson the teacher asked for.)
 
 ## Provider
