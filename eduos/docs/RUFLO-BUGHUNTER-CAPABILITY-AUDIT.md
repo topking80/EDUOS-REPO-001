@@ -168,7 +168,7 @@ This is **OPS-03**, and is optional. None of BugHunter's own attack tooling is u
 |---|---|---|---|
 | SEC-01 | Per-student RLS on the tables in §5.1, one table or group per PR | P0 | — |
 | SEC-02 | RLS coverage test in CI with a reviewed allowlist (**built**: `test/integration/rls-coverage.test.js`; the reviewed list shrinks as SEC-01 lands) | P0 | — |
-| SEC-05 | Route inventory test: every `/api` route has auth middleware or a public-list entry with a reason; rate limit and `no-store` noted | P1 | — |
+| SEC-05 | Route inventory test: every `/api` route has auth middleware or a public-list entry with a reason; rate limit and `no-store` noted (**built**: `test/route-inventory.test.js`, `docs/API-ROUTE-INVENTORY.md`; `/api`, `/auth` and `/lti` now default to `no-store`, and `/lti` joined the request ceiling) | P1 | — |
 | SEC-03 | Secret-shaped patterns in AI-gateway redaction | P1 | — |
 | SEC-04 | Hostile-content fixtures for Christie and the LRH-08 assistant | P1 | before LRH-08 |
 | SEC-06 | Count-only redaction audit per AI call | P2 | SEC-03 |

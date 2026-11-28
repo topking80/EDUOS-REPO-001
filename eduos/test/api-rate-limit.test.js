@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 
 const server = readFileSync(new URL("../src/server.js", import.meta.url), "utf8");
 test("the API ceiling is mounted before the first route", () => {
-  const mount = server.indexOf('app.use(["/api","/auth"],apiAddressLimiter,apiLimiter);');
+  const mount = server.indexOf('app.use(["/api","/auth","/lti"],apiAddressLimiter,apiLimiter);');
   assert.ok(mount > 0, "mounted");
   const firstRoute = server.search(/app\.(get|post|put|patch|delete)\(/);
   assert.ok(mount < firstRoute, "before any route");
