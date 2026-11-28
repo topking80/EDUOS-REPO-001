@@ -64,6 +64,7 @@ import { registerComplianceRoutes } from "./compliance-routes.js";
 import { registerLearningResourceRoutes } from "./learning-resource-routes.js";
 import { registerDayPlannerRoutes } from "./day-planner-routes.js";
 import { registerGuardianLinkRoutes } from "./guardian-link-routes.js";
+import { registerChiefOfStaffRoutes } from "./chief-of-staff-routes.js";
 import { registerSportsConnectorRoutes } from "./sports-connector-routes.js";
 import { registerRankingRoutes } from "./ranking-routes.js";
 import { registerHistoryPrivacyRoutes } from "./history-privacy-routes.js";
@@ -2106,6 +2107,7 @@ registerComplianceRoutes(app);
 registerLearningResourceRoutes(app);
 registerDayPlannerRoutes(app);
 registerGuardianLinkRoutes(app);
+registerChiefOfStaffRoutes(app); // COS-01
 registerSportsConnectorRoutes(app);
 registerRankingRoutes(app);
 registerHistoryPrivacyRoutes(app);

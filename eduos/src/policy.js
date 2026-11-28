@@ -17,6 +17,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     // 32.7.0: only a superintendent authorizes a DECN failover.
     eden: ["read", "manage", "authorize", "node"],
     activities: ["read", "manage", "join"], ticketing: ["configure"], streaming: ["schedule"],
+    cos: ["read", "manage"], // COS-01: the follow-up tracker and overview, with the chief of staff
     commerce: ["settings", "report", "refund", "purchase", "providers"] // 37.7.0 commerce: rates, revenue, refunds, marketplace buying; 37.7.1 payment providers
   },
   // 32.2.0: district IT administrator. Runs schools, accounts (not other
@@ -34,6 +35,11 @@ export const ROLE_PERMISSIONS = Object.freeze({
     eden: ["read", "manage", "node"], activities: ["read"],
     commerce: ["providers"] // 37.7.1: connects the district's payment processors (no revenue or refunds)
   },
+  // COS-01 (db/186): the district Chief of Staff. Coordination only: the
+  // district at a glance (counts, never student records), follow-ups with
+  // owners and due dates, and what waits for a decision. No school, no
+  // student, staff-record or family permission; the superintendent decides.
+  chief_of_staff: { schools: ["read"], branding: ["read"], cos: ["read", "manage"] },
   principal: {
     enrollment: ["manage"], // 37.6.0: own school's enrollment board
     access_requests: ["read", "create"],
@@ -134,6 +140,10 @@ export const ROLE_PERMISSIONS = Object.freeze({
 // District-level roles hold memberships without a school (school_id NULL).
 export const DISTRICT_ROLES = Object.freeze(["superintendent", "it_admin"]);
 export const isDistrictRole = role => DISTRICT_ROLES.includes(role);
+// Roles whose membership has no school. The Chief of Staff (COS-01) sits in
+// the superintendent's office without being a district administrator, so it
+// is here but not in DISTRICT_ROLES (which opens account and app management).
+export const NO_SCHOOL_ROLES = Object.freeze([...DISTRICT_ROLES, "chief_of_staff"]);
 
 export function canPerform(actor, resource, action) {
   if (!actor || !actor.role || !actor.districtId || !actor.userId) return false;

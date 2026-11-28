@@ -1056,3 +1056,8 @@ GRANT EXECUTE ON FUNCTION eduos_media_consent_totals(uuid), eduos_media_unconsen
 -- the counts-only check runs as the writer.
 GRANT UPDATE (redactions) ON ai_usage TO eduos_app;
 GRANT EXECUTE ON FUNCTION eduos_redaction_counts_ok(jsonb) TO eduos_app;
+
+-- 186 (COS-01): the Chief of Staff's follow-ups, staff list and count-only overview.
+GRANT SELECT, INSERT, UPDATE ON cos_followups TO eduos_app;
+REVOKE DELETE, TRUNCATE ON cos_followups FROM eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_cos_office(), eduos_cos_staff(), eduos_cos_overview(), eduos_is_district_staff(uuid) TO eduos_app;

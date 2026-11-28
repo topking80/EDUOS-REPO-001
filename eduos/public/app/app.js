@@ -159,13 +159,15 @@ const ROLE_TABS = {
   // TC-13: gift accounts once the superintendent designates them (db/140).
   school_secretary: [["gifts", "Gift accounts", "check"], ["staffing", "Staffing", "people"], ["messages", "Messages", "chat"]],
   principal: [["overview", "School", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["pickup", "Pick-up", "car"], ["transport", "Transport", "bus"], ["activities", "Clubs & Sports", "trophy"], ["messages", "Messages", "chat"], ["network", "Colleagues", "people"], ["devices", "Rooms & devices", "server"], ["alerts", "Alerts", "bell"]],
-  superintendent: [["overview", "District", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"]],
+  superintendent: [["overview", "District", "grid"], ["apps", "Apps", "apps"], ["capsules", "Time Capsules", "spark"], ["history", "Student history", "book"], ["staffing", "Staffing", "people"], ["library", "Library", "book"], ["alerts", "Alerts", "bell"], ["transport", "Transport", "bus"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["followups", "Follow-ups", "check"]],
   driver: [["route", "Route", "bus"], ["messages", "Messages", "chat"], ["alerts", "Alerts", "bell"]],
   sro: [["safety", "Safety", "shield"], ["alerts", "Alerts", "bell"]],
   coach: [["teams", "My teams", "trophy"], ["alerts", "Alerts", "bell"]],
+  // COS-01: the district Chief of Staff, coordination only (db/186).
+  chief_of_staff: [["cos", "District", "grid"], ["followups", "Follow-ups", "check"], ["alerts", "Alerts", "bell"]],
   it_admin: [["apps", "Apps", "apps"], ["devices", "Classroom devices", "server"], ["nodes", "Nodes", "server"], ["integrations", "Data links", "link"], ["library", "Library", "book"]]
 };
-const APP_NAME = { coach: "Coach", pupil: "Student", teacher: "Teacher", parent: "Family", principal: "School leader", superintendent: "District leader", driver: "Driver", sro: "School Resource Officer", librarian: "Librarian", vice_principal: "Vice Principal", counselor: "Guidance Counselor", nurse: "School Nurse", maintenance: "Maintenance", lunch_staff: "Lunch Staff", school_secretary: "School Secretary", it_admin: "District IT" };
+const APP_NAME = { chief_of_staff: "Chief of Staff", coach: "Coach", pupil: "Student", teacher: "Teacher", parent: "Family", principal: "School leader", superintendent: "District leader", driver: "Driver", sro: "School Resource Officer", librarian: "Librarian", vice_principal: "Vice Principal", counselor: "Guidance Counselor", nurse: "School Nurse", maintenance: "Maintenance", lunch_staff: "Lunch Staff", school_secretary: "School Secretary", it_admin: "District IT" };
 const state = { me: null, brand: null, tab: null, unread: 0, home: null, safety: [], safetySig: "" };
 const STAFF_ROLES = ["teacher", "principal", "vice_principal", "superintendent"];
 
@@ -5688,11 +5690,96 @@ VIEWS.apps = async () => {
   return out;
 };
 
+// ---------------- COS-01: Chief of Staff (coordination only) ----------------
+const COS_WAITING = { access_request: "Access requests", app_request: "App requests", enrollment_review: "Enrollment reviews", coverage_request: "Coverage requests" };
+const COS_STATUS = { open: "Open", in_progress: "In progress", done: "Done", cancelled: "Cancelled" };
+const cosCount = n => (n === null || n === undefined ? "fewer than 5" : String(n));
+const cosWaiting = w => Object.entries(w || {}).map(([k, v]) => h("li", {}, `${COS_WAITING[k] || k}: ${v.count}${v.oldestDays ? ` (oldest ${v.oldestDays} day${v.oldestDays === 1 ? "" : "s"})` : ""}`));
+VIEWS.cos = async () => {
+  const o = (await api.get("/api/cos/overview")).data;
+  const f = o.followups;
+  const district = cosWaiting(o.district?.waiting);
+  return [h("h2", {}, "District at a glance"),
+    h("p", { class: "small muted" }, "Counts only. Attendance totals under 5 are withheld. Decisions stay with the superintendent and school leaders."),
+    h("section", { class: "card", "aria-label": "Follow-ups" }, h("h3", {}, "Follow-ups"),
+      h("div", { class: "stats" }, stat(f.open, "open"), stat(f.overdue, "overdue", true), stat(f.dueThisWeek, "due this week"), stat(f.doneThisWeek, "done this week")),
+      h("button", { class: "btn block", type: "button", onclick: () => go("followups") }, icon("check"), "Open the follow-up tracker")),
+    district.length ? h("section", { class: "card", "aria-label": "Waiting at the district" }, h("h3", {}, "Waiting for a decision at the district"), h("ul", {}, district)) : null,
+    ...(o.schools || []).map(x => {
+      const waiting = cosWaiting(x.waiting);
+      return h("section", { class: "card", "aria-label": x.name },
+        h("h3", {}, x.name),
+        h("div", { class: "stats" }, stat(x.activeSafetyIncidents, "active safety alerts", true), stat(x.openServiceWork, "open work orders"), stat(x.coverageNeeded, "coverage needed", true)),
+        h("p", { class: "small" }, `Attendance today: ${cosCount(x.attendance.marked)} marked · ${cosCount(x.attendance.present)} present · ${cosCount(x.attendance.absent)} absent · ${cosCount(x.attendance.tardy)} tardy`),
+        waiting.length ? h("div", {}, h("h4", {}, "Waiting for a decision"), h("ul", {}, waiting)) : h("p", { class: "small muted" }, "Nothing waiting for a decision."));
+    })];
+};
+// One follow-up, with the actions this person may take on it.
+function cosFollowupCard(x, office, after) {
+  const slot = h("div", { class: "btns" });
+  const set = async (body, msg) => { try { await api.patch(`/api/cos/followups/${x.id}`, body); toast(msg); after(); } catch (e) { toast(e.body?.error === "follow_up_names_a_student" ? "Leave students' names and numbers out of follow-ups." : "That didn't save. Try again."); } };
+  const active = ["open", "in_progress"].includes(x.status);
+  if (x.status === "open") slot.append(h("button", { class: "btn small", type: "button", onclick: () => set({ status: "in_progress" }, "Marked in progress.") }, "Start"));
+  if (active) slot.append(h("button", { class: "btn small primary", type: "button", onclick: () => reasonForm(slot, `What was done: ${x.title}`, note => set({ status: "done", closeNote: note }, "Marked done.")) }, "Done"));
+  if (active && office) slot.append(h("button", { class: "btn small", type: "button", onclick: () => reasonForm(slot, `Why cancel: ${x.title}`, note => set({ status: "cancelled", closeNote: note }, "Cancelled.")) }, "Cancel"));
+  if (!active && (office || x.status === "done")) slot.append(h("button", { class: "btn small", type: "button", onclick: () => set({ status: "open", closeNote: null }, "Reopened.") }, "Reopen"));
+  return h("section", { class: "card", "aria-label": x.title },
+    h("div", { class: "row" }, h("div", { class: "grow" }, h("h3", {}, x.title),
+      h("p", { class: "small muted" }, [x.ownerName ? `Owner: ${x.ownerName}` : null, x.schoolName, x.dueOn ? `Due ${fmtDay(`${x.dueOn}T12:00:00`)}` : "No due date"].filter(Boolean).join(" · "))),
+      chip(x.overdue ? "absent" : x.status === "done" ? "present" : "pending", x.overdue ? "Overdue" : COS_STATUS[x.status])),
+    x.detail ? h("p", {}, x.detail) : null,
+    x.closeNote ? h("p", { class: "small" }, `Note: ${x.closeNote}`) : null,
+    slot);
+}
+VIEWS.followups = async () => {
+  const office = ["chief_of_staff", "superintendent"].includes(state.me.role);
+  const filter = state.cosFilter || "active";
+  const list = (await api.get(`/api/cos/followups${filter === "all" ? "" : `?status=${filter}`}`)).data;
+  const out = [h("h2", {}, office ? "Follow-ups" : "Follow-ups for you"),
+    h("div", { class: "btns", role: "group", "aria-label": "Show" }, [["active", "Open"], ["done", "Done"], ["all", "All"]].map(([k, label]) =>
+      h("button", { class: `btn small${k === filter ? " primary" : ""}`, type: "button", "aria-pressed": String(k === filter), onclick: () => { state.cosFilter = k; go("followups", { push: false }); } }, label)))];
+  if (office) {
+    const staff = (await api.get("/api/cos/staff")).data;
+    const schools = (await safe(api.get("/api/schools")))?.data || [];
+    const title = h("input", { id: "cos-title", required: true, minlength: 3, maxlength: 160 });
+    const detail = h("textarea", { id: "cos-detail", rows: 2, maxlength: 2000 });
+    const owner = h("select", { id: "cos-owner", required: true }, h("option", { value: "" }, "Choose a person"), staff.map(p => h("option", { value: p.userId }, `${p.name} (${p.role.replace(/_/g, " ")}${p.schoolName ? `, ${p.schoolName}` : ""})`)));
+    const school = h("select", { id: "cos-school" }, h("option", { value: "" }, "District-wide"), schools.map(x => h("option", { value: x.id }, x.name)));
+    const due = h("input", { id: "cos-due", type: "date" });
+    out.push(h("section", { class: "card", "aria-label": "New follow-up" }, h("h3", {}, "New follow-up"),
+      h("p", { class: "small muted" }, "For coordination: leave students' names and numbers out."),
+      h("form", { onsubmit: async e => {
+        e.preventDefault();
+        try {
+          await api.post("/api/cos/followups", { title: title.value.trim(), detail: detail.value.trim() || null, ownerUserId: owner.value, schoolId: school.value || null, dueOn: due.value || null });
+          toast("Follow-up added."); go("followups", { push: false });
+        } catch (err) { toast(err.body?.error === "follow_up_names_a_student" ? "Leave students' names and numbers out of follow-ups." : err.body?.error === "owner_must_be_district_staff" ? "Choose a staff member as the owner." : "That didn't save. Check the fields and try again."); }
+      } },
+        h("label", { for: "cos-title" }, "What needs to happen"), title,
+        h("label", { for: "cos-detail" }, "Details (optional)"), detail,
+        h("label", { for: "cos-owner" }, "Owner"), owner,
+        h("label", { for: "cos-school" }, "School"), school,
+        h("label", { for: "cos-due" }, "Due (optional)"), due,
+        h("button", { class: "btn primary block", type: "submit" }, "Add follow-up"))));
+  }
+  out.push(...(list.length ? list.map(x => cosFollowupCard(x, office, () => go("followups", { push: false }))) : [empty(filter === "done" ? "Nothing done yet." : "No open follow-ups.")]));
+  return out;
+};
+// Staff who aren't in the office see what's assigned to them on their account page.
+async function cosMineCard() {
+  if (["chief_of_staff", "superintendent", "parent", "pupil"].includes(state.me.role) || state.me.tenantKind && state.me.tenantKind !== "district") return null;
+  const mine = (await safe(api.get("/api/cos/followups?status=active")))?.data || [];
+  if (!mine.length) return null;
+  return h("section", { class: "card", "aria-label": "Follow-ups for you" }, h("h3", {}, `Follow-ups for you (${mine.length})`),
+    h("p", { class: "small muted" }, "Assigned by the superintendent's office."),
+    h("button", { class: "btn block", type: "button", onclick: () => go("followups") }, icon("check"), "Open my follow-ups"));
+}
 VIEWS.me = async () => {
   await loadProfiles();
   const memberships = state.profiles;
   return [h("h2", {}, "Account"), h("section", { class: "card" }, h("h3", {}, state.me.displayName), h("p", { class: "muted" }, `${roleName()} · ${state.brand?.school?.name || state.brand?.districtName || ""}`)),
     memberships.length > 1 ? h("section", { class: "card", "aria-label": "Switch profile" }, h("h3", {}, "Switch profile"), profileList(switchProfile)) : null,
+    await cosMineCard(),
     await homeschoolEntryCard(),
     await privateSchoolEntryCard(),
     LICENSED.includes(state.me.role) ? await licenseCard() : null,
