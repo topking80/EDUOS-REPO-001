@@ -82,6 +82,17 @@ The same rules protect the staff assistant and the student tutor (Christie).
   without separators is. Names in scripts written without spaces (Chinese,
   Japanese, Korean, Thai...) are matched anywhere in the text. Measured at
   100,000 students: about 0.2 s a request, 20 at once in under 3 s.
+- **Secrets first** (SEC-03, `src/redact-secrets.js`): before anything else,
+  secret-shaped text becomes `[secret]`: private key blocks, JWTs, AWS access
+  key ids, GitHub, GitLab, OpenAI/Anthropic-style, Stripe, Slack, Google,
+  Hugging Face, npm and SendGrid tokens, connection strings with a password,
+  Bearer/Basic credentials, and the value of a password, secret, key or token
+  setting in config form (`DB_PASSWORD=…`, `"apiKey": "…"`, a line starting
+  `password:`). The setting's name stays so the text still reads. It runs on
+  a window past the length cut, so a secret straddling the cut goes whole.
+  Long hex strings without a telling prefix (commit hashes, checksums) and the
+  word "secret" in a sentence are left alone. The same step runs on every
+  field Christie sends to an external tutor model.
 - **Removing** (`src/redact-names.js`): Unicode-aware word edges; the whole
   name first, then each part of two or more characters, including each side
   of a hyphen or apostrophe; numbers as phrases however they are punctuated.
