@@ -33,11 +33,15 @@ describe("student directory row security (179)", { skip }, () => {
   });
   after(async () => { await app?.end(); await admin?.end(); await db?.drop(); });
 
-  it("pupils and families see only their own; staff keep district-wide reads (narrowing them is SEC-08)", async () => {
+  it("pupils and families see only their own; staff see their school; district roles the district (SEC-08)", async () => {
     assert.deepEqual(await names("pu", "pupil", ID.s1), ["Alice A"]);
     assert.deepEqual(await names("pa", "parent", ID.s1), ["Alice A"]);
     assert.deepEqual(await names("pb", "parent", ID.s1), ["Bob B"]);
-    assert.deepEqual(await names("t1", "teacher", ID.s1), ["Alice A", "Bob B", "Carol C"]);
+    assert.deepEqual(await names("t1", "teacher", ID.s1), ["Alice A", "Bob B"]);
+    assert.deepEqual(await names("t1", "librarian", ID.s1), ["Alice A", "Bob B"]);
+    assert.deepEqual(await names("p2", "principal", ID.s2), ["Carol C"]);
+    assert.deepEqual(await names("t1", "teacher", null), [], "staff with no school see nobody");
+    assert.deepEqual(await names("t1", "driver", ID.s1), ["Bob B"], "a driver sees students on their routes");
     assert.deepEqual(await names("supt1", "superintendent", null), ["Alice A", "Bob B", "Carol C"]);
     assert.deepEqual(await names("supt2", "superintendent", null), ["Xavier X"]);
   });
