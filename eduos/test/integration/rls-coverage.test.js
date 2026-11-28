@@ -18,10 +18,6 @@ const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superus
 // Reviewed exceptions. Each needs a reason; SEC-01 removes the "pending" ones.
 // An entry that starts passing must be removed (the test says so).
 export const REVIEWED = {
-  athlete_association_consents: "SEC-01 pending",
-  activity_media_consents: "SEC-01 pending: limited to the school (plus district roles), not per student",
-  activity_media_consent_history: "SEC-01 pending: limited to the school (plus district roles), not per student",
-  activity_media_participants: "SEC-01 pending: limited to the school (plus district roles), not per student",
   eden_consent_exceptions: "Leaders only: a restrictive policy limits reads to the EDEN agent, the superintendent and the student's own school principal (records-transfer consent exceptions); no pupil, parent or teacher access",
 };
 

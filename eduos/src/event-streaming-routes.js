@@ -32,13 +32,8 @@ function safeStream(s) {
 }
 
 async function countUnconsentedParticipants(c, districtId, event) {
-  const row = await one(c, `SELECT count(DISTINCT p.student_id)::int AS n
-      FROM activity_media_participants p
-      JOIN activity_media_assets m ON m.id=p.media_asset_id AND m.district_id=p.district_id
-     WHERE p.district_id=$1 AND p.school_id=$2
-       AND (m.event_id=$3 OR ($4::uuid IS NOT NULL AND m.activity_id=$4))
-       AND p.consent_status <> 'approved'`,
-    [districtId, event.school_id, event.id, event.activity_id || null]);
+  // Every participant counts, whoever asks (a definer, db/181).
+  const row = await one(c, "SELECT eduos_media_unconsented_count($1, $2, $3) AS n", [event.school_id, event.id, event.activity_id || null]);
   return row?.n ?? 0;
 }
 
