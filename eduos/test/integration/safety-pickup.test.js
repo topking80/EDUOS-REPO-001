@@ -122,7 +122,7 @@ describe("EduOS 32.5.0 SafetyOS and pick-up against real PostgreSQL", { skip }, 
     const add = await as("pa")("POST", "/api/pickup/adults", { studentId: ID.alice, fullName: "Ruth Grandma", relationship: "Grandparent" });
     assert.equal(add.status, 201); assert.equal(add.body.data.status, "pending");
     grandma = add.body.data.id;
-    assert.equal((await as("pb")("POST", "/api/pickup/adults", { studentId: ID.alice, fullName: "Mallory", relationship: "Friend" })).status, 403, "not their child");
+    assert.equal((await as("pb")("POST", "/api/pickup/adults", { studentId: ID.alice, fullName: "Mallory", relationship: "Friend" })).status, 404, "not their child: since db/179 another family's child isn't visible at all");
     assert.equal((await as("pa")("POST", "/api/pickup/tags", { adultId: grandma })).status, 409, "pending adult gets no pass");
     assert.equal((await as("pa")("POST", `/api/pickup/adults/${grandma}/decision`, { decision: "approve" })).status, 403, "families cannot approve");
     const admin1 = (await as("p1")("GET", "/api/pickup/admin")).body.data;

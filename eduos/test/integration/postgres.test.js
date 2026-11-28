@@ -90,6 +90,8 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
       "tenants",
       // HSP-05 (migration 164): invoice and receipt numbers come only from eduos_ps_next_number().
       "ps_invoice_counters", "ps_receipt_counters",
+      // SEC-01 (migration 179): redaction reads the token index through eduos_student_identifiers_match().
+      "student_redact_tokens",
       // HSP-06 (migration 165): column-level SELECT only, so the one-time code's hash stays hidden.
       "learner_transfers"];
     assert.deepEqual(r.rows.map(x => x.tablename).filter(t => !definerOnly.includes(t)), []);

@@ -173,6 +173,7 @@ This is **OPS-03**, and is optional. None of BugHunter's own attack tooling is u
 | SEC-04 | Hostile-content fixtures for Christie and the LRH-08 assistant | P1 | before LRH-08 |
 | SEC-06 | Count-only redaction audit per AI call | P2 | SEC-03 |
 | SEC-07 | Concurrency tests: quiz attempts, payments, tickets, one-time codes | P2 | — |
+| SEC-08 | Narrow staff reads of `students` from district-wide to their school, route by route (SIS sync, arrival handoffs, cross-school guardians, pickers) | P1 | SEC-01 part 4 |
 | OPS-02 | CI run with optional integrations absent | P3 | — |
 | OPS-03 | Authorized staging-only scan under a signed scope | P3 | staging |
 

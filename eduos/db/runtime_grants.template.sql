@@ -371,7 +371,7 @@ GRANT EXECUTE ON FUNCTION eduos_edison_allowed(uuid), eduos_edison_source(text, 
 
 -- 043: the app tokenizes text with the same functions the student index uses.
 GRANT EXECUTE ON FUNCTION eduos_redact_tokens(text), eduos_redact_compact(text), eduos_redact_is_nospace(text) TO eduos_app;
-GRANT SELECT ON student_redact_tokens TO eduos_app;
+-- 179: the token index is read only through eduos_student_identifiers_match (no direct SELECT).
 
 -- 048: aggregate queue backlog for /metrics (totals and ages only).
 GRANT EXECUTE ON FUNCTION eduos_queue_backlog() TO eduos_app;
@@ -1044,3 +1044,7 @@ GRANT EXECUTE ON FUNCTION eduos_leads_student_school(uuid) TO eduos_app;
 
 -- 178 (SEC-01 part 3): attendance.
 GRANT EXECUTE ON FUNCTION eduos_can_see_attendance(uuid), eduos_can_write_attendance(uuid) TO eduos_app;
+
+-- 179 (SEC-01 part 4): students read policy; redaction lookups through definers.
+GRANT EXECUTE ON FUNCTION eduos_student_identifiers_match(text[]), eduos_student_identifiers_nospace(text) TO eduos_app;
+REVOKE SELECT ON student_redact_tokens FROM eduos_app;
