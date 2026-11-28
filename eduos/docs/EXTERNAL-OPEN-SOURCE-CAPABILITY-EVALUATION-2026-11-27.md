@@ -283,3 +283,67 @@ Before any external capability is approved:
 ## Evidence and limitations
 
 Repository names, default branches, public/non-archived status, README feature descriptions, and the license files noted above were checked through GitHub repository metadata and repository files on 2026-11-27. This pass did not clone/build the projects, run their tests, inspect all transitive dependencies, verify release cadence in depth, or perform a security audit. Items marked unconfirmed must be verified before any adoption decision.
+
+
+### 9. text-to-cad — AI-assisted engineering, fabrication, and robotics
+
+- Repository: https://github.com/earthtojake/text-to-cad
+- Default branch observed: `main`; public and not archived at review time.
+- Repository metadata reported approximately 27,675 stars and 2,649 forks at review time; these are popularity signals, not security or quality evidence.
+- README describes an agent-oriented local engineering toolkit for mechanical CAD, PCB design, manufacturing checks, finite-element stress studies, engineering drawings, rendering, fabrication workflows, and robotics simulation.
+- License metadata and repository badge identify MIT. The top-level README says the project is MIT-licensed.
+- Main technologies and formats described include Python, build123d, OpenCASCADE, KiCad, CalculiX, Netgen, Blender, MuJoCo, URDF, SRDF, MJCF, STEP, STL, 3MF, GLB, and DXF.
+
+**Potential EduOS value**
+- A strong foundation for a supervised **STEM / CTE Engineering and Maker Lab** capability.
+- Student projects in mechanical design, parametric modeling, assemblies, mechanisms, and 2D fabrication profiles.
+- PCB schematic/board design, electronics prototyping, and fabrication preparation.
+- Engineering drawing generation and introductory design-for-manufacturing workflows.
+- Guided stress-analysis and robotics simulation activities.
+- Exportable student project artifacts and portfolio evidence, subject to district ownership, retention, and consent policies.
+
+**Recommended disposition:** **High-value candidate for a tightly isolated, supervised engineering-lab proof of concept. Do not deploy its local server as a shared multi-tenant EduOS service.**
+
+**Integration shape**
+- Begin with a district-managed engineering workstation or isolated lab runner using synthetic projects and no production student records.
+- EduOS should own course enrollment, assignment instructions, user authorization, teacher review, project metadata, and portfolio publication approvals.
+- Treat the CAD engine as an execution tool in a separately isolated environment. Exchange only explicitly approved project artifacts and status metadata through a narrow integration API or controlled file handoff.
+- Keep project files private to the authorized learner/team and instructor. Require teacher approval before publishing artifacts to student portfolios, shared galleries, or external fabrication services.
+- Use separate resource quotas, timeouts, storage limits, network egress policy, malware scanning, and retention/deletion controls for every project.
+- Treat generated models, scripts, imported CAD/PCB files, meshes, and fabrication exports as untrusted content. Validate file type, size, parser behavior, and export contents before storage or sharing.
+- Require human review before any physical fabrication, electrical energizing, robotics actuation, or use of a design in a safety-critical context.
+
+**Security findings from the repository's own SECURITY.md**
+- The project describes itself as a local development tool; its server, viewer, and model execution run with the local user's rights and files.
+- The security document explicitly warns that a script's worker runs with the interpreter used to launch it, and dependencies declared by scripts may be installed with network access.
+- An agent sandbox that can reach the CAD server's local communication endpoint can cause work to execute with the server's own rights, outside the agent sandbox. Therefore, the agent sandbox alone is not a sufficient isolation boundary.
+- The viewer's token, session cookie, or signed link grants broad access to local CAD files and viewer actions. Links and credentials must never be shared across learners or embedded in broadly accessible EduOS records.
+- The project documents a local HTTP viewer/MCP endpoint and credential controls, but those controls are designed for a user's own machine—not EduOS district tenancy, learner-level authorization, or hostile multi-tenant workloads.
+- The README states that usage statistics and crash reports are sent by default with a random identifier and without files, paths, or prompts; review the privacy policy and provide an approved opt-out/configuration posture for school deployments.
+- Imported CAD, PCB, and robot-description files are treated as untrusted input by the project and processed with bounds; EduOS must independently validate the exact pinned version and deployment configuration.
+
+**Risks / checks**
+- A local workstation's user boundary is not equivalent to per-student process, filesystem, network, and kernel isolation.
+- Never run learner-supplied scripts under a shared service account that can read other learners' projects, teacher materials, district files, secrets, or host credentials.
+- Do not expose the CAD viewer token, MCP capability, local server port, or raw project filesystem to browser clients or other tenants.
+- Verify whether the intended lab workflow can operate with network egress disabled or tightly allowlisted; dependency installation and fabrication-service integrations need explicit controls.
+- Review all transitive dependencies, container/base images, downloaded tools, model assets, and fabrication providers; MIT at the repository root does not establish the license of every dependency or user-supplied asset.
+- Validate accessibility, Chromebook/browser compatibility, managed-device requirements, CPU/GPU/RAM needs, and support for district-approved operating systems.
+- Treat FEA outputs as educational analysis, not professional engineering certification or proof of safety. PCB ERC/DRC and manufacturing checks are not guarantees that a design is electrically or mechanically safe.
+- The PCB workflow documentation notes that its fetched KiCad CLI is a nightly 10.99 build; validate file compatibility before students edit projects intended for stable KiCad installations.
+- Require teacher supervision and age-appropriate controls for fabrication tools, sharp/hot equipment, batteries, electrical circuits, and robotics.
+
+## EduOS work package addition
+
+| ID | Work package | Priority | Exit evidence |
+|---|---|---:|---|
+| OSS-09 | text-to-cad supervised STEM/CTE lab proof-of-concept and isolation assessment | P1 | Synthetic-data demo; threat model; per-learner isolation test; teacher approval workflow; artifact scanning and retention plan; human fabrication safety gate |
+
+**Suggested pilot sequence**
+1. Use a district-controlled, single-purpose lab workstation or disposable isolated runner; do not connect it to production EduOS databases.
+2. Demonstrate a basic parametric part, an assembly, a dimensioned drawing, and a simple robotics simulation with synthetic project data.
+3. Verify that two learner sessions cannot read, modify, enumerate, or export each other's files, credentials, viewer sessions, or outputs.
+4. Test malicious or malformed imported CAD/PCB files, runaway scripts, dependency installation, resource exhaustion, and attempted network access.
+5. Add EduOS assignment/project metadata and teacher review only after isolation is demonstrated.
+6. Keep PCB fabrication, CNC/laser cutting, 3D printing, and physical robotics actuation disabled until separate district safety and supervision approvals are documented.
+
