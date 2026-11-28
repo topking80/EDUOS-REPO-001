@@ -67,6 +67,7 @@ The student experience must remain age-appropriate, accessible, privacy-preservi
 - [ ] Add language, reading, contrast, text-size, reduced-motion, and screen-reader improvements throughout student workflows. *Done: text size (standard, large, larger), high contrast and reduce motion, saved with the account (`PUT /api/me/preferences`, db/175) and applied on web and Flutter on top of the device's own settings; new student screens checked with axe. Still to do: translations.*
 - [x] Ensure Christie remains constrained to approved instructional content, hints rather than answer-giving, and the existing teacher visibility notice (unchanged; the Help page repeats the notice).
 - [x] Do not add unsupervised direct messaging, public student directories, targeted advertising, or external AI transmission of student personal data (Help adds none; it says plainly there's no student-to-student messaging).
+  - *Decision (2026-11-27): students may share files within a class through Class Share once built, only when the district enables it and the teacher opens the session; transfers are scanned, logged, visible to the teacher and stoppable. See `docs/LOCALSEND-VLC-INTEGRATION-PLAN.md`. This is supervised sharing, not direct messaging.*
 
 ## Acceptance criteria
 
