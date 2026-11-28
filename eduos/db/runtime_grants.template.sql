@@ -1035,3 +1035,6 @@ GRANT EXECUTE ON FUNCTION eduos_learner_schedule(uuid, date, integer) TO eduos_a
 
 -- 173: row security on assignment_submissions.
 GRANT EXECUTE ON FUNCTION eduos_can_see_submission(uuid, uuid) TO eduos_app;
+
+-- 176 (SEC-01): per-student row security on intervention cases and case notes.
+GRANT EXECUTE ON FUNCTION eduos_can_see_case(uuid, uuid, uuid, uuid, boolean), eduos_can_see_case_note(uuid, boolean) TO eduos_app;
