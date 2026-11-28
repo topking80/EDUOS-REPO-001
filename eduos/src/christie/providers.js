@@ -22,6 +22,12 @@
 //                        replaced by the local reply.
 import { bestPassage, leaksAnswer, MESSAGES } from "./tutor.js";
 import { removeIdentifiers } from "../redact-names.js";
+import { removeSecrets } from "../redact-secrets.js";
+
+// SEC-03: secrets are removed before the text is cut to length, from a window
+// a little past the cut (a private key block is the longest), so a secret
+// straddling the cut is removed whole rather than half-sent.
+const SECRET_WINDOW = 20000;
 
 const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/g;
 const URL_RE = /\bhttps?:\/\/\S+/gi;
@@ -29,7 +35,7 @@ const PHONE = /(\+?\d[\d\s().-]{7,}\d)/g;
 const STUDENT_NO = /\b[A-Z]{2,5}-\d{2,}\b/g;
 const LONG_DIGITS = /\b\d{6,}\b/g;
 
-/** Remove identifiers from learner text before it could leave the server. */
+/** Remove secrets and identifiers from text before it could leave the server. */
 export function redact(text, { names = [], numbers = [], max = 500 } = {}) {
   // Known students first (names in any script; student numbers as whole
   // phrases, src/redact-names.js), so the generic patterns below can't cut a
@@ -37,7 +43,10 @@ export function redact(text, { names = [], numbers = [], max = 500 } = {}) {
   // Then the same personal details approved content loses (web addresses
   // without a scheme, street addresses, labelled birth dates), and names
   // after a title, before the broader number patterns.
-  const out = removeIdentifiers(String(text || "").slice(0, max), { names: names.filter(Boolean), numbers });
+  // Secrets first (src/redact-secrets.js): a connection string or token must
+  // go whole, before the email and number patterns below cut it into pieces.
+  const clean = removeSecrets(String(text || "").slice(0, max + SECRET_WINDOW)).slice(0, max);
+  const out = removeIdentifiers(clean, { names: names.filter(Boolean), numbers });
   return out.replace(EMAIL, "[removed]").replace(URL_RE, "[removed]").replace(CONTENT_URL, "[removed]")
     .replace(CONTENT_DOB, "$1$2[removed]").replace(CONTENT_ADDRESS, "[removed]").replace(TITLED_NAME, "$1$2[name]")
     .replace(STUDENT_NO, "[removed]")
@@ -60,7 +69,7 @@ const CONTENT_DOB = new RegExp(`\\b(d\\.?o\\.?b\\.?|date of birth|birth ?date|bi
 const CONTENT_ADDRESS = /\b\d{1,6}[A-Za-z]?\s+(?:[\p{L}'.-]+\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Place|Pl|Way|Terrace|Ter|Circle|Cir|Highway|Hwy)\b\.?(?:,?\s+(?:Apt|Apartment|Unit|Suite|Ste|#)\.?\s*[\w-]+)?/giu;
 
 /**
- * Approved teaching content on its way out: student names and numbers, email
+ * Approved teaching content on its way out: secrets (src/redact-secrets.js), student names and numbers, email
  * addresses, web addresses, phone-shaped numbers, street addresses, dates
  * labelled as a birth date and names after a title ("Mr Lee") are removed. Unlike redact(), other digits are
  * left alone (a maths problem is full of them) and nothing is cut.
@@ -69,7 +78,7 @@ const CONTENT_ADDRESS = /\b\d{1,6}[A-Za-z]?\s+(?:[\p{L}'.-]+\s+){1,4}(?:Street|S
  * should be written without them, and external tutoring is off by default.
  */
 export function redactContent(text, identifiers = {}) {
-  const out = removeIdentifiers(String(text ?? ""), { names: identifiers.names || [], numbers: identifiers.numbers || [] });
+  const out = removeIdentifiers(removeSecrets(text), { names: identifiers.names || [], numbers: identifiers.numbers || [] });
   return out.replace(EMAIL, "[removed]").replace(CONTENT_URL, "[removed]").replace(CONTENT_DOB, "$1$2[removed]")
     .replace(CONTENT_ADDRESS, "[removed]").replace(TITLED_NAME, "$1$2[name]").replace(CONTENT_PHONE, "[removed]");
 }

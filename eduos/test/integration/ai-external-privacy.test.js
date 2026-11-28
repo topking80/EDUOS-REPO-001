@@ -175,6 +175,21 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     assert.equal(provider.received.at(-1).model, "fake-model");
   });
 
+  it("SEC-03: a pasted config or log loses its secrets before it leaves; the rest is still sent", async () => {
+    // Assembled at runtime so no file holds anything a secret scanner would flag.
+    const pg = "postgres" + "://eduos_app:" + "Wint3r-" + "pass" + "@db.internal:5432/eduos";
+    const gh = "gh" + "p_" + "Zq9".repeat(12), ak = "AK" + "IA" + "Q7".repeat(8);
+    const text = `Help me read this error. DATABASE_URL=${pg}\nGITHUB_TOKEN=${gh}\naws ${ak}\nAuthorization: Bearer ${"Tk".repeat(20)}\nSMTP_PASSWORD=autumn42\nThe sync stopped at 07:15. END-OF-LOG`;
+    const r = await runAi("t1", "resource_summary", text);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.data.source, "external");
+    const sent = sentText();
+    for (const leak of [pg, "Wint3r-", gh, ak, "Tk".repeat(20), "autumn42"]) assert.ok(!sent.includes(leak), `a secret reached the provider: ${sent}`);
+    assert.match(sent, /SMTP_PASSWORD=\[secret\]/);
+    assert.match(sent, /Bearer \[secret\]/);
+    assert.match(sent, /END-OF-LOG/);
+  });
+
   it("a teacher's text loses students from any school in the district, not only their roster", async () => {
     const r = await runAi("t1", "writing_feedback", "Feedback for Marisol Okonkwo-Reyes, student 2026-55417, and for Bob B on the argument essay.");
     assert.equal(r.status, 200, JSON.stringify(r.body));
