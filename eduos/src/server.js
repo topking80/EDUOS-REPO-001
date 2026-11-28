@@ -151,6 +151,11 @@ const edenJson = express.json({ limit: "16mb", strict: true, verify: (req, _res,
 // TEACH-06: a package file (up to 12 MB) is parsed by its own route, after the session is checked.
 app.use((req, res, next) => req.path.startsWith("/api/eden/v1/") ? edenJson(req, res, next) : BULK_PATHS.has(req.path) || STORAGE_FILE_PATHS.has(req.path) || HISTORY_IMPORT_PATHS.has(req.path) ? next() : smallJson(req, res, next));
 app.use((req,res,next)=>{ req.requestId=crypto.randomUUID(); res.setHeader("X-Request-Id",req.requestId); next(); });
+// SEC-05: API, sign-in and LTI answers are never stored by a browser or a
+// shared cache unless a route says otherwise (public branding sets its own
+// max-age; the event stream sets no-cache). Routes setting Cache-Control
+// themselves replace this default.
+app.use(["/api","/auth","/lti"],function noStoreByDefault(_req,res,next){ res.setHeader("Cache-Control","no-store"); next(); });
 
 // A ceiling on every API and sign-in request, before any route: per signed-in
 // session or device key (so a school behind one NAT address doesn't share
@@ -166,7 +171,8 @@ const apiCredential=req=>{
 const apiLimiter=rateLimit({windowMs:60_000,limit:config.apiRateLimitPerMinute,standardHeaders:true,legacyHeaders:false,
   keyGenerator:req=>{const c=apiCredential(req);return c?`cred:${crypto.createHash("sha256").update(c).digest("hex")}`:`ip:${ipKeyGenerator(req.ip)}`;}});
 const apiAddressLimiter=rateLimit({windowMs:60_000,limit:config.apiRateLimitPerMinute*10,standardHeaders:false,legacyHeaders:false,keyGenerator:req=>`addr:${ipKeyGenerator(req.ip)}`});
-app.use(["/api","/auth"],apiAddressLimiter,apiLimiter);
+// SEC-05: LTI launch and service routes share the ceiling.
+app.use(["/api","/auth","/lti"],apiAddressLimiter,apiLimiter);
 
 // 32.1.0: configurable. 30 per 15 minutes per IP locked out a whole school
 // behind one NAT address at the start of the day (login + callback = 2 hits).
