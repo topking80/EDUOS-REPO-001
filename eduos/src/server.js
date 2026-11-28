@@ -671,6 +671,8 @@ app.post("/api/guardian-invitations/accept",guardianAcceptLimiter,requireSession
   const tokenHash=crypto.createHash("sha256").update(token).digest("hex");
   try{
     const result=await withTenantTransaction(req.actor,async client=>{
+      // db/177: a parent sees only the invitation whose secret they present.
+      await client.query("SELECT set_config('app.invitation_token_hash',$1,true)",[tokenHash]);
       const invite=await client.query(
         `SELECT gi.* FROM guardian_invitations gi WHERE gi.token_hash=$1 AND gi.district_id=$2 FOR UPDATE`,
         [tokenHash,req.actor.districtId]);
