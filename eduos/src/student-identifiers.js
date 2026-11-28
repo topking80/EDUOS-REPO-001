@@ -12,7 +12,9 @@
 //   - for names in scripts written without spaces (Chinese, Japanese, Korean,
 //     Thai...), a part of two or more characters, or every part, appears
 //     anywhere in the text.
-// District-wide for every role, no row limit; only the matches come back.
+// District-wide for every role, no row limit; only the matches come back
+// (the lookups run as definers, db/179, so school-scoped readers still match
+// students at other schools).
 // src/redact-names.js then removes them (and decides how precisely).
 import { normalizeName, hasNoSpaceScript } from "./redact-names.js";
 
@@ -27,25 +29,10 @@ export async function findStudentIdentifiers(c, districtId, text) {
   const all = (await c.query("SELECT eduos_redact_tokens($1) AS t", [variants])).rows[0].t;
   if (!all.length) return { names: [], numbers: [] };
   // Equality joins on the token table (db/043), one indexable branch each.
-  const found = (await c.query(`
-    WITH words AS (SELECT DISTINCT w FROM unnest($2::text[]) w)
-    SELECT s.display_name, s.local_student_number FROM students s WHERE s.district_id = $1 AND s.id IN (
-        -- a name part of two or more characters is a word of the text
-        SELECT t.student_id FROM student_redact_tokens t JOIN words ON words.w = t.token
-         WHERE t.district_id = $1 AND t.kind = 'name' AND t.long
-        UNION
-        -- every part of the name, or of the student number, is a word of the text
-        SELECT t.student_id FROM student_redact_tokens t JOIN words ON words.w = t.token
-         WHERE t.district_id = $1 GROUP BY t.student_id, t.kind HAVING count(*) = min(t.n)
-        UNION
-        -- the student number without its separators is a word of the text
-        SELECT s2.id FROM students s2 JOIN words ON words.w = s2.redact_number_compact WHERE s2.district_id = $1)`,
-    [districtId, all])).rows;
-  if (hasNoSpaceScript(base)) {
-    found.push(...(await c.query(`SELECT s.display_name, s.local_student_number FROM students s
-       WHERE s.district_id = $1 AND s.redact_name_nospace
-         AND (EXISTS (SELECT 1 FROM unnest(eduos_redact_tokens(s.display_name)) w WHERE char_length(w) >= 2 AND strpos($2, w) > 0)
-           OR NOT EXISTS (SELECT 1 FROM unnest(eduos_redact_tokens(s.display_name)) w WHERE strpos($2, w) = 0))`, [districtId, variants.toLowerCase()])).rows);
-  }
+  // They run in definers (db/179): matching is district-wide whoever asks,
+  // and only the matches come back.
+  const found = (await c.query("SELECT display_name, local_student_number FROM eduos_student_identifiers_match($1::text[])", [all])).rows;
+  if (hasNoSpaceScript(base))
+    found.push(...(await c.query("SELECT display_name, local_student_number FROM eduos_student_identifiers_nospace($1)", [variants.toLowerCase()])).rows);
   return { names: [...new Set(found.map(r => r.display_name))], numbers: [...new Set(found.map(r => r.local_student_number))] };
 }

@@ -18,7 +18,6 @@ const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superus
 // Reviewed exceptions. Each needs a reason; SEC-01 removes the "pending" ones.
 // An entry that starts passing must be removed (the test says so).
 export const REVIEWED = {
-  students: "SEC-01 pending: the student directory row itself; staff lists, pickers and definers read it district-wide",
   attendance_events: "SEC-01 pending (next, on its own: about ten modules read or write attendance)",
   student_user_links: "SEC-01 pending: used inside many policies and definers, so it changes last",
   teacher_student_rosters: "SEC-01 pending: used inside many policies and definers, so it changes last",
@@ -27,7 +26,6 @@ export const REVIEWED = {
   activity_media_consent_history: "SEC-01 pending: limited to the school (plus district roles), not per student",
   activity_media_participants: "SEC-01 pending: limited to the school (plus district roles), not per student",
   eden_consent_exceptions: "Leaders only: a restrictive policy limits reads to the EDEN agent, the superintendent and the student's own school principal (records-transfer consent exceptions); no pupil, parent or teacher access",
-  student_redact_tokens: "Name and number tokens that redaction must match district-wide before any text leaves for an AI provider (src/student-identifiers.js). SEC-01 to move reads behind a definer so the runtime role can't list them",
 };
 
 describe("SEC-02 row-security coverage for student records", { skip }, () => {

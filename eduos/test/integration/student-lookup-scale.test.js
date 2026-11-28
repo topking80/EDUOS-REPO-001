@@ -9,7 +9,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
 import { PG_URL, ID, baseEnv, run, createDatabase, seed } from "./harness.js";
-import { findStudentIdentifiers } from "../../src/student-identifiers.js";
+import { findStudentIdentifiers as lookup } from "../../src/student-identifiers.js";
 import { removeIdentifiers } from "../../src/redact-names.js";
 
 const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superuser URL to run";
@@ -19,8 +19,22 @@ const LAST = ["Smith", "Garcia", "Nguyen", "Johnson", "Lee", "Martinez", "Brown"
   "O'Brien", "Okonkwo-Reyes", "de la Cruz", "Singh", "Ali", "Taylor", "Moore", "Jackson", "White", "Harris", "Clark", "Lewis", "Young", "Walker", "Hall", "Allen", "King", "Wright", "Scott", "Green",
   "Baker", "Adams", "Nelson", "Hill", "Campbell", "Mitchell", "Roberts", "Carter", "Phillips", "Evans", "Turner", "Torres", "Parker", "Collins", "Edwards", "Stewart", "Flores", "Morris", "Murphy", "Rivera"];
 
+// The lookup runs in definers that match within the caller's district
+// (db/179), so each call sets the district the way a tenant transaction does.
+let pool;
+async function findStudentIdentifiers(_pool, districtId, text) {
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN");
+    await c.query("SELECT set_config('app.district_id', $1, true)", [districtId]);
+    const r = await lookup(c, districtId, text);
+    await c.query("COMMIT");
+    return r;
+  } catch (e) { await c.query("ROLLBACK"); throw e; } finally { c.release(); }
+}
+
 describe("student identifier lookup at district scale", { skip }, () => {
-  let db, pool;
+  let db;
   const filler = "The committee reviewed the reading intervention schedule and agreed the next steps for each year group before the holiday. ".repeat(60);
   const text = `Notes. Unusual Zephyrine Quillfeather (ZQ-0000042) joined; Garcia and Maria met Okonkwo-Reyes. ID 7/000/099. ${filler} Ends with Kwame.`;
 
