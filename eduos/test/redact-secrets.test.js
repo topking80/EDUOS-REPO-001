@@ -9,10 +9,12 @@ import { externalRequestBody } from "../src/ai/providers.js";
 
 const r = (s, n) => s.repeat(n);
 const alnum = n => r("aB3", Math.ceil(n / 3)).slice(0, n);
+const dashes = r("-", 5);
+const pem = (label, body, closed) => `${dashes}BEGIN ${label}${dashes}\n${body}` + (closed ? `\n${dashes}END ${label}${dashes}` : "");
 const SAMPLES = {
-  private_key: ["-----BEGIN", "RSA PRIVATE KEY-----\n", r("MIIEow", 20), "\n-----END RSA PRIVATE KEY-----"].join(" ").replace("BEGIN RSA", "BEGIN RSA"),
-  pgp_private_key: ["-----BEGIN PGP PRIVATE KEY BLOCK-----", "", r("lQOYBF", 10), "-----END PGP PRIVATE KEY BLOCK-----"].join("\n"),
-  truncated_private_key: "-----BEGIN OPENSSH PRIVATE KEY-----\n" + r("b3BlbnNzaC1rZXk", 8),
+  private_key: pem("RSA PRIVATE KEY", r("MIIEow", 20), true),
+  pgp_private_key: pem("PGP PRIVATE KEY BLOCK", r("lQOYBF", 10), true),
+  truncated_private_key: pem("OPENSSH PRIVATE KEY", r("b3BlbnNzaC1rZXk", 8), false),
   jwt: ["ey" + "J" + alnum(20), "ey" + "J" + alnum(40), alnum(43)].join("."),
   connection_string: "postgres" + "://eduos_app:" + "Sup3r-" + "pass" + "@db.internal:5432/eduos",
   aws_access_key: "AK" + "IA" + r("Q", 16),
@@ -76,7 +78,7 @@ test("kinds and counts are reported without values", () => {
 });
 
 test("hostile input can't make redaction slow", () => {
-  for (const t of [r("a", 300000), r("_.-", 100000), r("eyJ", 100000), "Bearer " + r("a", 200000), r("password" + r("_", 39), 5000), "-----BEGIN PRIVATE KEY-----" + r("A", 300000)]) {
+  for (const t of [r("a", 300000), r("_.-", 100000), r("eyJ", 100000), "Bearer " + r("a", 200000), r("password" + r("_", 39), 5000), pem("PRIVATE KEY", r("A", 300000), false)]) {
     const start = process.hrtime.bigint();
     removeSecrets(t);
     assert.ok(Number(process.hrtime.bigint() - start) / 1e6 < 500, `${t.slice(0, 12)}… took too long`);
