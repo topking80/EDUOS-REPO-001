@@ -7,7 +7,8 @@ import { config } from "../config.js";
 import { withTenantTransaction } from "../db.js";
 import { HttpError, audit } from "../role-app-util.js";
 import { denial, policyOf, reserveBudget } from "./gateway.js";
-import { externalRequestBody, maxTokensFor, localProvider, capLocalOutput, localUnits, OUTPUT_MAX_TOKENS } from "./providers.js";
+import { externalRequestBody, maxTokensFor, localProvider, capLocalOutput, localUnits, OUTPUT_MAX_TOKENS, redactionTally } from "./providers.js";
+import { countsOf, countsDetail } from "../redaction-counts.js";
 
 /** Runs the model, but never longer than the deadline: then the local answer. */
 export function withDeadline(work, ms, fallback) {
@@ -25,7 +26,7 @@ export function withDeadline(work, ms, fallback) {
  */
 export async function invokeAi(req, { provider, usecase, prepare, settle }) {
   const a = req.actor, external = provider.name !== "local";
-  let reservation = null, reserved = 0, sentOut = false;
+  let reservation = null, reserved = 0, sentOut = false, redactions = {};
   try {
     // 1. Policy, role, the data and the redaction list, in the caller's own
     //    scope; then reserve budget atomically.
@@ -41,10 +42,12 @@ export async function invokeAi(req, { provider, usecase, prepare, settle }) {
       // Reserve a hard upper bound for exactly what would be sent (system
       // prompt, redacted text, output cap), whatever the tokenizer.
       const reserve = maxTokensFor(externalRequestBody({ model: "", usecase, input, identifiers }));
+      // SEC-06: what redaction removes before this leaves, as kinds and counts.
+      const redactions = external ? countsOf(redactionTally({ usecase, input, identifiers })) : {};
       const id = await reserveBudget(c, a, usecase, reserve, { requireExternal: external }).catch(e => { if (e.status === 429 || e.status === 403) throw new HttpError(e.status, e.message); throw e; });
-      return { input, identifiers, id, reserve };
+      return { input, identifiers, id, reserve, redactions };
     });
-    reservation = prep.id; reserved = prep.reserve;
+    reservation = prep.id; reserved = prep.reserve; redactions = prep.redactions;
     // 2. The model (outside any transaction). From here an external
     //    provider may have received, processed and billed the request,
     //    whatever happens next.
@@ -69,9 +72,9 @@ export async function invokeAi(req, { provider, usecase, prepare, settle }) {
     if (over) console.error(`ai usage ${tokensIn + tokensOut} exceeded its reservation ${prep.reserve} (district ${a.districtId})`);
     const source = external && !out.fallback ? "external" : "local";
     const extra = await withTenantTransaction(a, async (c) => {
-      await c.query(`UPDATE ai_usage SET provider=$2, outcome=$3, tokens_in=$4, tokens_out=$5 WHERE id=$1 AND outcome='pending'`,
-        [reservation, out.fallback || !external ? "local" : "openai_compatible", out.fallback ? "fallback" : "ok", tokensIn, tokensOut]);
-      await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${tokensIn}+${tokensOut}; usage=${basis}; reserved=${prep.reserve}; provider=${source}${over ? "; over_reservation" : ""}`);
+      await c.query(`UPDATE ai_usage SET provider=$2, outcome=$3, tokens_in=$4, tokens_out=$5, redactions=$6 WHERE id=$1 AND outcome='pending'`,
+        [reservation, out.fallback || !external ? "local" : "openai_compatible", out.fallback ? "fallback" : "ok", tokensIn, tokensOut, JSON.stringify(prep.redactions)]);
+      await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${tokensIn}+${tokensOut}; usage=${basis}; reserved=${prep.reserve}; provider=${source}${external ? `; redacted=${countsDetail(prep.redactions)}` : ""}${over ? "; over_reservation" : ""}`);
       return settle ? settle(c, out, { source, usageId: prep.id }) : undefined;
     });
     const usageId = reservation;
@@ -87,8 +90,8 @@ export async function invokeAi(req, { provider, usecase, prepare, settle }) {
       // fails, the row stays 'pending', which counts in full all day.
       console.error(`ai accounting failed after a provider call (district ${a.districtId}); keeping the reservation of ${reserved}: ${e.message}`);
       await withTenantTransaction(a, async (c) => {
-        await c.query("UPDATE ai_usage SET provider='openai_compatible', outcome='fallback', tokens_in=$2, tokens_out=$3 WHERE id=$1 AND outcome='pending'", [reservation, reserved - OUTPUT_MAX_TOKENS, OUTPUT_MAX_TOKENS]);
-        await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${reserved}; usage=reserved; reserved=${reserved}; accounting_failed_after_provider_call`, "failure");
+        await c.query("UPDATE ai_usage SET provider='openai_compatible', outcome='fallback', tokens_in=$2, tokens_out=$3, redactions=$4 WHERE id=$1 AND outcome='pending'", [reservation, reserved - OUTPUT_MAX_TOKENS, OUTPUT_MAX_TOKENS, JSON.stringify(redactions)]);
+        await audit(c, req, `ai_${usecase}`, "ai_usage", null, `tokens=${reserved}; usage=reserved; reserved=${reserved}; redacted=${countsDetail(redactions)}; accounting_failed_after_provider_call`, "failure");
       }).catch(() => {});
     }
     throw e;

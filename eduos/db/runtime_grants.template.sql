@@ -1051,3 +1051,8 @@ REVOKE SELECT ON student_redact_tokens FROM eduos_app;
 
 -- 181 (SEC-01 part 6): consent and media totals through definers.
 GRANT EXECUTE ON FUNCTION eduos_media_consent_totals(uuid), eduos_media_unconsented_count(uuid, uuid, uuid) TO eduos_app;
+
+-- 184 (SEC-06): the redaction counts are set when the usage row is settled;
+-- the counts-only check runs as the writer.
+GRANT UPDATE (redactions) ON ai_usage TO eduos_app;
+GRANT EXECUTE ON FUNCTION eduos_redaction_counts_ok(jsonb) TO eduos_app;
