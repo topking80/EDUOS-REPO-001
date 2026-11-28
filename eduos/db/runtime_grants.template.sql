@@ -1048,3 +1048,6 @@ GRANT EXECUTE ON FUNCTION eduos_can_see_attendance(uuid), eduos_can_write_attend
 -- 179 (SEC-01 part 4): students read policy; redaction lookups through definers.
 GRANT EXECUTE ON FUNCTION eduos_student_identifiers_match(text[]), eduos_student_identifiers_nospace(text) TO eduos_app;
 REVOKE SELECT ON student_redact_tokens FROM eduos_app;
+
+-- 181 (SEC-01 part 6): consent and media totals through definers.
+GRANT EXECUTE ON FUNCTION eduos_media_consent_totals(uuid), eduos_media_unconsented_count(uuid, uuid, uuid) TO eduos_app;

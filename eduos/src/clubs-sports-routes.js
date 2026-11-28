@@ -441,10 +441,9 @@ export function registerClubsSportsRoutes(app) {
      WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$3`,[a.districtId,asset.id,b.studentId]);
    const participantStatus=Number(guardianDecision.denials)>0?"denied":Number(guardianDecision.approvals)>0?"approved":"pending";
    await c.query("UPDATE activity_media_participants SET consent_status=$3 WHERE district_id=$1 AND media_asset_id=$2 AND student_id=$4",[a.districtId,asset.id,participantStatus,b.studentId]);
-   const aggregate=await one(c,`SELECT count(*)::int AS total,count(*) FILTER(WHERE consent_status='approved')::int AS approved,
-      count(*) FILTER(WHERE consent_status='denied')::int AS denied FROM activity_media_participants WHERE district_id=$1 AND media_asset_id=$2`,[a.districtId,asset.id]);
-   const withdrawn=await one(c,`SELECT count(*)::int AS n FROM activity_media_consents
-     WHERE district_id=$1 AND media_asset_id=$2 AND status='withdrawn'`,[a.districtId,asset.id]);
+   // Every participant counts, not just this guardian's child (a definer, db/181).
+   const aggregate=await one(c,"SELECT total,approved,denied,withdrawn FROM eduos_media_consent_totals($1)",[asset.id]);
+   const withdrawn={n:aggregate.withdrawn};
    const overall=Number(withdrawn.n)>0?"withdrawn":Number(aggregate.denied)>0?"denied":Number(aggregate.total)>0&&Number(aggregate.total)===Number(aggregate.approved)?"approved":"pending";
    await c.query("UPDATE activity_media_assets SET consent_status=$3 WHERE district_id=$1 AND id=$2",[a.districtId,asset.id,overall]);
    await audit(c,req,action==="grant"?"grant_media_consent":action==="deny"?"deny_media_consent":"withdraw_media_consent","activity_media_asset",asset.id,`student=${b.studentId};decision=${action}`);
