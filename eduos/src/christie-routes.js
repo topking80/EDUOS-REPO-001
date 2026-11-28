@@ -10,6 +10,7 @@ import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
 import { createProvider, outboundHelpFields, helpFieldsText } from "./christie/providers.js";
 import { findStudentIdentifiers } from "./student-identifiers.js";
+import { countsDetail } from "./redaction-counts.js";
 
 // The adults closest to a learner (linked family and rostered teachers): the
 // names a learner is most likely to type, removed before anything leaves for
@@ -166,6 +167,7 @@ export function registerChristieRoutes(app) {
         const itemSeq = item.item_seq;
         const wrongSoFar = (await one(client, `SELECT count(*)::int AS n FROM christie_turns WHERE session_id=$1 AND item_id=$2 AND kind='attempt' AND correct=false`, [session.id, item.item_id])).n;
         const out = { replies: [] };
+        let redacted = null; // SEC-06: kinds and counts removed before an external call
         const say = async (k, body, extra = {}) => { const t = await addTurn(client, session, { speaker: "christie", kind: k, body, itemId: item.item_id, provider: "rules", ...extra }); out.replies.push(turnView(t)); };
         const hintAt = level => item.hints[level - 1];
         const giveNextHint = async (prefix) => {
@@ -235,15 +237,17 @@ export function registerChristieRoutes(app) {
             // the names and numbers of any student in the district it mentions
             // (another learner in the question, a name in a lesson or hint).
             // If that lookup fails, the request fails: nothing is sent.
+            const tally = {};
             const outbound = p.name === "local" ? null
               : outboundHelpFields(fields, await findStudentIdentifiers(client, session.district_id, helpFieldsText(fields)),
-                  [learner?.display_name, me?.display_name, ...(await peopleAround(client, session.student_id))]);
+                  [learner?.display_name, me?.display_name, ...(await peopleAround(client, session.student_id))], tally);
+            if (outbound) redacted = countsDetail(tally);
             const reply = await p.help({ ...fields, firstHint: item.hints[0], answer: item.answer, outbound });
             await say("hint", reply.text, { provider: reply.fallback ? "local" : p.name });
           }
         }
         await client.query(`UPDATE christie_sessions SET last_activity_at=now() WHERE id=$1`, [session.id]);
-        await audit(client, req, "turn", "christie_session", session.id, `kind=${kind}${out.correct !== undefined ? `;correct=${out.correct}` : ""}`);
+        await audit(client, req, "turn", "christie_session", session.id, `kind=${kind}${out.correct !== undefined ? `;correct=${out.correct}` : ""}${redacted ? `;redacted=${redacted}` : ""}`);
         return out;
       });
       res.json({ data });

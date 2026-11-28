@@ -89,11 +89,21 @@ export function validUsage(u) {
 export function maxTokensFor(body) {
   return body.messages.reduce((n, m) => n + utf8Bytes(m.content) + 32, 0) + body.max_tokens;
 }
-export function externalRequestBody({ model, usecase, input, identifiers = {} }) {
+export function externalRequestBody({ model, usecase, input, identifiers = {} }, tally = null) {
   const content = usecase === "ops_brief" ? JSON.stringify(input.context)
     : usecase === "ops_trends" ? JSON.stringify(input.context)
-    : redact(input.text, { names: identifiers.names || [], numbers: identifiers.numbers || [], max: 12000 }).slice(0, 8000);
+    : redact(input.text, { names: identifiers.names || [], numbers: identifiers.numbers || [], max: 12000 }, tally).slice(0, 8000);
   return { model, temperature: 0.3, max_tokens: OUTPUT_MAX_TOKENS, messages: [{ role: "system", content: SYSTEM_PROMPTS[usecase] }, { role: "user", content }] };
+}
+
+/**
+ * SEC-06: what redaction removes from this request, by kind (counts only).
+ * The operations briefs send counts EduOS computed, which aren't redacted.
+ */
+export function redactionTally(request) {
+  const tally = {};
+  externalRequestBody({ model: "", ...request }, tally);
+  return tally;
 }
 
 export function openAiCompatibleProvider({ url, model, apiKey, timeoutMs, allowedHosts = [], allowInsecureLoopback = false, fetchImpl, log = console.warn }) {

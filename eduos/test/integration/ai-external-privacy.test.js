@@ -192,6 +192,19 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     assert.match(sent, /END-OF-LOG/);
   });
 
+  it("SEC-06: each external call records what redaction removed, as kinds and counts only", async () => {
+    const r = await runAi("t1", "writing_feedback", "Feedback for Marisol Okonkwo-Reyes (2026-55417), reach me at coach@school.example, DB_PASSWORD=winter42.");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const row = (await admin.query("SELECT id, redactions FROM ai_usage ORDER BY id DESC LIMIT 1")).rows[0];
+    assert.deepEqual(row.redactions, { student_name: 1, student_number: 1, email: 1, secret: 1 });
+    const ev = (await admin.query("SELECT detail FROM audit_events WHERE action='ai_writing_feedback' ORDER BY occurred_at DESC LIMIT 1")).rows[0];
+    assert.match(ev.detail, /; redacted=email:1,secret:1,student_name:1,student_number:1(;|$)/);
+    assert.ok(!/Marisol|55417|coach@|winter42/.test(JSON.stringify(row) + ev.detail), "no removed text is kept");
+    // The database refuses anything but known kinds with whole counts.
+    for (const bad of ['{"email": "coach@school.example"}', '{"note": 1}', '{"email": 1.5}', '{"email": -1}', '[1]'])
+      await assert.rejects(admin.query("UPDATE ai_usage SET redactions=$2::jsonb WHERE id=$1", [row.id, bad]), /ai_usage_redactions_counts_only/, bad);
+  });
+
   it("a teacher's text loses students from any school in the district, not only their roster", async () => {
     const r = await runAi("t1", "writing_feedback", "Feedback for Marisol Okonkwo-Reyes, student 2026-55417, and for Bob B on the argument essay.");
     assert.equal(r.status, 200, JSON.stringify(r.body));
@@ -252,6 +265,11 @@ describe("staff assistant with an external provider against real PostgreSQL", { 
     assert.match(sent.problem, /has 1\/2 of 10 apples/);
     assert.deepEqual(sent.hints_already_shown, ["Ask [name] [name] how she halves."]);
     assert.equal(asked.body.data.replies.at(-1).text, "OK from the model");
+    // SEC-06: the turn's audit event says what was removed, never what it was.
+    const ev = (await admin.query("SELECT detail FROM audit_events WHERE action='turn' AND resource_type='christie_session' AND resource_id=$1 ORDER BY occurred_at DESC LIMIT 1", [sid])).rows[0];
+    assert.match(ev.detail, /^kind=question;redacted=[a-z_]+:\d+(,[a-z_]+:\d+)*$/);
+    assert.match(ev.detail, /student_name:\d+/);
+    assert.ok(!/Marisol|Okonkwo|Bob|Carol/.test(ev.detail));
   });
 
   it("SEC-04: hostile lesson text reaches the tutor only as data, and an obeying reply never reaches the learner", async () => {

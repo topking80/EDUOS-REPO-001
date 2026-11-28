@@ -57,20 +57,25 @@ export function numberPattern(number, occurs = () => true) {
   return `(?<![${WORDCH}])${runs.map(esc).join(`${SEP}{0,3}`)}(?![${WORDCH}])`;
 }
 
-/** Replace every occurrence of the names and student numbers. */
-export function removeIdentifiers(text, { names = [], numbers = [] } = {}, { nameLabel = "[name]", numberLabel = "[removed]" } = {}) {
+/**
+ * Replace every occurrence of the names and student numbers. With a `tally`
+ * (SEC-06), each removal is counted there by kind (student_name,
+ * student_number); counts only, never what was removed.
+ */
+export function removeIdentifiers(text, { names = [], numbers = [] } = {}, { nameLabel = "[name]", numberLabel = "[removed]", tally = null } = {}) {
   let out = normalizeName(text);
   // Only parts that occur in the text make patterns: a common surname can
   // match thousands of students, but the text names a few.
   const lower = out.toLowerCase();
   const occurs = (p) => lower.includes(p.toLowerCase());
   const uniq = (list) => [...new Set(list.map(normalizeName).filter(n => n.trim()))];
-  const apply = (sources, label) => {
-    for (const src of [...new Set(sources)].sort((a, b) => b.length - a.length)) out = out.replace(new RegExp(src, "giu"), label);
+  const apply = (sources, label, kind) => {
+    const replacement = tally ? () => { tally[kind] = (tally[kind] || 0) + 1; return label; } : label;
+    for (const src of [...new Set(sources)].sort((a, b) => b.length - a.length)) out = out.replace(new RegExp(src, "giu"), replacement);
   };
   // Numbers first: a number's runs could otherwise be eaten as name parts.
-  apply(uniq(numbers).map(n => numberPattern(n, occurs)).filter(Boolean), numberLabel);
-  apply(uniq(names).flatMap(n => namePatterns(n, occurs)), nameLabel);
+  apply(uniq(numbers).map(n => numberPattern(n, occurs)).filter(Boolean), numberLabel, "student_number");
+  apply(uniq(names).flatMap(n => namePatterns(n, occurs)), nameLabel, "student_name");
   return out;
 }
 

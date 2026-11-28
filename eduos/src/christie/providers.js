@@ -22,7 +22,7 @@
 //                        replaced by the local reply.
 import { bestPassage, leaksAnswer, MESSAGES } from "./tutor.js";
 import { removeIdentifiers } from "../redact-names.js";
-import { removeSecrets } from "../redact-secrets.js";
+import { removeSecrets, expand } from "../redact-secrets.js";
 import { stripInvisible, unsafeReply } from "../ai/reply-screen.js";
 
 // SEC-03: secrets are removed before the text is cut to length, from a window
@@ -37,7 +37,7 @@ const STUDENT_NO = /\b[A-Z]{2,5}-\d{2,}\b/g;
 const LONG_DIGITS = /\b\d{6,}\b/g;
 
 /** Remove secrets and identifiers from text before it could leave the server. */
-export function redact(text, { names = [], numbers = [], max = 500 } = {}) {
+export function redact(text, { names = [], numbers = [], max = 500 } = {}, tally = null) {
   // Known students first (names in any script; student numbers as whole
   // phrases, src/redact-names.js), so the generic patterns below can't cut a
   // stored number in half before it is recognized. Then anything id-like.
@@ -47,13 +47,32 @@ export function redact(text, { names = [], numbers = [], max = 500 } = {}) {
   // Secrets first (src/redact-secrets.js): a connection string or token must
   // go whole, before the email and number patterns below cut it into pieces.
   // Invisible characters go too (SEC-04): they can hide an instruction to the
-  // model from the teacher reviewing the session.
-  const clean = removeSecrets(stripInvisible(String(text || "").slice(0, max + SECRET_WINDOW))).slice(0, max);
-  const out = removeIdentifiers(clean, { names: names.filter(Boolean), numbers });
-  return out.replace(EMAIL, "[removed]").replace(URL_RE, "[removed]").replace(CONTENT_URL, "[removed]")
-    .replace(CONTENT_DOB, "$1$2[removed]").replace(CONTENT_ADDRESS, "[removed]").replace(TITLED_NAME, "$1$2[name]")
-    .replace(STUDENT_NO, "[removed]")
-    .replace(PHONE, m => (m.replace(/\D/g, "").length >= 9 ? "[removed]" : m)).replace(LONG_DIGITS, "[removed]");
+  // model from the teacher reviewing the session. A `tally` (SEC-06) counts
+  // each removal by kind; counts only.
+  const clean = removeSecrets(stripInvisible(String(text || "").slice(0, max + SECRET_WINDOW)), tally).slice(0, max);
+  const out = removeIdentifiers(clean, { names: names.filter(Boolean), numbers }, { tally });
+  return steps(out, learnerSteps(), tally);
+}
+
+// The generic patterns, in order, each with the kind it counts as.
+const step = (re, label, kind) => ({ re, label, kind });
+// Built on first use: some patterns are defined further down.
+let LEARNER_STEPS, CONTENT_STEPS;
+const learnerSteps = () => (LEARNER_STEPS ||= [step(EMAIL, "[removed]", "email"), step(URL_RE, "[removed]", "url"), step(CONTENT_URL, "[removed]", "url"),
+  step(CONTENT_DOB, "$1$2[removed]", "birth_date"), step(CONTENT_ADDRESS, "[removed]", "address"), step(TITLED_NAME, "$1$2[name]", "titled_name"),
+  step(STUDENT_NO, "[removed]", "id_number"),
+  { re: PHONE, kind: "phone", fn: m => (m.replace(/\D/g, "").length >= 9 ? "[removed]" : null) }, step(LONG_DIGITS, "[removed]", "long_number")]);
+const contentSteps = () => (CONTENT_STEPS ||= [step(EMAIL, "[removed]", "email"), step(CONTENT_URL, "[removed]", "url"), step(CONTENT_DOB, "$1$2[removed]", "birth_date"),
+  step(CONTENT_ADDRESS, "[removed]", "address"), step(TITLED_NAME, "$1$2[name]", "titled_name"), step(CONTENT_PHONE, "[removed]", "phone")]);
+function steps(text, list, tally) {
+  let out = text;
+  for (const { re, label, kind, fn } of list) out = out.replace(re, (...m) => {
+    const r = fn ? fn(m[0]) : expand(label, m);
+    if (r === null) return m[0];
+    if (tally) tally[kind] = (tally[kind] || 0) + 1;
+    return r;
+  });
+  return out;
 }
 
 // A name after a title or family word ("Mrs Hargreaves", "Coach O'Neil",
@@ -80,10 +99,9 @@ const CONTENT_ADDRESS = /\b\d{1,6}[A-Za-z]?\s+(?:[\p{L}'.-]+\s+){1,4}(?:Street|S
  * birthday, an address written unusually, an untitled adult's name): lessons
  * should be written without them, and external tutoring is off by default.
  */
-export function redactContent(text, identifiers = {}) {
-  const out = removeIdentifiers(removeSecrets(stripInvisible(text)), { names: identifiers.names || [], numbers: identifiers.numbers || [] });
-  return out.replace(EMAIL, "[removed]").replace(CONTENT_URL, "[removed]").replace(CONTENT_DOB, "$1$2[removed]")
-    .replace(CONTENT_ADDRESS, "[removed]").replace(TITLED_NAME, "$1$2[name]").replace(CONTENT_PHONE, "[removed]");
+export function redactContent(text, identifiers = {}, tally = null) {
+  const out = removeIdentifiers(removeSecrets(stripInvisible(text), tally), { names: identifiers.names || [], numbers: identifiers.numbers || [] }, { tally });
+  return steps(out, contentSteps(), tally);
 }
 
 /**
@@ -92,11 +110,11 @@ export function redactContent(text, identifiers = {}) {
  * these fields (src/student-identifiers.js); `ownNames` the learner's and
  * signed-in user's names.
  */
-export function outboundHelpFields({ question, skillTitle, explanation, prompt, unlockedHints = [] }, identifiers = {}, ownNames = []) {
+export function outboundHelpFields({ question, skillTitle, explanation, prompt, unlockedHints = [] }, identifiers = {}, ownNames = [], tally = null) {
   const ids = { names: [...(identifiers.names || []), ...ownNames.filter(Boolean)], numbers: identifiers.numbers || [] };
   return Object.freeze({ sanitized: true,
-    question: redact(question, ids), skillTitle: redactContent(skillTitle, ids), explanation: redactContent(explanation, ids),
-    prompt: redactContent(prompt, ids), unlockedHints: unlockedHints.map(h => redactContent(h, ids)) });
+    question: redact(question, ids, tally), skillTitle: redactContent(skillTitle, ids, tally), explanation: redactContent(explanation, ids, tally),
+    prompt: redactContent(prompt, ids, tally), unlockedHints: unlockedHints.map(h => redactContent(h, ids, tally)) });
 }
 
 /** Every text field of a help request, for finding whom it names. */
