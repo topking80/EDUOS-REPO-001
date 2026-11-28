@@ -1038,3 +1038,6 @@ GRANT EXECUTE ON FUNCTION eduos_can_see_submission(uuid, uuid) TO eduos_app;
 
 -- 176 (SEC-01): per-student row security on intervention cases and case notes.
 GRANT EXECUTE ON FUNCTION eduos_can_see_case(uuid, uuid, uuid, uuid, boolean), eduos_can_see_case_note(uuid, boolean) TO eduos_app;
+
+-- 177 (SEC-01 part 2): family messages and guardian invitations.
+GRANT EXECUTE ON FUNCTION eduos_leads_student_school(uuid) TO eduos_app;

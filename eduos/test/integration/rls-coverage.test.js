@@ -19,9 +19,7 @@ const skip = PG_URL ? false : "set EDUOS_TEST_PG_URL to a PostgreSQL 15+ superus
 // An entry that starts passing must be removed (the test says so).
 export const REVIEWED = {
   students: "SEC-01 pending: the student directory row itself; staff lists, pickers and definers read it district-wide",
-  attendance_events: "SEC-01 pending (next: attendance, family messages, guardian invitations)",
-  family_messages: "SEC-01 pending",
-  guardian_invitations: "SEC-01 pending",
+  attendance_events: "SEC-01 pending (next, on its own: about ten modules read or write attendance)",
   student_user_links: "SEC-01 pending: used inside many policies and definers, so it changes last",
   teacher_student_rosters: "SEC-01 pending: used inside many policies and definers, so it changes last",
   athlete_association_consents: "SEC-01 pending",

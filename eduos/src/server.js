@@ -671,10 +671,19 @@ app.post("/api/guardian-invitations/accept",guardianAcceptLimiter,requireSession
   const tokenHash=crypto.createHash("sha256").update(token).digest("hex");
   try{
     const result=await withTenantTransaction(req.actor,async client=>{
+      // db/177: a parent sees only the invitation whose secret they present.
+      await client.query("SELECT set_config('app.invitation_token_hash',$1,true)",[tokenHash]);
+      // Look first, then lock: a parent may only lock (update) a pending
+      // invitation, so a used one is reported as used, not as missing.
+      const seen=await client.query(
+        `SELECT gi.status FROM guardian_invitations gi WHERE gi.token_hash=$1 AND gi.district_id=$2`,
+        [tokenHash,req.actor.districtId]);
+      if(!seen.rowCount)return {status:404,error:"invitation_not_found"};
+      if(seen.rows[0].status!=="pending")return {status:409,error:"invitation_not_pending"};
       const invite=await client.query(
         `SELECT gi.* FROM guardian_invitations gi WHERE gi.token_hash=$1 AND gi.district_id=$2 FOR UPDATE`,
         [tokenHash,req.actor.districtId]);
-      if(!invite.rowCount)return {status:404,error:"invitation_not_found"};
+      if(!invite.rowCount)return {status:409,error:"invitation_not_pending"};
       const row=invite.rows[0];
       if(row.status!=="pending")return {status:409,error:"invitation_not_pending"};
       if(row.expires_at<=new Date()){

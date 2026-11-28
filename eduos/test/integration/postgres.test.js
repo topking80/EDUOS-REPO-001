@@ -153,6 +153,8 @@ describe("EduOS against real PostgreSQL", { skip }, () => {
     assert.equal(denied.status, 403); assert.equal(denied.body.error, "idp_verified_email_required");
     const ok = await as("pb")("POST", "/api/guardian-invitations/accept", { token });
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    const again = await as("pb")("POST", "/api/guardian-invitations/accept", { token });
+    assert.deepEqual([again.status, again.body.error], [409, "invitation_not_pending"], "single use, reported as used (db/177)");
     s.pb = await login(server.base, idp, "pb", { email_verified: true }); // unverified login revoked nothing of s.pb, refresh anyway
   });
 
