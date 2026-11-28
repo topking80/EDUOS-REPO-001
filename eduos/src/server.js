@@ -63,6 +63,7 @@ import { registerPrivateSchoolMessageRoutes } from "./private-school-messages-ro
 import { registerComplianceRoutes } from "./compliance-routes.js";
 import { registerLearningResourceRoutes } from "./learning-resource-routes.js";
 import { registerDayPlannerRoutes } from "./day-planner-routes.js";
+import { registerGuardianLinkRoutes } from "./guardian-link-routes.js";
 import { registerSportsConnectorRoutes } from "./sports-connector-routes.js";
 import { registerRankingRoutes } from "./ranking-routes.js";
 import { registerHistoryPrivacyRoutes } from "./history-privacy-routes.js";
@@ -703,7 +704,7 @@ app.post("/api/guardian-invitations/accept",guardianAcceptLimiter,requireSession
       await client.query(
         `INSERT INTO student_user_links(district_id,user_id,student_id,relationship,status)
          VALUES($1,$2,$3,$4,'active')
-         ON CONFLICT(user_id,student_id,relationship) DO UPDATE SET status='active'`,
+         ON CONFLICT(user_id,student_id,relationship) DO UPDATE SET status='active',disabled_by=NULL,disabled_at=NULL,disabled_reason=NULL`,
         [req.actor.districtId,req.actor.userId,row.student_id,row.relationship]);
       await client.query(
         `UPDATE guardian_invitations SET status='accepted',accepted_by=$1,accepted_at=now() WHERE id=$2`,
@@ -2098,6 +2099,7 @@ registerPrivateSchoolMessageRoutes(app);
 registerComplianceRoutes(app);
 registerLearningResourceRoutes(app);
 registerDayPlannerRoutes(app);
+registerGuardianLinkRoutes(app);
 registerSportsConnectorRoutes(app);
 registerRankingRoutes(app);
 registerHistoryPrivacyRoutes(app);

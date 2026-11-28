@@ -42,11 +42,12 @@ describe("family links and teacher rosters row security (180)", { skip }, () => 
     assert.ok(await as("pa", "parent", ID.s1, async () => (await app.query("SELECT 1 FROM student_user_links WHERE student_id=$1 AND user_id=$2", [ID.alice, USERS.pu[0]])).rowCount === 1));
   });
 
-  it("families never add rosters or links for others; they can add only their own guardian link", async () => {
+  it("families never add rosters or links for others, and add their own only by accepting an invitation", async () => {
     await assert.rejects(as("pa", "parent", ID.s1, () => app.query("INSERT INTO teacher_student_rosters(district_id,school_id,teacher_user_id,student_id,created_by) VALUES($1,$2,$3,$4,$3)", [ID.d1, ID.s1, USERS.pa[0], ID.bob])), /row-level security/);
-    await assert.rejects(as("pa", "parent", ID.s1, () => app.query("INSERT INTO student_user_links(district_id,user_id,student_id,relationship,status) VALUES($1,$2,$3,'guardian','active')", [ID.d1, USERS.pb[0], ID.alice])), /row-level security/, "for someone else");
-    await assert.rejects(as("pu", "pupil", ID.s1, () => app.query("INSERT INTO student_user_links(district_id,user_id,student_id,relationship,status) VALUES($1,$2,$3,'pupil','active')", [ID.d1, USERS.pu[0], ID.bob])), /row-level security/);
-    await as("pb", "parent", ID.s1, () => app.query("INSERT INTO student_user_links(district_id,user_id,student_id,relationship,status) VALUES($1,$2,$3,'guardian','active')", [ID.d1, USERS.pb[0], ID.alice]));
+    await assert.rejects(as("pa", "parent", ID.s1, () => app.query("INSERT INTO student_user_links(district_id,user_id,student_id,relationship,status) VALUES($1,$2,$3,'guardian','active')", [ID.d1, USERS.pb[0], ID.alice])), /row-level security|only by accepting an invitation/, "for someone else");
+    await assert.rejects(as("pu", "pupil", ID.s1, () => app.query("INSERT INTO student_user_links(district_id,user_id,student_id,relationship,status) VALUES($1,$2,$3,'pupil','active')", [ID.d1, USERS.pu[0], ID.bob])), /row-level security|only by accepting an invitation/);
+    // Since db/182 a parent's own active link needs a pending invitation whose secret they hold.
+    await assert.rejects(as("pb", "parent", ID.s1, () => app.query("INSERT INTO student_user_links(district_id,user_id,student_id,relationship,status) VALUES($1,$2,$3,'guardian','active')", [ID.d1, USERS.pb[0], ID.alice])), /only by accepting an invitation/);
     assert.equal(await as("pa", "parent", ID.s1, async () => (await app.query("UPDATE student_user_links SET status='revoked' WHERE student_id=$1 AND user_id<>$2", [ID.alice, USERS.pa[0]])).rowCount), 0, "can't revoke a co-guardian");
   });
 });
