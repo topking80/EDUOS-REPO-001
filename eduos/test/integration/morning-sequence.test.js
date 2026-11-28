@@ -68,8 +68,8 @@ describe("a school morning end to end against real PostgreSQL", { skip }, () => 
   });
 
   it("2. the handoff: the driver starts it for a rider of their run; no one confirms their own; first attendance waits for receipt", async () => {
-    assert.equal((await as("drv1")("POST", "/api/arrival/handoffs", { studentId: ID.bob, method: "bus", routeRunId: runId })).status, 403, "not a rider of this run");
-    assert.equal((await as("drv2")("POST", "/api/arrival/handoffs", { studentId: ID.alice, method: "bus", routeRunId: runId })).status, 403, "not their run");
+    assert.ok([403, 404].includes((await as("drv1")("POST", "/api/arrival/handoffs", { studentId: ID.bob, method: "bus", routeRunId: runId })).status), "not a rider of this run (404 since SEC-08: a driver sees only their riders)");
+    assert.ok([403, 404].includes((await as("drv2")("POST", "/api/arrival/handoffs", { studentId: ID.alice, method: "bus", routeRunId: runId })).status), "not their run");
     const h = await as("drv1")("POST", "/api/arrival/handoffs", { studentId: ID.alice, method: "bus", routeRunId: runId, assignedTeacherUserId: USERS.t1[0] });
     assert.equal(h.status, 201, JSON.stringify(h.body)); handoff = h.body.data.id;
     assert.equal((await as("drv1")("POST", `/api/arrival/handoffs/${handoff}/receive`)).status, 403, "the driver can't confirm their own handoff");
