@@ -7,11 +7,28 @@
 -- SIS sync, arrival handoffs, guardian contributions across schools, pickers and
 -- definers all read students that way. Narrowing staff to their school is
 -- follow-up SEC-08, done route by route. Definers run as the owner and are unaffected.
+-- Context checks are wrapped as (SELECT ...) so Postgres runs each once per
+-- query (an InitPlan), not once per row: listing or joining a whole school
+-- stays fast (test/integration/performance-paths.test.js).
 CREATE POLICY student_read ON students AS RESTRICTIVE FOR SELECT
   USING (CASE
-    WHEN eduos_is_table_owner() THEN true
-    WHEN eduos_ctx_role() IN ('pupil', 'parent') THEN eduos_is_linked_student(id)
+    WHEN (SELECT eduos_is_table_owner()) THEN true
+    WHEN (SELECT eduos_ctx_role()) IN ('pupil', 'parent') THEN eduos_is_linked_student(id)
     ELSE true END);
+
+-- The same treatment for the attendance read policy (db/178), which shares the
+-- school-day query with students.
+ALTER POLICY attendance_read ON attendance_events
+  USING (CASE
+    WHEN (SELECT eduos_is_table_owner()) THEN true
+    WHEN (SELECT eduos_ctx_role()) IN ('superintendent', 'it_admin') THEN true
+    WHEN (SELECT eduos_ctx_role()) IN ('principal', 'teacher', 'librarian') THEN
+      student_id IN (SELECT s.id FROM students s WHERE s.district_id = (SELECT eduos_ctx_district()) AND s.school_id = (SELECT eduos_ctx_school()))
+    WHEN (SELECT eduos_ctx_role()) = 'driver' THEN
+      student_id IN (SELECT ra.student_id FROM transport_rider_assignments ra JOIN transport_routes r ON r.id = ra.route_id AND r.district_id = ra.district_id
+                      WHERE ra.district_id = (SELECT eduos_ctx_district()) AND r.driver_user_id = (SELECT eduos_ctx_user()))
+    WHEN (SELECT eduos_ctx_role()) IN ('pupil', 'parent') THEN eduos_is_linked_student(student_id)
+    ELSE false END);
 
 -- AI redaction must still find every student in the district that a text
 -- names, whoever wrote it, before the text may leave for an external provider
