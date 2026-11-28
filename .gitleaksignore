@@ -11,3 +11,5 @@ f93d5c3775e72c513c6d7910bbf28407b4f315df:eduos/test/integration/history-media.te
 5b4d8727e1c2d998529d00879711f29c6a96d6f6:eduos/test/integration/capsule-photos.test.js:generic-api-key:97
 # TC-06a: a made-up signing fingerprint in the smoke mock (since replaced with "TEST-FP"), not a secret.
 4394f52f2ca4c6f5ea2ec835c20f0fbc110db5e4:eduos/test/browser/app-smoke.test.js:generic-api-key:258
+# SEC-03 redaction tests: a fake, repeated-character private key header in the first commit of PR #250 (since assembled at runtime).
+891eec78c3888d7a5f9f68f93513e9bfc27e7e93:eduos/test/redact-secrets.test.js:private-key:14
