@@ -467,6 +467,10 @@ export function registerLearningRoutes(app) {
     if (a.kind !== "quiz" || a.status !== "published") throw new HttpError(409, "quiz_not_open");
     if (a.due_at && new Date(a.due_at) < Date.now()) throw new HttpError(409, "quiz_past_due");
     const learner = await enrolledLearner(client, req.actor, a.course_id);
+    // SEC-07: starts for one learner and quiz take turns, so a double tap or a
+    // retry resumes the attempt the first one opened instead of failing on the
+    // one-open-attempt index, and the attempt count can't be raced past the limit.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('quiz_attempt'), hashtext($1))", [`${a.id}:${learner.id}`]);
     const open = await one(client, `SELECT id FROM quiz_attempts WHERE assignment_id=$1 AND student_id=$2 AND status='in_progress'`, [a.id, learner.id]);
     if (open) return { attempt: await attemptView(client, req.actor, open.id), resumed: true };
     const used = (await one(client, `SELECT count(*)::int AS n FROM quiz_attempts WHERE assignment_id=$1 AND student_id=$2`, [a.id, learner.id])).n;
