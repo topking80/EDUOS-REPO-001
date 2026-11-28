@@ -1041,3 +1041,6 @@ GRANT EXECUTE ON FUNCTION eduos_can_see_case(uuid, uuid, uuid, uuid, boolean), e
 
 -- 177 (SEC-01 part 2): family messages and guardian invitations.
 GRANT EXECUTE ON FUNCTION eduos_leads_student_school(uuid) TO eduos_app;
+
+-- 178 (SEC-01 part 3): attendance.
+GRANT EXECUTE ON FUNCTION eduos_can_see_attendance(uuid), eduos_can_write_attendance(uuid) TO eduos_app;
