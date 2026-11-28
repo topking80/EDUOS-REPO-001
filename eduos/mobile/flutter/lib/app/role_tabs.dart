@@ -114,6 +114,8 @@ const roleNames = {
   'driver': 'Bus driver',
   'sro': 'School resource officer',
   'it_admin': 'IT',
+  // COS-01: no native screens yet, so the whole role opens the web app (like meal service).
+  'chief_of_staff': 'Chief of Staff',
   'coach': 'Coach',
 };
 

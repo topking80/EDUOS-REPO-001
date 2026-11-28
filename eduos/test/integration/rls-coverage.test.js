@@ -21,6 +21,20 @@ export const REVIEWED = {
   eden_consent_exceptions: "Leaders only: a restrictive policy limits reads to the EDEN agent, the superintendent and the student's own school principal (records-transfer consent exceptions); no pupil, parent or teacher access",
 };
 
+// Tables a chief of staff may reach (db/186); every other table with row security is closed to the role.
+export const COS_OPEN = {
+  cos_followups: "the role's own follow-up tracker, under its own policies",
+  districts: "district name for the app and overview",
+  schools: "school names for the overview and follow-ups",
+  branding_profiles: "the app's look",
+  user_preferences: "the role's own display settings",
+  notification_outbox: "the role's own notifications (per-user policy)",
+  users: "staff accounts only, via chief_of_staff_staff_only",
+  memberships: "staff memberships only, via chief_of_staff_staff_only",
+  district_users: "staff only, via chief_of_staff_staff_only",
+  audit_events: "it writes its own audit rows and can't read the log (chief_of_staff_writes_only)",
+};
+
 describe("SEC-02 row-security coverage for student records", { skip }, () => {
   let db, admin, tables;
   before(async () => {
@@ -43,7 +57,8 @@ describe("SEC-02 row-security coverage for student records", { skip }, () => {
     if (!t.app_select) return { ok: true };
     const reads = t.policies.filter(p => ["SELECT", "ALL"].includes(p.cmd));
     const broad = reads.filter(p => p.permissive && isBroad(p.qual) && !isOwnerOnly(p.qual));
-    const narrowing = reads.filter(p => !p.permissive && !isBroad(p.qual));
+    // no_chief_of_staff (db/186) shuts out one role; it narrows nothing per student.
+    const narrowing = reads.filter(p => !p.permissive && !isBroad(p.qual) && p.name !== "no_chief_of_staff");
     return { ok: broad.length === 0 || narrowing.length > 0, broad: broad.map(p => p.name) };
   };
 
@@ -65,6 +80,22 @@ describe("SEC-02 row-security coverage for student records", { skip }, () => {
       assert.ok(byName.has(name), `${name} is on the reviewed list but isn't a student table any more`);
       assert.ok(typeof reason === "string" && reason.length >= 10, `${name} needs a reason`);
       assert.equal(verdict(byName.get(name)).ok, false, `${name} now limits reads per student: take it off the reviewed list`);
+    }
+  });
+
+  // COS-01 (db/186): the Chief of Staff is coordination only, so every table
+  // with row security is closed to the role except the reviewed few it needs.
+  it("every table with row security is closed to the chief of staff, or reviewed as open", async () => {
+    const rls = (await admin.query(`SELECT k.relname AS name,
+        EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = k.relname AND p.policyname = 'no_chief_of_staff' AND p.permissive = 'RESTRICTIVE' AND p.cmd = 'ALL') AS closed
+      FROM pg_class k JOIN pg_namespace n ON n.oid = k.relnamespace AND n.nspname = 'public'
+      WHERE k.relkind = 'r' AND k.relrowsecurity ORDER BY 1`)).rows;
+    const open = rls.filter(t => !t.closed && !COS_OPEN[t.name]).map(t => t.name);
+    assert.deepEqual(open, [], "a new table must call eduos_close_to_chief_of_staff('<table>') in its migration, or be reviewed in COS_OPEN with a reason");
+    for (const [name, reason] of Object.entries(COS_OPEN)) {
+      const t = rls.find(x => x.name === name);
+      // A listed table without row security (districts) is open to every role by design.
+      assert.ok((!t || !t.closed) && reason.length >= 10, `${name}: on COS_OPEN, open to the role, with a reason`);
     }
   });
 });

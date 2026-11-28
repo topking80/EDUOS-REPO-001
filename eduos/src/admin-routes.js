@@ -19,7 +19,7 @@
 //  - 32.2.0: optional district caps (district_settings; NULL = unlimited) are
 //    enforced when schools and users are created.
 import { requireSession, requireCsrf, principalOnly } from "./auth.js";
-import { requirePermission, isDistrictRole } from "./policy.js";
+import { requirePermission, isDistrictRole, NO_SCHOOL_ROLES } from "./policy.js";
 import { pageOf, pageSql, paged } from "./paging.js";
 import { withTenantTransaction } from "./db.js";
 import { config } from "./config.js";
@@ -29,7 +29,7 @@ const validId = v => typeof v === "string" && UUID_RE.test(v);
 const text = (v, max) => typeof v === "string" && v.trim().length > 0 && v.trim().length <= max;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SUBJECT_RE = /^[\x21-\x7e]{1,255}$/;
-export const ROLES = ["superintendent", "it_admin", "principal", "teacher", "parent", "pupil", "driver", "sro", "librarian", "vice_principal", "counselor", "nurse", "maintenance", "lunch_staff", "school_secretary"];
+export const ROLES = ["superintendent", "it_admin", "chief_of_staff", "principal", "teacher", "parent", "pupil", "driver", "sro", "librarian", "vice_principal", "counselor", "nurse", "maintenance", "lunch_staff", "school_secretary"];
 const SCHOOL_LEVELS = ["elementary", "middle", "high", "k8", "k12", "other"];
 const PRINCIPAL_MANAGED = ["teacher", "parent", "pupil", "driver", "librarian", "vice_principal", "counselor", "nurse", "maintenance", "lunch_staff", "school_secretary"];
 
@@ -56,8 +56,8 @@ async function sroPolicyAllows(client, districtId, actorRole, schoolId) {
 
 function membershipError(role, schoolId) {
   if (!ROLES.includes(role)) return "invalid_role";
-  if (isDistrictRole(role) && schoolId) return "district_role_has_no_school";
-  if (!isDistrictRole(role) && !validId(schoolId)) return "school_required";
+  if (NO_SCHOOL_ROLES.includes(role) && schoolId) return "district_role_has_no_school";
+  if (!NO_SCHOOL_ROLES.includes(role) && !validId(schoolId)) return "school_required";
   return null;
 }
 const CAP_KEYS = { maxSchools: "max_schools", maxStudents: "max_students", maxUsers: "max_users", maxActiveWebhooks: "max_active_webhooks", maxApps: "max_apps" };
